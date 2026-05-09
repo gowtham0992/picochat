@@ -1,0 +1,235 @@
+"""Small transparent evaluation tools for Picochat."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+from pathlib import Path
+
+import torch
+
+from picochat.chat import extract_assistant_reply, render_chat_prompt
+from picochat.checkpoint import load_checkpoint
+from picochat.report import chat_eval_report_markdown
+from picochat.tokenizer import CharTokenizer
+
+
+@dataclass(frozen=True)
+class ChatEvalItem:
+    user: str
+    must_include: tuple[str, ...] = ()
+    must_include_any: tuple[tuple[str, ...], ...] = ()
+    must_not_include: tuple[str, ...] = ()
+    answerable: bool = True
+    category: str = "answerable"
+
+
+@dataclass(frozen=True)
+class ChatEvalConfig:
+    input_path: str
+    checkpoint_path: str
+    tokenizer_path: str
+    out_dir: str
+    max_new_tokens: int = 80
+    temperature: float = 0.0
+    top_k: int | None = None
+    seed: int = 42
+    device: str = "cpu"
+    case_sensitive: bool = False
+
+
+def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
+    """Load transparent chat eval items from JSONL."""
+    items: list[ChatEvalItem] = []
+    for line_number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        record = json.loads(line)
+        user = record.get("user")
+        if not isinstance(user, str):
+            raise ValueError(f"line {line_number} must contain a string user field")
+
+        must_include = record.get("must_include", ())
+        expected = record.get("expected")
+        if expected is not None:
+            if not isinstance(expected, str):
+                raise ValueError(f"line {line_number} expected field must be a string")
+            must_include = [*must_include, expected]
+
+        must_not_include = record.get("must_not_include", ())
+        must_include_any = record.get("must_include_any", ())
+        answerable = record.get("answerable", True)
+        if not isinstance(answerable, bool):
+            raise ValueError(f"line {line_number} answerable field must be a boolean")
+        category = record.get("category", "answerable" if answerable else "unanswerable")
+        if not isinstance(category, str):
+            raise ValueError(f"line {line_number} category field must be a string")
+        items.append(ChatEvalItem(
+            user=user,
+            must_include=_as_string_tuple(must_include, line_number, "must_include"),
+            must_include_any=_as_phrase_groups(must_include_any, line_number, "must_include_any"),
+            must_not_include=_as_string_tuple(must_not_include, line_number, "must_not_include"),
+            answerable=answerable,
+            category=category,
+        ))
+
+    if not items:
+        raise ValueError("chat eval dataset is empty")
+    return items
+
+
+def _as_string_tuple(value, line_number: int, field: str) -> tuple[str, ...]:
+    if value in (None, ()):
+        return ()
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"line {line_number} {field} field must be a list of strings")
+    return tuple(value)
+
+
+def _as_phrase_groups(value, line_number: int, field: str) -> tuple[tuple[str, ...], ...]:
+    if value in (None, ()):
+        return ()
+    if not isinstance(value, list):
+        raise ValueError(f"line {line_number} {field} field must be a list of lists")
+
+    groups: list[tuple[str, ...]] = []
+    for group in value:
+        if (
+            not isinstance(group, list)
+            or not group
+            or not all(isinstance(item, str) for item in group)
+        ):
+            raise ValueError(
+                f"line {line_number} {field} field must contain non-empty string lists"
+            )
+        groups.append(tuple(group))
+    return tuple(groups)
+
+
+def score_reply(reply: str, item: ChatEvalItem, case_sensitive: bool = False) -> dict:
+    """Score a reply with visible substring rules."""
+    if case_sensitive:
+        haystack = reply
+        includes = item.must_include
+        include_any = item.must_include_any
+        forbidden = item.must_not_include
+    else:
+        haystack = reply.lower()
+        includes = tuple(phrase.lower() for phrase in item.must_include)
+        include_any = tuple(
+            tuple(phrase.lower() for phrase in group)
+            for group in item.must_include_any
+        )
+        forbidden = tuple(phrase.lower() for phrase in item.must_not_include)
+
+    missing = [
+        original
+        for original, normalized in zip(item.must_include, includes, strict=True)
+        if normalized not in haystack
+    ]
+    missing_any = [
+        list(original_group)
+        for original_group, normalized_group in zip(
+            item.must_include_any,
+            include_any,
+            strict=True,
+        )
+        if not any(phrase in haystack for phrase in normalized_group)
+    ]
+    found_forbidden = [
+        original
+        for original, normalized in zip(item.must_not_include, forbidden, strict=True)
+        if normalized in haystack
+    ]
+    return {
+        "passed": not missing and not missing_any and not found_forbidden,
+        "missing": missing,
+        "missing_any": missing_any,
+        "found_forbidden": found_forbidden,
+    }
+
+
+def run_chat_eval(config: ChatEvalConfig) -> dict:
+    """Run a deterministic chat eval and write JSON/Markdown reports."""
+    out_dir = Path(config.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    tokenizer = CharTokenizer.load(config.tokenizer_path)
+    model, metadata = load_checkpoint(config.checkpoint_path, map_location=config.device)
+    if model.config.vocab_size != len(tokenizer):
+        raise ValueError("tokenizer vocabulary size does not match checkpoint")
+
+    device = torch.device(config.device)
+    model = model.to(device)
+    model.eval()
+
+    rows = []
+    for index, item in enumerate(load_chat_eval_items(config.input_path)):
+        reply = _generate_eval_reply(model, tokenizer, config, item.user, seed=config.seed + index)
+        score = score_reply(reply, item, case_sensitive=config.case_sensitive)
+        rows.append({
+            "user": item.user,
+            "answerable": item.answerable,
+            "category": item.category,
+            "reply": reply,
+            "must_include": list(item.must_include),
+            "must_include_any": [list(group) for group in item.must_include_any],
+            "must_not_include": list(item.must_not_include),
+            **score,
+        })
+
+    passed = sum(1 for row in rows if row["passed"])
+    unsupported_claims = sum(1 for row in rows if row["found_forbidden"])
+    missing_support = sum(1 for row in rows if row["missing"] or row["missing_any"])
+    answerable = sum(1 for row in rows if row["answerable"])
+    report = {
+        "config": config.__dict__,
+        "checkpoint": {
+            "path": config.checkpoint_path,
+            "step": metadata.get("step"),
+            "train_loss": metadata.get("train_loss"),
+        },
+        "summary": {
+            "num_examples": len(rows),
+            "num_passed": passed,
+            "num_failed": len(rows) - passed,
+            "pass_rate": passed / len(rows),
+            "num_answerable": answerable,
+            "num_unanswerable": len(rows) - answerable,
+            "unsupported_claims": unsupported_claims,
+            "unsupported_claim_rate": unsupported_claims / len(rows),
+            "missing_support": missing_support,
+            "missing_support_rate": missing_support / len(rows),
+        },
+        "examples": rows,
+    }
+    (out_dir / "eval_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    (out_dir / "report.md").write_text(chat_eval_report_markdown(report), encoding="utf-8")
+    return report
+
+
+@torch.no_grad()
+def _generate_eval_reply(
+    model,
+    tokenizer: CharTokenizer,
+    config: ChatEvalConfig,
+    user_message: str,
+    seed: int,
+) -> str:
+    prompt = render_chat_prompt([], user_message)
+    input_ids = torch.tensor(
+        [tokenizer.encode(prompt, add_bos=True)],
+        dtype=torch.long,
+        device=next(model.parameters()).device,
+    )
+    generated = model.generate(
+        input_ids,
+        max_new_tokens=config.max_new_tokens,
+        temperature=config.temperature,
+        top_k=config.top_k,
+        seed=seed,
+        eos_id=tokenizer.eos_id,
+    )
+    generated_text = tokenizer.decode(generated[0].tolist())
+    return extract_assistant_reply(prompt, generated_text)

@@ -1,0 +1,179 @@
+from picochat.report import (
+    chat_eval_report_markdown,
+    sft_report_markdown,
+    tiny_run_summary_markdown,
+    training_report_markdown,
+)
+
+
+def test_training_report_markdown_contains_key_sections():
+    report = {
+        "config": {
+            "corpus_path": "corpus.txt",
+            "tokenizer_path": "tokenizer.json",
+            "max_steps": 2,
+            "batch_size": 4,
+            "learning_rate": 0.001,
+            "device": "cpu",
+            "val_fraction": 0.1,
+        },
+        "dataset": {
+            "num_tokens": 100,
+            "context_size": 8,
+            "num_sequences": 92,
+            "train_sequences": 83,
+            "val_sequences": 9,
+        },
+        "model": {
+            "num_parameters": 1234,
+            "config": {
+                "vocab_size": 20,
+                "n_layer": 1,
+                "n_embd": 16,
+                "n_head": 4,
+                "dropout": 0.0,
+            },
+        },
+        "losses": [{"step": 1, "train_loss": 3.2, "val_loss": 3.4, "elapsed_sec": 0.1}],
+        "sample": "hello",
+        "checkpoint": "checkpoint",
+    }
+
+    markdown = training_report_markdown(report)
+
+    assert "# Picochat Base Training Report" in markdown
+    assert "## Dataset" in markdown
+    assert "## Model" in markdown
+    assert "## Training" in markdown
+    assert "hello" in markdown
+
+
+def test_sft_report_markdown_contains_key_sections():
+    report = {
+        "config": {
+            "input_path": "chat.jsonl",
+            "tokenizer_path": "tokenizer.json",
+            "max_steps": 2,
+            "batch_size": 4,
+            "learning_rate": 0.001,
+            "device": "cpu",
+        },
+        "base_checkpoint": {
+            "path": "base/checkpoint",
+            "step": 10,
+            "train_loss": 2.5,
+        },
+        "dataset": {
+            "num_examples": 5,
+            "context_size": 32,
+            "supervised_tokens": 100,
+            "train_examples": 4,
+            "val_examples": 1,
+        },
+        "model": {
+            "num_parameters": 1234,
+            "config": {
+                "vocab_size": 20,
+                "n_layer": 1,
+                "n_embd": 16,
+                "n_head": 4,
+            },
+        },
+        "losses": [{"step": 1, "train_loss": 3.2, "val_loss": 3.4, "elapsed_sec": 0.1}],
+        "sample": "User: hello\nAssistant:",
+        "checkpoint": "checkpoint",
+    }
+
+    markdown = sft_report_markdown(report)
+
+    assert "# Picochat SFT Report" in markdown
+    assert "## Dataset" in markdown
+    assert "## Base Checkpoint" in markdown
+    assert "## Training" in markdown
+    assert "User: hello" in markdown
+
+
+def test_chat_eval_report_markdown_contains_key_sections():
+    report = {
+        "config": {
+            "input_path": "eval.jsonl",
+            "tokenizer_path": "tokenizer.json",
+            "temperature": 0.0,
+            "max_new_tokens": 20,
+            "case_sensitive": False,
+        },
+        "checkpoint": {
+            "path": "checkpoint",
+            "step": 10,
+            "train_loss": 2.5,
+        },
+        "summary": {
+            "num_examples": 1,
+            "num_passed": 0,
+            "num_failed": 1,
+            "pass_rate": 0.0,
+        },
+        "examples": [{
+            "user": "What is Picochat?",
+            "reply": "I do not know.",
+            "must_include": ["Picochat"],
+            "must_include_any": [["educational", "learning"]],
+            "must_not_include": ["I do not know"],
+            "missing": ["Picochat"],
+            "missing_any": [["educational", "learning"]],
+            "found_forbidden": ["I do not know"],
+            "passed": False,
+        }],
+    }
+
+    markdown = chat_eval_report_markdown(report)
+
+    assert "# Picochat Chat Eval Report" in markdown
+    assert "## Summary" in markdown
+    assert "FAIL" in markdown
+    assert "Required any-phrase groups" in markdown
+    assert "Missing any-group" in markdown
+    assert "I do not know." in markdown
+
+
+def test_tiny_run_summary_markdown_contains_key_sections():
+    summary = {
+        "config": {
+            "context_size": 128,
+            "n_embd": 64,
+            "n_head": 4,
+            "n_layer": 2,
+            "base_steps": 300,
+            "sft_steps": 600,
+            "device": "cpu",
+        },
+        "artifacts": {
+            "corpus": "corpus.txt",
+            "tokenizer": "tokenizer.json",
+            "base_report": "base/report.md",
+            "sft_report": "sft/report.md",
+            "eval_report": "eval/report.md",
+        },
+        "base": {
+            "final_train_loss": 2.0,
+            "final_val_loss": 2.1,
+        },
+        "sft": {
+            "final_train_loss": 0.1,
+            "final_val_loss": 4.0,
+            "truncated_examples": 0,
+        },
+        "eval": {
+            "num_examples": 4,
+            "num_passed": 3,
+            "num_failed": 1,
+            "pass_rate": 0.75,
+        },
+    }
+
+    markdown = tiny_run_summary_markdown(summary)
+
+    assert "# Picochat Tiny Run Summary" in markdown
+    assert "Eval passed: 3 / 4" in markdown
+    assert "Base final train loss" in markdown
+    assert "eval/report.md" in markdown

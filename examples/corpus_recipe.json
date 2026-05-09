@@ -1,0 +1,14 @@
+{
+  "name": "tiny-demo-corpus",
+  "description": "Example Picochat corpus recipe. Paths are relative to this file.",
+  "exclude": [
+    "**/.DS_Store",
+    "**/draft-*"
+  ],
+  "sources": [
+    {
+      "path": "tiny_corpus.txt",
+      "label": "demo"
+    }
+  ]
+}

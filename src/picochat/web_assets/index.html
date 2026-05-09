@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Picochat Workbench</title>
+    <link rel="stylesheet" href="/assets/style.css">
+  </head>
+  <body>
+    <div class="desktop-grain" aria-hidden="true"></div>
+    <div class="terminal-shell">
+      <header class="terminal-header">
+        <div>
+          <p class="kicker">PICOCHAT / LOCAL LLM FACTORY</p>
+          <h1>PICOCHAT WORKBENCH</h1>
+        </div>
+        <button id="refresh-button" type="button">REFRESH</button>
+      </header>
+
+      <main class="terminal-grid">
+        <aside class="run-rail" aria-label="Run selector">
+          <div class="rail-title">
+            <span>RUN BANK</span>
+            <span id="run-count">BOOTING</span>
+          </div>
+          <div id="run-list" class="run-list"></div>
+        </aside>
+
+        <section class="workbench">
+          <section class="assembly-line" aria-label="Picochat factory flow">
+            <div class="assembly-title">
+              <span>FACTORY FLOW</span>
+              <span id="pipeline-run">NO RUN</span>
+            </div>
+            <div id="pipeline-strip" class="pipeline-strip"></div>
+            <div id="pipeline-detail" class="pipeline-detail">LOAD A RUN TO INSPECT THE PIPELINE.</div>
+          </section>
+
+          <nav class="tab-strip" aria-label="Pipeline panels">
+            <button class="tab-button active" type="button" data-panel="dataset">DATASET BAY</button>
+            <button class="tab-button" type="button" data-panel="tokenizer">TOKENIZER LAB</button>
+            <button class="tab-button" type="button" data-panel="training">TRAINING DASH</button>
+            <button class="tab-button" type="button" data-panel="generation">GENERATION DECK</button>
+            <button class="tab-button" type="button" data-panel="eval">EVAL SCOREBOARD</button>
+            <button class="tab-button" type="button" data-panel="report">REPORT VAULT</button>
+            <button class="tab-button" type="button" data-panel="compare">COMPARE RUNS</button>
+          </nav>
+
+          <section id="panel-dataset" class="panel-screen active">
+            <div class="panel-head">
+              <div>
+                <p class="kicker">STATION 00</p>
+                <h2>DATASET BAY</h2>
+              </div>
+              <span id="dataset-summary">DATA --</span>
+            </div>
+            <div class="two-col dataset-layout">
+              <div class="terminal-card">
+                <label>CORPUS MANIFEST</label>
+                <div id="dataset-stats" class="stat-grid"></div>
+              </div>
+              <div class="terminal-card">
+                <label>QUALITY CHECKS</label>
+                <div id="dataset-warnings" class="quality-list"></div>
+              </div>
+            </div>
+            <div class="two-col dataset-layout">
+              <div class="terminal-card">
+                <label>TRAINING WINDOWS</label>
+                <div id="dataset-windows" class="stat-grid"></div>
+              </div>
+              <div class="terminal-card">
+                <label>SOURCE FILES</label>
+                <div id="corpus-files" class="source-list"></div>
+              </div>
+            </div>
+            <div class="terminal-card dataset-preview-card">
+              <label>SOURCE PREVIEW</label>
+              <div class="preview-controls">
+                <div>
+                  <label for="preview-recipe-path">RECIPE PATH</label>
+                  <input id="preview-recipe-path" type="text" spellcheck="false" placeholder="examples/corpus_recipe.json">
+                </div>
+                <div>
+                  <label for="preview-input-path">INPUT PATH</label>
+                  <input id="preview-input-path" type="text" spellcheck="false" placeholder="my_docs/">
+                </div>
+                <button id="preview-corpus-button" type="button">PREVIEW SOURCES</button>
+              </div>
+              <div id="source-preview-status" class="notice">NO SOURCE PREVIEW REQUESTED.</div>
+              <div class="two-col source-preview-layout">
+                <div>
+                  <label>PREVIEW STATS</label>
+                  <div id="source-preview-stats" class="stat-grid"></div>
+                </div>
+                <div>
+                  <label>PREVIEW FILES</label>
+                  <div id="source-preview-files" class="source-list"></div>
+                </div>
+              </div>
+              <label>PREVIEW TEXT</label>
+              <pre id="source-preview-text">READY.</pre>
+            </div>
+            <div class="terminal-card dataset-preview-card">
+              <label>RUN CORPUS PREVIEW</label>
+              <pre id="corpus-preview"></pre>
+            </div>
+          </section>
+
+          <section id="panel-tokenizer" class="panel-screen">
+            <div class="panel-head">
+              <div>
+                <p class="kicker">STATION 01</p>
+                <h2>TOKENIZER LAB</h2>
+              </div>
+              <span id="tokenizer-summary">TOK --</span>
+            </div>
+            <div class="two-col">
+              <div class="terminal-card">
+                <label for="tokenizer-input">TYPE TEXT</label>
+                <textarea id="tokenizer-input" spellcheck="false">Picochat</textarea>
+                <div class="button-row">
+                  <button id="tokenize-button" type="button">STEP TOKENS</button>
+                  <button id="tokenize-sample-button" type="button">LOAD SAMPLE</button>
+                </div>
+                <div id="special-tokens" class="token-row"></div>
+              </div>
+              <div class="terminal-card">
+                <label>TOKEN STREAM</label>
+                <div id="token-stream" class="token-stream loading-line">READY<span class="cursor"></span></div>
+              </div>
+            </div>
+          </section>
+
+          <section id="panel-training" class="panel-screen">
+            <div class="panel-head">
+              <div>
+                <p class="kicker">STATION 02</p>
+                <h2>TRAINING DASH</h2>
+              </div>
+              <span id="training-badge">RUN --</span>
+            </div>
+            <div class="two-col">
+              <div class="terminal-card">
+                <label>BASE TRAINER LOSS TRACE</label>
+                <pre id="base-loss-chart"></pre>
+              </div>
+              <div class="terminal-card">
+                <label>CHAT TUNER LOSS TRACE</label>
+                <pre id="sft-loss-chart"></pre>
+              </div>
+            </div>
+            <div id="training-table" class="terminal-card"></div>
+          </section>
+
+          <section id="panel-generation" class="panel-screen">
+            <div class="panel-head">
+              <div>
+                <p class="kicker">STATION 03</p>
+                <h2>GENERATION DECK</h2>
+              </div>
+              <span id="seed-display">SEED 0042</span>
+            </div>
+            <div class="two-col">
+              <div class="terminal-card">
+                <label for="checkpoint-select">CHECKPOINT</label>
+                <select id="checkpoint-select">
+                  <option value="sft">SFT CHECKPOINT</option>
+                  <option value="base">BASE CHECKPOINT</option>
+                </select>
+                <label for="prompt-input">PROMPT</label>
+                <textarea id="prompt-input" spellcheck="false">User: What is Picochat?
+Assistant:</textarea>
+                <label for="temperature-slider">TEMPERATURE <span id="temperature-value">0.80</span></label>
+                <input id="temperature-slider" type="range" min="0" max="2" value="0.8" step="0.05">
+                <label for="topk-slider">TOP_K <span id="topk-value">20</span></label>
+                <input id="topk-slider" type="range" min="0" max="80" value="20" step="1">
+                <label for="max-tokens-slider">MAX TOKENS <span id="max-tokens-value">80</span></label>
+                <input id="max-tokens-slider" type="range" min="1" max="160" value="80" step="1">
+                <button id="generate-button" type="button">GENERATE</button>
+              </div>
+              <div class="terminal-card">
+                <label>OUTPUT TAPE</label>
+                <pre id="generation-output" class="loading-line">READY<span class="cursor"></span></pre>
+                <div id="logprob-bars" class="logprob-bars"></div>
+              </div>
+            </div>
+          </section>
+
+          <section id="panel-eval" class="panel-screen">
+            <div class="panel-head">
+              <div>
+                <p class="kicker">STATION 04</p>
+                <h2>EVAL SCOREBOARD</h2>
+              </div>
+              <span id="eval-status">EVAL --</span>
+            </div>
+            <div id="score-table" class="terminal-card"></div>
+            <div id="eval-results" class="eval-results"></div>
+          </section>
+
+          <section id="panel-report" class="panel-screen">
+            <div class="panel-head">
+              <div>
+                <p class="kicker">STATION 05</p>
+                <h2>REPORT VAULT</h2>
+              </div>
+              <span id="report-status">REPORT --</span>
+            </div>
+            <div class="two-col report-layout">
+              <div class="terminal-card">
+                <label for="report-select">REPORT FILE</label>
+                <select id="report-select">
+                  <option value="summary">SUMMARY</option>
+                  <option value="base">BASE TRAINING</option>
+                  <option value="sft">CHAT SFT</option>
+                  <option value="eval">EVAL</option>
+                </select>
+                <div id="report-list" class="report-list"></div>
+              </div>
+              <div class="terminal-card">
+                <label id="report-path">MARKDOWN</label>
+                <div id="report-viewer" class="report-viewer">LOAD A RUN REPORT.</div>
+              </div>
+            </div>
+          </section>
+
+          <section id="panel-compare" class="panel-screen">
+            <div class="panel-head">
+              <div>
+                <p class="kicker">STATION 06</p>
+                <h2>COMPARE RUNS</h2>
+              </div>
+              <span id="compare-status">COMPARE --</span>
+            </div>
+            <div class="two-col compare-layout">
+              <div class="terminal-card">
+                <label>RUN SET</label>
+                <button id="compare-button" type="button">COMPARE SELECTED</button>
+                <div id="compare-run-list" class="compare-run-list"></div>
+              </div>
+              <div class="terminal-card">
+                <label>RUN DELTAS</label>
+                <div id="compare-summary" class="compare-summary">SELECT RUNS TO COMPARE.</div>
+              </div>
+            </div>
+            <div id="compare-table" class="terminal-card"></div>
+          </section>
+        </section>
+      </main>
+
+      <footer id="status-line" class="status-line">READY. | CTX -- | TOK -- | SEED 42</footer>
+    </div>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

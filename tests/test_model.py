@@ -1,0 +1,58 @@
+import pytest
+import torch
+
+from picochat.model import GPTConfig, TinyGPT
+
+
+def test_model_forward_shapes_and_loss():
+    config = GPTConfig(vocab_size=20, context_size=8, n_embd=16, n_head=4, n_layer=2)
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (3, config.context_size))
+    y = torch.randint(0, config.vocab_size, (3, config.context_size))
+
+    logits, loss = model(x, y)
+
+    assert logits.shape == (3, config.context_size, config.vocab_size)
+    assert loss is not None
+    assert loss.ndim == 0
+
+
+def test_model_rejects_too_long_sequence():
+    config = GPTConfig(vocab_size=20, context_size=4, n_embd=16, n_head=4, n_layer=1)
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (1, 5))
+
+    with pytest.raises(ValueError):
+        model(x)
+
+
+def test_generate_adds_tokens():
+    config = GPTConfig(vocab_size=20, context_size=8, n_embd=16, n_head=4, n_layer=1)
+    model = TinyGPT(config)
+    prompt = torch.tensor([[1, 2, 3]], dtype=torch.long)
+
+    out = model.generate(prompt, max_new_tokens=5, temperature=0)
+
+    assert out.shape == (1, 8)
+    assert out[:, :3].tolist() == prompt.tolist()
+
+
+def test_generate_stops_when_eos_is_generated():
+    config = GPTConfig(vocab_size=20, context_size=8, n_embd=16, n_head=4, n_layer=1)
+    model = TinyGPT(config)
+    eos_id = 2
+    prompt = torch.tensor([[1, 3]], dtype=torch.long)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+        model.lm_head.bias[eos_id] = 10.0
+
+    out = model.generate(prompt, max_new_tokens=5, temperature=0, eos_id=eos_id)
+
+    assert out.shape == (1, 3)
+    assert out[0, -1].item() == eos_id
+
+
+def test_invalid_head_count_rejected():
+    with pytest.raises(ValueError):
+        TinyGPT(GPTConfig(vocab_size=20, context_size=8, n_embd=18, n_head=4, n_layer=1))

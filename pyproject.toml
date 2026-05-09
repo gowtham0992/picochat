@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "picochat"
+version = "0.1.0"
+description = "A tiny educational LLM factory."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.2",
+]
+
+[project.optional-dependencies]
+docs = [
+    "pypdf>=4.0",
+    "python-docx>=1.1",
+]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+pico = "picochat.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"picochat.web_assets" = ["*.html", "*.css", "*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

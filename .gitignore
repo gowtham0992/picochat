@@ -1,0 +1,40 @@
+# macOS/local editor files
+.DS_Store
+*.swp
+*.swo
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and local environment files
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Packaging/build outputs
+build/
+dist/
+*.egg-info/
+
+# Picochat generated run artifacts
+runs/
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+*.onnx
+
+# Logs and temporary output
+*.log
+tmp/
+temp/

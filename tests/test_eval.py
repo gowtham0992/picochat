@@ -1,0 +1,88 @@
+import json
+
+from picochat.checkpoint import save_checkpoint
+from picochat.eval import ChatEvalConfig, ChatEvalItem, load_chat_eval_items, run_chat_eval, score_reply
+from picochat.model import GPTConfig, TinyGPT
+from picochat.tokenizer import CharTokenizer
+
+
+def write_jsonl(path, rows):
+    path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+
+def test_load_chat_eval_items_supports_expected_alias(tmp_path):
+    input_path = tmp_path / "eval.jsonl"
+    write_jsonl(input_path, [{
+        "user": "hi",
+        "expected": "hello",
+        "must_include_any": [["hey", "hello"]],
+        "answerable": False,
+        "category": "refusal",
+    }])
+
+    items = load_chat_eval_items(input_path)
+
+    assert items == [
+        ChatEvalItem(
+            user="hi",
+            must_include=("hello",),
+            must_include_any=(("hey", "hello"),),
+            answerable=False,
+            category="refusal",
+        )
+    ]
+
+
+def test_score_reply_checks_required_and_forbidden_phrases():
+    item = ChatEvalItem(
+        user="What is Picochat?",
+        must_include=("educational", "LLM"),
+        must_include_any=(("factory", "lab"),),
+        must_not_include=("unknown",),
+    )
+
+    passing = score_reply("Picochat is an educational tiny LLM.", item)
+    passing_with_any = score_reply("Picochat is an educational tiny LLM lab.", item)
+    failing = score_reply("Picochat is unknown.", item)
+
+    assert passing["passed"] is False
+    assert passing["missing_any"] == [["factory", "lab"]]
+    assert passing_with_any["passed"] is True
+    assert failing["passed"] is False
+    assert failing["missing"] == ["educational", "LLM"]
+    assert failing["missing_any"] == [["factory", "lab"]]
+    assert failing["found_forbidden"] == ["unknown"]
+
+
+def test_run_chat_eval_writes_artifacts(tmp_path):
+    input_path = tmp_path / "eval.jsonl"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "checkpoint"
+    out_dir = tmp_path / "eval"
+    write_jsonl(input_path, [{"user": "hi"}])
+    tokenizer = CharTokenizer.train(["User: hi\nAssistant:"])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=32,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    report = run_chat_eval(ChatEvalConfig(
+        input_path=str(input_path),
+        checkpoint_path=str(checkpoint_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir),
+        max_new_tokens=0,
+    ))
+
+    assert (out_dir / "eval_report.json").exists()
+    assert (out_dir / "report.md").exists()
+    assert report["summary"]["num_examples"] == 1
+    assert report["summary"]["num_passed"] == 1
+    assert report["summary"]["unsupported_claim_rate"] == 0.0
+    assert report["examples"][0]["answerable"] is True
+    assert report["examples"][0]["category"] == "answerable"
