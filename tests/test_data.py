@@ -57,7 +57,15 @@ def test_build_corpus_artifacts_writes_manifest_and_report(tmp_path):
     (input_dir / "empty.md").write_text("   ", encoding="utf-8")
     (input_dir / "image.png").write_text("not text", encoding="utf-8")
 
-    report = build_corpus_artifacts(input_dir, output_path)
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+
+    report = build_corpus_artifacts(
+        input_dir,
+        output_path,
+        chat_input=chat_path,
+        eval_input=eval_path,
+    )
 
     assert output_path.read_text(encoding="utf-8") == "alpha\n"
     assert (output_path.parent / "corpus_manifest.json").exists()
@@ -73,7 +81,10 @@ def test_build_corpus_artifacts_writes_manifest_and_report(tmp_path):
     assert report.budget.preset == "smoke"
     assert report.budget.suggested_context_size == 32
     assert "run tiny" in report.training_command.command
+    assert str(chat_path) in report.training_command.command
+    assert str(eval_path) in report.training_command.command
     assert "--base-steps 100" in report.training_command.command
+    assert f"- Chat SFT input: `{chat_path}`" in (output_path.parent / "corpus_report.md").read_text(encoding="utf-8")
     assert "source file(s) were skipped" in report.warnings[-1]
 
 
@@ -166,7 +177,12 @@ def test_preview_corpus_sources_is_read_only(tmp_path):
         ],
     }), encoding="utf-8")
 
-    report = preview_corpus_sources(recipe_path=recipe_path, preview_chars=10)
+    report = preview_corpus_sources(
+        recipe_path=recipe_path,
+        preview_chars=10,
+        chat_input="domain/chat.jsonl",
+        eval_input="domain/eval.jsonl",
+    )
 
     assert report.preview == "alpha beta"
     assert report.recipe_path == str(recipe_path)
@@ -176,6 +192,8 @@ def test_preview_corpus_sources_is_read_only(tmp_path):
     assert report.budget.estimated_tokens == len("alpha beta gamma")
     assert report.budget.estimated_windows >= 0
     assert "--corpus-recipe" in report.training_command.command
+    assert "--chat-input domain/chat.jsonl" in report.training_command.command
+    assert "--eval-input domain/eval.jsonl" in report.training_command.command
     assert "--context-size 32" in report.training_command.command
     assert {check.name for check in report.readiness.checks} >= {
         "usable_documents",

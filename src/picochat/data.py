@@ -23,6 +23,8 @@ DOCUMENT_EXTENSIONS = {
 }
 
 SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | DOCUMENT_EXTENSIONS
+DEFAULT_CHAT_INPUT = "examples/tiny_chat.jsonl"
+DEFAULT_EVAL_INPUT = "examples/tiny_eval.jsonl"
 
 
 class DocumentExtractionError(RuntimeError):
@@ -107,6 +109,8 @@ class CorpusTrainingBudget:
 @dataclass(frozen=True)
 class CorpusTrainingCommand:
     out_dir: str
+    chat_input: str
+    eval_input: str
     command: str
     note: str
 
@@ -393,12 +397,18 @@ def suggest_training_command(
     input_path: str,
     recipe_path: str | None,
     budget: CorpusTrainingBudget,
+    chat_input: str | None = None,
+    eval_input: str | None = None,
 ) -> CorpusTrainingCommand:
     """Build a copyable first-run command from corpus intake metadata."""
     out_dir = f"runs/{_slugify_path(recipe_path or input_path)}-v1"
+    chat_input = _default_path(chat_input, DEFAULT_CHAT_INPUT)
+    eval_input = _default_path(eval_input, DEFAULT_EVAL_INPUT)
     if budget.preset == "blocked":
         return CorpusTrainingCommand(
             out_dir=out_dir,
+            chat_input=chat_input,
+            eval_input=eval_input,
             command="",
             note="No training command yet; fix blocked corpus readiness checks first.",
         )
@@ -417,9 +427,9 @@ def suggest_training_command(
         source_flag,
         source_path,
         "--chat-input",
-        "examples/tiny_chat.jsonl",
+        chat_input,
         "--eval-input",
-        "examples/tiny_eval.jsonl",
+        eval_input,
         "--context-size",
         budget.suggested_context_size,
         "--base-batch-size",
@@ -427,10 +437,17 @@ def suggest_training_command(
         "--base-steps",
         budget.suggested_base_steps,
     ])
+    note = "Uses the selected chat/eval JSONL files for SFT and scoring."
+    if chat_input == DEFAULT_CHAT_INPUT and eval_input == DEFAULT_EVAL_INPUT:
+        note = "Uses default chat/eval examples; replace --chat-input and --eval-input for domain-specific tuning."
+    elif chat_input == DEFAULT_CHAT_INPUT or eval_input == DEFAULT_EVAL_INPUT:
+        note = "One tuning file is still using a default example; replace it before a real domain run."
     return CorpusTrainingCommand(
         out_dir=out_dir,
+        chat_input=chat_input,
+        eval_input=eval_input,
         command=command,
-        note="Uses default chat/eval examples; replace --chat-input and --eval-input for domain-specific tuning.",
+        note=note,
     )
 
 
@@ -440,6 +457,11 @@ def _slugify_path(path: str) -> str:
     while "--" in slug:
         slug = slug.replace("--", "-")
     return slug or "corpus"
+
+
+def _default_path(path: str | Path | None, default: str) -> str:
+    text = str(path).strip() if path is not None else ""
+    return text or default
 
 
 def _shell_command(parts: list[object]) -> str:
@@ -475,12 +497,14 @@ def build_corpus_artifacts(
     report_path: str | Path | None = None,
     write_manifest: bool = True,
     recipe_path: str | Path | None = None,
+    chat_input: str | Path | None = None,
+    eval_input: str | Path | None = None,
 ) -> CorpusBuildReport:
     """Combine corpus sources and write provenance artifacts."""
     output_path = Path(output_path)
     manifest_path = Path(manifest_path) if manifest_path else output_path.with_name("corpus_manifest.json")
     report_path = Path(report_path) if report_path else output_path.with_name("corpus_report.md")
-    collected = _collect_corpus_sources(input_path, recipe_path)
+    collected = _collect_corpus_sources(input_path, recipe_path, chat_input, eval_input)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     corpus_text = "\n\n".join(collected.documents)
@@ -511,9 +535,11 @@ def preview_corpus_sources(
     input_path: str | Path | None = None,
     recipe_path: str | Path | None = None,
     preview_chars: int = 1000,
+    chat_input: str | Path | None = None,
+    eval_input: str | Path | None = None,
 ) -> CorpusPreviewReport:
     """Inspect corpus sources without writing artifacts."""
-    collected = _collect_corpus_sources(input_path, recipe_path)
+    collected = _collect_corpus_sources(input_path, recipe_path, chat_input, eval_input)
     corpus_text = "\n\n".join(collected.documents)
     return CorpusPreviewReport(
         input_path=collected.input_path,
@@ -583,6 +609,8 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         "## Suggested Run Command",
         "",
         f"- Output run: `{report.training_command.out_dir}`",
+        f"- Chat SFT input: `{report.training_command.chat_input}`",
+        f"- Eval input: `{report.training_command.eval_input}`",
         f"- Note: {report.training_command.note}",
         "",
         "```bash",
@@ -623,6 +651,8 @@ def _source_files(path: Path) -> list[Path]:
 def _collect_corpus_sources(
     input_path: str | Path | None,
     recipe_path: str | Path | None = None,
+    chat_input: str | Path | None = None,
+    eval_input: str | Path | None = None,
 ) -> _CollectedCorpus:
     recipe = Path(recipe_path) if recipe_path else None
     input_root = Path(input_path) if input_path else None
@@ -642,7 +672,13 @@ def _collect_corpus_sources(
     stats = inspect_documents(documents, num_files=len(candidates))
     readiness = assess_corpus_readiness(stats, records)
     budget = estimate_training_budget(stats)
-    training_command = suggest_training_command(input_display, str(recipe) if recipe else None, budget)
+    training_command = suggest_training_command(
+        input_display,
+        str(recipe) if recipe else None,
+        budget,
+        chat_input=chat_input,
+        eval_input=eval_input,
+    )
     warnings = _corpus_warnings(stats, records)
     return _CollectedCorpus(
         input_path=input_display,

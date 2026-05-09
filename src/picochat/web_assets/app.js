@@ -757,9 +757,13 @@ function renderDataset() {
 function seedSourcePreviewInputs(config) {
   const recipeInput = $("preview-recipe-path");
   const sourceInput = $("preview-input-path");
-  if (recipeInput.value || sourceInput.value) return;
+  const chatInput = $("preview-chat-path");
+  const evalInput = $("preview-eval-path");
+  if (recipeInput.value || sourceInput.value || chatInput.value || evalInput.value) return;
   recipeInput.value = config.corpus_recipe || "examples/corpus_recipe.json";
   sourceInput.value = config.corpus_input || "";
+  chatInput.value = config.chat_input || "examples/tiny_chat.jsonl";
+  evalInput.value = config.eval_input || "examples/tiny_eval.jsonl";
 }
 
 function statCards(rows) {
@@ -824,6 +828,8 @@ function renderCorpusFiles(files) {
 async function previewCorpusSources() {
   const recipePath = $("preview-recipe-path").value.trim();
   const inputPath = $("preview-input-path").value.trim();
+  const chatInput = $("preview-chat-path").value.trim();
+  const evalInput = $("preview-eval-path").value.trim();
   if (!recipePath && !inputPath) {
     throw new Error("enter a recipe path or input path");
   }
@@ -839,6 +845,8 @@ async function previewCorpusSources() {
   const report = await postJson("/api/corpus/preview", {
     recipe_path: recipePath || null,
     input_path: inputPath || null,
+    chat_input: chatInput || null,
+    eval_input: evalInput || null,
     preview_chars: 1400,
   });
   state.corpusSourcePreview = report;
@@ -869,6 +877,8 @@ function renderCorpusSourcePreview(report) {
   $("source-preview-stats").innerHTML = statCards([
     ["Input", report.input_path || "unknown"],
     ["Recipe", report.recipe_path || "none"],
+    ["Chat SFT", report.training_command?.chat_input || "examples/tiny_chat.jsonl"],
+    ["Eval", report.training_command?.eval_input || "examples/tiny_eval.jsonl"],
     ["Files", fmtInt(stats.num_files)],
     ["Documents", fmtInt(stats.num_documents)],
     ["Characters", fmtInt(stats.num_characters)],
@@ -925,6 +935,10 @@ function renderTrainingCommand(trainingCommand) {
     <div class="command-head">
       <label>SUGGESTED RUN COMMAND</label>
       ${trainingCommand.command ? copyCommandButton(trainingCommand.command) : ""}
+    </div>
+    <div class="command-meta">
+      <span>CHAT ${escapeHtml(trainingCommand.chat_input || "--")}</span>
+      <span>EVAL ${escapeHtml(trainingCommand.eval_input || "--")}</span>
     </div>
     <code>${escapeHtml(command)}</code>
     <p>${escapeHtml(trainingCommand.note || "")}</p>

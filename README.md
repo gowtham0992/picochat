@@ -152,8 +152,15 @@ corpus is blocked, trainable with cautions, or ready for a tiny experiment.
 The budget estimate is also deliberately simple: it assumes the current
 character tokenizer and suggests a starting context size, batch size, and base
 training step count. Picochat also prints a copyable `run tiny` command based
-on that estimate. The command intentionally keeps the default chat/eval files
-visible so you remember to replace them when doing real domain-specific tuning.
+on that estimate. Add `--chat-input` and `--eval-input` to `data preview` or
+`data build` when you already have domain-specific SFT/eval JSONL files:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data preview --recipe examples/corpus_recipe.json --chat-input my_data/chat.jsonl --eval-input my_data/eval.jsonl
+```
+
+If those flags are omitted, the suggested command keeps the default chat/eval
+files visible so you remember to replace them before a real domain-specific run.
 
 Recipe files make the dataset choice reviewable:
 

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import argparse
 
-from picochat.data import build_corpus_artifacts, inspect_path, preview_corpus_sources
+from picochat.data import (
+    DEFAULT_CHAT_INPUT,
+    DEFAULT_EVAL_INPUT,
+    build_corpus_artifacts,
+    inspect_path,
+    preview_corpus_sources,
+)
 from picochat.batching import load_token_dataset
 from picochat.tokenizer import CharTokenizer
 from picochat.train import TrainConfig, train_base
@@ -65,6 +71,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=800,
         help="Maximum number of combined corpus characters to print.",
     )
+    data_preview.add_argument(
+        "--chat-input",
+        default=DEFAULT_CHAT_INPUT,
+        help="Chat SFT JSONL path to place in the suggested run command.",
+    )
+    data_preview.add_argument(
+        "--eval-input",
+        default=DEFAULT_EVAL_INPUT,
+        help="Eval JSONL path to place in the suggested run command.",
+    )
 
     data_build = data_subparsers.add_parser("build", help="Build a normalized text corpus.")
     data_build.add_argument(
@@ -91,6 +107,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--report",
         default=None,
         help="Where to write corpus_report.md. Defaults beside --out.",
+    )
+    data_build.add_argument(
+        "--chat-input",
+        default=DEFAULT_CHAT_INPUT,
+        help="Chat SFT JSONL path to place in the suggested run command.",
+    )
+    data_build.add_argument(
+        "--eval-input",
+        default=DEFAULT_EVAL_INPUT,
+        help="Eval JSONL path to place in the suggested run command.",
     )
 
     tok_parser = subparsers.add_parser("tok", help="Tokenizer commands.")
@@ -279,6 +305,8 @@ def print_budget(budget) -> None:
 def print_training_command(training_command) -> None:
     print("\nsuggested run:")
     print(f"- out_dir: {training_command.out_dir}")
+    print(f"- chat_input: {training_command.chat_input}")
+    print(f"- eval_input: {training_command.eval_input}")
     print(f"- note: {training_command.note}")
     if training_command.command:
         print(training_command.command)
@@ -295,7 +323,13 @@ def inspect_data(args: argparse.Namespace) -> int:
 def preview_data(args: argparse.Namespace) -> int:
     if not args.input and not args.recipe:
         raise SystemExit("data preview requires --input or --recipe")
-    report = preview_corpus_sources(args.input, args.recipe, preview_chars=args.preview_chars)
+    report = preview_corpus_sources(
+        args.input,
+        args.recipe,
+        preview_chars=args.preview_chars,
+        chat_input=args.chat_input,
+        eval_input=args.eval_input,
+    )
     included = [record for record in report.files if record.included]
     skipped = [record for record in report.files if not record.included]
 
@@ -336,6 +370,8 @@ def build_data(args: argparse.Namespace) -> int:
         args.manifest,
         args.report,
         recipe_path=args.recipe,
+        chat_input=args.chat_input,
+        eval_input=args.eval_input,
     )
     print(f"built corpus: {args.out}")
     print(f"manifest: {report.manifest_path}")

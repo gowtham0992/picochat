@@ -229,6 +229,8 @@ def test_preview_corpus_plan_returns_source_decisions(tmp_path):
 
     report = preview_corpus_plan({
         "recipe_path": str(recipe_path),
+        "chat_input": "domain/chat.jsonl",
+        "eval_input": "domain/eval.jsonl",
         "preview_chars": 6,
     })
 
@@ -237,4 +239,7 @@ def test_preview_corpus_plan_returns_source_decisions(tmp_path):
     assert report["files"][0]["label"] == "lesson"
     assert report["files"][0]["included"] is True
     assert report["files"][1]["reason"] == "missing_source"
+    assert report["training_command"]["chat_input"] == "domain/chat.jsonl"
+    assert report["training_command"]["eval_input"] == "domain/eval.jsonl"
+    assert "--chat-input domain/chat.jsonl" in report["training_command"]["command"]
     assert not (tmp_path / "corpus_manifest.json").exists()

@@ -159,6 +159,8 @@ def preview_corpus_plan(payload: dict) -> dict:
 
     input_path = _optional_string(payload.get("input_path"))
     recipe_path = _optional_string(payload.get("recipe_path"))
+    chat_input = _optional_string(payload.get("chat_input"))
+    eval_input = _optional_string(payload.get("eval_input"))
     if not input_path and not recipe_path:
         raise ValueError("input_path or recipe_path is required")
 
@@ -167,6 +169,8 @@ def preview_corpus_plan(payload: dict) -> dict:
         input_path=input_path,
         recipe_path=recipe_path,
         preview_chars=preview_chars,
+        chat_input=chat_input,
+        eval_input=eval_input,
     ).to_dict()
 
 

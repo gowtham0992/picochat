@@ -100,6 +100,10 @@ def test_cli_data_preview_from_recipe(tmp_path, capsys):
         str(recipe_path),
         "--preview-chars",
         "6",
+        "--chat-input",
+        "domain/chat.jsonl",
+        "--eval-input",
+        "domain/eval.jsonl",
     ])
 
     assert exit_code == 0
@@ -111,6 +115,9 @@ def test_cli_data_preview_from_recipe(tmp_path, capsys):
     assert "suggested_context_size" in output
     assert "suggested run:" in output
     assert "run tiny" in output
+    assert "chat_input: domain/chat.jsonl" in output
+    assert "eval_input: domain/eval.jsonl" in output
+    assert "--chat-input domain/chat.jsonl" in output
     assert "include" in output
     assert "label=lesson" in output
     assert "lesson" in output
