@@ -152,6 +152,25 @@ def test_load_run_detail_reads_eval_reports_and_samples(tmp_path):
     assert checkpoint_status["kind"] == "directory"
 
 
+def test_artifact_inventory_indexes_relative_and_absolute_paths(tmp_path, monkeypatch):
+    run_dir = write_run(tmp_path / "runs", "tiny-a")
+    summary_path = run_dir / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["config"]["out_dir"] = "runs/tiny-a"
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    detail = load_run_detail("runs", "tiny-a")
+
+    by_path = detail["artifact_inventory"]["by_path"]
+    relative_manifest = by_path["runs/tiny-a/corpus_manifest.json"]
+    absolute_manifest = by_path[str(run_dir / "corpus_manifest.json")]
+    assert relative_manifest["exists"] is True
+    assert absolute_manifest["exists"] is True
+    assert relative_manifest["key"] == "corpus_manifest"
+    assert absolute_manifest["key"] == "corpus_manifest"
+
+
 def test_load_run_report_returns_markdown(tmp_path):
     write_run(tmp_path, "tiny-a")
 

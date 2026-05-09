@@ -405,7 +405,7 @@ def _load_artifact_inventory(run_dir: Path, summary: dict) -> dict:
     ]
     return {
         "items": items,
-        "by_path": {item["path"]: item for item in items},
+        "by_path": _artifact_records_by_path(items),
     }
 
 
@@ -426,6 +426,27 @@ def _artifact_record(key: str, path: Path) -> dict:
         "kind": kind,
         "size_bytes": size_bytes,
     }
+
+
+def _artifact_records_by_path(items: list[dict]) -> dict:
+    by_path = {}
+    for item in items:
+        for path in _path_aliases(Path(item["path"])):
+            by_path[path] = item
+    return by_path
+
+
+def _path_aliases(path: Path) -> set[str]:
+    aliases = {str(path)}
+    try:
+        aliases.add(str(path.resolve()))
+    except OSError:
+        pass
+    try:
+        aliases.add(str(path.resolve().relative_to(Path.cwd())))
+    except (OSError, ValueError):
+        pass
+    return aliases
 
 
 def _path_size(path: Path) -> int:

@@ -93,6 +93,11 @@ function bindControls() {
     if (!button) return;
     setStage(button.dataset.stage);
   });
+  $("run-doctor").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-stage]");
+    if (!button) return;
+    setStage(button.dataset.stage);
+  });
   $("report-select").addEventListener("change", () => {
     state.activeReport = $("report-select").value;
     loadReport().catch((error) => renderReportError(error));
@@ -246,6 +251,7 @@ function renderPipeline() {
   $("pipeline-strip").innerHTML = stages.map((stage) => renderPipelineStage(stage)).join("");
   const active = stages.find((stage) => stage.id === state.activeStage) || stages[0];
   $("pipeline-detail").innerHTML = active ? stageDetail(active) : "LOAD A RUN TO INSPECT THE PIPELINE.";
+  $("run-doctor").innerHTML = runDoctor(stages);
 }
 
 function renderPipelineStage(stage) {
@@ -510,6 +516,72 @@ function stageHealth(stage) {
     return { label: "MISSING", className: "missing" };
   }
   return { label: "PARTIAL", className: "partial" };
+}
+
+function materialLedgerItems(stage, role) {
+  return (stage.ledger || [])
+    .filter((item) => item.role === role)
+    .filter((item) => artifactStatus(item.path).kind !== "virtual");
+}
+
+function doctorRows(stages) {
+  return stages.map((stage) => {
+    const health = stageHealth(stage);
+    const inputs = materialLedgerItems(stage, "INPUT");
+    const outputs = materialLedgerItems(stage, "OUTPUT");
+    const missingInputs = inputs.filter((item) => !artifactStatus(item.path).exists);
+    const missingOutputs = outputs.filter((item) => !artifactStatus(item.path).exists);
+    let message = "Artifacts are present.";
+    if (health.className === "live") {
+      message = "Runtime stage. Use it when checkpoint inputs are ready.";
+    } else if (missingInputs.length) {
+      message = `Waiting on input: ${missingInputs.map((item) => item.label).join(", ")}.`;
+    } else if (missingOutputs.length) {
+      message = `Needs output: ${missingOutputs.map((item) => item.label).join(", ")}.`;
+    }
+    return { stage, health, missingInputs, missingOutputs, message };
+  });
+}
+
+function runDoctor(stages) {
+  if (!state.detail) return "RUN DOCTOR WAITING FOR A RUN.";
+  const rows = doctorRows(stages);
+  const ready = rows.filter((row) => row.health.className === "ready").length;
+  const live = rows.filter((row) => row.health.className === "live").length;
+  const attention = rows.length - ready - live;
+  const next = rows.find((row) =>
+    row.health.className !== "ready" &&
+    row.health.className !== "live" &&
+    !row.missingInputs.length
+  ) || rows.find((row) =>
+    row.health.className !== "ready" &&
+    row.health.className !== "live"
+  );
+  const nextStage = next?.stage;
+  return `
+    <div class="doctor-head">
+      <div>
+        <label>RUN DOCTOR</label>
+        <strong>${ready}/${rows.length} READY | ${attention} NEED ATTENTION | ${live} LIVE</strong>
+      </div>
+      <span>${escapeHtml(nextStage ? `NEXT ${nextStage.label}` : "RUN COMPLETE")}</span>
+    </div>
+    <div class="doctor-body">
+      <div class="doctor-next">
+        <label>${nextStage ? "NEXT COMMAND" : "NEXT STEP"}</label>
+        <code>${escapeHtml(nextStage?.command || "All material stages look ready. Open Generation Deck or Report Vault.")}</code>
+      </div>
+      <div class="doctor-list">
+        ${rows.map((row) => `
+          <button class="doctor-row ${row.health.className}" type="button" data-stage="${row.stage.id}">
+            <span>${escapeHtml(row.health.label)}</span>
+            <strong>${escapeHtml(row.stage.label)}</strong>
+            <small>${escapeHtml(row.message)}</small>
+          </button>
+        `).join("")}
+      </div>
+    </div>
+  `;
 }
 
 function datasetCommand(config, artifacts) {

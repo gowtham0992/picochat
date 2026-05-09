@@ -429,6 +429,103 @@ h2 {
   white-space: pre-wrap;
 }
 
+.run-doctor {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.doctor-head {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.doctor-head label,
+.doctor-next label {
+  margin-bottom: 4px;
+}
+
+.doctor-head span {
+  border: 1px solid var(--dim-line);
+  color: var(--accent);
+  font-weight: 700;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.doctor-body {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 1.8fr);
+}
+
+.doctor-next {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  padding: 8px;
+}
+
+.doctor-next code {
+  display: block;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.doctor-list {
+  border: 1px solid var(--dim-line);
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.doctor-row {
+  align-content: start;
+  background: var(--panel);
+  border: 0;
+  border-right: 1px solid var(--dim-line);
+  display: grid;
+  gap: 3px;
+  height: auto;
+  min-height: 74px;
+  padding: 7px;
+  text-align: left;
+}
+
+.doctor-row:last-child {
+  border-right: 0;
+}
+
+.doctor-row span {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.doctor-row strong {
+  font-size: 12px;
+}
+
+.doctor-row small {
+  color: var(--muted);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.doctor-row.ready span,
+.doctor-row.live span {
+  color: var(--green);
+}
+
+.doctor-row.partial span {
+  color: var(--accent);
+}
+
+.doctor-row.missing span {
+  color: var(--red);
+}
+
 .tab-strip {
   border: 1px solid var(--line);
   display: grid;
@@ -924,6 +1021,8 @@ th {
   .tab-strip,
   .pipeline-strip,
   .pipeline-detail-grid,
+  .doctor-body,
+  .doctor-list,
   .artifact-row,
   .stat-grid,
   .preview-controls,
