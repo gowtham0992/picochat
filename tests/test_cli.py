@@ -145,6 +145,32 @@ def test_cli_data_preview_from_dataset_pack(capsys):
     assert "eval: ready" in output
 
 
+def test_cli_data_init_pack_creates_starter_pack(tmp_path, capsys):
+    corpus_dir = tmp_path / "docs"
+    out_dir = tmp_path / "pack"
+    corpus_dir.mkdir()
+
+    exit_code = main([
+        "data",
+        "init-pack",
+        "--name",
+        "lesson-pack",
+        "--corpus",
+        str(corpus_dir),
+        "--out",
+        str(out_dir),
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "initialized dataset pack:" in output
+    assert "data preview --dataset-pack" in output
+    assert (out_dir / "dataset_pack.json").exists()
+    assert (out_dir / "corpus_recipe.json").exists()
+    assert (out_dir / "chat.jsonl").exists()
+    assert (out_dir / "eval.jsonl").exists()
+
+
 def test_cli_demo_uses_default_pipeline(tmp_path, capsys, monkeypatch):
     captured = {}
 

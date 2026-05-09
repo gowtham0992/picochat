@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,24 @@ class DatasetPack:
 
     def to_dict(self) -> dict[str, str | None]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class DatasetPackInitReport:
+    out_dir: str
+    dataset_pack: str
+    corpus_recipe: str
+    chat_input: str
+    eval_input: str
+    created: tuple[str, ...]
+    overwritten: tuple[str, ...]
+
+    def to_dict(self) -> dict:
+        return {
+            **asdict(self),
+            "created": list(self.created),
+            "overwritten": list(self.overwritten),
+        }
 
 
 def load_dataset_pack(path: str | Path) -> DatasetPack:
@@ -47,6 +66,95 @@ def load_dataset_pack(path: str | Path) -> DatasetPack:
         corpus_recipe=corpus_recipe,
         chat_input=chat_input,
         eval_input=eval_input,
+    )
+
+
+def init_dataset_pack(
+    out_dir: str | Path,
+    corpus_path: str | Path,
+    name: str = "picochat-pack",
+    description: str = "Starter Picochat dataset pack.",
+    force: bool = False,
+) -> DatasetPackInitReport:
+    """Create editable starter files for a corpus + chat + eval dataset pack."""
+    out_dir = Path(out_dir)
+    if not str(corpus_path).strip():
+        raise ValueError("corpus_path must be a non-empty path")
+    name = name.strip()
+    if not name:
+        raise ValueError("name must be non-empty")
+
+    dataset_pack_path = out_dir / "dataset_pack.json"
+    corpus_recipe_path = out_dir / "corpus_recipe.json"
+    chat_path = out_dir / "chat.jsonl"
+    eval_path = out_dir / "eval.jsonl"
+    targets = (dataset_pack_path, corpus_recipe_path, chat_path, eval_path)
+    existing = tuple(str(path) for path in targets if path.exists())
+    if existing and not force:
+        names = ", ".join(existing)
+        raise FileExistsError(f"Refusing to overwrite existing pack file(s): {names}")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    corpus_ref = _relative_path(corpus_path, out_dir)
+    files = {
+        dataset_pack_path: json.dumps({
+            "name": name,
+            "description": description,
+            "corpus": {"recipe": "corpus_recipe.json"},
+            "chat": "chat.jsonl",
+            "eval": "eval.jsonl",
+        }, indent=2) + "\n",
+        corpus_recipe_path: json.dumps({
+            "name": name,
+            "description": f"Corpus recipe for {name}.",
+            "sources": [
+                {
+                    "path": corpus_ref,
+                    "label": "corpus",
+                },
+            ],
+            "exclude": [
+                "**/.DS_Store",
+                "**/.git/**",
+                "**/__pycache__/**",
+            ],
+        }, indent=2) + "\n",
+        chat_path: _jsonl([
+            {
+                "user": "Replace this with a real user question from your domain.",
+                "assistant": "Replace this with the answer you want the model to learn.",
+            },
+        ]),
+        eval_path: _jsonl([
+            {
+                "user": "Replace this with a question your model should answer.",
+                "category": "starter",
+                "answerable": True,
+                "must_include": [
+                    "Replace this with a required phrase",
+                ],
+            },
+        ]),
+    }
+
+    overwritten: list[str] = []
+    created: list[str] = []
+    for path, content in files.items():
+        existed = path.exists()
+        path.write_text(content, encoding="utf-8")
+        if existed:
+            overwritten.append(str(path))
+        else:
+            created.append(str(path))
+
+    return DatasetPackInitReport(
+        out_dir=str(out_dir),
+        dataset_pack=str(dataset_pack_path),
+        corpus_recipe=str(corpus_recipe_path),
+        chat_input=str(chat_path),
+        eval_input=str(eval_path),
+        created=tuple(created),
+        overwritten=tuple(overwritten),
     )
 
 
@@ -95,3 +203,17 @@ def _resolve_path(value: str, pack_path: Path) -> str:
     if path.is_absolute():
         return str(path)
     return str(pack_path.parent / path)
+
+
+def _relative_path(path: str | Path, base_dir: Path) -> str:
+    source = Path(path)
+    target = source if source.is_absolute() else Path.cwd() / source
+    try:
+        relative = os.path.relpath(target.resolve(strict=False), start=base_dir.resolve(strict=False))
+    except ValueError:
+        return str(target.resolve(strict=False))
+    return Path(relative).as_posix()
+
+
+def _jsonl(rows: list[dict]) -> str:
+    return "\n".join(json.dumps(row) for row in rows) + "\n"

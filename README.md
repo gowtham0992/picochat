@@ -178,6 +178,16 @@ For repeatable experiments, put the three dataset inputs in one pack:
 }
 ```
 
+You can scaffold that folder instead of writing the JSON by hand:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data init-pack --name my-domain-pack --corpus my_docs/ --out my_pack/
+```
+
+This creates `dataset_pack.json`, `corpus_recipe.json`, `chat.jsonl`, and
+`eval.jsonl`. The chat/eval files are starter templates; edit them with real
+domain examples before treating a run as meaningful.
+
 Pack paths are relative to the pack file unless absolute. Preview a pack:
 
 ```bash

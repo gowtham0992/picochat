@@ -20,6 +20,7 @@ from picochat.chat import ChatConfig, chat_loop
 from picochat.eval import ChatEvalConfig, run_chat_eval
 from picochat.run import TinyRunConfig, run_tiny
 from picochat.compare import compare_runs, comparison_table, write_comparison_report
+from picochat.dataset_pack import init_dataset_pack
 from picochat.web import WebConfig, serve_web
 
 
@@ -132,6 +133,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_EVAL_INPUT,
         help="Eval JSONL path to place in the suggested run command.",
     )
+
+    data_init_pack = data_subparsers.add_parser("init-pack", help="Create a starter dataset pack folder.")
+    data_init_pack.add_argument("--name", default="picochat-pack", help="Human-readable dataset pack name.")
+    data_init_pack.add_argument("--corpus", required=True, help="Corpus file or folder to reference from the pack.")
+    data_init_pack.add_argument("--out", required=True, help="Output folder for dataset_pack.json and starter files.")
+    data_init_pack.add_argument(
+        "--description",
+        default="Starter Picochat dataset pack.",
+        help="Short description written into dataset_pack.json.",
+    )
+    data_init_pack.add_argument("--force", action="store_true", help="Overwrite existing starter files.")
 
     tok_parser = subparsers.add_parser("tok", help="Tokenizer commands.")
     tok_subparsers = tok_parser.add_subparsers(dest="tok_command")
@@ -428,6 +440,27 @@ def build_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def init_pack_data(args: argparse.Namespace) -> int:
+    report = init_dataset_pack(
+        out_dir=args.out,
+        corpus_path=args.corpus,
+        name=args.name,
+        description=args.description,
+        force=args.force,
+    )
+    print(f"initialized dataset pack: {report.dataset_pack}")
+    print(f"corpus recipe: {report.corpus_recipe}")
+    print(f"chat sft jsonl: {report.chat_input}")
+    print(f"eval jsonl: {report.eval_input}")
+    if report.overwritten:
+        print("overwritten:")
+        for path in report.overwritten:
+            print(f"- {path}")
+    print("\nnext:")
+    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {report.dataset_pack}")
+    return 0
+
+
 def train_tokenizer(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -651,6 +684,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "build":
         return build_data(args)
+
+    if args.command == "data" and args.data_command == "init-pack":
+        return init_pack_data(args)
 
     if args.command == "tok" and args.tok_command == "train":
         return train_tokenizer(args)
