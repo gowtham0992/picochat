@@ -21,6 +21,7 @@ from picochat.eval import ChatEvalConfig, run_chat_eval
 from picochat.run import TinyRunConfig, run_tiny
 from picochat.compare import compare_runs, comparison_table, write_comparison_report
 from picochat.dataset_pack import init_dataset_pack
+from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.web import WebConfig, serve_web
 
 
@@ -156,6 +157,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Short description written into dataset_pack.json.",
     )
     data_init_pack.add_argument("--force", action="store_true", help="Overwrite existing starter files.")
+
+    data_hf_import = data_subparsers.add_parser(
+        "hf-import",
+        help="Import a Hugging Face dataset split into a local text corpus.",
+    )
+    data_hf_import.add_argument("--dataset", required=True, help="Hugging Face dataset name, for example wikimedia/wikipedia.")
+    data_hf_import.add_argument("--config", dest="config_name", default=None, help="Optional dataset configuration name.")
+    data_hf_import.add_argument("--split", default="train", help="Dataset split to read.")
+    data_hf_import.add_argument("--text-column", default="text", help="Column containing training text.")
+    data_hf_import.add_argument("--out", required=True, help="Output local corpus text path.")
+    data_hf_import.add_argument("--report", default=None, help="Optional JSON report path. Markdown is written beside it.")
+    data_hf_import.add_argument("--max-rows", type=int, default=1000, help="Maximum rows to inspect from the split.")
+    data_hf_import.add_argument("--min-chars", type=int, default=20, help="Minimum text length required for a row to be written.")
+    data_hf_import.add_argument(
+        "--no-streaming",
+        action="store_true",
+        help="Download/load the split normally instead of streaming rows.",
+    )
 
     tok_parser = subparsers.add_parser("tok", help="Tokenizer commands.")
     tok_subparsers = tok_parser.add_subparsers(dest="tok_command")
@@ -485,6 +504,33 @@ def init_pack_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def hf_import_data(args: argparse.Namespace) -> int:
+    report = import_hf_dataset(HFImportConfig(
+        dataset=args.dataset,
+        config_name=args.config_name,
+        split=args.split,
+        text_column=args.text_column,
+        out_path=args.out,
+        report_path=args.report,
+        max_rows=args.max_rows,
+        min_chars=args.min_chars,
+        streaming=not args.no_streaming,
+    ))
+    print(f"imported dataset: {report.dataset}")
+    print(f"split: {report.split}")
+    print(f"text_column: {report.text_column}")
+    print(f"streaming: {report.streaming}")
+    print(f"rows_seen: {report.rows_seen}")
+    print(f"rows_written: {report.rows_written}")
+    print(f"rows_skipped: {report.rows_skipped}")
+    print(f"characters_written: {report.characters_written}")
+    print(f"corpus: {report.out_path}")
+    print(f"report: {report.report_path}")
+    print("\nnext:")
+    print(f"PYTHONPATH=src python -m picochat.cli data preview --input {report.out_path}")
+    return 0
+
+
 def train_tokenizer(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -712,6 +758,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "init-pack":
         return init_pack_data(args)
+
+    if args.command == "data" and args.data_command == "hf-import":
+        return hf_import_data(args)
 
     if args.command == "tok" and args.tok_command == "train":
         return train_tokenizer(args)

@@ -22,6 +22,7 @@ Input examples:
 - `examples/tiny_corpus.txt`
 - a folder of `.txt`, `.md`, `.jsonl`, `.csv`, or `.py` files
 - a dataset pack such as `examples/tiny_dataset_pack.json`
+- a small imported Hugging Face sample written to a local `corpus.txt`
 
 Output artifacts:
 
@@ -45,6 +46,15 @@ Useful command:
 
 ```bash
 PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tiny_dataset_pack.json
+```
+
+Hugging Face import is an intake helper before this stage. It streams or loads
+rows from a dataset split, writes a local text file, and then hands control
+back to the normal Picochat corpus preview:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data hf-import --dataset HuggingFaceFW/fineweb-edu --split train --text-column text --max-rows 1000 --out runs/fineweb-edu-sample/corpus.txt
+PYTHONPATH=src python -m picochat.cli data preview --input runs/fineweb-edu-sample/corpus.txt
 ```
 
 ## 2. Tokenizer

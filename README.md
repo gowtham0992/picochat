@@ -176,6 +176,29 @@ The same preview also preflights both JSONL files: chat SFT rows need string
 pass/fail rules such as `must_include`, `must_include_any`, `must_not_include`,
 or `expected`.
 
+You can also import a small sample from a Hugging Face dataset into a local
+plain-text corpus. This is intentionally a separate intake step: first export
+rows locally, then run Picochat's normal preview/scoring/training flow on the
+result.
+
+Install the optional dependency:
+
+```bash
+pip install -e ".[hf]"
+```
+
+Import up to 1,000 streamed rows from a text column:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data hf-import --dataset HuggingFaceFW/fineweb-edu --split train --text-column text --max-rows 1000 --out runs/fineweb-edu-sample/corpus.txt
+```
+
+Then inspect the local corpus before training:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data preview --input runs/fineweb-edu-sample/corpus.txt
+```
+
 For repeatable experiments, put the three dataset inputs in one pack:
 
 ```json

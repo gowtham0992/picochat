@@ -17,6 +17,9 @@ docs = [
     "pypdf>=4.0",
     "python-docx>=1.1",
 ]
+hf = [
+    "datasets>=2.20",
+]
 dev = [
     "pytest>=8.0",
 ]

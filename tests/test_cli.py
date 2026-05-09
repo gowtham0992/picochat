@@ -172,6 +172,62 @@ def test_cli_data_init_pack_creates_starter_pack(tmp_path, capsys):
     assert (out_dir / "eval.jsonl").exists()
 
 
+def test_cli_data_hf_import_uses_importer(tmp_path, capsys, monkeypatch):
+    from picochat.hf_import import HFImportReport
+
+    captured = {}
+
+    def fake_import(config):
+        captured["config"] = config
+        return HFImportReport(
+            dataset=config.dataset,
+            config_name=config.config_name,
+            split=config.split,
+            text_column=config.text_column,
+            streaming=config.streaming,
+            max_rows=config.max_rows,
+            min_chars=config.min_chars,
+            out_path=config.out_path,
+            report_path=config.report_path or str(tmp_path / "hf_import_report.json"),
+            rows_seen=3,
+            rows_written=2,
+            rows_skipped=1,
+            characters_written=42,
+            rows=(),
+        )
+
+    monkeypatch.setattr("picochat.cli.import_hf_dataset", fake_import)
+
+    exit_code = main([
+        "data",
+        "hf-import",
+        "--dataset",
+        "demo/dataset",
+        "--config",
+        "plain",
+        "--split",
+        "train",
+        "--text-column",
+        "body",
+        "--out",
+        str(tmp_path / "corpus.txt"),
+        "--max-rows",
+        "3",
+        "--min-chars",
+        "5",
+        "--no-streaming",
+    ])
+
+    assert exit_code == 0
+    assert captured["config"].dataset == "demo/dataset"
+    assert captured["config"].config_name == "plain"
+    assert captured["config"].text_column == "body"
+    assert captured["config"].streaming is False
+    output = capsys.readouterr().out
+    assert "imported dataset: demo/dataset" in output
+    assert "rows_written: 2" in output
+
+
 def test_cli_demo_uses_default_pipeline(tmp_path, capsys, monkeypatch):
     captured = {}
 
