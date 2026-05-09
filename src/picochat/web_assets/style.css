@@ -513,6 +513,16 @@ h2 {
   line-height: 1.25;
 }
 
+.doctor-row:hover strong,
+.doctor-row:focus-visible strong {
+  color: var(--inverse-ink);
+}
+
+.doctor-row:hover small,
+.doctor-row:focus-visible small {
+  color: var(--inverse-muted);
+}
+
 .doctor-row.ready span,
 .doctor-row.live span {
   color: var(--green);
@@ -524,6 +534,23 @@ h2 {
 
 .doctor-row.missing span {
   color: var(--red);
+}
+
+.doctor-row.ready:hover span,
+.doctor-row.ready:focus-visible span,
+.doctor-row.live:hover span,
+.doctor-row.live:focus-visible span {
+  color: var(--inverse-green);
+}
+
+.doctor-row.partial:hover span,
+.doctor-row.partial:focus-visible span {
+  color: var(--inverse-accent);
+}
+
+.doctor-row.missing:hover span,
+.doctor-row.missing:focus-visible span {
+  color: var(--inverse-red);
 }
 
 .tab-strip {
