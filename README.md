@@ -381,8 +381,8 @@ Near-term v0.1 polish:
 
 - create a clean flagship `runs/tiny-v4` demo with current eval metadata
 - add screenshots of the workbench
-- tighten report language around honesty metrics
-- add a small guide explaining each pipeline stage
+- keep tightening report language around honesty metrics
+- expand the pipeline guide with screenshots and examples
 
 After that, dataset and training upgrades should come next:
 

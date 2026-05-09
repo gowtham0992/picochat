@@ -129,6 +129,12 @@ def test_chat_eval_report_markdown_contains_key_sections():
             "num_passed": 0,
             "num_failed": 1,
             "pass_rate": 0.0,
+            "num_answerable": 1,
+            "num_unanswerable": 0,
+            "unsupported_claims": 1,
+            "unsupported_claim_rate": 1.0,
+            "missing_support": 1,
+            "missing_support_rate": 1.0,
         },
         "examples": [{
             "user": "What is Picochat?",
@@ -148,6 +154,8 @@ def test_chat_eval_report_markdown_contains_key_sections():
     assert "# Picochat Chat Eval Report" in markdown
     assert "## Summary" in markdown
     assert "FAIL" in markdown
+    assert "## Honesty Metrics" in markdown
+    assert "does not prove semantic truth" in markdown
     assert "Required any-phrase groups" in markdown
     assert "Missing any-group" in markdown
     assert "I do not know." in markdown
@@ -193,6 +201,8 @@ def test_tiny_run_summary_markdown_contains_key_sections():
             "num_passed": 3,
             "num_failed": 1,
             "pass_rate": 0.75,
+            "unsupported_claim_rate": 0.25,
+            "missing_support_rate": 0.5,
         },
     }
 
@@ -200,6 +210,7 @@ def test_tiny_run_summary_markdown_contains_key_sections():
 
     assert "# Picochat Tiny Run Summary" in markdown
     assert "Eval passed: 3 / 4" in markdown
+    assert "Unsupported claim rate: 25.0000%" in markdown
     assert "Base final train loss" in markdown
     assert "SFT loss status: `memorization-risk`" in markdown
     assert "eval/report.md" in markdown

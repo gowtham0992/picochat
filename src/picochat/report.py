@@ -288,6 +288,22 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append(f"- Missing support rate: {format_float(summary.get('missing_support_rate', 0.0) * 100)}%")
     lines.append("")
 
+    if "unsupported_claim_rate" in summary:
+        lines.append("## Honesty Metrics")
+        lines.append("")
+        lines.append(
+            "These metrics are deliberately narrow and inspectable. "
+            "Unsupported claim rate counts replies that contain forbidden phrases "
+            "from the eval row. Missing support rate counts replies that missed "
+            "required phrases or any-phrase groups."
+        )
+        lines.append("")
+        lines.append(
+            "This does not prove semantic truth. It tells you whether this tiny "
+            "checkpoint followed the explicit support/refusal rules in the eval file."
+        )
+        lines.append("")
+
     lines.append("## Results")
     lines.append("")
     for index, item in enumerate(report["examples"], start=1):
@@ -356,6 +372,9 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Eval passed: {eval_summary['num_passed']} / {eval_summary['num_examples']}")
     lines.append(f"- Eval pass rate: {format_float(eval_summary['pass_rate'] * 100)}%")
     lines.append(f"- Failed examples: {eval_summary['num_failed']}")
+    if "unsupported_claim_rate" in eval_summary:
+        lines.append(f"- Unsupported claim rate: {format_float(eval_summary['unsupported_claim_rate'] * 100)}%")
+        lines.append(f"- Missing support rate: {format_float(eval_summary.get('missing_support_rate', 0.0) * 100)}%")
     lines.append("")
 
     lines.append("## Settings")
@@ -403,7 +422,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(
         "Use this summary to compare tiny runs. If eval improves but SFT validation "
         "loss rises, the model is likely memorizing the tiny chat data rather than "
-        "generalizing. That is useful signal, not a hidden failure."
+        "generalizing. Unsupported claim and missing support rates are rule-based "
+        "signals from the eval file, not proof of semantic truth."
     )
     lines.append("")
     return "\n".join(lines)
