@@ -9,6 +9,7 @@ const state = {
   corpusSourcePreview: null,
   tokenTimer: null,
   generationTimer: null,
+  statusTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -85,6 +86,11 @@ async function boot() {
 
 function bindControls() {
   $("refresh-button").addEventListener("click", loadRuns);
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-copy-command]");
+    if (!button) return;
+    copyCommand(button.dataset.copyCommand || "", button);
+  });
   document.querySelectorAll("[data-panel]").forEach((button) => {
     button.addEventListener("click", () => setPanel(button.dataset.panel));
   });
@@ -568,7 +574,10 @@ function runDoctor(stages) {
     </div>
     <div class="doctor-body">
       <div class="doctor-next">
-        <label>${nextStage ? "NEXT COMMAND" : "NEXT STEP"}</label>
+        <div class="command-head">
+          <label>${nextStage ? "NEXT COMMAND" : "NEXT STEP"}</label>
+          ${nextStage ? copyCommandButton(nextStage.command) : ""}
+        </div>
         <code>${escapeHtml(nextStage?.command || "All material stages look ready. Open Generation Deck or Report Vault.")}</code>
       </div>
       <div class="doctor-list">
@@ -623,10 +632,83 @@ function stageDetail(stage) {
       `).join("")}
     </div>
     <div class="command-tape">
-      <label>COMMAND TAPE</label>
+      <div class="command-head">
+        <label>COMMAND TAPE</label>
+        ${copyCommandButton(stage.command)}
+      </div>
       <code>${escapeHtml(stage.command || "NO COMMAND AVAILABLE.")}</code>
     </div>
   `;
+}
+
+function copyCommandButton(command) {
+  if (!command) return "";
+  return `<button class="copy-command" type="button" data-copy-command="${escapeHtml(command)}">COPY</button>`;
+}
+
+async function copyCommand(command, button) {
+  if (!command) {
+    flashStatus("COPY FAULT. | no command found");
+    return;
+  }
+  const previous = button.textContent;
+  button.textContent = "COPYING";
+  button.disabled = true;
+  try {
+    await writeClipboard(command);
+    button.textContent = "COPIED";
+    flashStatus("COPIED COMMAND. | Paste it in your terminal from the repo root.");
+  } catch (error) {
+    button.textContent = "FAILED";
+    flashStatus(`COPY FAULT. | ${error.message}`);
+  }
+  window.setTimeout(() => {
+    button.textContent = previous;
+    button.disabled = false;
+  }, 1200);
+}
+
+async function writeClipboard(text) {
+  let clipboardError = null;
+  if (navigator.clipboard?.writeText) {
+    try {
+      await withTimeout(navigator.clipboard.writeText(text), 700);
+      return;
+    } catch (error) {
+      clipboardError = error;
+    }
+  }
+  if (fallbackCopy(text)) return;
+  throw clipboardError || new Error("clipboard unavailable");
+}
+
+function withTimeout(promise, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error("clipboard timeout")), timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function fallbackCopy(text) {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  return copied;
 }
 
 function renderDataset() {
@@ -1292,6 +1374,15 @@ function hasMissingSupport(item) {
 
 function hasForbiddenClaim(item) {
   return Boolean((item.found_forbidden || []).length);
+}
+
+function flashStatus(message) {
+  window.clearTimeout(state.statusTimer);
+  $("status-line").textContent = message;
+  state.statusTimer = window.setTimeout(() => {
+    state.statusTimer = null;
+    renderStatus();
+  }, 1600);
 }
 
 function renderStatus() {
