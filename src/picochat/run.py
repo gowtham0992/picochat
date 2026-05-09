@@ -136,12 +136,14 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "final_train_loss": base_report["losses"][-1]["train_loss"],
             "final_val_loss": base_report["losses"][-1]["val_loss"],
             "num_parameters": base_report["model"]["num_parameters"],
+            "loss_diagnostics": base_report.get("loss_diagnostics", {}),
         },
         "sft": {
             "checkpoint": sft_report["checkpoint"],
             "final_train_loss": sft_report["losses"][-1]["train_loss"],
             "final_val_loss": sft_report["losses"][-1]["val_loss"],
             "truncated_examples": sft_report["dataset"]["truncated_examples"],
+            "loss_diagnostics": sft_report.get("loss_diagnostics", {}),
         },
         "eval": eval_report["summary"],
     }

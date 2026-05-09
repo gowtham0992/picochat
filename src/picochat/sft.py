@@ -11,7 +11,7 @@ import torch
 
 from picochat.chat import render_chat_prompt
 from picochat.checkpoint import load_checkpoint, save_checkpoint
-from picochat.report import sft_report_markdown
+from picochat.report import loss_diagnostics, sft_report_markdown
 from picochat.tokenizer import CharTokenizer
 from picochat.train import evaluate_loss
 
@@ -283,6 +283,7 @@ def train_sft(config: SFTConfig) -> dict:
             "num_parameters": model.num_parameters(),
         },
         "losses": losses,
+        "loss_diagnostics": loss_diagnostics(losses),
         "sample": sample,
         "checkpoint": str(checkpoint_dir),
     }

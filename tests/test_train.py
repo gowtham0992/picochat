@@ -33,4 +33,6 @@ def test_train_base_writes_artifacts(tmp_path):
     assert (out_dir / "sample.txt").exists()
     assert report["model"]["num_parameters"] > 0
     assert "val_loss" in report["losses"][-1]
+    assert report["loss_diagnostics"]["final_step"] == 2
+    assert "Loss Diagnostics" in (out_dir / "report.md").read_text(encoding="utf-8")
     assert report["dataset"]["val_sequences"] > 0

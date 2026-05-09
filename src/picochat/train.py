@@ -12,7 +12,7 @@ import torch
 from picochat.batching import load_token_dataset, make_dataloader, split_dataset
 from picochat.checkpoint import save_checkpoint
 from picochat.model import GPTConfig, TinyGPT
-from picochat.report import training_report_markdown
+from picochat.report import loss_diagnostics, training_report_markdown
 from picochat.tokenizer import CharTokenizer
 
 
@@ -152,6 +152,7 @@ def train_base(config: TrainConfig) -> dict:
             "num_parameters": model.num_parameters(),
         },
         "losses": losses,
+        "loss_diagnostics": loss_diagnostics(losses),
         "sample": sample,
         "checkpoint": str(checkpoint_dir),
     }

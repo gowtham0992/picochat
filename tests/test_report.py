@@ -1,9 +1,23 @@
 from picochat.report import (
     chat_eval_report_markdown,
+    loss_diagnostics,
     sft_report_markdown,
     tiny_run_summary_markdown,
     training_report_markdown,
 )
+
+
+def test_loss_diagnostics_detects_validation_regression():
+    diagnostics = loss_diagnostics([
+        {"step": 1, "train_loss": 2.0, "val_loss": 2.1},
+        {"step": 2, "train_loss": 0.4, "val_loss": 1.8},
+        {"step": 3, "train_loss": 0.1, "val_loss": 3.2},
+    ])
+
+    assert diagnostics["status"] == "memorization-risk"
+    assert diagnostics["best_val_step"] == 2
+    assert round(diagnostics["final_gap"], 2) == 3.10
+    assert round(diagnostics["val_regression"], 2) == 1.40
 
 
 def test_training_report_markdown_contains_key_sections():
@@ -45,6 +59,8 @@ def test_training_report_markdown_contains_key_sections():
     assert "## Dataset" in markdown
     assert "## Model" in markdown
     assert "## Training" in markdown
+    assert "## Loss Diagnostics" in markdown
+    assert "Best validation step" in markdown
     assert "hello" in markdown
 
 
@@ -90,6 +106,7 @@ def test_sft_report_markdown_contains_key_sections():
     assert "## Dataset" in markdown
     assert "## Base Checkpoint" in markdown
     assert "## Training" in markdown
+    assert "## Loss Diagnostics" in markdown
     assert "User: hello" in markdown
 
 
@@ -157,11 +174,19 @@ def test_tiny_run_summary_markdown_contains_key_sections():
         "base": {
             "final_train_loss": 2.0,
             "final_val_loss": 2.1,
+            "loss_diagnostics": {
+                "status": "stable",
+                "final_gap": 0.1,
+            },
         },
         "sft": {
             "final_train_loss": 0.1,
             "final_val_loss": 4.0,
             "truncated_examples": 0,
+            "loss_diagnostics": {
+                "status": "memorization-risk",
+                "final_gap": 3.9,
+            },
         },
         "eval": {
             "num_examples": 4,
@@ -176,4 +201,5 @@ def test_tiny_run_summary_markdown_contains_key_sections():
     assert "# Picochat Tiny Run Summary" in markdown
     assert "Eval passed: 3 / 4" in markdown
     assert "Base final train loss" in markdown
+    assert "SFT loss status: `memorization-risk`" in markdown
     assert "eval/report.md" in markdown

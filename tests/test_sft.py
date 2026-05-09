@@ -96,3 +96,5 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert (out_dir / "sample.txt").exists()
     assert report["dataset"]["num_examples"] == 2
     assert report["dataset"]["supervised_tokens"] > 0
+    assert report["loss_diagnostics"]["final_step"] == 2
+    assert "Loss Diagnostics" in (out_dir / "report.md").read_text(encoding="utf-8")

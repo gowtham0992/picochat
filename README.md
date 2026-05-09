@@ -110,6 +110,12 @@ runs/pico-demo/
 These artifacts are the contract between the training code, CLI, reports, and
 workbench.
 
+Base and SFT reports include loss diagnostics in both JSON and Markdown:
+best validation step, final train/validation gap, validation regression from
+the best step, and a compact status such as `stable`, `watch-gap`, or
+`memorization-risk`. These labels are not magic scores; they are readable
+signals for deciding whether a tiny run is learning or mostly memorizing.
+
 ## Bring Your Own Corpus
 
 Picochat v1 corpus support is intentionally conservative: local files in
