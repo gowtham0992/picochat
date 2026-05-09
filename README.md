@@ -10,6 +10,9 @@ can be inspected.
 dataset -> tokenizer -> base pretraining -> chat SFT -> eval -> chat -> report
 ```
 
+For a stage-by-stage explanation, read
+[docs/pipeline_guide.md](docs/pipeline_guide.md).
+
 Picochat is inspired by nanochat, but it has a different target. It is not a
 small ChatGPT and it is not a GPT-2 race. It is a microscope for understanding
 the whole chat-model pipeline on one machine.
