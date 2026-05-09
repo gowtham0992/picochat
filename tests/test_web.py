@@ -1,8 +1,11 @@
 import json
 
+import pytest
+
 from picochat.web import (
     discover_runs,
     generate_run_text,
+    init_dataset_pack_plan,
     load_run_detail,
     load_run_report,
     preview_corpus_plan,
@@ -283,3 +286,52 @@ def test_preview_corpus_plan_accepts_dataset_pack(tmp_path):
     assert "--dataset-pack" in report["training_command"]["command"]
     assert report["chat_data"]["status"] == "ready"
     assert report["eval_data"]["status"] == "ready"
+
+
+def test_init_dataset_pack_plan_creates_starter_files(tmp_path):
+    corpus_dir = tmp_path / "docs"
+    pack_dir = tmp_path / "my_pack"
+    corpus_dir.mkdir()
+
+    report = init_dataset_pack_plan({
+        "name": "ui-pack",
+        "description": "Created from the workbench.",
+        "corpus_path": str(corpus_dir),
+        "out_dir": str(pack_dir),
+    })
+
+    assert report["name"] == "ui-pack"
+    assert report["dataset_pack"] == str(pack_dir / "dataset_pack.json")
+    assert report["corpus_recipe"] == str(pack_dir / "corpus_recipe.json")
+    assert report["chat_input"] == str(pack_dir / "chat.jsonl")
+    assert report["eval_input"] == str(pack_dir / "eval.jsonl")
+    assert report["overwritten"] == []
+    assert set(report["created"]) == {
+        str(pack_dir / "dataset_pack.json"),
+        str(pack_dir / "corpus_recipe.json"),
+        str(pack_dir / "chat.jsonl"),
+        str(pack_dir / "eval.jsonl"),
+    }
+    assert "--dataset-pack" in report["preview_command"]
+    pack = json.loads((pack_dir / "dataset_pack.json").read_text(encoding="utf-8"))
+    assert pack["name"] == "ui-pack"
+    assert pack["chat"] == "chat.jsonl"
+
+
+def test_init_dataset_pack_plan_refuses_overwrite_without_force(tmp_path):
+    corpus_path = tmp_path / "lesson.txt"
+    pack_dir = tmp_path / "pack"
+    corpus_path.write_text("lesson", encoding="utf-8")
+    payload = {
+        "name": "overwrite-pack",
+        "corpus_path": str(corpus_path),
+        "out_dir": str(pack_dir),
+    }
+    init_dataset_pack_plan(payload)
+
+    with pytest.raises(FileExistsError):
+        init_dataset_pack_plan(payload)
+
+    report = init_dataset_pack_plan({**payload, "force": True})
+
+    assert str(pack_dir / "dataset_pack.json") in report["overwritten"]

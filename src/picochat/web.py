@@ -7,10 +7,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.resources
 import json
 from pathlib import Path
+import shlex
 from urllib.parse import parse_qs, urlparse
 
 from picochat.compare import compare_runs
 from picochat.data import preview_corpus_sources
+from picochat.dataset_pack import init_dataset_pack
 from picochat.generate import GenerateConfig, generate_text_with_trace
 
 
@@ -176,6 +178,48 @@ def preview_corpus_plan(payload: dict) -> dict:
     ).to_dict()
 
 
+def init_dataset_pack_plan(payload: dict) -> dict:
+    """Create starter dataset pack files from a web request."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+
+    name = _optional_string(payload.get("name")) or "picochat-pack"
+    description = _optional_string(payload.get("description")) or "Starter Picochat dataset pack."
+    corpus_path = _optional_string(payload.get("corpus_path"))
+    out_dir = _optional_string(payload.get("out_dir"))
+    if not corpus_path:
+        raise ValueError("corpus_path is required")
+    if not out_dir:
+        raise ValueError("out_dir is required")
+
+    force = payload.get("force", False)
+    if not isinstance(force, bool):
+        raise ValueError("force must be true or false")
+
+    report = init_dataset_pack(
+        out_dir=out_dir,
+        corpus_path=corpus_path,
+        name=name,
+        description=description,
+        force=force,
+    )
+    return {
+        **report.to_dict(),
+        "name": name,
+        "description": description,
+        "preview_command": _shell_command(
+            "PYTHONPATH=src",
+            "python",
+            "-m",
+            "picochat.cli",
+            "data",
+            "preview",
+            "--dataset-pack",
+            report.dataset_pack,
+        ),
+    }
+
+
 def serve_web(config: WebConfig) -> None:
     """Start the blocking local web server."""
     handler = _make_handler(config)
@@ -239,6 +283,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(generate_run_text(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/corpus/preview":
                     self._send_json(preview_corpus_plan(self._read_json_body()))
+                elif parsed.path == "/api/dataset-pack/init":
+                    self._send_json(init_dataset_pack_plan(self._read_json_body()))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -305,6 +351,10 @@ def _optional_string(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _shell_command(*parts: str) -> str:
+    return " ".join(shlex.quote(part) for part in parts)
 
 
 def _read_json_if_exists(path: Path) -> dict | None:

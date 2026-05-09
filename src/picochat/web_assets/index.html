@@ -76,6 +76,34 @@
               </div>
             </div>
             <div class="terminal-card dataset-preview-card">
+              <label>PACK BUILDER</label>
+              <div class="pack-builder-controls">
+                <div>
+                  <label for="pack-name">PACK NAME</label>
+                  <input id="pack-name" type="text" spellcheck="false" placeholder="my-domain-pack">
+                </div>
+                <div>
+                  <label for="pack-corpus-path">CORPUS PATH</label>
+                  <input id="pack-corpus-path" type="text" spellcheck="false" placeholder="my_docs/">
+                </div>
+                <div>
+                  <label for="pack-out-dir">OUTPUT FOLDER</label>
+                  <input id="pack-out-dir" type="text" spellcheck="false" placeholder="my_pack/">
+                </div>
+                <div>
+                  <label for="pack-description">DESCRIPTION</label>
+                  <input id="pack-description" type="text" spellcheck="false" placeholder="Starter Picochat dataset pack.">
+                </div>
+                <label class="checkbox-line" for="pack-force">
+                  <input id="pack-force" type="checkbox">
+                  FORCE
+                </label>
+                <button id="init-pack-button" type="button">INIT PACK</button>
+              </div>
+              <div id="pack-builder-status" class="notice">NO PACK INIT REQUESTED.</div>
+              <div id="pack-builder-result" class="command-tape source-command"></div>
+            </div>
+            <div class="terminal-card dataset-preview-card">
               <label>SOURCE PREVIEW</label>
               <div class="preview-controls">
                 <div>

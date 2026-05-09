@@ -728,6 +728,51 @@ h2 {
   margin-bottom: 10px;
 }
 
+.pack-builder-controls {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(130px, 1fr)) auto auto;
+  margin-bottom: 10px;
+}
+
+.checkbox-line {
+  align-items: center;
+  border: 1px solid var(--dim-line);
+  color: var(--ink);
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin: 0;
+  min-height: 34px;
+  padding: 0 9px;
+}
+
+.checkbox-line input {
+  accent-color: var(--accent);
+}
+
+.pack-file-list {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pack-file-list > div {
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 4px;
+  padding: 7px;
+}
+
+.pack-file-list strong {
+  color: var(--accent);
+}
+
+.pack-file-list code {
+  font-size: 12px;
+}
+
 .source-preview-layout {
   padding: 10px 0;
 }
@@ -1236,6 +1281,8 @@ th {
   .readiness-row,
   .budget-grid,
   .preview-controls,
+  .pack-builder-controls,
+  .pack-file-list,
   .tuning-preflight,
   .compare-layout,
   .compare-cards,

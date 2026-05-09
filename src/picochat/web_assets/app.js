@@ -7,6 +7,7 @@ const state = {
   activeReport: "summary",
   compareRuns: [],
   corpusSourcePreview: null,
+  datasetPackInit: null,
   tokenTimer: null,
   generationTimer: null,
   statusTimer: null,
@@ -124,6 +125,9 @@ function bindControls() {
   });
   $("preview-corpus-button").addEventListener("click", () => {
     previewCorpusSources().catch((error) => renderCorpusSourcePreviewError(error));
+  });
+  $("init-pack-button").addEventListener("click", () => {
+    initDatasetPack().catch((error) => renderDatasetPackInitError(error));
   });
   $("tokenize-button").addEventListener("click", () => animateTokenizer());
   $("tokenize-sample-button").addEventListener("click", () => {
@@ -726,6 +730,7 @@ function renderDataset() {
   const config = summary.config || {};
   const baseDataset = state.detail?.base_report?.dataset || {};
   const manifest = state.detail?.corpus_manifest;
+  seedPackBuilderInputs(config);
   seedSourcePreviewInputs(config);
   $("dataset-summary").textContent = corpus.num_characters
     ? `${fmtInt(corpus.num_characters)} CHARS | ${fmtInt(corpus.num_lines)} LINES`
@@ -751,7 +756,20 @@ function renderDataset() {
   ]);
   $("corpus-files").innerHTML = renderCorpusFiles(manifest?.files || []);
   renderCorpusSourcePreview(state.corpusSourcePreview);
+  renderDatasetPackInit(state.datasetPackInit);
   $("corpus-preview").textContent = state.detail?.corpus_preview || "NO CORPUS PREVIEW ARTIFACT FOUND.";
+}
+
+function seedPackBuilderInputs(config) {
+  const nameInput = $("pack-name");
+  const corpusInput = $("pack-corpus-path");
+  const outInput = $("pack-out-dir");
+  const descriptionInput = $("pack-description");
+  if (nameInput.value || corpusInput.value || outInput.value || descriptionInput.value) return;
+  nameInput.value = "my-domain-pack";
+  corpusInput.value = config.corpus_input || config.corpus_recipe || "my_docs/";
+  outInput.value = "my_pack/";
+  descriptionInput.value = "Starter Picochat dataset pack.";
 }
 
 function seedSourcePreviewInputs(config) {
@@ -766,6 +784,84 @@ function seedSourcePreviewInputs(config) {
   sourceInput.value = config.corpus_input || "";
   chatInput.value = config.chat_input || "examples/tiny_chat.jsonl";
   evalInput.value = config.eval_input || "examples/tiny_eval.jsonl";
+}
+
+async function initDatasetPack() {
+  const name = $("pack-name").value.trim() || "picochat-pack";
+  const corpusPath = $("pack-corpus-path").value.trim();
+  const outDir = $("pack-out-dir").value.trim();
+  const description = $("pack-description").value.trim() || "Starter Picochat dataset pack.";
+  const force = $("pack-force").checked;
+  if (!corpusPath || !outDir) {
+    throw new Error("enter corpus path and output folder");
+  }
+
+  $("init-pack-button").disabled = true;
+  $("pack-builder-status").innerHTML = 'BUILDING PACK FILES<span class="cursor"></span>';
+  $("pack-builder-result").innerHTML = "";
+  try {
+    const report = await postJson("/api/dataset-pack/init", {
+      name,
+      description,
+      corpus_path: corpusPath,
+      out_dir: outDir,
+      force,
+    });
+    state.datasetPackInit = report;
+    $("preview-pack-path").value = report.dataset_pack || "";
+    $("preview-recipe-path").value = "";
+    $("preview-input-path").value = "";
+    $("preview-chat-path").value = "";
+    $("preview-eval-path").value = "";
+    renderDatasetPackInit(report);
+  } finally {
+    $("init-pack-button").disabled = false;
+  }
+}
+
+function renderDatasetPackInit(report) {
+  if (!report) {
+    $("pack-builder-status").textContent = "NO PACK INIT REQUESTED.";
+    $("pack-builder-result").innerHTML = "";
+    return;
+  }
+  const created = report.created || [];
+  const overwritten = report.overwritten || [];
+  const files = [
+    ["Dataset pack", report.dataset_pack],
+    ["Corpus recipe", report.corpus_recipe],
+    ["Chat SFT JSONL", report.chat_input],
+    ["Eval JSONL", report.eval_input],
+  ];
+  $("pack-builder-status").textContent =
+    `PACK READY | ${fmtInt(created.length)} CREATED | ${fmtInt(overwritten.length)} OVERWRITTEN`;
+  $("pack-builder-result").innerHTML = `
+    <div class="command-head">
+      <label>PACK FILES</label>
+      ${report.preview_command ? copyCommandButton(report.preview_command) : ""}
+    </div>
+    <div class="pack-file-list">
+      ${files.map(([label, path]) => `
+        <div>
+          <strong>${escapeHtml(label)}</strong>
+          <code>${escapeHtml(path || "--")}</code>
+        </div>
+      `).join("")}
+    </div>
+    <label>NEXT COMMAND</label>
+    <code>${escapeHtml(report.preview_command || "NO PREVIEW COMMAND AVAILABLE.")}</code>
+    <p>Edit the starter chat and eval rows, then preview the pack before training.</p>
+  `;
+}
+
+function renderDatasetPackInitError(error) {
+  $("init-pack-button").disabled = false;
+  $("pack-builder-status").textContent = "PACK BUILDER FAULT";
+  $("pack-builder-result").innerHTML = `
+    <label>ERROR</label>
+    <code>FAULT: ${escapeHtml(error.message)}</code>
+    <p>Use FORCE only when you mean to overwrite the four starter pack files.</p>
+  `;
 }
 
 function statCards(rows) {

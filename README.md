@@ -71,7 +71,7 @@ The local web UI is artifact-backed. It reads files produced by runs; it does
 not show fake training data.
 
 - **Factory Flow:** the real pipeline from dataset to report.
-- **Dataset Bay:** corpus stats, quality checks, training windows, and preview.
+- **Dataset Bay:** corpus stats, quality checks, training windows, pack builder, and preview.
 - **Tokenizer Lab:** character-to-token-ID inspection from the trained tokenizer.
 - **Training Dash:** base and SFT loss traces, including memorization warnings.
 - **Generation Deck:** live generation from the selected base or SFT checkpoint.
@@ -187,6 +187,10 @@ PYTHONPATH=src python -m picochat.cli data init-pack --name my-domain-pack --cor
 This creates `dataset_pack.json`, `corpus_recipe.json`, `chat.jsonl`, and
 `eval.jsonl`. The chat/eval files are starter templates; edit them with real
 domain examples before treating a run as meaningful.
+
+The same starter pack flow is available in the web workbench under Dataset
+Bay. The Pack Builder writes the four files locally and fills Source Preview
+with the new `dataset_pack.json` path.
 
 Pack paths are relative to the pack file unless absolute. Preview a pack:
 
