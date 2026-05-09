@@ -11,9 +11,10 @@ import shlex
 from urllib.parse import parse_qs, urlparse
 
 from picochat.compare import compare_runs
-from picochat.data import preview_corpus_sources
-from picochat.dataset_pack import init_dataset_pack
+from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus_sources
+from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.generate import GenerateConfig, generate_text_with_trace
+from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
 
 @dataclass(frozen=True)
@@ -220,6 +221,54 @@ def init_dataset_pack_plan(payload: dict) -> dict:
     }
 
 
+def inspect_tuning_plan(payload: dict) -> dict:
+    """Inspect chat SFT and eval JSONL inputs for the web UI."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+
+    dataset_pack = _optional_string(payload.get("dataset_pack"))
+    chat_input = _optional_string(payload.get("chat_input"))
+    eval_input = _optional_string(payload.get("eval_input"))
+    if dataset_pack:
+        if chat_input or eval_input:
+            raise ValueError("dataset_pack cannot be combined with chat_input or eval_input")
+        pack = load_dataset_pack(dataset_pack)
+        chat_input = pack.chat_input
+        eval_input = pack.eval_input
+    else:
+        chat_input = chat_input or DEFAULT_CHAT_INPUT
+        eval_input = eval_input or DEFAULT_EVAL_INPUT
+
+    chat_data = inspect_chat_sft_data(chat_input)
+    eval_data = inspect_chat_eval_data(eval_input)
+    status = _combined_tuning_status(chat_data.status, eval_data.status)
+    return {
+        "status": status,
+        "summary": _tuning_summary(status),
+        "training_ready": status == "ready",
+        "can_train": status != "blocked",
+        "dataset_pack": dataset_pack,
+        "chat_input": chat_input,
+        "eval_input": eval_input,
+        "chat_data": chat_data.to_dict(),
+        "eval_data": eval_data.to_dict(),
+        "next_actions": _tuning_next_actions(chat_data, eval_data, bool(dataset_pack)),
+        "preview_command": (
+            _shell_command(
+                "PYTHONPATH=src",
+                "python",
+                "-m",
+                "picochat.cli",
+                "data",
+                "preview",
+                "--dataset-pack",
+                dataset_pack,
+            )
+            if dataset_pack else None
+        ),
+    }
+
+
 def serve_web(config: WebConfig) -> None:
     """Start the blocking local web server."""
     handler = _make_handler(config)
@@ -285,6 +334,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(preview_corpus_plan(self._read_json_body()))
                 elif parsed.path == "/api/dataset-pack/init":
                     self._send_json(init_dataset_pack_plan(self._read_json_body()))
+                elif parsed.path == "/api/tuning/inspect":
+                    self._send_json(inspect_tuning_plan(self._read_json_body()))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -355,6 +406,37 @@ def _optional_string(value: object) -> str | None:
 
 def _shell_command(*parts: str) -> str:
     return " ".join(shlex.quote(part) for part in parts)
+
+
+def _combined_tuning_status(chat_status: str, eval_status: str) -> str:
+    statuses = {chat_status, eval_status}
+    if "blocked" in statuses:
+        return "blocked"
+    if "caution" in statuses:
+        return "caution"
+    return "ready"
+
+
+def _tuning_summary(status: str) -> str:
+    if status == "ready":
+        return "Chat SFT and eval files look ready for a tiny run."
+    if status == "caution":
+        return "Files are readable, but improve them before trusting a run."
+    return "Fix blocked chat/eval data before training."
+
+
+def _tuning_next_actions(chat_data, eval_data, from_pack: bool) -> list[str]:
+    actions = []
+    for label, report in (("Chat SFT", chat_data), ("Eval", eval_data)):
+        if report.status == "blocked":
+            actions.append(f"Fix {label}: {report.summary}")
+        elif report.status == "caution":
+            actions.append(f"Improve {label}: {report.summary}")
+    if not actions:
+        actions.append("Tuning data is ready for the next tiny run.")
+    if from_pack:
+        actions.append("Run Source Preview next to inspect corpus readiness and get the training command.")
+    return actions
 
 
 def _read_json_if_exists(path: Path) -> dict | None:

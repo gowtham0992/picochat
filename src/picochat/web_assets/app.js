@@ -8,6 +8,7 @@ const state = {
   compareRuns: [],
   corpusSourcePreview: null,
   datasetPackInit: null,
+  tuningInspection: null,
   tokenTimer: null,
   generationTimer: null,
   statusTimer: null,
@@ -128,6 +129,9 @@ function bindControls() {
   });
   $("init-pack-button").addEventListener("click", () => {
     initDatasetPack().catch((error) => renderDatasetPackInitError(error));
+  });
+  $("inspect-tuning-button").addEventListener("click", () => {
+    inspectTuningData().catch((error) => renderTuningInspectionError(error));
   });
   $("tokenize-button").addEventListener("click", () => animateTokenizer());
   $("tokenize-sample-button").addEventListener("click", () => {
@@ -731,6 +735,7 @@ function renderDataset() {
   const baseDataset = state.detail?.base_report?.dataset || {};
   const manifest = state.detail?.corpus_manifest;
   seedPackBuilderInputs(config);
+  seedTuningInspectorInputs(config);
   seedSourcePreviewInputs(config);
   $("dataset-summary").textContent = corpus.num_characters
     ? `${fmtInt(corpus.num_characters)} CHARS | ${fmtInt(corpus.num_lines)} LINES`
@@ -757,6 +762,7 @@ function renderDataset() {
   $("corpus-files").innerHTML = renderCorpusFiles(manifest?.files || []);
   renderCorpusSourcePreview(state.corpusSourcePreview);
   renderDatasetPackInit(state.datasetPackInit);
+  renderTuningInspection(state.tuningInspection);
   $("corpus-preview").textContent = state.detail?.corpus_preview || "NO CORPUS PREVIEW ARTIFACT FOUND.";
 }
 
@@ -770,6 +776,16 @@ function seedPackBuilderInputs(config) {
   corpusInput.value = config.corpus_input || config.corpus_recipe || "my_docs/";
   outInput.value = "my_pack/";
   descriptionInput.value = "Starter Picochat dataset pack.";
+}
+
+function seedTuningInspectorInputs(config) {
+  const packInput = $("tuning-pack-path");
+  const chatInput = $("tuning-chat-path");
+  const evalInput = $("tuning-eval-path");
+  if (packInput.value || chatInput.value || evalInput.value) return;
+  packInput.value = config.dataset_pack || "";
+  chatInput.value = config.chat_input || "examples/tiny_chat.jsonl";
+  evalInput.value = config.eval_input || "examples/tiny_eval.jsonl";
 }
 
 function seedSourcePreviewInputs(config) {
@@ -813,7 +829,11 @@ async function initDatasetPack() {
     $("preview-input-path").value = "";
     $("preview-chat-path").value = "";
     $("preview-eval-path").value = "";
+    $("tuning-pack-path").value = report.dataset_pack || "";
+    $("tuning-chat-path").value = "";
+    $("tuning-eval-path").value = "";
     renderDatasetPackInit(report);
+    inspectTuningData().catch((error) => renderTuningInspectionError(error));
   } finally {
     $("init-pack-button").disabled = false;
   }
@@ -861,6 +881,85 @@ function renderDatasetPackInitError(error) {
     <label>ERROR</label>
     <code>FAULT: ${escapeHtml(error.message)}</code>
     <p>Use FORCE only when you mean to overwrite the four starter pack files.</p>
+  `;
+}
+
+async function inspectTuningData() {
+  const packPath = $("tuning-pack-path").value.trim();
+  const chatInput = $("tuning-chat-path").value.trim();
+  const evalInput = $("tuning-eval-path").value.trim();
+  $("inspect-tuning-button").disabled = true;
+  $("tuning-inspector-status").innerHTML = 'INSPECTING TUNING DATA<span class="cursor"></span>';
+  $("tuning-inspector-actions").innerHTML = "";
+  $("tuning-inspector-result").innerHTML = "";
+  $("tuning-inspector-command").innerHTML = "";
+  try {
+    const report = await postJson("/api/tuning/inspect", {
+      dataset_pack: packPath || null,
+      chat_input: packPath ? null : chatInput || null,
+      eval_input: packPath ? null : evalInput || null,
+    });
+    state.tuningInspection = report;
+    renderTuningInspection(report);
+  } finally {
+    $("inspect-tuning-button").disabled = false;
+  }
+}
+
+function renderTuningInspection(report) {
+  if (!report) {
+    $("tuning-inspector-status").textContent = "NO TUNING INSPECTION REQUESTED.";
+    $("tuning-inspector-actions").innerHTML = "";
+    $("tuning-inspector-result").innerHTML = "";
+    $("tuning-inspector-command").innerHTML = "";
+    return;
+  }
+  const status = String(report.status || "unknown").toUpperCase();
+  $("tuning-inspector-status").textContent =
+    `TUNING ${status} | CHAT ${escapeHtml(report.chat_data?.status || "--")} | EVAL ${escapeHtml(report.eval_data?.status || "--")}`;
+  $("tuning-inspector-actions").innerHTML = renderTuningActions(report);
+  $("tuning-inspector-result").innerHTML = renderTuningPreflight(report.chat_data, report.eval_data);
+  $("tuning-inspector-command").innerHTML = report.preview_command ? `
+    <div class="command-head">
+      <label>NEXT PREVIEW COMMAND</label>
+      ${copyCommandButton(report.preview_command)}
+    </div>
+    <div class="command-meta">
+      <span>PACK ${escapeHtml(report.dataset_pack || "--")}</span>
+      <span>CHAT ${escapeHtml(report.chat_input || "--")}</span>
+      <span>EVAL ${escapeHtml(report.eval_input || "--")}</span>
+    </div>
+    <code>${escapeHtml(report.preview_command)}</code>
+  ` : "";
+}
+
+function renderTuningActions(report) {
+  const status = escapeHtml(report.status || "unknown");
+  const rowStatus = report.status === "ready" ? "pass" : report.status === "caution" ? "warn" : "fail";
+  const actions = report.next_actions || [];
+  return `
+    <div class="readiness-summary ${status}">
+      <strong>TUNING ${escapeHtml(String(report.status || "--").toUpperCase())}</strong>
+      <span>${escapeHtml(report.summary || "")}</span>
+    </div>
+    ${actions.map((action, index) => `
+      <div class="readiness-row ${rowStatus}">
+        <strong>ACTION ${index + 1}</strong>
+        <span>${escapeHtml(report.training_ready ? "ready" : report.can_train ? "can-run" : "blocked")}</span>
+        <p>${escapeHtml(action)}</p>
+      </div>
+    `).join("")}
+  `;
+}
+
+function renderTuningInspectionError(error) {
+  $("inspect-tuning-button").disabled = false;
+  $("tuning-inspector-status").textContent = "TUNING INSPECTION FAULT";
+  $("tuning-inspector-actions").innerHTML = "";
+  $("tuning-inspector-result").innerHTML = "";
+  $("tuning-inspector-command").innerHTML = `
+    <label>ERROR</label>
+    <code>FAULT: ${escapeHtml(error.message)}</code>
   `;
 }
 
@@ -951,7 +1050,9 @@ async function previewCorpusSources() {
     preview_chars: 1400,
   });
   state.corpusSourcePreview = report;
+  state.tuningInspection = tuningInspectionFromPreview(report);
   renderCorpusSourcePreview(report);
+  renderTuningInspection(state.tuningInspection);
   $("preview-corpus-button").disabled = false;
 }
 
@@ -990,6 +1091,52 @@ function renderCorpusSourcePreview(report) {
   ]);
   $("source-preview-files").innerHTML = renderCorpusFiles(files);
   $("source-preview-text").textContent = report.preview || "(EMPTY)";
+}
+
+function tuningInspectionFromPreview(report) {
+  const chatStatus = report.chat_data?.status || "unknown";
+  const evalStatus = report.eval_data?.status || "unknown";
+  const status = chatStatus === "blocked" || evalStatus === "blocked"
+    ? "blocked"
+    : chatStatus === "caution" || evalStatus === "caution"
+      ? "caution"
+      : "ready";
+  return {
+    status,
+    summary: status === "ready"
+      ? "Chat SFT and eval files look ready for a tiny run."
+      : status === "caution"
+        ? "Files are readable, but improve them before trusting a run."
+        : "Fix blocked chat/eval data before training.",
+    training_ready: status === "ready",
+    can_train: status !== "blocked",
+    dataset_pack: report.dataset_pack || null,
+    chat_input: report.training_command?.chat_input || null,
+    eval_input: report.training_command?.eval_input || null,
+    chat_data: report.chat_data,
+    eval_data: report.eval_data,
+    next_actions: compactTuningActions(report.chat_data, report.eval_data, Boolean(report.dataset_pack)),
+    preview_command: report.dataset_pack
+      ? shellCommand(["PYTHONPATH=src", "python", "-m", "picochat.cli", "data", "preview", "--dataset-pack", report.dataset_pack])
+      : null,
+  };
+}
+
+function compactTuningActions(chatData, evalData, fromPack) {
+  const actions = [];
+  [
+    ["Chat SFT", chatData],
+    ["Eval", evalData],
+  ].forEach(([label, report]) => {
+    if (report?.status === "blocked") {
+      actions.push(`Fix ${label}: ${report.summary}`);
+    } else if (report?.status === "caution") {
+      actions.push(`Improve ${label}: ${report.summary}`);
+    }
+  });
+  if (!actions.length) actions.push("Tuning data is ready for the next tiny run.");
+  if (fromPack) actions.push("Run Source Preview next to inspect corpus readiness and get the training command.");
+  return actions;
 }
 
 function readinessBadge(readiness) {

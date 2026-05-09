@@ -6,6 +6,7 @@ from picochat.web import (
     discover_runs,
     generate_run_text,
     init_dataset_pack_plan,
+    inspect_tuning_plan,
     load_run_detail,
     load_run_report,
     preview_corpus_plan,
@@ -335,3 +336,78 @@ def test_init_dataset_pack_plan_refuses_overwrite_without_force(tmp_path):
     report = init_dataset_pack_plan({**payload, "force": True})
 
     assert str(pack_dir / "dataset_pack.json") in report["overwritten"]
+
+
+def test_inspect_tuning_plan_accepts_ready_dataset_pack(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    source_path.write_text("lesson", encoding="utf-8")
+    chat_path.write_text(
+        "\n".join(
+            json.dumps({"user": f"question {index}", "assistant": f"answer {index}"})
+            for index in range(8)
+        ),
+        encoding="utf-8",
+    )
+    eval_path.write_text(
+        "\n".join([
+            json.dumps({"user": "q1", "must_include": ["a1"]}),
+            json.dumps({"user": "q2", "must_include": ["a2"]}),
+            json.dumps({"user": "q3", "must_not_include": ["bad"]}),
+            json.dumps({"user": "q4", "answerable": False, "must_include_any": [["unknown"]]}),
+        ]),
+        encoding="utf-8",
+    )
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    report = inspect_tuning_plan({"dataset_pack": str(pack_path)})
+
+    assert report["status"] == "ready"
+    assert report["training_ready"] is True
+    assert report["can_train"] is True
+    assert report["chat_input"] == str(chat_path)
+    assert report["eval_input"] == str(eval_path)
+    assert report["chat_data"]["num_examples"] == 8
+    assert report["eval_data"]["num_items"] == 4
+    assert "--dataset-pack" in report["preview_command"]
+
+
+def test_inspect_tuning_plan_marks_starter_pack_as_caution(tmp_path):
+    corpus_path = tmp_path / "lesson.txt"
+    pack_dir = tmp_path / "pack"
+    corpus_path.write_text("lesson", encoding="utf-8")
+    init_report = init_dataset_pack_plan({
+        "name": "starter-pack",
+        "corpus_path": str(corpus_path),
+        "out_dir": str(pack_dir),
+    })
+
+    report = inspect_tuning_plan({"dataset_pack": init_report["dataset_pack"]})
+
+    assert report["status"] == "caution"
+    assert report["training_ready"] is False
+    assert report["can_train"] is True
+    assert report["chat_data"]["status"] == "caution"
+    assert report["eval_data"]["status"] == "caution"
+    assert any(action.startswith("Improve Chat SFT") for action in report["next_actions"])
+
+
+def test_inspect_tuning_plan_rejects_pack_with_overrides(tmp_path):
+    pack_path = tmp_path / "dataset_pack.json"
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        inspect_tuning_plan({
+            "dataset_pack": str(pack_path),
+            "chat_input": "other_chat.jsonl",
+        })

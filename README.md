@@ -71,7 +71,8 @@ The local web UI is artifact-backed. It reads files produced by runs; it does
 not show fake training data.
 
 - **Factory Flow:** the real pipeline from dataset to report.
-- **Dataset Bay:** corpus stats, quality checks, training windows, pack builder, and preview.
+- **Dataset Bay:** corpus stats, quality checks, training windows, pack builder,
+  tuning-data inspection, and preview.
 - **Tokenizer Lab:** character-to-token-ID inspection from the trained tokenizer.
 - **Training Dash:** base and SFT loss traces, including memorization warnings.
 - **Generation Deck:** live generation from the selected base or SFT checkpoint.
@@ -191,6 +192,10 @@ domain examples before treating a run as meaningful.
 The same starter pack flow is available in the web workbench under Dataset
 Bay. The Pack Builder writes the four files locally and fills Source Preview
 with the new `dataset_pack.json` path.
+
+Dataset Bay also has a Tuning Data Inspector. Point it at a dataset pack, or
+at separate chat/eval JSONL files, to check row schemas, usable example counts,
+eval scoring rules, preview rows, and next actions before running training.
 
 Pack paths are relative to the pack file unless absolute. Preview a pack:
 

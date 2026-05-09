@@ -728,6 +728,14 @@ h2 {
   margin-bottom: 10px;
 }
 
+.tuning-inspector-controls {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 1fr) minmax(150px, 1fr) auto;
+  margin-bottom: 10px;
+}
+
 .pack-builder-controls {
   align-items: end;
   display: grid;
@@ -1281,6 +1289,7 @@ th {
   .readiness-row,
   .budget-grid,
   .preview-controls,
+  .tuning-inspector-controls,
   .pack-builder-controls,
   .pack-file-list,
   .tuning-preflight,

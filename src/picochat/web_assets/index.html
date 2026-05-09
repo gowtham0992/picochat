@@ -104,6 +104,28 @@
               <div id="pack-builder-result" class="command-tape source-command"></div>
             </div>
             <div class="terminal-card dataset-preview-card">
+              <label>TUNING DATA INSPECTOR</label>
+              <div class="tuning-inspector-controls">
+                <div>
+                  <label for="tuning-pack-path">DATASET PACK</label>
+                  <input id="tuning-pack-path" type="text" spellcheck="false" placeholder="examples/tiny_dataset_pack.json">
+                </div>
+                <div>
+                  <label for="tuning-chat-path">CHAT SFT JSONL</label>
+                  <input id="tuning-chat-path" type="text" spellcheck="false" placeholder="examples/tiny_chat.jsonl">
+                </div>
+                <div>
+                  <label for="tuning-eval-path">EVAL JSONL</label>
+                  <input id="tuning-eval-path" type="text" spellcheck="false" placeholder="examples/tiny_eval.jsonl">
+                </div>
+                <button id="inspect-tuning-button" type="button">INSPECT TUNING</button>
+              </div>
+              <div id="tuning-inspector-status" class="notice">NO TUNING INSPECTION REQUESTED.</div>
+              <div id="tuning-inspector-actions" class="readiness-list"></div>
+              <div id="tuning-inspector-result" class="tuning-preflight"></div>
+              <div id="tuning-inspector-command" class="command-tape source-command"></div>
+            </div>
+            <div class="terminal-card dataset-preview-card">
               <label>SOURCE PREVIEW</label>
               <div class="preview-controls">
                 <div>
