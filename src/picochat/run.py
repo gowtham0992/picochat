@@ -35,6 +35,7 @@ class TinyRunConfig:
     seed: int = 42
     device: str = "cpu"
     eval_max_new_tokens: int = 120
+    min_quality_score: int = 0
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -54,6 +55,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         chat_input=None if config.dataset_pack else config.chat_input,
         eval_input=None if config.dataset_pack else config.eval_input,
         dataset_pack=config.dataset_pack,
+        min_quality_score=config.min_quality_score,
     )
     chat_input = corpus_build.training_command.chat_input
     eval_input = corpus_build.training_command.eval_input

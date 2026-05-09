@@ -204,6 +204,16 @@ can also be cancelled from the launcher. Launcher presets (`smoke`, `tiny`,
 and `small-local`) keep run sizes explicit, and Source Preview's budget
 estimate can be applied directly to the launcher controls.
 
+Source Preview and `data build` score every corpus source from 0-100 using
+local, explainable heuristics such as short documents, duplicate lines,
+non-ASCII rate, and extraction noise. Use `--min-score` when you want to
+filter low-quality sources out of the actual training corpus while keeping
+the skipped files visible in the manifest:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tiny_dataset_pack.json --min-score 70
+```
+
 Pack paths are relative to the pack file unless absolute. Preview a pack:
 
 ```bash
@@ -368,7 +378,7 @@ Near-term v0.1 polish:
 After that, dataset and training upgrades should come next:
 
 - Hugging Face dataset import
-- dataset scoring and filtering
+- stronger dataset scoring and filtering
 - larger tokenizer option, likely BPE
 - cleaner train/validation split controls
 - longer base pretraining runs

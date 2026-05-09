@@ -89,6 +89,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_EVAL_INPUT,
         help="Eval JSONL path to place in the suggested run command.",
     )
+    data_preview.add_argument(
+        "--min-score",
+        type=int,
+        default=0,
+        help="Minimum 0-100 source quality score required for a file to enter the preview corpus.",
+    )
 
     data_build = data_subparsers.add_parser("build", help="Build a normalized text corpus.")
     data_build.add_argument(
@@ -132,6 +138,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--eval-input",
         default=DEFAULT_EVAL_INPUT,
         help="Eval JSONL path to place in the suggested run command.",
+    )
+    data_build.add_argument(
+        "--min-score",
+        type=int,
+        default=0,
+        help="Minimum 0-100 source quality score required for a file to enter the built corpus.",
     )
 
     data_init_pack = data_subparsers.add_parser("init-pack", help="Create a starter dataset pack folder.")
@@ -285,6 +297,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--seed", type=int, default=42)
     run_tiny_parser.add_argument("--device", default="cpu")
     run_tiny_parser.add_argument("--eval-max-new-tokens", type=int, default=120)
+    run_tiny_parser.add_argument(
+        "--min-score",
+        type=int,
+        default=0,
+        help="Minimum 0-100 source quality score required for a file to enter the training corpus.",
+    )
 
     compare_parser = subparsers.add_parser("compare", help="Compare completed run summaries.")
     compare_parser.add_argument("runs", nargs="+", help="Run directories containing summary.json.")
@@ -382,6 +400,7 @@ def preview_data(args: argparse.Namespace) -> int:
         chat_input=args.chat_input,
         eval_input=args.eval_input,
         dataset_pack=args.dataset_pack,
+        min_quality_score=args.min_score,
     )
     included = [record for record in report.files if record.included]
     skipped = [record for record in report.files if not record.included]
@@ -389,6 +408,7 @@ def preview_data(args: argparse.Namespace) -> int:
     print(f"input: {report.input_path}")
     print(f"recipe: {report.recipe_path or 'none'}")
     print(f"dataset_pack: {report.dataset_pack or 'none'}")
+    print(f"min_quality_score: {report.min_quality_score}")
     print(f"files_included: {len(included)}")
     print(f"files_skipped: {len(skipped)}")
     print_stats(report.stats)
@@ -403,7 +423,9 @@ def preview_data(args: argparse.Namespace) -> int:
         label = f" label={record.label}" if record.label else ""
         print(
             f"- {status} {record.path}{label} ext={record.extension} "
-            f"chars={record.num_characters} lines={record.num_lines} reason={record.reason}"
+            f"score={record.quality_score} chars={record.num_characters} "
+            f"lines={record.num_lines} reason={record.reason}"
+            f"{' flags=' + ','.join(record.quality_flags) if record.quality_flags else ''}"
         )
 
     if report.warnings:
@@ -428,10 +450,12 @@ def build_data(args: argparse.Namespace) -> int:
         chat_input=args.chat_input,
         eval_input=args.eval_input,
         dataset_pack=args.dataset_pack,
+        min_quality_score=args.min_score,
     )
     print(f"built corpus: {args.out}")
     print(f"manifest: {report.manifest_path}")
     print(f"report: {report.report_path}")
+    print(f"min_quality_score: {report.min_quality_score}")
     print_stats(report.stats)
     print_readiness(report.readiness)
     print_budget(report.budget)
@@ -624,6 +648,7 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         seed=args.seed,
         device=args.device,
         eval_max_new_tokens=args.eval_max_new_tokens,
+        min_quality_score=args.min_score,
     ))
     print(
         f"tiny run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "

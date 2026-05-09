@@ -101,6 +101,8 @@ def test_build_corpus_artifacts_writes_manifest_and_report(tmp_path):
     assert report.eval_data.status == "ready"
     assert f"- Chat SFT input: `{chat_path}`" in (output_path.parent / "corpus_report.md").read_text(encoding="utf-8")
     assert "source file(s) were skipped" in report.warnings[-1]
+    assert report.files[0].quality_score < 100
+    assert "short_document" in report.files[0].quality_flags
 
 
 def test_build_corpus_artifacts_extracts_document_sources(tmp_path, monkeypatch):
@@ -255,3 +257,37 @@ def test_preview_corpus_sources_uses_dataset_pack(tmp_path):
     assert report.training_command.eval_input == str(eval_path)
     assert report.chat_data.status == "ready"
     assert report.eval_data.status == "ready"
+
+
+def test_build_corpus_artifacts_can_filter_by_quality_score(tmp_path):
+    input_dir = tmp_path / "input"
+    output_path = tmp_path / "out" / "corpus.txt"
+    input_dir.mkdir()
+    good_text = "\n".join(f"quality source line {index}" for index in range(80))
+    (input_dir / "good.txt").write_text(good_text, encoding="utf-8")
+    (input_dir / "short.txt").write_text("tiny", encoding="utf-8")
+
+    report = build_corpus_artifacts(input_dir, output_path, min_quality_score=80)
+    records = {record.path: record for record in report.files}
+
+    assert output_path.read_text(encoding="utf-8") == f"{good_text}\n"
+    assert report.min_quality_score == 80
+    assert "--min-score 80" in report.training_command.command
+    assert records[str(input_dir / "good.txt")].included is True
+    assert records[str(input_dir / "good.txt")].quality_score >= 80
+    assert records[str(input_dir / "short.txt")].included is False
+    assert records[str(input_dir / "short.txt")].reason == "below_min_score"
+    assert "short_document" in records[str(input_dir / "short.txt")].quality_flags
+    assert "source file(s) were filtered by the minimum quality score" in " ".join(report.warnings)
+
+
+def test_preview_corpus_sources_rejects_invalid_quality_score(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    source_path.write_text("lesson text", encoding="utf-8")
+
+    try:
+        preview_corpus_sources(source_path, min_quality_score=101)
+    except ValueError as error:
+        assert "min_quality_score" in str(error)
+    else:
+        raise AssertionError("preview should reject scores outside 0-100")

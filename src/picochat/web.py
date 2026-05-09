@@ -219,6 +219,7 @@ def preview_corpus_plan(payload: dict) -> dict:
         raise ValueError("input_path, recipe_path, or dataset_pack is required")
 
     preview_chars = _bounded_int(payload.get("preview_chars", 1200), 0, 10000)
+    min_quality_score = _bounded_int(payload.get("min_quality_score", 0), 0, 100)
     return preview_corpus_sources(
         input_path=input_path,
         recipe_path=recipe_path,
@@ -226,6 +227,7 @@ def preview_corpus_plan(payload: dict) -> dict:
         chat_input=chat_input,
         eval_input=eval_input,
         dataset_pack=dataset_pack,
+        min_quality_score=min_quality_score,
     ).to_dict()
 
 
@@ -355,8 +357,13 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     if not Path(dataset_pack).exists():
         raise FileNotFoundError(f"missing dataset pack: {dataset_pack}")
     load_dataset_pack(dataset_pack)
+    min_quality_score = _bounded_int(payload.get("min_quality_score", 0), 0, 100)
     try:
-        launch_preview = preview_corpus_sources(dataset_pack=dataset_pack, preview_chars=0)
+        launch_preview = preview_corpus_sources(
+            dataset_pack=dataset_pack,
+            preview_chars=0,
+            min_quality_score=min_quality_score,
+        )
     except FileNotFoundError as error:
         raise ValueError(f"corpus readiness blocked: missing source {error}") from error
     _validate_launch_readiness(launch_preview)
@@ -413,6 +420,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(seed),
         "--eval-max-new-tokens",
         str(eval_max_new_tokens),
+        "--min-score",
+        str(min_quality_score),
         "--device",
         "cpu",
     ]
@@ -441,6 +450,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         "started_at": time.time(),
         "process": process,
         "preset": preset_name,
+        "min_quality_score": min_quality_score,
         "launch_readiness": launch_preview.readiness.to_dict(),
         "launch_tuning": {
             "chat": launch_preview.chat_data.to_dict(),
@@ -825,6 +835,7 @@ def _run_job_status(job: dict) -> dict:
         "source": "active",
         "updated_at": time.time(),
         "preset": job.get("preset"),
+        "min_quality_score": job.get("min_quality_score", 0),
         "launch_readiness": job.get("launch_readiness"),
         "launch_tuning": job.get("launch_tuning"),
     }
@@ -873,6 +884,7 @@ def _discover_run_jobs(runs_dir: str | Path, limit: int = 20) -> list[dict]:
             "source": "disk",
             "updated_at": updated_at,
             "preset": None,
+            "min_quality_score": None,
             "launch_readiness": None,
             "launch_tuning": None,
         })

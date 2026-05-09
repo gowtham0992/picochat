@@ -122,6 +122,7 @@ def test_cli_data_preview_from_recipe(tmp_path, capsys):
     assert "chat_sft: blocked" in output
     assert "eval: blocked" in output
     assert "include" in output
+    assert "score=" in output
     assert "label=lesson" in output
     assert "lesson" in output
     assert not (tmp_path / "corpus_manifest.json").exists()

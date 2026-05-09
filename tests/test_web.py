@@ -295,6 +295,23 @@ def test_preview_corpus_plan_accepts_dataset_pack(tmp_path):
     assert report["eval_data"]["status"] == "ready"
 
 
+def test_preview_corpus_plan_accepts_min_quality_score(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    source_path.write_text("tiny", encoding="utf-8")
+
+    report = preview_corpus_plan({
+        "input_path": str(source_path),
+        "preview_chars": 20,
+        "min_quality_score": 80,
+    })
+
+    assert report["min_quality_score"] == 80
+    assert report["preview"] == ""
+    assert report["files"][0]["included"] is False
+    assert report["files"][0]["reason"] == "below_min_score"
+    assert report["files"][0]["quality_score"] < 80
+
+
 def test_init_dataset_pack_plan_creates_starter_files(tmp_path):
     corpus_dir = tmp_path / "docs"
     pack_dir = tmp_path / "my_pack"
@@ -513,13 +530,16 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
         "n_head": 4,
         "n_layer": 1,
         "preset": "smoke",
+        "min_quality_score": 0,
     })
 
     job = status["job"]
     assert job["state"] == "running"
     assert job["run_name"] == "ui-run"
     assert job["preset"] == "smoke"
+    assert job["min_quality_score"] == 0
     assert "--dataset-pack" in captured["command"]
+    assert "--min-score" in captured["command"]
     assert str(pack_path) in captured["command"]
     assert captured["kwargs"]["cwd"].name == "picochat"
     assert (tmp_path / "runs" / "ui-run" / "web_run.log").exists()

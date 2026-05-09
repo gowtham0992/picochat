@@ -853,9 +853,13 @@ function renderRunPresetOptions() {
 function seedRunLauncherInputs(config) {
   const packInput = $("launch-pack-path");
   const runNameInput = $("launch-run-name");
+  const minScoreInput = $("launch-min-score");
   if (!packInput.value) packInput.value = config.dataset_pack || "";
   if (!runNameInput.value) runNameInput.value = suggestedRunName(packInput.value || "picochat");
   else if (runNameExists(runNameInput.value)) runNameInput.value = uniqueRunName(runNameInput.value);
+  if (config.min_quality_score && (!minScoreInput.value || minScoreInput.value === "0")) {
+    minScoreInput.value = config.min_quality_score;
+  }
 }
 
 function seedSourcePreviewInputs(config) {
@@ -1168,6 +1172,7 @@ function applyPreviewBudgetToLauncher() {
   $("launch-context-size").value = budget.suggested_context_size || $("launch-context-size").value;
   $("launch-base-steps").value = budget.suggested_base_steps || $("launch-base-steps").value;
   $("launch-sft-steps").value = Math.max(60, Number(budget.suggested_base_steps || 30) * 2);
+  $("launch-min-score").value = state.corpusSourcePreview?.min_quality_score ?? $("launch-min-score").value;
   flashStatus(`APPLIED PREVIEW BUDGET. | CTX ${$("launch-context-size").value} | BASE ${$("launch-base-steps").value} | SFT ${$("launch-sft-steps").value}`);
 }
 
@@ -1187,6 +1192,7 @@ async function launchRun() {
       base_steps: Number($("launch-base-steps").value),
       sft_steps: Number($("launch-sft-steps").value),
       seed: Number($("launch-seed").value),
+      min_quality_score: Number($("launch-min-score").value || 0),
     });
     state.runJob = payload.job;
     state.runJobs = payload.jobs || [payload.job];
@@ -1271,6 +1277,7 @@ function renderRunJob(job) {
       <span>SUMMARY ${job.summary_exists ? "READY" : "PENDING"}</span>
       <span>SOURCE ${escapeHtml(job.source || "--")}</span>
       <span>PRESET ${escapeHtml(job.preset || "--")}</span>
+      <span>MIN SCORE ${escapeHtml(job.min_quality_score ?? "--")}</span>
     </div>
     <code>${escapeHtml(job.command || "")}</code>
   `;
@@ -1423,9 +1430,9 @@ function renderCorpusFiles(files) {
     <div class="source-row ${file.included ? "included" : "skipped"}">
       <div>
         <strong>${escapeHtml(shortPath(file.path))}</strong>
-        <span>${escapeHtml(file.included ? "INCLUDED" : "SKIPPED")}</span>
+        <span>${escapeHtml(file.included ? "INCLUDED" : "SKIPPED")} | Q${escapeHtml(file.quality_score ?? "--")}</span>
       </div>
-      <small>${escapeHtml(file.extension)}${file.label ? ` | label:${escapeHtml(file.label)}` : ""} | ${fmtInt(file.num_characters)} chars | ${fmtInt(file.num_lines)} lines | ${escapeHtml(file.reason)}</small>
+      <small>${escapeHtml(file.extension)}${file.label ? ` | label:${escapeHtml(file.label)}` : ""} | ${fmtInt(file.num_characters)} chars | ${fmtInt(file.num_lines)} lines | ${escapeHtml(file.reason)}${file.quality_flags?.length ? ` | flags:${escapeHtml(file.quality_flags.join(","))}` : ""}</small>
     </div>
   `).join("");
 }
@@ -1436,6 +1443,7 @@ async function previewCorpusSources() {
   const inputPath = $("preview-input-path").value.trim();
   const chatInput = $("preview-chat-path").value.trim();
   const evalInput = $("preview-eval-path").value.trim();
+  const minQualityScore = Number($("preview-min-score").value || 0);
   if (!packPath && !recipePath && !inputPath) {
     throw new Error("enter a dataset pack, recipe path, or input path");
   }
@@ -1456,11 +1464,13 @@ async function previewCorpusSources() {
     chat_input: packPath ? null : chatInput || null,
     eval_input: packPath ? null : evalInput || null,
     preview_chars: 1400,
+    min_quality_score: minQualityScore,
   });
   state.corpusSourcePreview = report;
   state.tuningInspection = tuningInspectionFromPreview(report);
   if (report.dataset_pack) {
     $("launch-pack-path").value = report.dataset_pack;
+    $("launch-min-score").value = report.min_quality_score ?? minQualityScore;
     if (!$("launch-run-name").value) $("launch-run-name").value = suggestedRunName(report.dataset_pack);
   }
   renderCorpusSourcePreview(report);
@@ -1484,8 +1494,9 @@ function renderCorpusSourcePreview(report) {
   const included = files.filter((file) => file.included);
   const skipped = files.length - included.length;
   const stats = report.stats || {};
+  const qualityScore = averageQualityScore(included);
   $("source-preview-status").textContent =
-    `${readinessBadge(report.readiness)} | ${fmtInt(included.length)} INCLUDED | ${fmtInt(skipped)} SKIPPED | ${fmtInt(stats.num_characters)} CHARS`;
+    `${readinessBadge(report.readiness)} | ${fmtInt(included.length)} INCLUDED | ${fmtInt(skipped)} SKIPPED | Q${qualityScore ?? "--"} | ${fmtInt(stats.num_characters)} CHARS`;
   $("source-preview-readiness").innerHTML = renderReadiness(report.readiness);
   $("source-preview-budget").innerHTML = renderBudget(report.budget);
   $("source-preview-command").innerHTML = renderTrainingCommand(report.training_command);
@@ -1496,6 +1507,8 @@ function renderCorpusSourcePreview(report) {
     ["Recipe", report.recipe_path || "none"],
     ["Chat SFT", report.training_command?.chat_input || "examples/tiny_chat.jsonl"],
     ["Eval", report.training_command?.eval_input || "examples/tiny_eval.jsonl"],
+    ["Min score", report.min_quality_score ?? 0],
+    ["Avg score", qualityScore ?? "--"],
     ["Files", fmtInt(stats.num_files)],
     ["Documents", fmtInt(stats.num_documents)],
     ["Characters", fmtInt(stats.num_characters)],
@@ -1503,6 +1516,14 @@ function renderCorpusSourcePreview(report) {
   ]);
   $("source-preview-files").innerHTML = renderCorpusFiles(files);
   $("source-preview-text").textContent = report.preview || "(EMPTY)";
+}
+
+function averageQualityScore(files) {
+  const scores = files
+    .map((file) => Number(file.quality_score))
+    .filter((score) => Number.isFinite(score));
+  if (!scores.length) return null;
+  return Math.round(scores.reduce((total, score) => total + score, 0) / scores.length);
 }
 
 function tuningInspectionFromPreview(report) {

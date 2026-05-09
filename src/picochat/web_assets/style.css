@@ -724,7 +724,7 @@ h2 {
   align-items: end;
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(5, minmax(140px, 1fr)) auto;
+  grid-template-columns: repeat(5, minmax(140px, 1fr)) 90px auto;
   margin-bottom: 10px;
 }
 
@@ -748,7 +748,7 @@ h2 {
   align-items: end;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(180px, 1.4fr) minmax(130px, 1fr) 90px repeat(4, 92px) auto auto auto auto;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(130px, 1fr) 90px repeat(5, 92px) auto auto auto auto;
   margin-bottom: 10px;
 }
 

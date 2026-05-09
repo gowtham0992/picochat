@@ -66,9 +66,11 @@ class CorpusFileRecord:
     num_lines: int
     included: bool
     reason: str
+    quality_score: int
+    quality_flags: tuple[str, ...]
     label: str | None = None
 
-    def to_dict(self) -> dict[str, str | int | bool | None]:
+    def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
 
@@ -143,6 +145,7 @@ class CorpusBuildReport:
     warnings: tuple[str, ...]
     recipe_path: str | None = None
     dataset_pack: str | None = None
+    min_quality_score: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -152,6 +155,7 @@ class CorpusBuildReport:
             "report_path": self.report_path,
             "recipe_path": self.recipe_path,
             "dataset_pack": self.dataset_pack,
+            "min_quality_score": self.min_quality_score,
             "stats": self.stats.to_dict(),
             "files": [record.to_dict() for record in self.files],
             "readiness": self.readiness.to_dict(),
@@ -177,12 +181,14 @@ class CorpusPreviewReport:
     eval_data: ChatEvalDataReport
     warnings: tuple[str, ...]
     preview: str
+    min_quality_score: int = 0
 
     def to_dict(self) -> dict:
         return {
             "input_path": self.input_path,
             "recipe_path": self.recipe_path,
             "dataset_pack": self.dataset_pack,
+            "min_quality_score": self.min_quality_score,
             "stats": self.stats.to_dict(),
             "files": [record.to_dict() for record in self.files],
             "readiness": self.readiness.to_dict(),
@@ -209,6 +215,7 @@ class _CollectedCorpus:
     chat_data: ChatSFTDataReport
     eval_data: ChatEvalDataReport
     warnings: tuple[str, ...]
+    min_quality_score: int
 
 
 @dataclass(frozen=True)
@@ -424,6 +431,7 @@ def suggest_training_command(
     chat_input: str | None = None,
     eval_input: str | None = None,
     dataset_pack: str | None = None,
+    min_quality_score: int = 0,
 ) -> CorpusTrainingCommand:
     """Build a copyable first-run command from corpus intake metadata."""
     out_dir = f"runs/{_slugify_path(dataset_pack or recipe_path or input_path)}-v1"
@@ -467,6 +475,7 @@ def suggest_training_command(
         budget.suggested_batch_size,
         "--base-steps",
         budget.suggested_base_steps,
+        *(["--min-score", min_quality_score] if min_quality_score else []),
     ])
     note = "Uses the selected chat/eval JSONL files for SFT and scoring."
     if dataset_pack:
@@ -534,12 +543,20 @@ def build_corpus_artifacts(
     chat_input: str | Path | None = None,
     eval_input: str | Path | None = None,
     dataset_pack: str | Path | None = None,
+    min_quality_score: int = 0,
 ) -> CorpusBuildReport:
     """Combine corpus sources and write provenance artifacts."""
     output_path = Path(output_path)
     manifest_path = Path(manifest_path) if manifest_path else output_path.with_name("corpus_manifest.json")
     report_path = Path(report_path) if report_path else output_path.with_name("corpus_report.md")
-    collected = _collect_corpus_sources(input_path, recipe_path, chat_input, eval_input, dataset_pack)
+    collected = _collect_corpus_sources(
+        input_path,
+        recipe_path,
+        chat_input,
+        eval_input,
+        dataset_pack,
+        min_quality_score=min_quality_score,
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     corpus_text = "\n\n".join(collected.documents)
@@ -560,6 +577,7 @@ def build_corpus_artifacts(
         warnings=collected.warnings,
         recipe_path=collected.recipe_path,
         dataset_pack=collected.dataset_pack,
+        min_quality_score=collected.min_quality_score,
     )
     if write_manifest:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -576,9 +594,17 @@ def preview_corpus_sources(
     chat_input: str | Path | None = None,
     eval_input: str | Path | None = None,
     dataset_pack: str | Path | None = None,
+    min_quality_score: int = 0,
 ) -> CorpusPreviewReport:
     """Inspect corpus sources without writing artifacts."""
-    collected = _collect_corpus_sources(input_path, recipe_path, chat_input, eval_input, dataset_pack)
+    collected = _collect_corpus_sources(
+        input_path,
+        recipe_path,
+        chat_input,
+        eval_input,
+        dataset_pack,
+        min_quality_score=min_quality_score,
+    )
     corpus_text = "\n\n".join(collected.documents)
     return CorpusPreviewReport(
         input_path=collected.input_path,
@@ -593,6 +619,7 @@ def preview_corpus_sources(
         eval_data=collected.eval_data,
         warnings=collected.warnings,
         preview=corpus_text[:max(0, preview_chars)],
+        min_quality_score=collected.min_quality_score,
     )
 
 
@@ -612,6 +639,7 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         f"- Output corpus: `{report.output_path}`",
         f"- Recipe: `{report.recipe_path}`" if report.recipe_path else "- Recipe: none",
         f"- Dataset pack: `{report.dataset_pack}`" if report.dataset_pack else "- Dataset pack: none",
+        f"- Minimum source quality score: {report.min_quality_score}",
         f"- Files scanned: {len(report.files)}",
         f"- Files included: {len(included)}",
         f"- Files skipped: {len(skipped)}",
@@ -682,13 +710,14 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         "",
         "## Files",
         "",
-        "| File | Label | Ext | Included | Chars | Lines | Reason |",
-        "| --- | --- | --- | ---: | ---: | ---: | --- |",
+        "| File | Label | Ext | Included | Score | Chars | Lines | Reason | Flags |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |",
     ])
     for record in report.files:
+        flags = ", ".join(record.quality_flags)
         lines.append(
             f"| `{record.path}` | `{record.label or ''}` | `{record.extension}` | {str(record.included).lower()} | "
-            f"{record.num_characters} | {record.num_lines} | `{record.reason}` |"
+            f"{record.quality_score} | {record.num_characters} | {record.num_lines} | `{record.reason}` | `{flags}` |"
         )
     lines.append("")
     return "\n".join(lines)
@@ -708,7 +737,9 @@ def _collect_corpus_sources(
     chat_input: str | Path | None = None,
     eval_input: str | Path | None = None,
     dataset_pack: str | Path | None = None,
+    min_quality_score: int = 0,
 ) -> _CollectedCorpus:
+    min_quality_score = _clamp_quality_score(min_quality_score)
     pack = load_dataset_pack(dataset_pack) if dataset_pack else None
     input_path, recipe_path, chat_input, eval_input = _apply_dataset_pack(
         pack,
@@ -727,7 +758,7 @@ def _collect_corpus_sources(
     documents: list[str] = []
     records: list[CorpusFileRecord] = []
     for candidate in candidates:
-        text, record = _read_source_candidate(candidate)
+        text, record = _read_source_candidate(candidate, min_quality_score=min_quality_score)
         records.append(record)
         if text is not None:
             documents.append(text)
@@ -742,6 +773,7 @@ def _collect_corpus_sources(
         chat_input=chat_input,
         eval_input=eval_input,
         dataset_pack=str(dataset_pack) if dataset_pack else None,
+        min_quality_score=min_quality_score,
     )
     chat_data = inspect_chat_sft_data(training_command.chat_input)
     eval_data = inspect_chat_eval_data(training_command.eval_input)
@@ -759,6 +791,7 @@ def _collect_corpus_sources(
         chat_data=chat_data,
         eval_data=eval_data,
         warnings=tuple(warnings),
+        min_quality_score=min_quality_score,
     )
 
 
@@ -776,7 +809,10 @@ def _apply_dataset_pack(
     return pack.corpus_input, pack.corpus_recipe, pack.chat_input, pack.eval_input
 
 
-def _read_source_candidate(candidate: _SourceCandidate) -> tuple[str | None, CorpusFileRecord]:
+def _read_source_candidate(
+    candidate: _SourceCandidate,
+    min_quality_score: int = 0,
+) -> tuple[str | None, CorpusFileRecord]:
     file_path = candidate.path
     extension = file_path.suffix.lower()
     if candidate.skipped_reason:
@@ -787,6 +823,8 @@ def _read_source_candidate(candidate: _SourceCandidate) -> tuple[str | None, Cor
             num_lines=0,
             included=False,
             reason=candidate.skipped_reason,
+            quality_score=0,
+            quality_flags=(candidate.skipped_reason,),
             label=candidate.label,
         )
 
@@ -798,6 +836,8 @@ def _read_source_candidate(candidate: _SourceCandidate) -> tuple[str | None, Cor
             num_lines=0,
             included=False,
             reason="unsupported_extension",
+            quality_score=0,
+            quality_flags=("unsupported_extension",),
             label=candidate.label,
         )
 
@@ -811,6 +851,8 @@ def _read_source_candidate(candidate: _SourceCandidate) -> tuple[str | None, Cor
             num_lines=0,
             included=False,
             reason=error.reason,
+            quality_score=0,
+            quality_flags=(error.reason,),
             label=candidate.label,
         )
 
@@ -824,6 +866,22 @@ def _read_source_candidate(candidate: _SourceCandidate) -> tuple[str | None, Cor
             num_lines=0,
             included=False,
             reason=empty_reason,
+            quality_score=0,
+            quality_flags=(empty_reason,),
+            label=candidate.label,
+        )
+
+    quality_score, quality_flags = _score_source_text(text, included_reason)
+    if quality_score < min_quality_score:
+        return None, CorpusFileRecord(
+            path=str(file_path),
+            extension=extension,
+            num_characters=len(text),
+            num_lines=len(text.splitlines()),
+            included=False,
+            reason="below_min_score",
+            quality_score=quality_score,
+            quality_flags=(*quality_flags, "below_min_score"),
             label=candidate.label,
         )
 
@@ -834,8 +892,62 @@ def _read_source_candidate(candidate: _SourceCandidate) -> tuple[str | None, Cor
         num_lines=len(text.splitlines()),
         included=True,
         reason=included_reason,
+        quality_score=quality_score,
+        quality_flags=quality_flags,
         label=candidate.label,
     )
+
+
+def _score_source_text(text: str, included_reason: str) -> tuple[int, tuple[str, ...]]:
+    """Score one source with explainable local heuristics."""
+    lines = text.splitlines()
+    non_empty_lines = [line.strip() for line in lines if line.strip()]
+    duplicate_lines = len(non_empty_lines) - len(set(non_empty_lines))
+    duplicate_rate = duplicate_lines / max(1, len(non_empty_lines))
+    empty_rate = sum(1 for line in lines if not line.strip()) / max(1, len(lines))
+    non_ascii_rate = sum(1 for char in text if ord(char) > 127) / max(1, len(text))
+    control_chars = sum(1 for char in text if ord(char) < 32 and char not in "\n\r\t")
+
+    score = 100
+    flags: list[str] = []
+    if len(text) < 200:
+        score -= 25
+        flags.append("short_document")
+    elif len(text) < 1000:
+        score -= 10
+        flags.append("small_document")
+    if len(non_empty_lines) <= 1 and len(text) > 500:
+        score -= 10
+        flags.append("long_single_line")
+    if duplicate_rate > 0.30:
+        score -= 25
+        flags.append("high_duplicate_lines")
+    elif duplicate_rate > 0.10:
+        score -= 10
+        flags.append("duplicate_lines")
+    if empty_rate > 0.50:
+        score -= 10
+        flags.append("many_empty_lines")
+    if non_ascii_rate > 0.10:
+        score -= 15
+        flags.append("high_non_ascii")
+    elif non_ascii_rate > 0.05:
+        score -= 8
+        flags.append("non_ascii")
+    if control_chars or "\ufffd" in text:
+        score -= 25
+        flags.append("extraction_noise")
+    if included_reason in {"included_pdf", "included_docx"} and len(text) < 200:
+        flags.append("short_extraction")
+
+    return max(0, min(100, score)), tuple(flags)
+
+
+def _clamp_quality_score(value: int) -> int:
+    score = int(value)
+    if score < 0 or score > 100:
+        raise ValueError("min_quality_score must be between 0 and 100.")
+    return score
 
 
 def _path_source_candidates(path: Path | None) -> list[_SourceCandidate]:
@@ -987,6 +1099,11 @@ def _extract_docx_text(file_path: Path) -> str:
 def _corpus_warnings(stats: CorpusStats, records: list[CorpusFileRecord]) -> list[str]:
     warnings: list[str] = []
     skipped = [record for record in records if not record.included]
+    filtered = [record for record in skipped if record.reason == "below_min_score"]
+    low_quality = [
+        record for record in records
+        if record.included and record.quality_score < 70
+    ]
     if stats.num_documents == 0:
         warnings.append("No usable text documents were included.")
     if stats.num_characters < 1000:
@@ -999,6 +1116,10 @@ def _corpus_warnings(stats: CorpusStats, records: list[CorpusFileRecord]) -> lis
         warnings.append("Empty line rate is high; context windows may be wasted.")
     if stats.non_ascii_rate > 0.05:
         warnings.append("Non-ASCII rate is high; confirm this is expected for the corpus.")
+    if low_quality:
+        warnings.append(f"{len(low_quality)} included source file(s) scored below 70.")
+    if filtered:
+        warnings.append(f"{len(filtered)} source file(s) were filtered by the minimum quality score.")
     if skipped:
         warnings.append(f"{len(skipped)} source file(s) were skipped.")
     return warnings

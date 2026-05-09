@@ -182,6 +182,10 @@
                   <label for="preview-eval-path">EVAL JSONL</label>
                   <input id="preview-eval-path" type="text" spellcheck="false" placeholder="examples/tiny_eval.jsonl">
                 </div>
+                <div>
+                  <label for="preview-min-score">MIN SCORE</label>
+                  <input id="preview-min-score" type="number" min="0" max="100" value="0">
+                </div>
                 <button id="preview-corpus-button" type="button">PREVIEW SOURCES</button>
               </div>
               <div id="source-preview-status" class="notice">NO SOURCE PREVIEW REQUESTED.</div>
@@ -235,6 +239,10 @@
                 <div>
                   <label for="launch-seed">SEED</label>
                   <input id="launch-seed" type="number" min="0" max="9999" value="42">
+                </div>
+                <div>
+                  <label for="launch-min-score">MIN SCORE</label>
+                  <input id="launch-min-score" type="number" min="0" max="100" value="0">
                 </div>
                 <button id="launch-run-button" type="button">LAUNCH RUN</button>
                 <button id="refresh-run-job-button" type="button">REFRESH LOG</button>
