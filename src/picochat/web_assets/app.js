@@ -832,6 +832,7 @@ async function previewCorpusSources() {
   $("source-preview-status").innerHTML = 'PREVIEWING SOURCES<span class="cursor"></span>';
   $("source-preview-readiness").innerHTML = "";
   $("source-preview-budget").innerHTML = "";
+  $("source-preview-command").innerHTML = "";
   $("source-preview-stats").innerHTML = "";
   $("source-preview-files").innerHTML = "";
   $("source-preview-text").textContent = "";
@@ -850,6 +851,7 @@ function renderCorpusSourcePreview(report) {
     $("source-preview-status").textContent = "NO SOURCE PREVIEW REQUESTED.";
     $("source-preview-readiness").innerHTML = "";
     $("source-preview-budget").innerHTML = "";
+    $("source-preview-command").innerHTML = "";
     $("source-preview-stats").innerHTML = "";
     $("source-preview-files").innerHTML = '<div class="empty">NO PREVIEW PLAN LOADED.</div>';
     $("source-preview-text").textContent = "READY.";
@@ -863,6 +865,7 @@ function renderCorpusSourcePreview(report) {
     `${readinessBadge(report.readiness)} | ${fmtInt(included.length)} INCLUDED | ${fmtInt(skipped)} SKIPPED | ${fmtInt(stats.num_characters)} CHARS`;
   $("source-preview-readiness").innerHTML = renderReadiness(report.readiness);
   $("source-preview-budget").innerHTML = renderBudget(report.budget);
+  $("source-preview-command").innerHTML = renderTrainingCommand(report.training_command);
   $("source-preview-stats").innerHTML = statCards([
     ["Input", report.input_path || "unknown"],
     ["Recipe", report.recipe_path || "none"],
@@ -915,11 +918,25 @@ function renderBudget(budget) {
   `;
 }
 
+function renderTrainingCommand(trainingCommand) {
+  if (!trainingCommand) return "";
+  const command = trainingCommand.command || "# Fix corpus readiness issues before running training.";
+  return `
+    <div class="command-head">
+      <label>SUGGESTED RUN COMMAND</label>
+      ${trainingCommand.command ? copyCommandButton(trainingCommand.command) : ""}
+    </div>
+    <code>${escapeHtml(command)}</code>
+    <p>${escapeHtml(trainingCommand.note || "")}</p>
+  `;
+}
+
 function renderCorpusSourcePreviewError(error) {
   $("preview-corpus-button").disabled = false;
   $("source-preview-status").textContent = "SOURCE PREVIEW FAULT";
   $("source-preview-readiness").innerHTML = "";
   $("source-preview-budget").innerHTML = "";
+  $("source-preview-command").innerHTML = "";
   $("source-preview-stats").innerHTML = "";
   $("source-preview-files").innerHTML = "";
   $("source-preview-text").textContent = `FAULT: ${error.message}`;

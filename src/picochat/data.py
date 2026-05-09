@@ -105,6 +105,16 @@ class CorpusTrainingBudget:
 
 
 @dataclass(frozen=True)
+class CorpusTrainingCommand:
+    out_dir: str
+    command: str
+    note: str
+
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class CorpusBuildReport:
     input_path: str
     output_path: str
@@ -114,6 +124,7 @@ class CorpusBuildReport:
     files: tuple[CorpusFileRecord, ...]
     readiness: CorpusReadiness
     budget: CorpusTrainingBudget
+    training_command: CorpusTrainingCommand
     warnings: tuple[str, ...]
     recipe_path: str | None = None
 
@@ -128,6 +139,7 @@ class CorpusBuildReport:
             "files": [record.to_dict() for record in self.files],
             "readiness": self.readiness.to_dict(),
             "budget": self.budget.to_dict(),
+            "training_command": self.training_command.to_dict(),
             "warnings": list(self.warnings),
         }
 
@@ -140,6 +152,7 @@ class CorpusPreviewReport:
     files: tuple[CorpusFileRecord, ...]
     readiness: CorpusReadiness
     budget: CorpusTrainingBudget
+    training_command: CorpusTrainingCommand
     warnings: tuple[str, ...]
     preview: str
 
@@ -151,6 +164,7 @@ class CorpusPreviewReport:
             "files": [record.to_dict() for record in self.files],
             "readiness": self.readiness.to_dict(),
             "budget": self.budget.to_dict(),
+            "training_command": self.training_command.to_dict(),
             "warnings": list(self.warnings),
             "preview": self.preview,
         }
@@ -165,6 +179,7 @@ class _CollectedCorpus:
     stats: CorpusStats
     readiness: CorpusReadiness
     budget: CorpusTrainingBudget
+    training_command: CorpusTrainingCommand
     warnings: tuple[str, ...]
 
 
@@ -374,6 +389,70 @@ def estimate_training_budget(stats: CorpusStats) -> CorpusTrainingBudget:
     )
 
 
+def suggest_training_command(
+    input_path: str,
+    recipe_path: str | None,
+    budget: CorpusTrainingBudget,
+) -> CorpusTrainingCommand:
+    """Build a copyable first-run command from corpus intake metadata."""
+    out_dir = f"runs/{_slugify_path(recipe_path or input_path)}-v1"
+    if budget.preset == "blocked":
+        return CorpusTrainingCommand(
+            out_dir=out_dir,
+            command="",
+            note="No training command yet; fix blocked corpus readiness checks first.",
+        )
+
+    source_flag = "--corpus-recipe" if recipe_path else "--corpus-input"
+    source_path = recipe_path or input_path
+    command = _shell_command([
+        "PYTHONPATH=src",
+        "python",
+        "-m",
+        "picochat.cli",
+        "run",
+        "tiny",
+        "--out-dir",
+        out_dir,
+        source_flag,
+        source_path,
+        "--chat-input",
+        "examples/tiny_chat.jsonl",
+        "--eval-input",
+        "examples/tiny_eval.jsonl",
+        "--context-size",
+        budget.suggested_context_size,
+        "--base-batch-size",
+        budget.suggested_batch_size,
+        "--base-steps",
+        budget.suggested_base_steps,
+    ])
+    return CorpusTrainingCommand(
+        out_dir=out_dir,
+        command=command,
+        note="Uses default chat/eval examples; replace --chat-input and --eval-input for domain-specific tuning.",
+    )
+
+
+def _slugify_path(path: str) -> str:
+    stem = Path(path).stem or "corpus"
+    slug = "".join(char.lower() if char.isalnum() else "-" for char in stem).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug or "corpus"
+
+
+def _shell_command(parts: list[object]) -> str:
+    return " ".join(_shell_token(part) for part in parts)
+
+
+def _shell_token(value: object) -> str:
+    text = str(value)
+    if text and all(char.isalnum() or char in "_./:=+-" for char in text):
+        return text
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
 def _readiness_check(name: str, status: str, metric: str, threshold: str, message: str) -> CorpusReadinessCheck:
     return CorpusReadinessCheck(
         name=name,
@@ -416,6 +495,7 @@ def build_corpus_artifacts(
         files=collected.files,
         readiness=collected.readiness,
         budget=collected.budget,
+        training_command=collected.training_command,
         warnings=collected.warnings,
         recipe_path=collected.recipe_path,
     )
@@ -442,6 +522,7 @@ def preview_corpus_sources(
         files=collected.files,
         readiness=collected.readiness,
         budget=collected.budget,
+        training_command=collected.training_command,
         warnings=collected.warnings,
         preview=corpus_text[:max(0, preview_chars)],
     )
@@ -499,6 +580,15 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         f"- Rough passes over text: {budget.estimated_passes:.2f}",
         f"- Note: {budget.note}",
         "",
+        "## Suggested Run Command",
+        "",
+        f"- Output run: `{report.training_command.out_dir}`",
+        f"- Note: {report.training_command.note}",
+        "",
+        "```bash",
+        report.training_command.command or "# Fix corpus readiness issues before running training.",
+        "```",
+        "",
         "## Warnings",
         "",
     ])
@@ -552,6 +642,7 @@ def _collect_corpus_sources(
     stats = inspect_documents(documents, num_files=len(candidates))
     readiness = assess_corpus_readiness(stats, records)
     budget = estimate_training_budget(stats)
+    training_command = suggest_training_command(input_display, str(recipe) if recipe else None, budget)
     warnings = _corpus_warnings(stats, records)
     return _CollectedCorpus(
         input_path=input_display,
@@ -561,6 +652,7 @@ def _collect_corpus_sources(
         stats=stats,
         readiness=readiness,
         budget=budget,
+        training_command=training_command,
         warnings=tuple(warnings),
     )
 

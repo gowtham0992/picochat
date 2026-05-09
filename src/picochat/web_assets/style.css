@@ -443,6 +443,14 @@ h2 {
   white-space: pre-wrap;
 }
 
+.command-tape p {
+  color: var(--muted);
+}
+
+.source-command {
+  margin-top: 10px;
+}
+
 .run-doctor {
   border-top: 1px solid var(--line);
   display: grid;

@@ -276,6 +276,16 @@ def print_budget(budget) -> None:
     print(f"- note: {budget.note}")
 
 
+def print_training_command(training_command) -> None:
+    print("\nsuggested run:")
+    print(f"- out_dir: {training_command.out_dir}")
+    print(f"- note: {training_command.note}")
+    if training_command.command:
+        print(training_command.command)
+    else:
+        print("(no command until corpus readiness is unblocked)")
+
+
 def inspect_data(args: argparse.Namespace) -> int:
     stats = inspect_path(args.input)
     print_stats(stats)
@@ -296,6 +306,7 @@ def preview_data(args: argparse.Namespace) -> int:
     print_stats(report.stats)
     print_readiness(report.readiness)
     print_budget(report.budget)
+    print_training_command(report.training_command)
 
     print("\nsource plan:")
     for record in report.files:
@@ -332,6 +343,7 @@ def build_data(args: argparse.Namespace) -> int:
     print_stats(report.stats)
     print_readiness(report.readiness)
     print_budget(report.budget)
+    print_training_command(report.training_command)
     return 0
 
 

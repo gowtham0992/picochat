@@ -151,7 +151,9 @@ conservative: it does not promise a good model, but it tells you whether the
 corpus is blocked, trainable with cautions, or ready for a tiny experiment.
 The budget estimate is also deliberately simple: it assumes the current
 character tokenizer and suggests a starting context size, batch size, and base
-training step count.
+training step count. Picochat also prints a copyable `run tiny` command based
+on that estimate. The command intentionally keeps the default chat/eval files
+visible so you remember to replace them when doing real domain-specific tuning.
 
 Recipe files make the dataset choice reviewable:
 

@@ -72,6 +72,8 @@ def test_build_corpus_artifacts_writes_manifest_and_report(tmp_path):
     assert report.readiness.status == "caution"
     assert report.budget.preset == "smoke"
     assert report.budget.suggested_context_size == 32
+    assert "run tiny" in report.training_command.command
+    assert "--base-steps 100" in report.training_command.command
     assert "source file(s) were skipped" in report.warnings[-1]
 
 
@@ -119,6 +121,7 @@ def test_build_corpus_artifacts_records_missing_document_extractors(tmp_path, mo
     assert report.readiness.status == "blocked"
     assert report.budget.preset == "blocked"
     assert report.budget.suggested_base_steps == 0
+    assert report.training_command.command == ""
 
 
 def test_build_corpus_artifacts_uses_recipe_labels_and_exclusions(tmp_path):
@@ -172,6 +175,8 @@ def test_preview_corpus_sources_is_read_only(tmp_path):
     assert report.readiness.status == "caution"
     assert report.budget.estimated_tokens == len("alpha beta gamma")
     assert report.budget.estimated_windows >= 0
+    assert "--corpus-recipe" in report.training_command.command
+    assert "--context-size 32" in report.training_command.command
     assert {check.name for check in report.readiness.checks} >= {
         "usable_documents",
         "corpus_size",
