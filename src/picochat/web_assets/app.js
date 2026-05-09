@@ -12,6 +12,7 @@ const state = {
   packEditor: null,
   runJob: null,
   runJobs: [],
+  runPresets: {},
   runJobLoaded: false,
   runPollTimer: null,
   tokenTimer: null,
@@ -88,6 +89,7 @@ async function postJson(url, body) {
 
 async function boot() {
   bindControls();
+  await loadRunPresets();
   await loadRuns();
   await loadRunJobs();
 }
@@ -156,6 +158,9 @@ function bindControls() {
   });
   $("cancel-run-job-button").addEventListener("click", () => {
     cancelRunJob().catch((error) => renderRunJobError(error));
+  });
+  $("apply-budget-button").addEventListener("click", () => {
+    applyPreviewBudgetToLauncher();
   });
   $("tokenize-button").addEventListener("click", () => animateTokenizer());
   $("tokenize-sample-button").addEventListener("click", () => {
@@ -827,6 +832,24 @@ function seedPackEditorInputs(config) {
   evalInput.value = config.eval_input || "examples/tiny_eval.jsonl";
 }
 
+async function loadRunPresets() {
+  const payload = await fetchJson("/api/run/presets");
+  state.runPresets = payload.presets || {};
+  renderRunPresetOptions();
+  applyLaunchPreset(true);
+}
+
+function renderRunPresetOptions() {
+  const select = $("launch-preset");
+  const selected = select.value || "smoke";
+  const presets = Object.entries(state.runPresets);
+  if (!presets.length) return;
+  select.innerHTML = presets.map(([key, preset]) => `
+    <option value="${escapeHtml(key)}">${escapeHtml(String(preset.label || key).toUpperCase())}</option>
+  `).join("");
+  select.value = state.runPresets[selected] ? selected : "smoke";
+}
+
 function seedRunLauncherInputs(config) {
   const packInput = $("launch-pack-path");
   const runNameInput = $("launch-run-name");
@@ -1123,17 +1146,28 @@ function editorToTuningInspection(report) {
   };
 }
 
-function applyLaunchPreset() {
+function applyLaunchPreset(quiet = false) {
   const preset = $("launch-preset").value;
-  if (preset === "tiny") {
-    $("launch-context-size").value = 128;
-    $("launch-base-steps").value = 300;
-    $("launch-sft-steps").value = 600;
-  } else {
-    $("launch-context-size").value = 64;
-    $("launch-base-steps").value = 40;
-    $("launch-sft-steps").value = 60;
+  const values = state.runPresets[preset];
+  if (!values) return;
+  $("launch-context-size").value = values.context_size;
+  $("launch-base-steps").value = values.base_steps;
+  $("launch-sft-steps").value = values.sft_steps;
+  if (!quiet) {
+    flashStatus(`APPLIED ${String(values.label || preset).toUpperCase()} PRESET. | ${values.description || ""}`);
   }
+}
+
+function applyPreviewBudgetToLauncher() {
+  const budget = state.corpusSourcePreview?.budget;
+  if (!budget) {
+    flashStatus("BUDGET APPLY FAULT. | Run Source Preview first.");
+    return;
+  }
+  $("launch-context-size").value = budget.suggested_context_size || $("launch-context-size").value;
+  $("launch-base-steps").value = budget.suggested_base_steps || $("launch-base-steps").value;
+  $("launch-sft-steps").value = Math.max(60, Number(budget.suggested_base_steps || 30) * 2);
+  flashStatus(`APPLIED PREVIEW BUDGET. | CTX ${$("launch-context-size").value} | BASE ${$("launch-base-steps").value} | SFT ${$("launch-sft-steps").value}`);
 }
 
 async function launchRun() {
@@ -1147,16 +1181,11 @@ async function launchRun() {
     const payload = await postJson("/api/run/start", {
       dataset_pack: datasetPack,
       run_name: runName,
+      preset: $("launch-preset").value,
       context_size: Number($("launch-context-size").value),
       base_steps: Number($("launch-base-steps").value),
       sft_steps: Number($("launch-sft-steps").value),
-      base_batch_size: 4,
-      sft_batch_size: 4,
       seed: Number($("launch-seed").value),
-      n_embd: $("launch-preset").value === "tiny" ? 64 : 32,
-      n_head: 4,
-      n_layer: $("launch-preset").value === "tiny" ? 2 : 1,
-      eval_max_new_tokens: $("launch-preset").value === "tiny" ? 120 : 80,
     });
     state.runJob = payload.job;
     state.runJobs = payload.jobs || [payload.job];
@@ -1239,6 +1268,7 @@ function renderRunJob(job) {
       <span>LOG ${escapeHtml(job.log_path)}</span>
       <span>SUMMARY ${job.summary_exists ? "READY" : "PENDING"}</span>
       <span>SOURCE ${escapeHtml(job.source || "--")}</span>
+      <span>PRESET ${escapeHtml(job.preset || "--")}</span>
     </div>
     <code>${escapeHtml(job.command || "")}</code>
   `;

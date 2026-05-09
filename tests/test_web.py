@@ -12,6 +12,7 @@ from picochat.web import (
     load_run_detail,
     load_run_report,
     preview_corpus_plan,
+    run_presets_plan,
     run_status_plan,
     save_pack_editor_plan,
     start_run_plan,
@@ -511,11 +512,13 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
         "n_embd": 32,
         "n_head": 4,
         "n_layer": 1,
+        "preset": "smoke",
     })
 
     job = status["job"]
     assert job["state"] == "running"
     assert job["run_name"] == "ui-run"
+    assert job["preset"] == "smoke"
     assert "--dataset-pack" in captured["command"]
     assert str(pack_path) in captured["command"]
     assert captured["kwargs"]["cwd"].name == "picochat"
@@ -621,3 +624,29 @@ def test_cancel_run_plan_terminates_active_job(tmp_path, monkeypatch):
     assert fake_processes[0].terminated is True
     assert cancelled["job"]["state"] == "failed"
     assert cancelled["job"]["can_cancel"] is False
+
+
+def test_run_presets_are_exposed_for_web_launcher():
+    presets = run_presets_plan()["presets"]
+
+    assert presets["smoke"]["base_steps"] < presets["tiny"]["base_steps"]
+    assert presets["small-local"]["n_layer"] >= presets["tiny"]["n_layer"]
+
+
+def test_start_run_plan_rejects_unknown_preset(tmp_path):
+    pack_path = tmp_path / "dataset_pack.json"
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+    (tmp_path / "lesson.txt").write_text("lesson text", encoding="utf-8")
+    (tmp_path / "chat.jsonl").write_text(json.dumps({"user": "hi", "assistant": "hello"}), encoding="utf-8")
+    (tmp_path / "eval.jsonl").write_text(json.dumps({"user": "hi", "must_include": ["hello"]}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="preset must be one of"):
+        start_run_plan(tmp_path / "runs", {
+            "dataset_pack": str(pack_path),
+            "run_name": "bad-preset",
+            "preset": "giant",
+        })

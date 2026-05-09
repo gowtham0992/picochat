@@ -24,6 +24,47 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
 _RUN_JOBS: dict[str, dict] = {}
 _RUN_JOBS_LOCK = threading.Lock()
+RUN_PRESETS = {
+    "smoke": {
+        "label": "Smoke",
+        "description": "Fast CPU sanity check for UI and data wiring.",
+        "context_size": 64,
+        "base_steps": 40,
+        "sft_steps": 60,
+        "base_batch_size": 4,
+        "sft_batch_size": 4,
+        "n_embd": 32,
+        "n_head": 4,
+        "n_layer": 1,
+        "eval_max_new_tokens": 80,
+    },
+    "tiny": {
+        "label": "Tiny",
+        "description": "Default educational tiny run.",
+        "context_size": 128,
+        "base_steps": 300,
+        "sft_steps": 600,
+        "base_batch_size": 8,
+        "sft_batch_size": 7,
+        "n_embd": 64,
+        "n_head": 4,
+        "n_layer": 2,
+        "eval_max_new_tokens": 120,
+    },
+    "small-local": {
+        "label": "Small Local",
+        "description": "Still local, but slower; use after the workflow is proven.",
+        "context_size": 128,
+        "base_steps": 800,
+        "sft_steps": 1200,
+        "base_batch_size": 8,
+        "sft_batch_size": 8,
+        "n_embd": 96,
+        "n_head": 4,
+        "n_layer": 3,
+        "eval_max_new_tokens": 120,
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -325,16 +366,18 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     if out_dir.exists() and any(out_dir.iterdir()):
         raise FileExistsError(f"run output already exists: {out_dir}")
 
-    context_size = _bounded_int(payload.get("context_size", 64), 8, 512)
-    base_steps = _bounded_int(payload.get("base_steps", 40), 1, 2000)
-    sft_steps = _bounded_int(payload.get("sft_steps", 60), 1, 4000)
-    base_batch_size = _bounded_int(payload.get("base_batch_size", 4), 1, 64)
-    sft_batch_size = _bounded_int(payload.get("sft_batch_size", 4), 1, 64)
+    preset_name = _optional_string(payload.get("preset")) or "smoke"
+    preset = _run_preset(preset_name)
+    context_size = _bounded_int(payload.get("context_size", preset["context_size"]), 8, 512)
+    base_steps = _bounded_int(payload.get("base_steps", preset["base_steps"]), 1, 2000)
+    sft_steps = _bounded_int(payload.get("sft_steps", preset["sft_steps"]), 1, 4000)
+    base_batch_size = _bounded_int(payload.get("base_batch_size", preset["base_batch_size"]), 1, 64)
+    sft_batch_size = _bounded_int(payload.get("sft_batch_size", preset["sft_batch_size"]), 1, 64)
     seed = _bounded_int(payload.get("seed", 42), 0, 9999)
-    eval_max_new_tokens = _bounded_int(payload.get("eval_max_new_tokens", 80), 1, 240)
-    n_embd = _bounded_int(payload.get("n_embd", 64), 16, 256)
-    n_head = _bounded_int(payload.get("n_head", 4), 1, 8)
-    n_layer = _bounded_int(payload.get("n_layer", 2), 1, 8)
+    eval_max_new_tokens = _bounded_int(payload.get("eval_max_new_tokens", preset["eval_max_new_tokens"]), 1, 240)
+    n_embd = _bounded_int(payload.get("n_embd", preset["n_embd"]), 16, 256)
+    n_head = _bounded_int(payload.get("n_head", preset["n_head"]), 1, 8)
+    n_layer = _bounded_int(payload.get("n_layer", preset["n_layer"]), 1, 8)
     if n_embd % n_head != 0:
         raise ValueError("n_embd must be divisible by n_head")
 
@@ -397,6 +440,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         "command": _shell_command(*command),
         "started_at": time.time(),
         "process": process,
+        "preset": preset_name,
         "launch_readiness": launch_preview.readiness.to_dict(),
         "launch_tuning": {
             "chat": launch_preview.chat_data.to_dict(),
@@ -457,6 +501,10 @@ def cancel_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     return run_status_plan(job_id, runs_dir)
 
 
+def run_presets_plan() -> dict:
+    return {"presets": RUN_PRESETS}
+
+
 def serve_web(config: WebConfig) -> None:
     """Start the blocking local web server."""
     handler = _make_handler(config)
@@ -512,6 +560,8 @@ def _make_handler(config: WebConfig):
                     query = parse_qs(parsed.query)
                     job_id = query.get("job", [None])[0]
                     self._send_json(run_status_plan(job_id, config.runs_dir))
+                elif parsed.path == "/api/run/presets":
+                    self._send_json(run_presets_plan())
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -615,6 +665,13 @@ def _combined_tuning_status(chat_status: str, eval_status: str) -> str:
     if "caution" in statuses:
         return "caution"
     return "ready"
+
+
+def _run_preset(name: str) -> dict:
+    if name not in RUN_PRESETS:
+        known = ", ".join(sorted(RUN_PRESETS))
+        raise ValueError(f"preset must be one of: {known}")
+    return RUN_PRESETS[name]
 
 
 def _tuning_summary(status: str) -> str:
@@ -767,6 +824,7 @@ def _run_job_status(job: dict) -> dict:
         "can_cancel": state == "running",
         "source": "active",
         "updated_at": time.time(),
+        "preset": job.get("preset"),
         "launch_readiness": job.get("launch_readiness"),
         "launch_tuning": job.get("launch_tuning"),
     }
@@ -814,6 +872,7 @@ def _discover_run_jobs(runs_dir: str | Path, limit: int = 20) -> list[dict]:
             "can_cancel": False,
             "source": "disk",
             "updated_at": updated_at,
+            "preset": None,
             "launch_readiness": None,
             "launch_tuning": None,
         })

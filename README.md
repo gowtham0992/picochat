@@ -200,7 +200,9 @@ The Pack JSONL Editor can load and save those chat/eval files directly, and
 the Run Launcher starts `run tiny` from a dataset pack while streaming a local
 `web_run.log` tail. Web-launched runs stay visible after page reload because
 the workbench rediscovers run folders that contain `web_run.log`; active runs
-can also be cancelled from the launcher.
+can also be cancelled from the launcher. Launcher presets (`smoke`, `tiny`,
+and `small-local`) keep run sizes explicit, and Source Preview's budget
+estimate can be applied directly to the launcher controls.
 
 Pack paths are relative to the pack file unless absolute. Preview a pack:
 
