@@ -7,9 +7,13 @@ from picochat.web import (
     generate_run_text,
     init_dataset_pack_plan,
     inspect_tuning_plan,
+    load_pack_editor_plan,
     load_run_detail,
     load_run_report,
     preview_corpus_plan,
+    run_status_plan,
+    save_pack_editor_plan,
+    start_run_plan,
 )
 
 
@@ -411,3 +415,108 @@ def test_inspect_tuning_plan_rejects_pack_with_overrides(tmp_path):
             "dataset_pack": str(pack_path),
             "chat_input": "other_chat.jsonl",
         })
+
+
+def test_pack_editor_loads_and_saves_pack_jsonl(tmp_path):
+    corpus_path = tmp_path / "lesson.txt"
+    pack_dir = tmp_path / "pack"
+    corpus_path.write_text("lesson", encoding="utf-8")
+    init_report = init_dataset_pack_plan({
+        "name": "editable-pack",
+        "corpus_path": str(corpus_path),
+        "out_dir": str(pack_dir),
+    })
+
+    loaded = load_pack_editor_plan({"dataset_pack": init_report["dataset_pack"]})
+
+    assert loaded["dataset_pack"] == init_report["dataset_pack"]
+    assert "Replace this with a real user question" in loaded["chat_text"]
+    assert loaded["chat_lines"] == 1
+
+    chat_rows = [
+        {"user": f"question {index}", "assistant": f"answer {index}"}
+        for index in range(8)
+    ]
+    eval_rows = [
+        {"user": "q1", "must_include": ["a1"]},
+        {"user": "q2", "must_include": ["a2"]},
+        {"user": "q3", "must_not_include": ["bad"]},
+        {"user": "q4", "answerable": False, "must_include_any": [["unknown"]]},
+    ]
+    saved = save_pack_editor_plan({
+        "dataset_pack": init_report["dataset_pack"],
+        "chat_text": "\n".join(json.dumps(row) for row in chat_rows),
+        "eval_text": "\n".join(json.dumps(row) for row in eval_rows),
+    })
+
+    assert saved["saved"] is True
+    assert saved["status"] == "ready"
+    assert saved["chat_data"]["num_examples"] == 8
+    assert saved["eval_data"]["num_items"] == 4
+    assert (pack_dir / "chat.jsonl").read_text(encoding="utf-8").endswith("\n")
+
+
+def test_pack_editor_rejects_invalid_jsonl_without_overwriting(tmp_path):
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    chat_path.write_text(json.dumps({"user": "hi", "assistant": "hello"}), encoding="utf-8")
+    eval_path.write_text(json.dumps({"user": "hi", "must_include": ["hello"]}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="chat_text line 1"):
+        save_pack_editor_plan({
+            "chat_input": str(chat_path),
+            "eval_input": str(eval_path),
+            "chat_text": "{not-json",
+            "eval_text": eval_path.read_text(encoding="utf-8"),
+        })
+
+    assert chat_path.read_text(encoding="utf-8") == json.dumps({"user": "hi", "assistant": "hello"})
+
+
+def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
+    source_path = tmp_path / "lesson.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    source_path.write_text("lesson", encoding="utf-8")
+    chat_path.write_text(json.dumps({"user": "hi", "assistant": "hello"}), encoding="utf-8")
+    eval_path.write_text(json.dumps({"user": "hi", "must_include": ["hello"]}), encoding="utf-8")
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+    captured = {}
+
+    class FakeProcess:
+        pid = 4321
+
+        def __init__(self, command, **kwargs):
+            captured["command"] = command
+            captured["kwargs"] = kwargs
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr("picochat.web.subprocess.Popen", FakeProcess)
+
+    status = start_run_plan(tmp_path / "runs", {
+        "dataset_pack": str(pack_path),
+        "run_name": "ui run",
+        "context_size": 32,
+        "base_steps": 2,
+        "sft_steps": 3,
+        "seed": 9,
+        "n_embd": 32,
+        "n_head": 4,
+        "n_layer": 1,
+    })
+
+    job = status["job"]
+    assert job["state"] == "running"
+    assert job["run_name"] == "ui-run"
+    assert "--dataset-pack" in captured["command"]
+    assert str(pack_path) in captured["command"]
+    assert captured["kwargs"]["cwd"].name == "picochat"
+    assert (tmp_path / "runs" / "ui-run" / "web_run.log").exists()
+    assert run_status_plan(job["id"])["job"]["pid"] == 4321

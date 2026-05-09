@@ -9,6 +9,10 @@ const state = {
   corpusSourcePreview: null,
   datasetPackInit: null,
   tuningInspection: null,
+  packEditor: null,
+  runJob: null,
+  runJobLoaded: false,
+  runPollTimer: null,
   tokenTimer: null,
   generationTimer: null,
   statusTimer: null,
@@ -132,6 +136,21 @@ function bindControls() {
   });
   $("inspect-tuning-button").addEventListener("click", () => {
     inspectTuningData().catch((error) => renderTuningInspectionError(error));
+  });
+  $("load-editor-button").addEventListener("click", () => {
+    loadPackEditor().catch((error) => renderPackEditorError(error));
+  });
+  $("save-editor-button").addEventListener("click", () => {
+    savePackEditor().catch((error) => renderPackEditorError(error));
+  });
+  $("add-chat-row-button").addEventListener("click", addChatEditorRow);
+  $("add-eval-row-button").addEventListener("click", addEvalEditorRow);
+  $("launch-preset").addEventListener("change", applyLaunchPreset);
+  $("launch-run-button").addEventListener("click", () => {
+    launchRun().catch((error) => renderRunJobError(error));
+  });
+  $("refresh-run-job-button").addEventListener("click", () => {
+    refreshRunJob().catch((error) => renderRunJobError(error));
   });
   $("tokenize-button").addEventListener("click", () => animateTokenizer());
   $("tokenize-sample-button").addEventListener("click", () => {
@@ -736,6 +755,8 @@ function renderDataset() {
   const manifest = state.detail?.corpus_manifest;
   seedPackBuilderInputs(config);
   seedTuningInspectorInputs(config);
+  seedPackEditorInputs(config);
+  seedRunLauncherInputs(config);
   seedSourcePreviewInputs(config);
   $("dataset-summary").textContent = corpus.num_characters
     ? `${fmtInt(corpus.num_characters)} CHARS | ${fmtInt(corpus.num_lines)} LINES`
@@ -763,6 +784,8 @@ function renderDataset() {
   renderCorpusSourcePreview(state.corpusSourcePreview);
   renderDatasetPackInit(state.datasetPackInit);
   renderTuningInspection(state.tuningInspection);
+  renderPackEditor(state.packEditor);
+  renderRunJob(state.runJob);
   $("corpus-preview").textContent = state.detail?.corpus_preview || "NO CORPUS PREVIEW ARTIFACT FOUND.";
 }
 
@@ -786,6 +809,23 @@ function seedTuningInspectorInputs(config) {
   packInput.value = config.dataset_pack || "";
   chatInput.value = config.chat_input || "examples/tiny_chat.jsonl";
   evalInput.value = config.eval_input || "examples/tiny_eval.jsonl";
+}
+
+function seedPackEditorInputs(config) {
+  const packInput = $("editor-pack-path");
+  const chatInput = $("editor-chat-path");
+  const evalInput = $("editor-eval-path");
+  if (packInput.value || chatInput.value || evalInput.value) return;
+  packInput.value = config.dataset_pack || "";
+  chatInput.value = config.chat_input || "examples/tiny_chat.jsonl";
+  evalInput.value = config.eval_input || "examples/tiny_eval.jsonl";
+}
+
+function seedRunLauncherInputs(config) {
+  const packInput = $("launch-pack-path");
+  const runNameInput = $("launch-run-name");
+  if (!packInput.value) packInput.value = config.dataset_pack || "";
+  if (!runNameInput.value) runNameInput.value = suggestedRunName(packInput.value || "picochat");
 }
 
 function seedSourcePreviewInputs(config) {
@@ -832,8 +872,14 @@ async function initDatasetPack() {
     $("tuning-pack-path").value = report.dataset_pack || "";
     $("tuning-chat-path").value = "";
     $("tuning-eval-path").value = "";
+    $("editor-pack-path").value = report.dataset_pack || "";
+    $("editor-chat-path").value = "";
+    $("editor-eval-path").value = "";
+    $("launch-pack-path").value = report.dataset_pack || "";
+    $("launch-run-name").value = suggestedRunName(report.dataset_pack || "picochat");
     renderDatasetPackInit(report);
     inspectTuningData().catch((error) => renderTuningInspectionError(error));
+    loadPackEditor().catch((error) => renderPackEditorError(error));
   } finally {
     $("init-pack-button").disabled = false;
   }
@@ -963,6 +1009,228 @@ function renderTuningInspectionError(error) {
   `;
 }
 
+async function loadPackEditor() {
+  const packPath = $("editor-pack-path").value.trim();
+  const chatInput = $("editor-chat-path").value.trim();
+  const evalInput = $("editor-eval-path").value.trim();
+  $("load-editor-button").disabled = true;
+  $("pack-editor-status").innerHTML = 'LOADING JSONL<span class="cursor"></span>';
+  try {
+    const report = await postJson("/api/pack/editor/load", {
+      dataset_pack: packPath || null,
+      chat_input: packPath ? null : chatInput || null,
+      eval_input: packPath ? null : evalInput || null,
+    });
+    state.packEditor = report;
+    $("editor-chat-jsonl").value = report.chat_text || "";
+    $("editor-eval-jsonl").value = report.eval_text || "";
+    renderPackEditor(report);
+  } finally {
+    $("load-editor-button").disabled = false;
+  }
+}
+
+async function savePackEditor() {
+  const packPath = $("editor-pack-path").value.trim();
+  const chatInput = $("editor-chat-path").value.trim();
+  const evalInput = $("editor-eval-path").value.trim();
+  $("save-editor-button").disabled = true;
+  $("pack-editor-status").innerHTML = 'SAVING JSONL<span class="cursor"></span>';
+  try {
+    const report = await postJson("/api/pack/editor/save", {
+      dataset_pack: packPath || null,
+      chat_input: packPath ? null : chatInput || null,
+      eval_input: packPath ? null : evalInput || null,
+      chat_text: $("editor-chat-jsonl").value,
+      eval_text: $("editor-eval-jsonl").value,
+    });
+    state.packEditor = report;
+    state.tuningInspection = editorToTuningInspection(report);
+    $("tuning-pack-path").value = report.dataset_pack || "";
+    $("tuning-chat-path").value = report.dataset_pack ? "" : report.chat_input || "";
+    $("tuning-eval-path").value = report.dataset_pack ? "" : report.eval_input || "";
+    $("preview-pack-path").value = report.dataset_pack || $("preview-pack-path").value;
+    $("launch-pack-path").value = report.dataset_pack || $("launch-pack-path").value;
+    if (report.dataset_pack && !$("launch-run-name").value) {
+      $("launch-run-name").value = suggestedRunName(report.dataset_pack);
+    }
+    renderPackEditor(report);
+    renderTuningInspection(state.tuningInspection);
+  } finally {
+    $("save-editor-button").disabled = false;
+  }
+}
+
+function renderPackEditor(report) {
+  if (!report) {
+    $("pack-editor-status").textContent = "NO JSONL LOADED.";
+    return;
+  }
+  const saved = report.saved ? "SAVED" : "LOADED";
+  $("pack-editor-status").textContent =
+    `${saved} | CHAT ${fmtInt(report.chat_lines)} LINES | EVAL ${fmtInt(report.eval_lines)} LINES | TUNING ${String(report.status || "--").toUpperCase()}`;
+}
+
+function renderPackEditorError(error) {
+  $("load-editor-button").disabled = false;
+  $("save-editor-button").disabled = false;
+  $("pack-editor-status").textContent = `JSONL EDITOR FAULT | ${error.message}`;
+}
+
+function addChatEditorRow() {
+  appendJsonlLine("editor-chat-jsonl", {
+    user: "Replace with a real user question.",
+    assistant: "Replace with the answer you want the model to learn.",
+  });
+}
+
+function addEvalEditorRow() {
+  appendJsonlLine("editor-eval-jsonl", {
+    user: "Replace with a question your model should answer.",
+    category: "starter",
+    answerable: true,
+    must_include: ["Replace with a required phrase"],
+  });
+}
+
+function appendJsonlLine(id, row) {
+  const field = $(id);
+  const prefix = field.value.trim() ? `${field.value.trimEnd()}\n` : "";
+  field.value = `${prefix}${JSON.stringify(row)}`;
+}
+
+function editorToTuningInspection(report) {
+  return {
+    status: report.status,
+    summary: report.summary,
+    training_ready: report.status === "ready",
+    can_train: report.status !== "blocked",
+    dataset_pack: report.dataset_pack || null,
+    chat_input: report.chat_input || null,
+    eval_input: report.eval_input || null,
+    chat_data: report.chat_data,
+    eval_data: report.eval_data,
+    next_actions: report.next_actions || [],
+    preview_command: report.dataset_pack
+      ? shellCommand(["PYTHONPATH=src", "python", "-m", "picochat.cli", "data", "preview", "--dataset-pack", report.dataset_pack])
+      : null,
+  };
+}
+
+function applyLaunchPreset() {
+  const preset = $("launch-preset").value;
+  if (preset === "tiny") {
+    $("launch-context-size").value = 128;
+    $("launch-base-steps").value = 300;
+    $("launch-sft-steps").value = 600;
+  } else {
+    $("launch-context-size").value = 64;
+    $("launch-base-steps").value = 40;
+    $("launch-sft-steps").value = 60;
+  }
+}
+
+async function launchRun() {
+  const datasetPack = $("launch-pack-path").value.trim();
+  const runName = $("launch-run-name").value.trim();
+  if (!datasetPack) throw new Error("enter a dataset pack");
+  if (!runName) throw new Error("enter a run name");
+  $("launch-run-button").disabled = true;
+  $("run-launch-status").innerHTML = 'LAUNCHING RUN<span class="cursor"></span>';
+  try {
+    const payload = await postJson("/api/run/start", {
+      dataset_pack: datasetPack,
+      run_name: runName,
+      context_size: Number($("launch-context-size").value),
+      base_steps: Number($("launch-base-steps").value),
+      sft_steps: Number($("launch-sft-steps").value),
+      base_batch_size: 4,
+      sft_batch_size: 4,
+      seed: Number($("launch-seed").value),
+      n_embd: $("launch-preset").value === "tiny" ? 64 : 32,
+      n_head: 4,
+      n_layer: $("launch-preset").value === "tiny" ? 2 : 1,
+      eval_max_new_tokens: $("launch-preset").value === "tiny" ? 120 : 80,
+    });
+    state.runJob = payload.job;
+    state.runJobLoaded = false;
+    renderRunJob(state.runJob);
+    startRunPolling();
+  } finally {
+    $("launch-run-button").disabled = false;
+  }
+}
+
+async function refreshRunJob() {
+  if (!state.runJob?.id) throw new Error("no run job to refresh");
+  const payload = await fetchJson(`/api/run/status?job=${encodeURIComponent(state.runJob.id)}`);
+  state.runJob = payload.job;
+  renderRunJob(state.runJob);
+  if (state.runJob?.state === "running") startRunPolling();
+}
+
+function startRunPolling() {
+  window.clearInterval(state.runPollTimer);
+  state.runPollTimer = window.setInterval(() => {
+    refreshRunJob().catch((error) => {
+      window.clearInterval(state.runPollTimer);
+      state.runPollTimer = null;
+      renderRunJobError(error);
+    });
+  }, 1500);
+}
+
+function renderRunJob(job) {
+  if (!job) {
+    $("run-launch-status").textContent = "NO RUN LAUNCHED.";
+    $("run-launch-command").innerHTML = "";
+    $("run-launch-log").textContent = "READY.";
+    return;
+  }
+  $("run-launch-status").textContent =
+    `RUN ${String(job.state || "--").toUpperCase()} | ${escapeHtml(job.run_name)} | ${fmtLoss(job.elapsed_seconds || 0)}S | PID ${escapeHtml(job.pid || "--")}`;
+  $("run-launch-command").innerHTML = `
+    <div class="command-head">
+      <label>RUN COMMAND</label>
+      ${copyCommandButton(job.command)}
+    </div>
+    <div class="command-meta">
+      <span>OUT ${escapeHtml(job.out_dir)}</span>
+      <span>LOG ${escapeHtml(job.log_path)}</span>
+      <span>SUMMARY ${job.summary_exists ? "READY" : "PENDING"}</span>
+    </div>
+    <code>${escapeHtml(job.command || "")}</code>
+  `;
+  $("run-launch-log").textContent = job.log_tail || "WAITING FOR LOG OUTPUT.";
+  if (job.state !== "running") {
+    window.clearInterval(state.runPollTimer);
+    state.runPollTimer = null;
+    if (!state.runJobLoaded && job.summary_exists) {
+      state.runJobLoaded = true;
+      loadRuns().catch(() => {});
+    }
+  }
+}
+
+function renderRunJobError(error) {
+  $("launch-run-button").disabled = false;
+  $("run-launch-status").textContent = `RUN LAUNCH FAULT | ${error.message}`;
+}
+
+function suggestedRunName(packPath) {
+  const parts = String(packPath || "picochat").split("/").filter(Boolean);
+  const last = parts.at(-1) || "picochat";
+  const parent = parts.length > 1 ? parts.at(-2) : last.replace(/\.[^.]+$/, "");
+  return `${slugify(parent || "picochat")}-v1`;
+}
+
+function slugify(value) {
+  return String(value || "picochat")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "picochat";
+}
+
 function statCards(rows) {
   return rows.map(([label, value]) => `
     <div class="pipeline-stat">
@@ -1051,6 +1319,10 @@ async function previewCorpusSources() {
   });
   state.corpusSourcePreview = report;
   state.tuningInspection = tuningInspectionFromPreview(report);
+  if (report.dataset_pack) {
+    $("launch-pack-path").value = report.dataset_pack;
+    if (!$("launch-run-name").value) $("launch-run-name").value = suggestedRunName(report.dataset_pack);
+  }
   renderCorpusSourcePreview(report);
   renderTuningInspection(state.tuningInspection);
   $("preview-corpus-button").disabled = false;

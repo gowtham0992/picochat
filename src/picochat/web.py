@@ -6,8 +6,14 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.resources
 import json
+import os
 from pathlib import Path
 import shlex
+import subprocess
+import sys
+import threading
+import time
+import uuid
 from urllib.parse import parse_qs, urlparse
 
 from picochat.compare import compare_runs
@@ -15,6 +21,9 @@ from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.generate import GenerateConfig, generate_text_with_trace
 from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
+
+_RUN_JOBS: dict[str, dict] = {}
+_RUN_JOBS_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -269,6 +278,143 @@ def inspect_tuning_plan(payload: dict) -> dict:
     }
 
 
+def load_pack_editor_plan(payload: dict) -> dict:
+    """Load editable chat/eval JSONL text for a dataset pack or explicit paths."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+
+    dataset_pack, chat_input, eval_input = _resolve_tuning_paths(payload)
+    return _pack_editor_payload(dataset_pack, chat_input, eval_input, saved=False)
+
+
+def save_pack_editor_plan(payload: dict) -> dict:
+    """Save edited chat/eval JSONL text and return fresh validation reports."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+
+    dataset_pack, chat_input, eval_input = _resolve_tuning_paths(payload)
+    chat_text = _bounded_text(payload.get("chat_text", ""), "chat_text")
+    eval_text = _bounded_text(payload.get("eval_text", ""), "eval_text")
+    _validate_jsonl_text(chat_text, "chat_text")
+    _validate_jsonl_text(eval_text, "eval_text")
+
+    _write_text_file(chat_input, _normalized_jsonl_text(chat_text))
+    _write_text_file(eval_input, _normalized_jsonl_text(eval_text))
+    return _pack_editor_payload(dataset_pack, chat_input, eval_input, saved=True)
+
+
+def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Start a local tiny run as a background process."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+
+    dataset_pack = _optional_string(payload.get("dataset_pack"))
+    if not dataset_pack:
+        raise ValueError("dataset_pack is required")
+    if not Path(dataset_pack).exists():
+        raise FileNotFoundError(f"missing dataset pack: {dataset_pack}")
+    load_dataset_pack(dataset_pack)
+
+    run_name = _slug(_optional_string(payload.get("run_name")) or _default_run_name(dataset_pack))
+    out_dir = _safe_child(Path(runs_dir), run_name)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise FileExistsError(f"run output already exists: {out_dir}")
+
+    context_size = _bounded_int(payload.get("context_size", 64), 8, 512)
+    base_steps = _bounded_int(payload.get("base_steps", 40), 1, 2000)
+    sft_steps = _bounded_int(payload.get("sft_steps", 60), 1, 4000)
+    base_batch_size = _bounded_int(payload.get("base_batch_size", 4), 1, 64)
+    sft_batch_size = _bounded_int(payload.get("sft_batch_size", 4), 1, 64)
+    seed = _bounded_int(payload.get("seed", 42), 0, 9999)
+    eval_max_new_tokens = _bounded_int(payload.get("eval_max_new_tokens", 80), 1, 240)
+    n_embd = _bounded_int(payload.get("n_embd", 64), 16, 256)
+    n_head = _bounded_int(payload.get("n_head", 4), 1, 8)
+    n_layer = _bounded_int(payload.get("n_layer", 2), 1, 8)
+    if n_embd % n_head != 0:
+        raise ValueError("n_embd must be divisible by n_head")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_path = out_dir / "web_run.log"
+    command = [
+        sys.executable,
+        "-m",
+        "picochat.cli",
+        "run",
+        "tiny",
+        "--out-dir",
+        str(out_dir),
+        "--dataset-pack",
+        dataset_pack,
+        "--context-size",
+        str(context_size),
+        "--n-embd",
+        str(n_embd),
+        "--n-head",
+        str(n_head),
+        "--n-layer",
+        str(n_layer),
+        "--base-steps",
+        str(base_steps),
+        "--sft-steps",
+        str(sft_steps),
+        "--base-batch-size",
+        str(base_batch_size),
+        "--sft-batch-size",
+        str(sft_batch_size),
+        "--seed",
+        str(seed),
+        "--eval-max-new-tokens",
+        str(eval_max_new_tokens),
+        "--device",
+        "cpu",
+    ]
+    log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
+    log_file = log_path.open("a", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=Path.cwd(),
+            env=_child_env(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    finally:
+        log_file.close()
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "id": job_id,
+        "run_name": run_name,
+        "out_dir": str(out_dir),
+        "dataset_pack": dataset_pack,
+        "log_path": str(log_path),
+        "command": _shell_command(*command),
+        "started_at": time.time(),
+        "process": process,
+    }
+    with _RUN_JOBS_LOCK:
+        _RUN_JOBS[job_id] = job
+    return run_status_plan(job_id)
+
+
+def run_status_plan(job_id: str | None = None) -> dict:
+    """Return status and log tail for a background run."""
+    with _RUN_JOBS_LOCK:
+        if job_id:
+            job = _RUN_JOBS.get(job_id)
+            if job is None:
+                raise ValueError(f"unknown run job: {job_id}")
+            jobs = [job]
+        else:
+            jobs = list(_RUN_JOBS.values())
+    statuses = [_run_job_status(job) for job in jobs]
+    return {
+        "jobs": statuses,
+        "job": statuses[-1] if statuses else None,
+    }
+
+
 def serve_web(config: WebConfig) -> None:
     """Start the blocking local web server."""
     handler = _make_handler(config)
@@ -320,6 +466,10 @@ def _make_handler(config: WebConfig):
                     names = query.get("run", [])
                     run_paths = [str(_safe_child(Path(config.runs_dir), name)) for name in names]
                     self._send_json(compare_runs(run_paths))
+                elif parsed.path == "/api/run/status":
+                    query = parse_qs(parsed.query)
+                    job_id = query.get("job", [None])[0]
+                    self._send_json(run_status_plan(job_id))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -336,6 +486,12 @@ def _make_handler(config: WebConfig):
                     self._send_json(init_dataset_pack_plan(self._read_json_body()))
                 elif parsed.path == "/api/tuning/inspect":
                     self._send_json(inspect_tuning_plan(self._read_json_body()))
+                elif parsed.path == "/api/pack/editor/load":
+                    self._send_json(load_pack_editor_plan(self._read_json_body()))
+                elif parsed.path == "/api/pack/editor/save":
+                    self._send_json(save_pack_editor_plan(self._read_json_body()))
+                elif parsed.path == "/api/run/start":
+                    self._send_json(start_run_plan(config.runs_dir, self._read_json_body()))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -437,6 +593,139 @@ def _tuning_next_actions(chat_data, eval_data, from_pack: bool) -> list[str]:
     if from_pack:
         actions.append("Run Source Preview next to inspect corpus readiness and get the training command.")
     return actions
+
+
+def _resolve_tuning_paths(payload: dict) -> tuple[str | None, str, str]:
+    dataset_pack = _optional_string(payload.get("dataset_pack"))
+    chat_input = _optional_string(payload.get("chat_input"))
+    eval_input = _optional_string(payload.get("eval_input"))
+    if dataset_pack:
+        if chat_input or eval_input:
+            raise ValueError("dataset_pack cannot be combined with chat_input or eval_input")
+        pack = load_dataset_pack(dataset_pack)
+        return dataset_pack, pack.chat_input, pack.eval_input
+    return None, chat_input or DEFAULT_CHAT_INPUT, eval_input or DEFAULT_EVAL_INPUT
+
+
+def _pack_editor_payload(dataset_pack: str | None, chat_input: str, eval_input: str, saved: bool) -> dict:
+    chat_text, chat_truncated = _read_editable_text(chat_input)
+    eval_text, eval_truncated = _read_editable_text(eval_input)
+    chat_data = inspect_chat_sft_data(chat_input)
+    eval_data = inspect_chat_eval_data(eval_input)
+    status = _combined_tuning_status(chat_data.status, eval_data.status)
+    return {
+        "saved": saved,
+        "status": status,
+        "summary": _tuning_summary(status),
+        "dataset_pack": dataset_pack,
+        "chat_input": chat_input,
+        "eval_input": eval_input,
+        "chat_text": chat_text,
+        "eval_text": eval_text,
+        "chat_truncated": chat_truncated,
+        "eval_truncated": eval_truncated,
+        "chat_lines": _line_count(chat_text),
+        "eval_lines": _line_count(eval_text),
+        "chat_data": chat_data.to_dict(),
+        "eval_data": eval_data.to_dict(),
+        "next_actions": _tuning_next_actions(chat_data, eval_data, bool(dataset_pack)),
+    }
+
+
+def _read_editable_text(path: str, limit: int = 200_000) -> tuple[str, bool]:
+    source = Path(path)
+    if not source.exists():
+        return "", False
+    if not source.is_file():
+        raise ValueError(f"path is not a file: {path}")
+    text = source.read_text(encoding="utf-8")
+    if len(text) > limit:
+        return text[:limit], True
+    return text, False
+
+
+def _bounded_text(value: object, field: str, limit: int = 300_000) -> str:
+    text = str(value or "")
+    if len(text) > limit:
+        raise ValueError(f"{field} is too large for the web editor")
+    return text
+
+
+def _validate_jsonl_text(text: str, field: str) -> None:
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            value = json.loads(stripped)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"{field} line {line_number} is invalid JSON: {error}") from error
+        if not isinstance(value, dict):
+            raise ValueError(f"{field} line {line_number} must be a JSON object")
+
+
+def _normalized_jsonl_text(text: str) -> str:
+    stripped = text.strip()
+    return f"{stripped}\n" if stripped else ""
+
+
+def _write_text_file(path: str, text: str) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+
+
+def _line_count(text: str) -> int:
+    return len([line for line in text.splitlines() if line.strip()])
+
+
+def _slug(value: str) -> str:
+    slug = "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug or "pico-run"
+
+
+def _default_run_name(dataset_pack: str) -> str:
+    pack_path = Path(dataset_pack)
+    base = pack_path.parent.name if pack_path.parent.name else pack_path.stem
+    return f"{base}-run"
+
+
+def _child_env() -> dict[str, str]:
+    env = os.environ.copy()
+    src_path = str(Path.cwd() / "src")
+    current = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{current}" if current else src_path
+    return env
+
+
+def _run_job_status(job: dict) -> dict:
+    process = job["process"]
+    returncode = process.poll()
+    state = "running" if returncode is None else "succeeded" if returncode == 0 else "failed"
+    summary_path = Path(job["out_dir"]) / "summary.json"
+    return {
+        "id": job["id"],
+        "run_name": job["run_name"],
+        "out_dir": job["out_dir"],
+        "dataset_pack": job["dataset_pack"],
+        "log_path": job["log_path"],
+        "command": job["command"],
+        "pid": process.pid,
+        "state": state,
+        "returncode": returncode,
+        "elapsed_seconds": max(0, round(time.time() - job["started_at"], 1)),
+        "summary_exists": summary_path.exists(),
+        "log_tail": _read_log_tail(Path(job["log_path"])),
+    }
+
+
+def _read_log_tail(path: Path, limit: int = 12000) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return text[-limit:]
 
 
 def _read_json_if_exists(path: Path) -> dict | None:

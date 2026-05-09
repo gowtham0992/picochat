@@ -736,6 +736,39 @@ h2 {
   margin-bottom: 10px;
 }
 
+.pack-editor-controls {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, 1fr) minmax(150px, 1fr) auto auto;
+  margin-bottom: 10px;
+}
+
+.run-launch-controls {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(130px, 1fr) 90px repeat(4, 92px) auto auto;
+  margin-bottom: 10px;
+}
+
+.editor-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.jsonl-editor {
+  min-height: 230px;
+  white-space: pre;
+}
+
+.run-log {
+  max-height: 320px;
+  overflow: auto;
+}
+
 .pack-builder-controls {
   align-items: end;
   display: grid;
@@ -1290,6 +1323,9 @@ th {
   .budget-grid,
   .preview-controls,
   .tuning-inspector-controls,
+  .pack-editor-controls,
+  .run-launch-controls,
+  .editor-grid,
   .pack-builder-controls,
   .pack-file-list,
   .tuning-preflight,

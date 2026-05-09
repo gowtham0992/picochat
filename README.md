@@ -72,7 +72,7 @@ not show fake training data.
 
 - **Factory Flow:** the real pipeline from dataset to report.
 - **Dataset Bay:** corpus stats, quality checks, training windows, pack builder,
-  tuning-data inspection, and preview.
+  JSONL editor, tuning-data inspection, run launcher, and preview.
 - **Tokenizer Lab:** character-to-token-ID inspection from the trained tokenizer.
 - **Training Dash:** base and SFT loss traces, including memorization warnings.
 - **Generation Deck:** live generation from the selected base or SFT checkpoint.
@@ -196,6 +196,9 @@ with the new `dataset_pack.json` path.
 Dataset Bay also has a Tuning Data Inspector. Point it at a dataset pack, or
 at separate chat/eval JSONL files, to check row schemas, usable example counts,
 eval scoring rules, preview rows, and next actions before running training.
+The Pack JSONL Editor can load and save those chat/eval files directly, and
+the Run Launcher starts `run tiny` from a dataset pack while streaming a local
+`web_run.log` tail.
 
 Pack paths are relative to the pack file unless absolute. Preview a pack:
 

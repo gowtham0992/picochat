@@ -126,6 +126,40 @@
               <div id="tuning-inspector-command" class="command-tape source-command"></div>
             </div>
             <div class="terminal-card dataset-preview-card">
+              <label>PACK JSONL EDITOR</label>
+              <div class="pack-editor-controls">
+                <div>
+                  <label for="editor-pack-path">DATASET PACK</label>
+                  <input id="editor-pack-path" type="text" spellcheck="false" placeholder="examples/tiny_dataset_pack.json">
+                </div>
+                <div>
+                  <label for="editor-chat-path">CHAT SFT JSONL</label>
+                  <input id="editor-chat-path" type="text" spellcheck="false" placeholder="examples/tiny_chat.jsonl">
+                </div>
+                <div>
+                  <label for="editor-eval-path">EVAL JSONL</label>
+                  <input id="editor-eval-path" type="text" spellcheck="false" placeholder="examples/tiny_eval.jsonl">
+                </div>
+                <button id="load-editor-button" type="button">LOAD JSONL</button>
+                <button id="save-editor-button" type="button">SAVE JSONL</button>
+              </div>
+              <div class="button-row">
+                <button id="add-chat-row-button" type="button">ADD CHAT ROW</button>
+                <button id="add-eval-row-button" type="button">ADD EVAL ROW</button>
+              </div>
+              <div id="pack-editor-status" class="notice">NO JSONL LOADED.</div>
+              <div class="editor-grid">
+                <div>
+                  <label for="editor-chat-jsonl">CHAT SFT JSONL</label>
+                  <textarea id="editor-chat-jsonl" class="jsonl-editor" spellcheck="false"></textarea>
+                </div>
+                <div>
+                  <label for="editor-eval-jsonl">EVAL JSONL</label>
+                  <textarea id="editor-eval-jsonl" class="jsonl-editor" spellcheck="false"></textarea>
+                </div>
+              </div>
+            </div>
+            <div class="terminal-card dataset-preview-card">
               <label>SOURCE PREVIEW</label>
               <div class="preview-controls">
                 <div>
@@ -167,6 +201,47 @@
               </div>
               <label>PREVIEW TEXT</label>
               <pre id="source-preview-text">READY.</pre>
+            </div>
+            <div class="terminal-card dataset-preview-card">
+              <label>RUN LAUNCHER</label>
+              <div class="run-launch-controls">
+                <div>
+                  <label for="launch-pack-path">DATASET PACK</label>
+                  <input id="launch-pack-path" type="text" spellcheck="false" placeholder="examples/tiny_dataset_pack.json">
+                </div>
+                <div>
+                  <label for="launch-run-name">RUN NAME</label>
+                  <input id="launch-run-name" type="text" spellcheck="false" placeholder="my-pack-v1">
+                </div>
+                <div>
+                  <label for="launch-preset">PRESET</label>
+                  <select id="launch-preset">
+                    <option value="smoke">SMOKE</option>
+                    <option value="tiny">TINY</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="launch-context-size">CTX</label>
+                  <input id="launch-context-size" type="number" min="8" max="512" value="64">
+                </div>
+                <div>
+                  <label for="launch-base-steps">BASE STEPS</label>
+                  <input id="launch-base-steps" type="number" min="1" max="2000" value="40">
+                </div>
+                <div>
+                  <label for="launch-sft-steps">SFT STEPS</label>
+                  <input id="launch-sft-steps" type="number" min="1" max="4000" value="60">
+                </div>
+                <div>
+                  <label for="launch-seed">SEED</label>
+                  <input id="launch-seed" type="number" min="0" max="9999" value="42">
+                </div>
+                <button id="launch-run-button" type="button">LAUNCH RUN</button>
+                <button id="refresh-run-job-button" type="button">REFRESH LOG</button>
+              </div>
+              <div id="run-launch-status" class="notice">NO RUN LAUNCHED.</div>
+              <div id="run-launch-command" class="command-tape source-command"></div>
+              <pre id="run-launch-log" class="run-log">READY.</pre>
             </div>
             <div class="terminal-card dataset-preview-card">
               <label>RUN CORPUS PREVIEW</label>
