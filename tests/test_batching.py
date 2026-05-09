@@ -1,6 +1,8 @@
+import json
+
 import pytest
 
-from picochat.batching import TokenWindowDataset, load_token_dataset, make_dataloader, split_dataset
+from picochat.batching import TokenWindowDataset, load_token_dataset, load_token_split, make_dataloader, split_dataset
 from picochat.tokenizer import CharTokenizer
 
 
@@ -54,3 +56,63 @@ def test_split_dataset_is_deterministic():
     assert val_a.indices == val_b.indices
     assert len(train_a) + len(val_a) == len(dataset)
     assert len(val_a) >= 1
+
+
+def test_load_token_split_can_hold_out_complete_documents(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    manifest_path = tmp_path / "corpus_manifest.json"
+    docs = [
+        "alpha " * 20,
+        "beta " * 20,
+        "gamma " * 20,
+    ]
+    corpus_text = "\n\n".join(doc.strip() for doc in docs)
+    corpus_path.write_text(f"{corpus_text}\n", encoding="utf-8")
+    CharTokenizer.train([corpus_text]).save(tokenizer_path)
+    offset = 0
+    manifest_docs = []
+    for index, doc in enumerate(doc.strip() for doc in docs):
+        manifest_docs.append({
+            "document_id": index,
+            "path": f"doc-{index}.txt",
+            "char_start": offset,
+            "char_end": offset + len(doc),
+        })
+        offset += len(doc) + 2
+    manifest_path.write_text(json.dumps({"documents": manifest_docs}), encoding="utf-8")
+
+    split = load_token_split(
+        corpus_path,
+        tokenizer_path,
+        context_size=8,
+        val_fraction=0.34,
+        seed=1,
+        split_mode="document",
+        corpus_manifest_path=manifest_path,
+    )
+
+    assert split.stats["split_mode"] == "document"
+    assert split.stats["train_documents"] == 2
+    assert split.stats["val_documents"] == 1
+    assert split.val_text.strip()
+    assert split.val_text not in split.train_text
+
+
+def test_load_token_split_falls_back_to_window_without_document_manifest(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    text = "hello picochat " * 20
+    corpus_path.write_text(text, encoding="utf-8")
+    CharTokenizer.train([text]).save(tokenizer_path)
+
+    split = load_token_split(
+        corpus_path,
+        tokenizer_path,
+        context_size=8,
+        split_mode="document",
+        corpus_manifest_path=tmp_path / "missing.json",
+    )
+
+    assert split.stats["split_mode"] == "window"
+    assert split.stats["split_reason"] == "document_split_unavailable"

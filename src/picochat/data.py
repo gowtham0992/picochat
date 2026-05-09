@@ -75,6 +75,22 @@ class CorpusFileRecord:
 
 
 @dataclass(frozen=True)
+class CorpusDocumentRecord:
+    document_id: int
+    path: str
+    label: str | None
+    char_start: int
+    char_end: int
+    num_characters: int
+    num_lines: int
+    quality_score: int
+    quality_flags: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class CorpusReadinessCheck:
     name: str
     status: str
@@ -146,6 +162,7 @@ class CorpusBuildReport:
     recipe_path: str | None = None
     dataset_pack: str | None = None
     min_quality_score: int = 0
+    documents: tuple[CorpusDocumentRecord, ...] = ()
 
     def to_dict(self) -> dict:
         return {
@@ -156,6 +173,7 @@ class CorpusBuildReport:
             "recipe_path": self.recipe_path,
             "dataset_pack": self.dataset_pack,
             "min_quality_score": self.min_quality_score,
+            "documents": [document.to_dict() for document in self.documents],
             "stats": self.stats.to_dict(),
             "files": [record.to_dict() for record in self.files],
             "readiness": self.readiness.to_dict(),
@@ -207,6 +225,7 @@ class _CollectedCorpus:
     recipe_path: str | None
     dataset_pack: str | None
     documents: tuple[str, ...]
+    document_sources: tuple[CorpusFileRecord, ...]
     files: tuple[CorpusFileRecord, ...]
     stats: CorpusStats
     readiness: CorpusReadiness
@@ -475,6 +494,8 @@ def suggest_training_command(
         budget.suggested_batch_size,
         "--base-steps",
         budget.suggested_base_steps,
+        "--split-mode",
+        "document",
         *(["--min-score", min_quality_score] if min_quality_score else []),
     ])
     note = "Uses the selected chat/eval JSONL files for SFT and scoring."
@@ -561,6 +582,7 @@ def build_corpus_artifacts(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     corpus_text = "\n\n".join(collected.documents)
     output_path.write_text(corpus_text + ("\n" if corpus_text else ""), encoding="utf-8")
+    document_records = _document_records(collected.document_sources, collected.documents)
 
     report = CorpusBuildReport(
         input_path=collected.input_path,
@@ -578,6 +600,7 @@ def build_corpus_artifacts(
         recipe_path=collected.recipe_path,
         dataset_pack=collected.dataset_pack,
         min_quality_score=collected.min_quality_score,
+        documents=document_records,
     )
     if write_manifest:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -708,6 +731,24 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         lines.append("- none")
     lines.extend([
         "",
+        "## Documents",
+        "",
+        "These spans let training hold out complete documents instead of random token windows.",
+        "",
+        "| ID | Source | Label | Chars | Lines | Span | Score |",
+        "| ---: | --- | --- | ---: | ---: | --- | ---: |",
+    ])
+    if report.documents:
+        for document in report.documents:
+            lines.append(
+                f"| {document.document_id} | `{document.path}` | `{document.label or ''}` | "
+                f"{document.num_characters} | {document.num_lines} | "
+                f"{document.char_start}:{document.char_end} | {document.quality_score} |"
+            )
+    else:
+        lines.append("|  | none |  |  |  |  |  |")
+    lines.extend([
+        "",
         "## Files",
         "",
         "| File | Label | Ext | Included | Score | Chars | Lines | Reason | Flags |",
@@ -721,6 +762,30 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         )
     lines.append("")
     return "\n".join(lines)
+
+
+def _document_records(
+    sources: tuple[CorpusFileRecord, ...],
+    documents: tuple[str, ...],
+) -> tuple[CorpusDocumentRecord, ...]:
+    records: list[CorpusDocumentRecord] = []
+    offset = 0
+    for index, (source, text) in enumerate(zip(sources, documents)):
+        char_start = offset
+        char_end = char_start + len(text)
+        records.append(CorpusDocumentRecord(
+            document_id=index,
+            path=source.path,
+            label=source.label,
+            char_start=char_start,
+            char_end=char_end,
+            num_characters=len(text),
+            num_lines=len(text.splitlines()),
+            quality_score=source.quality_score,
+            quality_flags=source.quality_flags,
+        ))
+        offset = char_end + 2
+    return tuple(records)
 
 
 def _source_files(path: Path) -> list[Path]:
@@ -756,12 +821,14 @@ def _collect_corpus_sources(
     input_display = str(input_root) if input_root is not None else str(recipe)
     candidates = _recipe_source_candidates(recipe) if recipe else _path_source_candidates(input_root)
     documents: list[str] = []
+    document_sources: list[CorpusFileRecord] = []
     records: list[CorpusFileRecord] = []
     for candidate in candidates:
         text, record = _read_source_candidate(candidate, min_quality_score=min_quality_score)
         records.append(record)
         if text is not None:
             documents.append(text)
+            document_sources.append(record)
 
     stats = inspect_documents(documents, num_files=len(candidates))
     readiness = assess_corpus_readiness(stats, records)
@@ -783,6 +850,7 @@ def _collect_corpus_sources(
         recipe_path=str(recipe) if recipe else None,
         dataset_pack=str(dataset_pack) if dataset_pack else None,
         documents=tuple(documents),
+        document_sources=tuple(document_sources),
         files=tuple(records),
         stats=stats,
         readiness=readiness,

@@ -788,6 +788,8 @@ function renderDataset() {
     ["Windows", fmtInt(baseDataset.num_sequences)],
     ["Train windows", fmtInt(baseDataset.train_sequences)],
     ["Val windows", fmtInt(baseDataset.val_sequences)],
+    ["Split mode", baseDataset.split_mode || "--"],
+    ["Held-out docs", baseDataset.val_documents == null ? "--" : `${baseDataset.val_documents}/${baseDataset.num_documents}`],
     ["Val fraction", baseDataset.num_sequences ? fmtPercent((baseDataset.val_sequences || 0) / baseDataset.num_sequences) : "--"],
   ]);
   $("corpus-files").innerHTML = renderCorpusFiles(manifest?.files || []);
@@ -1764,13 +1766,15 @@ function renderTraining() {
   const detail = state.detail;
   const baseLosses = detail?.base_report?.losses || [];
   const sftLosses = detail?.sft_report?.losses || [];
+  const baseMemorization = detail?.base_report?.memorization;
   const sftLast = sftLosses.at(-1);
   const overfit = sftLast && sftLast.val_loss > sftLast.train_loss + 1;
-  $("training-badge").textContent = overfit ? "MEMORIZED WARNING" : "LOSS TRACE READY";
-  $("training-badge").classList.toggle("warning", Boolean(overfit));
+  const memorized = baseMemorization?.status === "high" || overfit;
+  $("training-badge").textContent = memorized ? "MEMORIZATION WARNING" : "LOSS TRACE READY";
+  $("training-badge").classList.toggle("warning", Boolean(memorized));
   $("base-loss-chart").textContent = asciiLossChart(baseLosses);
   $("sft-loss-chart").textContent = asciiLossChart(sftLosses);
-  $("training-table").innerHTML = trainingRows(baseLosses, sftLosses);
+  $("training-table").innerHTML = trainingDiagnostics(detail) + trainingRows(baseLosses, sftLosses);
 }
 
 function asciiLossChart(losses) {
@@ -1813,6 +1817,27 @@ function trainingRows(baseLosses, sftLosses) {
         ` : "").join("")}
       </tbody>
     </table>
+  `;
+}
+
+function trainingDiagnostics(detail) {
+  const dataset = detail?.base_report?.dataset || {};
+  const memory = detail?.base_report?.memorization;
+  const loss = detail?.base_report?.loss_diagnostics;
+  if (!memory && !loss && !dataset.split_mode) return "";
+  return `
+    <label>LEARNING CHECKS</label>
+    <div class="stat-grid">
+      ${statCards([
+        ["Split", dataset.split_mode || "--"],
+        ["Held-out docs", dataset.val_documents == null ? "--" : `${dataset.val_documents}/${dataset.num_documents}`],
+        ["Loss status", loss?.status || "--"],
+        ["Copy risk", memory?.status || "--"],
+        ["Train copy", memory ? fmtPercent(memory.train_overlap_rate) : "--"],
+        ["Held-out overlap", memory ? fmtPercent(memory.validation_overlap_rate) : "--"],
+      ])}
+    </div>
+    <p class="notice">${escapeHtml(memory?.summary || loss?.summary || "Diagnostics will appear after the base training report is written.")}</p>
   `;
 }
 

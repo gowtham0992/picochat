@@ -79,6 +79,10 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Training windows: {dataset['num_sequences']}")
     lines.append(f"- Train windows: {dataset['train_sequences']}")
     lines.append(f"- Validation windows: {dataset['val_sequences']}")
+    lines.append(f"- Split mode: `{dataset.get('split_mode', 'window')}`")
+    lines.append(f"- Split reason: {dataset.get('split_reason', 'not recorded')}")
+    if dataset.get("val_documents") is not None:
+        lines.append(f"- Held-out documents: {dataset.get('val_documents')} / {dataset.get('num_documents')}")
     lines.append("")
 
     lines.append("## Model")
@@ -119,6 +123,24 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Validation regression from best step: {format_optional_float(diagnostics['val_regression'])}")
     lines.append(f"- Train loss improvement: {format_optional_float(diagnostics['train_improvement'])}")
     lines.append("")
+
+    if report.get("memorization"):
+        memorization = report["memorization"]
+        lines.append("## Memorization Diagnostics")
+        lines.append("")
+        lines.append(f"- Status: `{memorization['status']}`")
+        lines.append(f"- Summary: {memorization['summary']}")
+        lines.append(f"- N-gram size: {memorization['ngram_size']}")
+        lines.append(f"- Generated tokens checked: {memorization['generated_tokens']}")
+        lines.append(f"- Train overlap rate: {format_float(memorization['train_overlap_rate'] * 100)}%")
+        lines.append(f"- Held-out overlap rate: {format_float(memorization['validation_overlap_rate'] * 100)}%")
+        lines.append(f"- Longest train overlap tokens: {memorization['longest_train_overlap_tokens']}")
+        lines.append(f"- Longest held-out overlap tokens: {memorization['longest_validation_overlap_tokens']}")
+        if memorization.get("canary_hits"):
+            lines.append(f"- Canary hits: {_inline_list(memorization['canary_hits'])}")
+        else:
+            lines.append("- Canary hits: none")
+        lines.append("")
 
     lines.append("## Sample")
     lines.append("")
@@ -357,6 +379,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     artifacts = summary["artifacts"]
     base_diagnostics = base.get("loss_diagnostics", {})
     sft_diagnostics = sft.get("loss_diagnostics", {})
+    base_memorization = base.get("memorization", {})
 
     lines: list[str] = []
     lines.append("# Picochat Tiny Run Summary")
@@ -400,6 +423,9 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     if base_diagnostics:
         lines.append(f"- Base loss status: `{base_diagnostics.get('status', 'unknown')}`")
         lines.append(f"- Base final train/val gap: {format_optional_float(base_diagnostics.get('final_gap'))}")
+    if base_memorization:
+        lines.append(f"- Base memorization status: `{base_memorization.get('status', 'unknown')}`")
+        lines.append(f"- Base train copy rate: {format_float(base_memorization.get('train_overlap_rate', 0.0) * 100)}%")
     if sft_diagnostics:
         lines.append(f"- SFT loss status: `{sft_diagnostics.get('status', 'unknown')}`")
         lines.append(f"- SFT final train/val gap: {format_optional_float(sft_diagnostics.get('final_gap'))}")

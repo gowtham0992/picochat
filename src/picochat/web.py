@@ -420,6 +420,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(seed),
         "--eval-max-new-tokens",
         str(eval_max_new_tokens),
+        "--split-mode",
+        "document",
         "--min-score",
         str(min_quality_score),
         "--device",

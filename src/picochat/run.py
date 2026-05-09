@@ -36,6 +36,7 @@ class TinyRunConfig:
     device: str = "cpu"
     eval_max_new_tokens: int = 120
     min_quality_score: int = 0
+    split_mode: str = "document"
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -81,6 +82,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
         device=config.device,
         log_every=max(1, config.base_steps // 6),
         sample_tokens=160,
+        split_mode=config.split_mode,
+        corpus_manifest_path=corpus_build.manifest_path,
     ))
 
     print("[4/5] train chat SFT")
@@ -137,6 +140,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "final_val_loss": base_report["losses"][-1]["val_loss"],
             "num_parameters": base_report["model"]["num_parameters"],
             "loss_diagnostics": base_report.get("loss_diagnostics", {}),
+            "memorization": base_report.get("memorization", {}),
         },
         "sft": {
             "checkpoint": sft_report["checkpoint"],

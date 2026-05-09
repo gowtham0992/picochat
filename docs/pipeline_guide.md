@@ -37,6 +37,7 @@ What to inspect:
 - empty-line rate
 - source quality scores
 - whether files were filtered by `--min-score`
+- document spans used for whole-document validation holdout
 
 Important idea: a tiny model cannot learn what the dataset does not contain.
 If the corpus is tiny, repeated, noisy, or off-topic, the model will mostly
@@ -111,16 +112,21 @@ What to inspect:
 - validation loss
 - final train/validation gap
 - best validation step
+- split mode: random token windows or held-out complete documents
+- memorization diagnostics: train copy rate, held-out overlap, copied spans, canary hits
 - generated base sample
 
 Important idea: decreasing train loss only means the model is fitting the
 training windows. Validation loss tells you whether that fit is carrying over
-to held-out windows.
+to held-out windows. When `run tiny` has a corpus manifest with multiple
+documents, Picochat prefers document-level holdout so validation text comes
+from complete unseen sources. That is a stronger signal than splitting random
+windows from the same document.
 
 Useful command:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/base --context-size 128 --max-steps 300
+PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --corpus-manifest runs/manual/corpus_manifest.json --split-mode document --out-dir runs/manual/base --context-size 128 --max-steps 300
 ```
 
 ## 4. Chat SFT
@@ -252,10 +258,11 @@ it is not useful yet.
 1. Start with `corpus_report.md`.
 2. Check tokenizer stats and token examples.
 3. Read base loss diagnostics.
-4. Read SFT loss diagnostics.
-5. Check eval pass/fail details.
-6. Compare generated samples with eval results.
-7. Only then increase data size, context length, steps, or model size.
+4. Check base memorization diagnostics and copied-span rates.
+5. Read SFT loss diagnostics.
+6. Check eval pass/fail details.
+7. Compare generated samples with eval results.
+8. Only then increase data size, context length, steps, or model size.
 
 The point of Picochat is controlled learning. Make one change, rerun, compare
 artifacts, and keep the explanation honest.

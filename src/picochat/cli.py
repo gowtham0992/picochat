@@ -244,6 +244,17 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--val-fraction", type=float, default=0.1)
     train_base_parser.add_argument("--eval-batches", type=int, default=10)
     train_base_parser.add_argument("--sample-tokens", type=int, default=120)
+    train_base_parser.add_argument(
+        "--split-mode",
+        choices=("window", "document"),
+        default="window",
+        help="Use random token windows or hold out complete corpus documents when a manifest is available.",
+    )
+    train_base_parser.add_argument(
+        "--corpus-manifest",
+        default=None,
+        help="Path to corpus_manifest.json for document-level holdout.",
+    )
 
     train_sft_parser = train_subparsers.add_parser("sft", help="Fine-tune on chat JSONL.")
     train_sft_parser.add_argument("--input", required=True, help="Path to chat JSONL.")
@@ -321,6 +332,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="Minimum 0-100 source quality score required for a file to enter the training corpus.",
+    )
+    run_tiny_parser.add_argument(
+        "--split-mode",
+        choices=("window", "document"),
+        default="document",
+        help="Base training validation split. 'document' holds out complete corpus documents when possible.",
     )
 
     compare_parser = subparsers.add_parser("compare", help="Compare completed run summaries.")
@@ -591,6 +608,8 @@ def run_train_base(args: argparse.Namespace) -> int:
         val_fraction=args.val_fraction,
         eval_batches=args.eval_batches,
         sample_tokens=args.sample_tokens,
+        split_mode=args.split_mode,
+        corpus_manifest_path=args.corpus_manifest,
     )
     report = train_base(config)
     print(f"saved checkpoint: {report['checkpoint']}")
@@ -695,6 +714,7 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         device=args.device,
         eval_max_new_tokens=args.eval_max_new_tokens,
         min_quality_score=args.min_score,
+        split_mode=args.split_mode,
     ))
     print(
         f"tiny run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "

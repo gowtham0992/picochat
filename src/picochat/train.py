@@ -9,8 +9,9 @@ import time
 
 import torch
 
-from picochat.batching import load_token_dataset, make_dataloader, split_dataset
+from picochat.batching import load_token_split, make_dataloader
 from picochat.checkpoint import save_checkpoint
+from picochat.memorization import memorization_diagnostics
 from picochat.model import GPTConfig, TinyGPT
 from picochat.report import loss_diagnostics, training_report_markdown
 from picochat.tokenizer import CharTokenizer
@@ -35,6 +36,8 @@ class TrainConfig:
     val_fraction: float = 0.1
     eval_batches: int = 10
     sample_tokens: int = 120
+    split_mode: str = "window"
+    corpus_manifest_path: str | None = None
 
 
 @torch.no_grad()
@@ -63,18 +66,17 @@ def train_base(config: TrainConfig) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     tokenizer = CharTokenizer.load(config.tokenizer_path)
-    dataset = load_token_dataset(
-        config.corpus_path,
-        config.tokenizer_path,
+    split = load_token_split(
+        corpus_path=config.corpus_path,
+        tokenizer_path=config.tokenizer_path,
         context_size=config.context_size,
-    )
-    train_dataset, val_dataset = split_dataset(
-        dataset,
         val_fraction=config.val_fraction,
         seed=config.seed,
+        split_mode=config.split_mode,
+        corpus_manifest_path=config.corpus_manifest_path,
     )
-    train_loader = make_dataloader(train_dataset, batch_size=config.batch_size, shuffle=True, seed=config.seed)
-    val_loader = make_dataloader(val_dataset, batch_size=config.batch_size, shuffle=False, seed=config.seed)
+    train_loader = make_dataloader(split.train_dataset, batch_size=config.batch_size, shuffle=True, seed=config.seed)
+    val_loader = make_dataloader(split.val_dataset, batch_size=config.batch_size, shuffle=False, seed=config.seed)
     data_iter = iter(train_loader)
 
     device = torch.device(config.device)
@@ -143,9 +145,7 @@ def train_base(config: TrainConfig) -> dict:
     report = {
         "config": config.__dict__,
         "dataset": {
-            **dataset.stats().__dict__,
-            "train_sequences": len(train_dataset),
-            "val_sequences": len(val_dataset),
+            **split.stats,
         },
         "model": {
             "config": model_config.to_dict(),
@@ -153,6 +153,7 @@ def train_base(config: TrainConfig) -> dict:
         },
         "losses": losses,
         "loss_diagnostics": loss_diagnostics(losses),
+        "memorization": memorization_diagnostics(sample, split.train_text, split.val_text),
         "sample": sample,
         "checkpoint": str(checkpoint_dir),
     }

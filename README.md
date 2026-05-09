@@ -119,6 +119,13 @@ the best step, and a compact status such as `stable`, `watch-gap`, or
 `memorization-risk`. These labels are not magic scores; they are readable
 signals for deciding whether a tiny run is learning or mostly memorizing.
 
+Corpus manifests also record document spans. When a run has at least two
+usable documents, base training can hold out complete documents for validation
+instead of mixing random token windows from the same source. Base reports then
+add memorization diagnostics: generated sample n-gram overlap with training
+text, overlap with held-out text, longest copied span, and any
+`pico-canary-*` strings reproduced by the model.
+
 ## Bring Your Own Corpus
 
 Picochat v1 corpus support is intentionally conservative: local files in
@@ -409,10 +416,9 @@ Near-term v0.1 polish:
 
 After that, dataset and training upgrades should come next:
 
-- Hugging Face dataset import
 - stronger dataset scoring and filtering
 - larger tokenizer option, likely BPE
-- cleaner train/validation split controls
+- richer train/validation split controls
 - longer base pretraining runs
 - better eval suites for unsupported claims
 

@@ -103,6 +103,12 @@ def test_build_corpus_artifacts_writes_manifest_and_report(tmp_path):
     assert "source file(s) were skipped" in report.warnings[-1]
     assert report.files[0].quality_score < 100
     assert "short_document" in report.files[0].quality_flags
+    assert len(report.documents) == 1
+    assert report.documents[0].char_start == 0
+    assert report.documents[0].char_end == len("alpha")
+    manifest = json.loads((output_path.parent / "corpus_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["documents"][0]["path"] == str(input_dir / "a.txt")
+    assert "## Documents" in (output_path.parent / "corpus_report.md").read_text(encoding="utf-8")
 
 
 def test_build_corpus_artifacts_extracts_document_sources(tmp_path, monkeypatch):
