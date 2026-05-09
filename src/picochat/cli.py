@@ -263,6 +263,19 @@ def print_readiness(readiness) -> None:
         )
 
 
+def print_budget(budget) -> None:
+    print("\ntraining budget:")
+    print(f"- preset: {budget.preset}")
+    print(f"- estimated_tokens: {budget.estimated_tokens}")
+    print(f"- suggested_context_size: {budget.suggested_context_size}")
+    print(f"- estimated_windows: {budget.estimated_windows}")
+    print(f"- suggested_batch_size: {budget.suggested_batch_size}")
+    print(f"- suggested_base_steps: {budget.suggested_base_steps}")
+    print(f"- estimated_tokens_per_step: {budget.estimated_tokens_per_step}")
+    print(f"- estimated_passes: {budget.estimated_passes:.2f}")
+    print(f"- note: {budget.note}")
+
+
 def inspect_data(args: argparse.Namespace) -> int:
     stats = inspect_path(args.input)
     print_stats(stats)
@@ -282,6 +295,7 @@ def preview_data(args: argparse.Namespace) -> int:
     print(f"files_skipped: {len(skipped)}")
     print_stats(report.stats)
     print_readiness(report.readiness)
+    print_budget(report.budget)
 
     print("\nsource plan:")
     for record in report.files:
@@ -317,6 +331,7 @@ def build_data(args: argparse.Namespace) -> int:
     print(f"report: {report.report_path}")
     print_stats(report.stats)
     print_readiness(report.readiness)
+    print_budget(report.budget)
     return 0
 
 

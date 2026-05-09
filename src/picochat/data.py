@@ -89,6 +89,22 @@ class CorpusReadiness:
 
 
 @dataclass(frozen=True)
+class CorpusTrainingBudget:
+    preset: str
+    estimated_tokens: int
+    suggested_context_size: int
+    estimated_windows: int
+    suggested_batch_size: int
+    suggested_base_steps: int
+    estimated_tokens_per_step: int
+    estimated_passes: float
+    note: str
+
+    def to_dict(self) -> dict[str, float | int | str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class CorpusBuildReport:
     input_path: str
     output_path: str
@@ -97,6 +113,7 @@ class CorpusBuildReport:
     stats: CorpusStats
     files: tuple[CorpusFileRecord, ...]
     readiness: CorpusReadiness
+    budget: CorpusTrainingBudget
     warnings: tuple[str, ...]
     recipe_path: str | None = None
 
@@ -110,6 +127,7 @@ class CorpusBuildReport:
             "stats": self.stats.to_dict(),
             "files": [record.to_dict() for record in self.files],
             "readiness": self.readiness.to_dict(),
+            "budget": self.budget.to_dict(),
             "warnings": list(self.warnings),
         }
 
@@ -121,6 +139,7 @@ class CorpusPreviewReport:
     stats: CorpusStats
     files: tuple[CorpusFileRecord, ...]
     readiness: CorpusReadiness
+    budget: CorpusTrainingBudget
     warnings: tuple[str, ...]
     preview: str
 
@@ -131,6 +150,7 @@ class CorpusPreviewReport:
             "stats": self.stats.to_dict(),
             "files": [record.to_dict() for record in self.files],
             "readiness": self.readiness.to_dict(),
+            "budget": self.budget.to_dict(),
             "warnings": list(self.warnings),
             "preview": self.preview,
         }
@@ -144,6 +164,7 @@ class _CollectedCorpus:
     files: tuple[CorpusFileRecord, ...]
     stats: CorpusStats
     readiness: CorpusReadiness
+    budget: CorpusTrainingBudget
     warnings: tuple[str, ...]
 
 
@@ -303,6 +324,56 @@ def assess_corpus_readiness(
     return CorpusReadiness(status=status, summary=summary, checks=tuple(checks))
 
 
+def estimate_training_budget(stats: CorpusStats) -> CorpusTrainingBudget:
+    """Estimate a conservative first training budget for the current char tokenizer."""
+    estimated_tokens = stats.num_characters
+    if estimated_tokens == 0:
+        context_size = 32
+        batch_size = 1
+        base_steps = 0
+        preset = "blocked"
+        note = "No usable text means there is nothing to train yet."
+    elif estimated_tokens < 1000:
+        context_size = 32
+        batch_size = 4
+        base_steps = 100
+        preset = "smoke"
+        note = "Use this only to test the pipeline; the model will mostly memorize."
+    elif stats.num_documents == 1:
+        context_size = 128
+        batch_size = 8
+        base_steps = 300
+        preset = "overfit-check"
+        note = "Good for checking whether the model can learn one source before adding more documents."
+    elif estimated_tokens < 50000:
+        context_size = 128
+        batch_size = 8
+        base_steps = 500
+        preset = "tiny"
+        note = "Reasonable first tiny run; compare loss, samples, and eval before increasing scale."
+    else:
+        context_size = 256
+        batch_size = 4
+        base_steps = 1000
+        preset = "small-preview"
+        note = "Large enough for a longer local run; start here before trying larger models."
+
+    estimated_windows = max(0, estimated_tokens - context_size)
+    tokens_per_step = context_size * batch_size
+    estimated_passes = (base_steps * tokens_per_step / estimated_tokens) if estimated_tokens else 0.0
+    return CorpusTrainingBudget(
+        preset=preset,
+        estimated_tokens=estimated_tokens,
+        suggested_context_size=context_size,
+        estimated_windows=estimated_windows,
+        suggested_batch_size=batch_size,
+        suggested_base_steps=base_steps,
+        estimated_tokens_per_step=tokens_per_step,
+        estimated_passes=estimated_passes,
+        note=note,
+    )
+
+
 def _readiness_check(name: str, status: str, metric: str, threshold: str, message: str) -> CorpusReadinessCheck:
     return CorpusReadinessCheck(
         name=name,
@@ -344,6 +415,7 @@ def build_corpus_artifacts(
         stats=collected.stats,
         files=collected.files,
         readiness=collected.readiness,
+        budget=collected.budget,
         warnings=collected.warnings,
         recipe_path=collected.recipe_path,
     )
@@ -369,6 +441,7 @@ def preview_corpus_sources(
         stats=collected.stats,
         files=collected.files,
         readiness=collected.readiness,
+        budget=collected.budget,
         warnings=collected.warnings,
         preview=corpus_text[:max(0, preview_chars)],
     )
@@ -411,7 +484,20 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         lines.append(
             f"| `{check.name}` | `{check.status}` | {check.metric} | `{check.threshold}` | {check.message} |"
         )
+    budget = report.budget
     lines.extend([
+        "",
+        "## Training Budget",
+        "",
+        f"- Preset: `{budget.preset}`",
+        f"- Estimated char tokens: {budget.estimated_tokens:,}",
+        f"- Suggested context size: {budget.suggested_context_size}",
+        f"- Estimated training windows: {budget.estimated_windows:,}",
+        f"- Suggested batch size: {budget.suggested_batch_size}",
+        f"- Suggested base steps: {budget.suggested_base_steps}",
+        f"- Estimated tokens per step: {budget.estimated_tokens_per_step:,}",
+        f"- Rough passes over text: {budget.estimated_passes:.2f}",
+        f"- Note: {budget.note}",
         "",
         "## Warnings",
         "",
@@ -465,6 +551,7 @@ def _collect_corpus_sources(
 
     stats = inspect_documents(documents, num_files=len(candidates))
     readiness = assess_corpus_readiness(stats, records)
+    budget = estimate_training_budget(stats)
     warnings = _corpus_warnings(stats, records)
     return _CollectedCorpus(
         input_path=input_display,
@@ -473,6 +560,7 @@ def _collect_corpus_sources(
         files=tuple(records),
         stats=stats,
         readiness=readiness,
+        budget=budget,
         warnings=tuple(warnings),
     )
 

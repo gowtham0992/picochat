@@ -107,6 +107,8 @@ def test_cli_data_preview_from_recipe(tmp_path, capsys):
     assert "source plan:" in output
     assert "readiness:" in output
     assert "readiness checks:" in output
+    assert "training budget:" in output
+    assert "suggested_context_size" in output
     assert "include" in output
     assert "label=lesson" in output
     assert "lesson" in output

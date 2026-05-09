@@ -831,6 +831,7 @@ async function previewCorpusSources() {
   $("preview-corpus-button").disabled = true;
   $("source-preview-status").innerHTML = 'PREVIEWING SOURCES<span class="cursor"></span>';
   $("source-preview-readiness").innerHTML = "";
+  $("source-preview-budget").innerHTML = "";
   $("source-preview-stats").innerHTML = "";
   $("source-preview-files").innerHTML = "";
   $("source-preview-text").textContent = "";
@@ -848,6 +849,7 @@ function renderCorpusSourcePreview(report) {
   if (!report) {
     $("source-preview-status").textContent = "NO SOURCE PREVIEW REQUESTED.";
     $("source-preview-readiness").innerHTML = "";
+    $("source-preview-budget").innerHTML = "";
     $("source-preview-stats").innerHTML = "";
     $("source-preview-files").innerHTML = '<div class="empty">NO PREVIEW PLAN LOADED.</div>';
     $("source-preview-text").textContent = "READY.";
@@ -860,6 +862,7 @@ function renderCorpusSourcePreview(report) {
   $("source-preview-status").textContent =
     `${readinessBadge(report.readiness)} | ${fmtInt(included.length)} INCLUDED | ${fmtInt(skipped)} SKIPPED | ${fmtInt(stats.num_characters)} CHARS`;
   $("source-preview-readiness").innerHTML = renderReadiness(report.readiness);
+  $("source-preview-budget").innerHTML = renderBudget(report.budget);
   $("source-preview-stats").innerHTML = statCards([
     ["Input", report.input_path || "unknown"],
     ["Recipe", report.recipe_path || "none"],
@@ -895,10 +898,28 @@ function renderReadiness(readiness) {
   `;
 }
 
+function renderBudget(budget) {
+  if (!budget) return "";
+  return `
+    <label>TRAINING BUDGET ESTIMATE</label>
+    <div class="budget-grid">
+      <div><strong>${escapeHtml(budget.preset)}</strong><span>preset</span></div>
+      <div><strong>${fmtInt(budget.estimated_tokens)}</strong><span>char-token est</span></div>
+      <div><strong>${escapeHtml(budget.suggested_context_size)}</strong><span>ctx</span></div>
+      <div><strong>${fmtInt(budget.estimated_windows)}</strong><span>windows</span></div>
+      <div><strong>${escapeHtml(budget.suggested_batch_size)}</strong><span>batch</span></div>
+      <div><strong>${escapeHtml(budget.suggested_base_steps)}</strong><span>base steps</span></div>
+      <div><strong>${fmtLoss(budget.estimated_passes)}</strong><span>rough passes</span></div>
+    </div>
+    <p>${escapeHtml(budget.note || "")}</p>
+  `;
+}
+
 function renderCorpusSourcePreviewError(error) {
   $("preview-corpus-button").disabled = false;
   $("source-preview-status").textContent = "SOURCE PREVIEW FAULT";
   $("source-preview-readiness").innerHTML = "";
+  $("source-preview-budget").innerHTML = "";
   $("source-preview-stats").innerHTML = "";
   $("source-preview-files").innerHTML = "";
   $("source-preview-text").textContent = `FAULT: ${error.message}`;

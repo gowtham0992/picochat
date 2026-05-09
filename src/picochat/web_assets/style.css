@@ -743,6 +743,40 @@ h2 {
   color: var(--red);
 }
 
+.budget-panel {
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px;
+}
+
+.budget-panel label {
+  margin-bottom: 0;
+}
+
+.budget-grid {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.budget-grid div {
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 3px;
+  padding: 6px;
+}
+
+.budget-grid strong {
+  color: var(--accent);
+}
+
+.budget-grid span,
+.budget-panel p {
+  color: var(--muted);
+}
+
 .source-list {
   display: grid;
   gap: 8px;
@@ -1113,6 +1147,7 @@ th {
   .stat-grid,
   .readiness-summary,
   .readiness-row,
+  .budget-grid,
   .preview-controls,
   .compare-layout,
   .compare-cards,
