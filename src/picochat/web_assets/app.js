@@ -839,6 +839,7 @@ async function previewCorpusSources() {
   $("source-preview-readiness").innerHTML = "";
   $("source-preview-budget").innerHTML = "";
   $("source-preview-command").innerHTML = "";
+  $("source-preview-tuning").innerHTML = "";
   $("source-preview-stats").innerHTML = "";
   $("source-preview-files").innerHTML = "";
   $("source-preview-text").textContent = "";
@@ -860,6 +861,7 @@ function renderCorpusSourcePreview(report) {
     $("source-preview-readiness").innerHTML = "";
     $("source-preview-budget").innerHTML = "";
     $("source-preview-command").innerHTML = "";
+    $("source-preview-tuning").innerHTML = "";
     $("source-preview-stats").innerHTML = "";
     $("source-preview-files").innerHTML = '<div class="empty">NO PREVIEW PLAN LOADED.</div>';
     $("source-preview-text").textContent = "READY.";
@@ -874,6 +876,7 @@ function renderCorpusSourcePreview(report) {
   $("source-preview-readiness").innerHTML = renderReadiness(report.readiness);
   $("source-preview-budget").innerHTML = renderBudget(report.budget);
   $("source-preview-command").innerHTML = renderTrainingCommand(report.training_command);
+  $("source-preview-tuning").innerHTML = renderTuningPreflight(report.chat_data, report.eval_data);
   $("source-preview-stats").innerHTML = statCards([
     ["Input", report.input_path || "unknown"],
     ["Recipe", report.recipe_path || "none"],
@@ -945,12 +948,82 @@ function renderTrainingCommand(trainingCommand) {
   `;
 }
 
+function renderTuningPreflight(chatData, evalData) {
+  if (!chatData && !evalData) return "";
+  return `
+    <div class="tuning-card ${escapeHtml(chatData?.status || "unknown")}">
+      <div>
+        <label>CHAT SFT PREFLIGHT</label>
+        <strong>${escapeHtml(String(chatData?.status || "--").toUpperCase())}</strong>
+      </div>
+      <p>${escapeHtml(chatData?.summary || "")}</p>
+      <div class="mini-stat-row">
+        <span>${fmtInt(chatData?.num_examples)} usable</span>
+        <span>${fmtInt(chatData?.invalid_rows)} invalid</span>
+        <span>${fmtPercent(chatData?.duplicate_user_rate || 0)} dup prompts</span>
+      </div>
+      ${renderIssues(chatData?.issues || [])}
+      ${renderChatPreview(chatData?.preview || [])}
+    </div>
+    <div class="tuning-card ${escapeHtml(evalData?.status || "unknown")}">
+      <div>
+        <label>EVAL PREFLIGHT</label>
+        <strong>${escapeHtml(String(evalData?.status || "--").toUpperCase())}</strong>
+      </div>
+      <p>${escapeHtml(evalData?.summary || "")}</p>
+      <div class="mini-stat-row">
+        <span>${fmtInt(evalData?.num_items)} items</span>
+        <span>${fmtInt(evalData?.answerable_items)} answerable</span>
+        <span>${fmtInt(evalData?.unanswerable_items)} unanswerable</span>
+        <span>${fmtInt((evalData?.must_include_rules || 0) + (evalData?.must_include_any_groups || 0) + (evalData?.must_not_include_rules || 0))} rules</span>
+      </div>
+      ${renderIssues(evalData?.issues || [])}
+      ${renderEvalPreview(evalData?.preview || [])}
+    </div>
+  `;
+}
+
+function renderIssues(issues) {
+  if (!issues.length) return '<div class="mini-ok">NO SCHEMA ISSUES FOUND.</div>';
+  return `
+    <div class="issue-list">
+      ${issues.slice(0, 4).map((issue) => `
+        <div><strong>LINE ${escapeHtml(issue.line)}</strong> ${escapeHtml(issue.message)}</div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderChatPreview(rows) {
+  if (!rows.length) return "";
+  return `
+    <div class="preview-list">
+      ${rows.map((row) => `
+        <div><strong>U</strong> ${escapeHtml(compactPreview(row.user || "", 90))}</div>
+        <div><strong>A</strong> ${escapeHtml(compactPreview(row.assistant || "", 90))}</div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderEvalPreview(rows) {
+  if (!rows.length) return "";
+  return `
+    <div class="preview-list">
+      ${rows.map((row) => `
+        <div><strong>${escapeHtml(row.category || "eval")}</strong> ${escapeHtml(compactPreview(row.user || "", 120))}</div>
+      `).join("")}
+    </div>
+  `;
+}
+
 function renderCorpusSourcePreviewError(error) {
   $("preview-corpus-button").disabled = false;
   $("source-preview-status").textContent = "SOURCE PREVIEW FAULT";
   $("source-preview-readiness").innerHTML = "";
   $("source-preview-budget").innerHTML = "";
   $("source-preview-command").innerHTML = "";
+  $("source-preview-tuning").innerHTML = "";
   $("source-preview-stats").innerHTML = "";
   $("source-preview-files").innerHTML = "";
   $("source-preview-text").textContent = `FAULT: ${error.message}`;

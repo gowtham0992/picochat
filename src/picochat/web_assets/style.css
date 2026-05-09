@@ -459,6 +459,77 @@ h2 {
   margin-top: 10px;
 }
 
+.tuning-preflight {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.tuning-card {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+}
+
+.tuning-card > div:first-child {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.tuning-card.ready > div:first-child strong {
+  color: var(--green);
+}
+
+.tuning-card.caution > div:first-child strong {
+  color: var(--accent);
+}
+
+.tuning-card.blocked > div:first-child strong {
+  color: var(--red);
+}
+
+.mini-stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mini-stat-row span,
+.mini-ok,
+.issue-list div {
+  border: 1px solid var(--dim-line);
+  color: var(--muted);
+  padding: 3px 5px;
+}
+
+.issue-list {
+  display: grid;
+  gap: 4px;
+}
+
+.issue-list strong {
+  color: var(--red);
+}
+
+.preview-list {
+  border-top: 1px solid var(--dim-line);
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+}
+
+.preview-list div {
+  overflow-wrap: anywhere;
+}
+
+.preview-list strong {
+  color: var(--accent);
+}
+
 .run-doctor {
   border-top: 1px solid var(--line);
   display: grid;
@@ -1165,6 +1236,7 @@ th {
   .readiness-row,
   .budget-grid,
   .preview-controls,
+  .tuning-preflight,
   .compare-layout,
   .compare-cards,
   .eval-summary-cards {

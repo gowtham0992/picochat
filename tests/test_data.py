@@ -59,6 +59,19 @@ def test_build_corpus_artifacts_writes_manifest_and_report(tmp_path):
 
     chat_path = tmp_path / "chat.jsonl"
     eval_path = tmp_path / "eval.jsonl"
+    chat_path.write_text(
+        "\n".join(json.dumps({"user": f"q{index}", "assistant": f"a{index}"}) for index in range(8)),
+        encoding="utf-8",
+    )
+    eval_path.write_text(
+        "\n".join([
+            json.dumps({"user": "q1", "must_include": ["a1"]}),
+            json.dumps({"user": "q2", "must_include": ["a2"]}),
+            json.dumps({"user": "q3", "must_not_include": ["bad"]}),
+            json.dumps({"user": "q4", "answerable": False, "must_include_any": [["unknown"]]}),
+        ]),
+        encoding="utf-8",
+    )
 
     report = build_corpus_artifacts(
         input_dir,
@@ -84,6 +97,8 @@ def test_build_corpus_artifacts_writes_manifest_and_report(tmp_path):
     assert str(chat_path) in report.training_command.command
     assert str(eval_path) in report.training_command.command
     assert "--base-steps 100" in report.training_command.command
+    assert report.chat_data.status == "ready"
+    assert report.eval_data.status == "ready"
     assert f"- Chat SFT input: `{chat_path}`" in (output_path.parent / "corpus_report.md").read_text(encoding="utf-8")
     assert "source file(s) were skipped" in report.warnings[-1]
 

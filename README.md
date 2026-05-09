@@ -161,6 +161,10 @@ PYTHONPATH=src python -m picochat.cli data preview --recipe examples/corpus_reci
 
 If those flags are omitted, the suggested command keeps the default chat/eval
 files visible so you remember to replace them before a real domain-specific run.
+The same preview also preflights both JSONL files: chat SFT rows need string
+`user` and `assistant` fields, while eval rows need a string `user` plus visible
+pass/fail rules such as `must_include`, `must_include_any`, `must_not_include`,
+or `expected`.
 
 Recipe files make the dataset choice reviewable:
 

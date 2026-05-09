@@ -242,4 +242,6 @@ def test_preview_corpus_plan_returns_source_decisions(tmp_path):
     assert report["training_command"]["chat_input"] == "domain/chat.jsonl"
     assert report["training_command"]["eval_input"] == "domain/eval.jsonl"
     assert "--chat-input domain/chat.jsonl" in report["training_command"]["command"]
+    assert report["chat_data"]["status"] == "blocked"
+    assert report["eval_data"]["status"] == "blocked"
     assert not (tmp_path / "corpus_manifest.json").exists()

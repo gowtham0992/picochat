@@ -314,6 +314,31 @@ def print_training_command(training_command) -> None:
         print("(no command until corpus readiness is unblocked)")
 
 
+def print_tuning_data(chat_data, eval_data) -> None:
+    print("\nchat/eval data:")
+    print(
+        f"- chat_sft: {chat_data.status} | {chat_data.num_examples}/{chat_data.num_rows} usable rows "
+        f"| avg_user_chars {chat_data.average_user_chars:.1f} "
+        f"| avg_assistant_chars {chat_data.average_assistant_chars:.1f}"
+    )
+    print(f"  {chat_data.path}: {chat_data.summary}")
+    for issue in chat_data.issues[:3]:
+        print(f"  issue line {issue.line}: {issue.message}")
+    print(
+        f"- eval: {eval_data.status} | {eval_data.num_items}/{eval_data.num_rows} usable rows "
+        f"| answerable {eval_data.answerable_items} "
+        f"| unanswerable {eval_data.unanswerable_items}"
+    )
+    print(
+        f"  rules: include {eval_data.must_include_rules}, "
+        f"include_any {eval_data.must_include_any_groups}, "
+        f"forbidden {eval_data.must_not_include_rules}"
+    )
+    print(f"  {eval_data.path}: {eval_data.summary}")
+    for issue in eval_data.issues[:3]:
+        print(f"  issue line {issue.line}: {issue.message}")
+
+
 def inspect_data(args: argparse.Namespace) -> int:
     stats = inspect_path(args.input)
     print_stats(stats)
@@ -341,6 +366,7 @@ def preview_data(args: argparse.Namespace) -> int:
     print_readiness(report.readiness)
     print_budget(report.budget)
     print_training_command(report.training_command)
+    print_tuning_data(report.chat_data, report.eval_data)
 
     print("\nsource plan:")
     for record in report.files:
@@ -380,6 +406,7 @@ def build_data(args: argparse.Namespace) -> int:
     print_readiness(report.readiness)
     print_budget(report.budget)
     print_training_command(report.training_command)
+    print_tuning_data(report.chat_data, report.eval_data)
     return 0
 
 

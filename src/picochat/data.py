@@ -7,6 +7,13 @@ from fnmatch import fnmatch
 import json
 from pathlib import Path
 
+from picochat.tuning_data import (
+    ChatEvalDataReport,
+    ChatSFTDataReport,
+    inspect_chat_eval_data,
+    inspect_chat_sft_data,
+)
+
 
 TEXT_EXTENSIONS = {
     ".md",
@@ -129,6 +136,8 @@ class CorpusBuildReport:
     readiness: CorpusReadiness
     budget: CorpusTrainingBudget
     training_command: CorpusTrainingCommand
+    chat_data: ChatSFTDataReport
+    eval_data: ChatEvalDataReport
     warnings: tuple[str, ...]
     recipe_path: str | None = None
 
@@ -144,6 +153,8 @@ class CorpusBuildReport:
             "readiness": self.readiness.to_dict(),
             "budget": self.budget.to_dict(),
             "training_command": self.training_command.to_dict(),
+            "chat_data": self.chat_data.to_dict(),
+            "eval_data": self.eval_data.to_dict(),
             "warnings": list(self.warnings),
         }
 
@@ -157,6 +168,8 @@ class CorpusPreviewReport:
     readiness: CorpusReadiness
     budget: CorpusTrainingBudget
     training_command: CorpusTrainingCommand
+    chat_data: ChatSFTDataReport
+    eval_data: ChatEvalDataReport
     warnings: tuple[str, ...]
     preview: str
 
@@ -169,6 +182,8 @@ class CorpusPreviewReport:
             "readiness": self.readiness.to_dict(),
             "budget": self.budget.to_dict(),
             "training_command": self.training_command.to_dict(),
+            "chat_data": self.chat_data.to_dict(),
+            "eval_data": self.eval_data.to_dict(),
             "warnings": list(self.warnings),
             "preview": self.preview,
         }
@@ -184,6 +199,8 @@ class _CollectedCorpus:
     readiness: CorpusReadiness
     budget: CorpusTrainingBudget
     training_command: CorpusTrainingCommand
+    chat_data: ChatSFTDataReport
+    eval_data: ChatEvalDataReport
     warnings: tuple[str, ...]
 
 
@@ -520,6 +537,8 @@ def build_corpus_artifacts(
         readiness=collected.readiness,
         budget=collected.budget,
         training_command=collected.training_command,
+        chat_data=collected.chat_data,
+        eval_data=collected.eval_data,
         warnings=collected.warnings,
         recipe_path=collected.recipe_path,
     )
@@ -549,6 +568,8 @@ def preview_corpus_sources(
         readiness=collected.readiness,
         budget=collected.budget,
         training_command=collected.training_command,
+        chat_data=collected.chat_data,
+        eval_data=collected.eval_data,
         warnings=collected.warnings,
         preview=corpus_text[:max(0, preview_chars)],
     )
@@ -617,6 +638,16 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         report.training_command.command or "# Fix corpus readiness issues before running training.",
         "```",
         "",
+        "## Chat/Eval Data Preflight",
+        "",
+        f"- Chat SFT: `{report.chat_data.status}` - {report.chat_data.summary}",
+        f"- Chat rows: {report.chat_data.num_examples} usable / {report.chat_data.num_rows} non-empty",
+        f"- Eval: `{report.eval_data.status}` - {report.eval_data.summary}",
+        f"- Eval rows: {report.eval_data.num_items} usable / {report.eval_data.num_rows} non-empty",
+        f"- Eval rules: {report.eval_data.must_include_rules} include, "
+        f"{report.eval_data.must_include_any_groups} include-any groups, "
+        f"{report.eval_data.must_not_include_rules} forbidden",
+        "",
         "## Warnings",
         "",
     ])
@@ -679,6 +710,8 @@ def _collect_corpus_sources(
         chat_input=chat_input,
         eval_input=eval_input,
     )
+    chat_data = inspect_chat_sft_data(training_command.chat_input)
+    eval_data = inspect_chat_eval_data(training_command.eval_input)
     warnings = _corpus_warnings(stats, records)
     return _CollectedCorpus(
         input_path=input_display,
@@ -689,6 +722,8 @@ def _collect_corpus_sources(
         readiness=readiness,
         budget=budget,
         training_command=training_command,
+        chat_data=chat_data,
+        eval_data=eval_data,
         warnings=tuple(warnings),
     )
 

@@ -118,6 +118,9 @@ def test_cli_data_preview_from_recipe(tmp_path, capsys):
     assert "chat_input: domain/chat.jsonl" in output
     assert "eval_input: domain/eval.jsonl" in output
     assert "--chat-input domain/chat.jsonl" in output
+    assert "chat/eval data:" in output
+    assert "chat_sft: blocked" in output
+    assert "eval: blocked" in output
     assert "include" in output
     assert "label=lesson" in output
     assert "lesson" in output
