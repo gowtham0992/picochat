@@ -1278,6 +1278,7 @@ function renderRunJob(job) {
     state.runPollTimer = null;
     if (!state.runJobLoaded && job.summary_exists) {
       state.runJobLoaded = true;
+      state.selectedRun = job.run_name;
       loadRuns().catch(() => {});
     }
   }
@@ -1303,6 +1304,10 @@ function renderRunJobList() {
       renderRunJob(job);
       renderRunJobList();
       if (job.state === "running") startRunPolling();
+      if (job.summary_exists) {
+        state.selectedRun = job.run_name;
+        loadRuns().catch((error) => renderRunJobError(error));
+      }
     });
   });
 }
