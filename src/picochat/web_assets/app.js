@@ -855,6 +855,7 @@ function seedRunLauncherInputs(config) {
   const runNameInput = $("launch-run-name");
   if (!packInput.value) packInput.value = config.dataset_pack || "";
   if (!runNameInput.value) runNameInput.value = suggestedRunName(packInput.value || "picochat");
+  else if (runNameExists(runNameInput.value)) runNameInput.value = uniqueRunName(runNameInput.value);
 }
 
 function seedSourcePreviewInputs(config) {
@@ -1216,6 +1217,7 @@ async function loadRunJobs() {
     const refreshed = state.runJobs.find((job) => job.id === state.runJob.id || job.run_name === state.runJob.run_name);
     if (refreshed) state.runJob = refreshed;
   }
+  keepLauncherRunNameFresh();
   renderRunJob(state.runJob);
   renderRunJobList();
   if (state.runJob?.state === "running") startRunPolling();
@@ -1329,7 +1331,7 @@ function suggestedRunName(packPath) {
   const parts = String(packPath || "picochat").split("/").filter(Boolean);
   const last = parts.at(-1) || "picochat";
   const parent = parts.length > 1 ? parts.at(-2) : last.replace(/\.[^.]+$/, "");
-  return `${slugify(parent || "picochat")}-v1`;
+  return uniqueRunName(`${slugify(parent || "picochat")}-v1`);
 }
 
 function slugify(value) {
@@ -1337,6 +1339,36 @@ function slugify(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || "picochat";
+}
+
+function runNameExists(name) {
+  const normalized = String(name || "").trim();
+  if (!normalized) return false;
+  return state.runs.some((run) => run.name === normalized) ||
+    state.runJobs.some((job) => job.run_name === normalized);
+}
+
+function uniqueRunName(base) {
+  const match = String(base || "picochat").trim().match(/^(.*?)-v(\d+)$/);
+  const stem = match ? match[1] : base;
+  const normalized = slugify(stem) || "picochat";
+  const usedNames = new Set([
+    ...state.runs.map((run) => run.name),
+    ...state.runJobs.map((job) => job.run_name),
+  ]);
+  let index = match ? Number(match[2]) : 1;
+  let candidate = `${normalized}-v${index}`;
+  while (usedNames.has(candidate)) {
+    index += 1;
+    candidate = `${normalized}-v${index}`;
+  }
+  return candidate;
+}
+
+function keepLauncherRunNameFresh() {
+  const input = $("launch-run-name");
+  if (!input.value || !runNameExists(input.value)) return;
+  input.value = uniqueRunName(input.value);
 }
 
 function statCards(rows) {
