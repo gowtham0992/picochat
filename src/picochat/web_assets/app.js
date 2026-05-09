@@ -299,7 +299,7 @@ function pipelineStages() {
         ["Characters", fmtInt(corpus.num_characters)],
         ["Duplicate lines", fmtPercent(corpus.duplicate_line_rate || 0)],
       ],
-      note: detail?.corpus_preview ? `Preview: ${detail.corpus_preview.slice(0, 180).replace(/\s+/g, " ")}` : "No corpus preview artifact found.",
+      note: detail?.corpus_preview ? `Preview: ${compactPreview(detail.corpus_preview, 220)}` : "No corpus preview artifact found.",
       command: datasetCommand(config, artifacts),
       ledger: [
         artifactItem("INPUT", "Source", config.corpus_recipe || config.corpus_input || "examples/tiny_corpus.txt"),
@@ -481,6 +481,15 @@ function pipelineStages() {
 
 function artifactItem(role, label, path) {
   return { role, label, path };
+}
+
+function compactPreview(text, maxLength) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  const slice = normalized.slice(0, maxLength + 1);
+  const lastSpace = slice.lastIndexOf(" ");
+  const end = lastSpace > maxLength * 0.6 ? lastSpace : maxLength;
+  return `${normalized.slice(0, end).trim()}...`;
 }
 
 function artifactStatus(path) {
