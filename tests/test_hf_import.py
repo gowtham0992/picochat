@@ -35,14 +35,20 @@ def test_import_hf_dataset_writes_local_corpus_and_reports(tmp_path):
 
     assert calls == [(("demo/dataset", "plain"), {"split": "train[:1%]", "streaming": True})]
     assert out_path.read_text(encoding="utf-8") == "first useful row\n\nsecond useful row with enough text\n"
+    documents_dir = tmp_path / "hf" / "documents"
+    assert (documents_dir / "row-000000.txt").read_text(encoding="utf-8") == "first useful row\n"
+    assert (documents_dir / "row-000004.txt").read_text(encoding="utf-8") == "second useful row with enough text\n"
     assert report.rows_seen == 5
     assert report.rows_written == 2
     assert report.rows_skipped == 3
     assert report.rows[1].reason == "missing_text_column"
     assert report.rows[2].reason == "text_column_not_string"
     assert report.rows[3].reason == "below_min_chars"
+    assert report.rows[0].document_path == str(documents_dir / "row-000000.txt")
+    assert report.documents_dir == str(documents_dir)
     report_json = json.loads((tmp_path / "hf" / "hf_import_report.json").read_text(encoding="utf-8"))
     assert report_json["dataset"] == "demo/dataset"
+    assert report_json["documents_dir"] == str(documents_dir)
     assert (tmp_path / "hf" / "hf_import_report.md").exists()
 
 
@@ -66,6 +72,29 @@ def test_import_hf_dataset_respects_max_rows(tmp_path):
 
     assert report.rows_seen == 2
     assert report.rows_written == 2
+
+
+def test_import_hf_dataset_clears_stale_row_files(tmp_path):
+    def fake_loader(*_args, **_kwargs):
+        return [{"text": "fresh row is long enough"}]
+
+    documents_dir = tmp_path / "docs"
+    documents_dir.mkdir()
+    stale_path = documents_dir / "row-000999.txt"
+    stale_path.write_text("stale", encoding="utf-8")
+
+    import_hf_dataset(
+        HFImportConfig(
+            dataset="demo/dataset",
+            out_path=str(tmp_path / "corpus.txt"),
+            documents_dir=str(documents_dir),
+            min_chars=1,
+        ),
+        loader=fake_loader,
+    )
+
+    assert not stale_path.exists()
+    assert (documents_dir / "row-000000.txt").exists()
 
 
 def test_import_hf_dataset_reports_missing_optional_dependency(tmp_path, monkeypatch):

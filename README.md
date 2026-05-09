@@ -191,7 +191,9 @@ result.
 Install the optional dependency:
 
 ```bash
-pip install -e ".[hf]"
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[hf]"
 ```
 
 Import up to 1,000 streamed rows from a text column:
@@ -200,10 +202,12 @@ Import up to 1,000 streamed rows from a text column:
 PYTHONPATH=src python -m picochat.cli data hf-import --dataset HuggingFaceFW/fineweb-edu --split train --text-column text --max-rows 1000 --out runs/fineweb-edu-sample/corpus.txt
 ```
 
-Then inspect the local corpus before training:
+The import writes both a combined `corpus.txt` and a `documents/` folder with
+one text file per accepted dataset row. Use the folder for preview and training
+when you want document-level holdout checks:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli data preview --input runs/fineweb-edu-sample/corpus.txt
+PYTHONPATH=src python -m picochat.cli data preview --input runs/fineweb-edu-sample/documents
 ```
 
 For repeatable experiments, put the three dataset inputs in one pack:

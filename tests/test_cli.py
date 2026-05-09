@@ -128,6 +128,30 @@ def test_cli_data_preview_from_recipe(tmp_path, capsys):
     assert not (tmp_path / "corpus_manifest.json").exists()
 
 
+def test_cli_data_preview_limits_large_source_plan(tmp_path, capsys):
+    for index in range(30):
+        (tmp_path / f"doc-{index:02d}.txt").write_text(f"document {index} text", encoding="utf-8")
+
+    exit_code = main([
+        "data",
+        "preview",
+        "--input",
+        str(tmp_path),
+        "--preview-chars",
+        "0",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "25 more" not in output
+    assert "5 more source file(s) omitted" in output
+    assert "include" in output
+    assert "score=" in output
+    assert "doc-00.txt" in output
+    assert "doc-29.txt" not in output
+    assert not (tmp_path / "corpus_manifest.json").exists()
+
+
 def test_cli_data_preview_from_dataset_pack(capsys):
     exit_code = main([
         "data",
@@ -189,6 +213,7 @@ def test_cli_data_hf_import_uses_importer(tmp_path, capsys, monkeypatch):
             min_chars=config.min_chars,
             out_path=config.out_path,
             report_path=config.report_path or str(tmp_path / "hf_import_report.json"),
+            documents_dir=config.documents_dir or str(tmp_path / "documents"),
             rows_seen=3,
             rows_written=2,
             rows_skipped=1,
@@ -211,6 +236,8 @@ def test_cli_data_hf_import_uses_importer(tmp_path, capsys, monkeypatch):
         "body",
         "--out",
         str(tmp_path / "corpus.txt"),
+        "--documents-dir",
+        str(tmp_path / "docs"),
         "--max-rows",
         "3",
         "--min-chars",
@@ -223,9 +250,11 @@ def test_cli_data_hf_import_uses_importer(tmp_path, capsys, monkeypatch):
     assert captured["config"].config_name == "plain"
     assert captured["config"].text_column == "body"
     assert captured["config"].streaming is False
+    assert captured["config"].documents_dir == str(tmp_path / "docs")
     output = capsys.readouterr().out
     assert "imported dataset: demo/dataset" in output
     assert "rows_written: 2" in output
+    assert f"documents_dir: {tmp_path / 'docs'}" in output
 
 
 def test_cli_demo_uses_default_pipeline(tmp_path, capsys, monkeypatch):

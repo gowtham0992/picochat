@@ -25,6 +25,9 @@ from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.web import WebConfig, serve_web
 
 
+SOURCE_PLAN_PREVIEW_LIMIT = 25
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pico",
@@ -168,6 +171,11 @@ def build_parser() -> argparse.ArgumentParser:
     data_hf_import.add_argument("--text-column", default="text", help="Column containing training text.")
     data_hf_import.add_argument("--out", required=True, help="Output local corpus text path.")
     data_hf_import.add_argument("--report", default=None, help="Optional JSON report path. Markdown is written beside it.")
+    data_hf_import.add_argument(
+        "--documents-dir",
+        default=None,
+        help="Optional folder for one text file per accepted row. Defaults to a documents folder beside --out.",
+    )
     data_hf_import.add_argument("--max-rows", type=int, default=1000, help="Maximum rows to inspect from the split.")
     data_hf_import.add_argument("--min-chars", type=int, default=20, help="Minimum text length required for a row to be written.")
     data_hf_import.add_argument(
@@ -454,7 +462,8 @@ def preview_data(args: argparse.Namespace) -> int:
     print_tuning_data(report.chat_data, report.eval_data)
 
     print("\nsource plan:")
-    for record in report.files:
+    visible_records = report.files[:SOURCE_PLAN_PREVIEW_LIMIT]
+    for record in visible_records:
         status = "include" if record.included else "skip"
         label = f" label={record.label}" if record.label else ""
         print(
@@ -463,6 +472,9 @@ def preview_data(args: argparse.Namespace) -> int:
             f"lines={record.num_lines} reason={record.reason}"
             f"{' flags=' + ','.join(record.quality_flags) if record.quality_flags else ''}"
         )
+    omitted = len(report.files) - len(visible_records)
+    if omitted:
+        print(f"- ... {omitted} more source file(s) omitted from CLI preview")
 
     if report.warnings:
         print("\nwarnings:")
@@ -529,6 +541,7 @@ def hf_import_data(args: argparse.Namespace) -> int:
         text_column=args.text_column,
         out_path=args.out,
         report_path=args.report,
+        documents_dir=args.documents_dir,
         max_rows=args.max_rows,
         min_chars=args.min_chars,
         streaming=not args.no_streaming,
@@ -542,9 +555,11 @@ def hf_import_data(args: argparse.Namespace) -> int:
     print(f"rows_skipped: {report.rows_skipped}")
     print(f"characters_written: {report.characters_written}")
     print(f"corpus: {report.out_path}")
+    if report.documents_dir:
+        print(f"documents_dir: {report.documents_dir}")
     print(f"report: {report.report_path}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --input {report.out_path}")
+    print(f"PYTHONPATH=src python -m picochat.cli data preview --input {report.documents_dir or report.out_path}")
     return 0
 
 

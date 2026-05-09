@@ -23,6 +23,7 @@ class HFImportConfig:
     min_chars: int = 20
     streaming: bool = True
     report_path: str | None = None
+    documents_dir: str | None = None
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class HFImportRow:
     reason: str
     num_characters: int
     preview: str
+    document_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -48,6 +50,7 @@ class HFImportReport:
     min_chars: int
     out_path: str
     report_path: str
+    documents_dir: str | None
     rows_seen: int
     rows_written: int
     rows_skipped: int
@@ -69,10 +72,12 @@ def import_hf_dataset(config: HFImportConfig, loader: DatasetLoader | None = Non
     _validate_config(config)
     out_path = Path(config.out_path)
     report_path = Path(config.report_path) if config.report_path else out_path.with_name("hf_import_report.json")
+    documents_dir = Path(config.documents_dir) if config.documents_dir else out_path.parent / "documents"
     dataset = _load_dataset(config, loader)
 
     rows: list[HFImportRow] = []
     documents: list[str] = []
+    document_writes: list[tuple[Path, str]] = []
     for index, record in enumerate(dataset):
         if index >= config.max_rows:
             break
@@ -90,18 +95,22 @@ def import_hf_dataset(config: HFImportConfig, loader: DatasetLoader | None = Non
                 preview=_preview(text),
             ))
             continue
+        document_path = documents_dir / f"row-{index:06d}.txt"
         documents.append(text)
+        document_writes.append((document_path, text))
         rows.append(HFImportRow(
             index=index,
             included=True,
             reason="included",
             num_characters=len(text),
             preview=_preview(text),
+            document_path=str(document_path),
         ))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     corpus_text = "\n\n".join(documents)
     out_path.write_text(corpus_text + ("\n" if corpus_text else ""), encoding="utf-8")
+    _write_document_files(documents_dir, document_writes)
 
     report = HFImportReport(
         dataset=config.dataset,
@@ -113,6 +122,7 @@ def import_hf_dataset(config: HFImportConfig, loader: DatasetLoader | None = Non
         min_chars=config.min_chars,
         out_path=str(out_path),
         report_path=str(report_path),
+        documents_dir=str(documents_dir),
         rows_seen=len(rows),
         rows_written=len(documents),
         rows_skipped=len(rows) - len(documents),
@@ -140,26 +150,29 @@ def hf_import_markdown(report: HFImportReport) -> str:
         f"- Rows skipped: {report.rows_skipped}",
         f"- Characters written: {report.characters_written:,}",
         f"- Output corpus: `{report.out_path}`",
+        f"- Output documents: `{report.documents_dir}`" if report.documents_dir else "- Output documents: none",
         "",
         "## Rows",
         "",
-        "| Index | Included | Chars | Reason | Preview |",
-        "| ---: | ---: | ---: | --- | --- |",
+        "| Index | Included | Chars | Reason | Document | Preview |",
+        "| ---: | ---: | ---: | --- | --- | --- |",
     ]
     for row in report.rows[:20]:
         preview = row.preview.replace("|", "\\|")
+        document_path = row.document_path or ""
         lines.append(
-            f"| {row.index} | {str(row.included).lower()} | {row.num_characters} | `{row.reason}` | {preview} |"
+            f"| {row.index} | {str(row.included).lower()} | {row.num_characters} | "
+            f"`{row.reason}` | `{document_path}` | {preview} |"
         )
     if len(report.rows) > 20:
-        lines.append(f"| ... | ... | ... | ... | {len(report.rows) - 20} more row(s) omitted |")
+        lines.append(f"| ... | ... | ... | ... | ... | {len(report.rows) - 20} more row(s) omitted |")
     lines.append("")
     lines.append("## Next")
     lines.append("")
-    lines.append("Preview the imported corpus before training:")
+    lines.append("Preview the imported documents before training so Picochat can see row-level document boundaries:")
     lines.append("")
     lines.append("```bash")
-    lines.append(f"PYTHONPATH=src python -m picochat.cli data preview --input {report.out_path}")
+    lines.append(f"PYTHONPATH=src python -m picochat.cli data preview --input {report.documents_dir or report.out_path}")
     lines.append("```")
     lines.append("")
     return "\n".join(lines)
@@ -206,6 +219,15 @@ def _validate_config(config: HFImportConfig) -> None:
         raise ValueError("max_rows must be at least 1")
     if config.min_chars < 1:
         raise ValueError("min_chars must be at least 1")
+
+
+def _write_document_files(documents_dir: Path, documents: list[tuple[Path, str]]) -> None:
+    documents_dir.mkdir(parents=True, exist_ok=True)
+    for stale_path in documents_dir.glob("row-*.txt"):
+        if stale_path.is_file():
+            stale_path.unlink()
+    for document_path, text in documents:
+        document_path.write_text(text + "\n", encoding="utf-8")
 
 
 def _preview(text: str, limit: int = 90) -> str:
