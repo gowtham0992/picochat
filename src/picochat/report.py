@@ -293,6 +293,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Base steps: {config['base_steps']}")
     lines.append(f"- SFT steps: {config['sft_steps']}")
     lines.append(f"- Device: `{config['device']}`")
+    if config.get("dataset_pack"):
+        lines.append(f"- Dataset pack: `{config['dataset_pack']}`")
     lines.append("")
 
     lines.append("## Losses")
@@ -306,6 +308,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
 
     lines.append("## Artifacts")
     lines.append("")
+    if artifacts.get("dataset_pack"):
+        lines.append(f"- Dataset pack: `{artifacts['dataset_pack']}`")
     lines.append(f"- Corpus: `{artifacts['corpus']}`")
     lines.append(f"- Tokenizer: `{artifacts['tokenizer']}`")
     lines.append(f"- Base report: `{artifacts['base_report']}`")

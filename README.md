@@ -166,6 +166,30 @@ The same preview also preflights both JSONL files: chat SFT rows need string
 pass/fail rules such as `must_include`, `must_include_any`, `must_not_include`,
 or `expected`.
 
+For repeatable experiments, put the three dataset inputs in one pack:
+
+```json
+{
+  "name": "my-domain-pack",
+  "description": "Corpus, chat SFT, and eval files for one tiny run.",
+  "corpus": {"recipe": "corpus_recipe.json"},
+  "chat": "chat.jsonl",
+  "eval": "eval.jsonl"
+}
+```
+
+Pack paths are relative to the pack file unless absolute. Preview a pack:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tiny_dataset_pack.json
+```
+
+Run the full tiny pipeline from the pack:
+
+```bash
+PYTHONPATH=src python -m picochat.cli run tiny --dataset-pack examples/tiny_dataset_pack.json --out-dir runs/tiny-pack-v1
+```
+
 Recipe files make the dataset choice reviewable:
 
 ```json
@@ -208,6 +232,12 @@ Or run the full tiny pipeline directly from a recipe:
 PYTHONPATH=src python -m picochat.cli run tiny --corpus-recipe examples/corpus_recipe.json --out-dir runs/my-docs-v1
 ```
 
+Or use a dataset pack so corpus, chat SFT, and eval move together:
+
+```bash
+PYTHONPATH=src python -m picochat.cli run tiny --dataset-pack examples/tiny_dataset_pack.json --out-dir runs/tiny-pack-v1
+```
+
 Use only text you have permission to use. For local experiments, this can be
 your own notes, internal documents you are allowed to process, public-domain
 text, or permissively licensed material. Do not redistribute corpora or models
@@ -232,6 +262,7 @@ Inspect and build a corpus:
 ```bash
 PYTHONPATH=src python -m picochat.cli data inspect --input examples/tiny_corpus.txt
 PYTHONPATH=src python -m picochat.cli data build --input examples/tiny_corpus.txt --out runs/manual/corpus.txt
+PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tiny_dataset_pack.json
 ```
 
 Train a tokenizer:

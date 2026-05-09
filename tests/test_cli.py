@@ -127,6 +127,24 @@ def test_cli_data_preview_from_recipe(tmp_path, capsys):
     assert not (tmp_path / "corpus_manifest.json").exists()
 
 
+def test_cli_data_preview_from_dataset_pack(capsys):
+    exit_code = main([
+        "data",
+        "preview",
+        "--dataset-pack",
+        "examples/tiny_dataset_pack.json",
+        "--preview-chars",
+        "6",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "dataset_pack: examples/tiny_dataset_pack.json" in output
+    assert "--dataset-pack examples/tiny_dataset_pack.json" in output
+    assert "chat_sft: ready" in output
+    assert "eval: ready" in output
+
+
 def test_cli_demo_uses_default_pipeline(tmp_path, capsys, monkeypatch):
     captured = {}
 

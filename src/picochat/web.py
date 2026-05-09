@@ -159,10 +159,11 @@ def preview_corpus_plan(payload: dict) -> dict:
 
     input_path = _optional_string(payload.get("input_path"))
     recipe_path = _optional_string(payload.get("recipe_path"))
+    dataset_pack = _optional_string(payload.get("dataset_pack"))
     chat_input = _optional_string(payload.get("chat_input"))
     eval_input = _optional_string(payload.get("eval_input"))
-    if not input_path and not recipe_path:
-        raise ValueError("input_path or recipe_path is required")
+    if not input_path and not recipe_path and not dataset_pack:
+        raise ValueError("input_path, recipe_path, or dataset_pack is required")
 
     preview_chars = _bounded_int(payload.get("preview_chars", 1200), 0, 10000)
     return preview_corpus_sources(
@@ -171,6 +172,7 @@ def preview_corpus_plan(payload: dict) -> dict:
         preview_chars=preview_chars,
         chat_input=chat_input,
         eval_input=eval_input,
+        dataset_pack=dataset_pack,
     ).to_dict()
 
 
@@ -382,6 +384,7 @@ def _load_artifact_inventory(run_dir: Path, summary: dict) -> dict:
     sft_checkpoint = Path(summary.get("sft", {}).get("checkpoint", out_dir / "sft" / "checkpoint"))
 
     known_paths = {
+        "dataset_pack": config.get("dataset_pack"),
         "corpus_source": config.get("corpus_recipe") or config.get("corpus_input"),
         "chat_input": config.get("chat_input"),
         "eval_input": config.get("eval_input"),

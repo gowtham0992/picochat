@@ -7,6 +7,7 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     corpus_path = tmp_path / "corpus.txt"
     chat_path = tmp_path / "chat.jsonl"
     eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
     out_dir = tmp_path / "run"
     corpus_path.write_text(
         "Picochat is small.\nUser: hi\nAssistant: hello\n" * 8,
@@ -17,12 +18,15 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
         encoding="utf-8",
     )
     eval_path.write_text(json.dumps({"user": "hi"}), encoding="utf-8")
+    pack_path.write_text(json.dumps({
+        "corpus": "corpus.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
 
     summary = run_tiny(TinyRunConfig(
         out_dir=str(out_dir),
-        corpus_input=str(corpus_path),
-        chat_input=str(chat_path),
-        eval_input=str(eval_path),
+        dataset_pack=str(pack_path),
         context_size=16,
         n_embd=16,
         n_head=4,
@@ -45,3 +49,6 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert (out_dir / "summary.md").exists()
     assert summary["eval"]["num_examples"] == 1
     assert "corpus_manifest" in summary["artifacts"]
+    assert summary["config"]["dataset_pack"] == str(pack_path)
+    assert summary["config"]["chat_input"] == str(chat_path)
+    assert summary["config"]["eval_input"] == str(eval_path)

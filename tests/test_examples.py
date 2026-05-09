@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from picochat.data import inspect_path
+from picochat.dataset_pack import load_dataset_pack
 from picochat.eval import load_chat_eval_items
 from picochat.sft import load_chat_examples
 from picochat.tokenizer import CharTokenizer
@@ -32,3 +33,11 @@ def test_tiny_eval_examples_are_valid_jsonl():
     assert len(items) >= 6
     assert any("honest" in item.must_include for item in items)
     assert any(item.must_include_any for item in items)
+
+
+def test_tiny_dataset_pack_points_at_example_files():
+    pack = load_dataset_pack(Path("examples/tiny_dataset_pack.json"))
+
+    assert pack.corpus_recipe == "examples/corpus_recipe.json"
+    assert pack.chat_input == "examples/tiny_chat.jsonl"
+    assert pack.eval_input == "examples/tiny_eval.jsonl"

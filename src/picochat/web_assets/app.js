@@ -755,11 +755,13 @@ function renderDataset() {
 }
 
 function seedSourcePreviewInputs(config) {
+  const packInput = $("preview-pack-path");
   const recipeInput = $("preview-recipe-path");
   const sourceInput = $("preview-input-path");
   const chatInput = $("preview-chat-path");
   const evalInput = $("preview-eval-path");
-  if (recipeInput.value || sourceInput.value || chatInput.value || evalInput.value) return;
+  if (packInput.value || recipeInput.value || sourceInput.value || chatInput.value || evalInput.value) return;
+  packInput.value = config.dataset_pack || "";
   recipeInput.value = config.corpus_recipe || "examples/corpus_recipe.json";
   sourceInput.value = config.corpus_input || "";
   chatInput.value = config.chat_input || "examples/tiny_chat.jsonl";
@@ -826,12 +828,13 @@ function renderCorpusFiles(files) {
 }
 
 async function previewCorpusSources() {
+  const packPath = $("preview-pack-path").value.trim();
   const recipePath = $("preview-recipe-path").value.trim();
   const inputPath = $("preview-input-path").value.trim();
   const chatInput = $("preview-chat-path").value.trim();
   const evalInput = $("preview-eval-path").value.trim();
-  if (!recipePath && !inputPath) {
-    throw new Error("enter a recipe path or input path");
+  if (!packPath && !recipePath && !inputPath) {
+    throw new Error("enter a dataset pack, recipe path, or input path");
   }
 
   $("preview-corpus-button").disabled = true;
@@ -844,10 +847,11 @@ async function previewCorpusSources() {
   $("source-preview-files").innerHTML = "";
   $("source-preview-text").textContent = "";
   const report = await postJson("/api/corpus/preview", {
-    recipe_path: recipePath || null,
-    input_path: inputPath || null,
-    chat_input: chatInput || null,
-    eval_input: evalInput || null,
+    dataset_pack: packPath || null,
+    recipe_path: packPath ? null : recipePath || null,
+    input_path: packPath ? null : inputPath || null,
+    chat_input: packPath ? null : chatInput || null,
+    eval_input: packPath ? null : evalInput || null,
     preview_chars: 1400,
   });
   state.corpusSourcePreview = report;
@@ -878,6 +882,7 @@ function renderCorpusSourcePreview(report) {
   $("source-preview-command").innerHTML = renderTrainingCommand(report.training_command);
   $("source-preview-tuning").innerHTML = renderTuningPreflight(report.chat_data, report.eval_data);
   $("source-preview-stats").innerHTML = statCards([
+    ["Pack", report.dataset_pack || "none"],
     ["Input", report.input_path || "unknown"],
     ["Recipe", report.recipe_path || "none"],
     ["Chat SFT", report.training_command?.chat_input || "examples/tiny_chat.jsonl"],
@@ -940,6 +945,7 @@ function renderTrainingCommand(trainingCommand) {
       ${trainingCommand.command ? copyCommandButton(trainingCommand.command) : ""}
     </div>
     <div class="command-meta">
+      ${trainingCommand.dataset_pack ? `<span>PACK ${escapeHtml(trainingCommand.dataset_pack)}</span>` : ""}
       <span>CHAT ${escapeHtml(trainingCommand.chat_input || "--")}</span>
       <span>EVAL ${escapeHtml(trainingCommand.eval_input || "--")}</span>
     </div>

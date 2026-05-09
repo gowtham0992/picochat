@@ -724,7 +724,7 @@ h2 {
   align-items: end;
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(4, minmax(160px, 1fr)) auto;
+  grid-template-columns: repeat(5, minmax(140px, 1fr)) auto;
   margin-bottom: 10px;
 }
 

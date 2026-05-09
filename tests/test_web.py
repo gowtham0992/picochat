@@ -245,3 +245,41 @@ def test_preview_corpus_plan_returns_source_decisions(tmp_path):
     assert report["chat_data"]["status"] == "blocked"
     assert report["eval_data"]["status"] == "blocked"
     assert not (tmp_path / "corpus_manifest.json").exists()
+
+
+def test_preview_corpus_plan_accepts_dataset_pack(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    source_path.write_text("lesson text", encoding="utf-8")
+    chat_path.write_text(
+        "\n".join(json.dumps({"user": f"q{index}", "assistant": f"a{index}"}) for index in range(8)),
+        encoding="utf-8",
+    )
+    eval_path.write_text(
+        "\n".join([
+            json.dumps({"user": "q1", "must_include": ["a1"]}),
+            json.dumps({"user": "q2", "must_include": ["a2"]}),
+            json.dumps({"user": "q3", "must_not_include": ["bad"]}),
+            json.dumps({"user": "q4", "answerable": False, "must_include_any": [["unknown"]]}),
+        ]),
+        encoding="utf-8",
+    )
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    report = preview_corpus_plan({
+        "dataset_pack": str(pack_path),
+        "preview_chars": 6,
+    })
+
+    assert report["dataset_pack"] == str(pack_path)
+    assert report["input_path"] == str(source_path)
+    assert report["training_command"]["dataset_pack"] == str(pack_path)
+    assert "--dataset-pack" in report["training_command"]["command"]
+    assert report["chat_data"]["status"] == "ready"
+    assert report["eval_data"]["status"] == "ready"

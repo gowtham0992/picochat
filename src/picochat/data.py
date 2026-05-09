@@ -7,6 +7,7 @@ from fnmatch import fnmatch
 import json
 from pathlib import Path
 
+from picochat.dataset_pack import DatasetPack, load_dataset_pack
 from picochat.tuning_data import (
     ChatEvalDataReport,
     ChatSFTDataReport,
@@ -118,10 +119,11 @@ class CorpusTrainingCommand:
     out_dir: str
     chat_input: str
     eval_input: str
+    dataset_pack: str | None
     command: str
     note: str
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, str | None]:
         return asdict(self)
 
 
@@ -140,6 +142,7 @@ class CorpusBuildReport:
     eval_data: ChatEvalDataReport
     warnings: tuple[str, ...]
     recipe_path: str | None = None
+    dataset_pack: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -148,6 +151,7 @@ class CorpusBuildReport:
             "manifest_path": self.manifest_path,
             "report_path": self.report_path,
             "recipe_path": self.recipe_path,
+            "dataset_pack": self.dataset_pack,
             "stats": self.stats.to_dict(),
             "files": [record.to_dict() for record in self.files],
             "readiness": self.readiness.to_dict(),
@@ -163,6 +167,7 @@ class CorpusBuildReport:
 class CorpusPreviewReport:
     input_path: str
     recipe_path: str | None
+    dataset_pack: str | None
     stats: CorpusStats
     files: tuple[CorpusFileRecord, ...]
     readiness: CorpusReadiness
@@ -177,6 +182,7 @@ class CorpusPreviewReport:
         return {
             "input_path": self.input_path,
             "recipe_path": self.recipe_path,
+            "dataset_pack": self.dataset_pack,
             "stats": self.stats.to_dict(),
             "files": [record.to_dict() for record in self.files],
             "readiness": self.readiness.to_dict(),
@@ -193,6 +199,7 @@ class CorpusPreviewReport:
 class _CollectedCorpus:
     input_path: str
     recipe_path: str | None
+    dataset_pack: str | None
     documents: tuple[str, ...]
     files: tuple[CorpusFileRecord, ...]
     stats: CorpusStats
@@ -416,9 +423,10 @@ def suggest_training_command(
     budget: CorpusTrainingBudget,
     chat_input: str | None = None,
     eval_input: str | None = None,
+    dataset_pack: str | None = None,
 ) -> CorpusTrainingCommand:
     """Build a copyable first-run command from corpus intake metadata."""
-    out_dir = f"runs/{_slugify_path(recipe_path or input_path)}-v1"
+    out_dir = f"runs/{_slugify_path(dataset_pack or recipe_path or input_path)}-v1"
     chat_input = _default_path(chat_input, DEFAULT_CHAT_INPUT)
     eval_input = _default_path(eval_input, DEFAULT_EVAL_INPUT)
     if budget.preset == "blocked":
@@ -426,12 +434,23 @@ def suggest_training_command(
             out_dir=out_dir,
             chat_input=chat_input,
             eval_input=eval_input,
+            dataset_pack=dataset_pack,
             command="",
             note="No training command yet; fix blocked corpus readiness checks first.",
         )
 
-    source_flag = "--corpus-recipe" if recipe_path else "--corpus-input"
-    source_path = recipe_path or input_path
+    if dataset_pack:
+        source_args = ["--dataset-pack", dataset_pack]
+    else:
+        source_flag = "--corpus-recipe" if recipe_path else "--corpus-input"
+        source_args = [
+            source_flag,
+            recipe_path or input_path,
+            "--chat-input",
+            chat_input,
+            "--eval-input",
+            eval_input,
+        ]
     command = _shell_command([
         "PYTHONPATH=src",
         "python",
@@ -441,12 +460,7 @@ def suggest_training_command(
         "tiny",
         "--out-dir",
         out_dir,
-        source_flag,
-        source_path,
-        "--chat-input",
-        chat_input,
-        "--eval-input",
-        eval_input,
+        *source_args,
         "--context-size",
         budget.suggested_context_size,
         "--base-batch-size",
@@ -455,7 +469,9 @@ def suggest_training_command(
         budget.suggested_base_steps,
     ])
     note = "Uses the selected chat/eval JSONL files for SFT and scoring."
-    if chat_input == DEFAULT_CHAT_INPUT and eval_input == DEFAULT_EVAL_INPUT:
+    if dataset_pack:
+        note = "Uses the dataset pack corpus, chat SFT, and eval files."
+    elif chat_input == DEFAULT_CHAT_INPUT and eval_input == DEFAULT_EVAL_INPUT:
         note = "Uses default chat/eval examples; replace --chat-input and --eval-input for domain-specific tuning."
     elif chat_input == DEFAULT_CHAT_INPUT or eval_input == DEFAULT_EVAL_INPUT:
         note = "One tuning file is still using a default example; replace it before a real domain run."
@@ -463,6 +479,7 @@ def suggest_training_command(
         out_dir=out_dir,
         chat_input=chat_input,
         eval_input=eval_input,
+        dataset_pack=dataset_pack,
         command=command,
         note=note,
     )
@@ -516,12 +533,13 @@ def build_corpus_artifacts(
     recipe_path: str | Path | None = None,
     chat_input: str | Path | None = None,
     eval_input: str | Path | None = None,
+    dataset_pack: str | Path | None = None,
 ) -> CorpusBuildReport:
     """Combine corpus sources and write provenance artifacts."""
     output_path = Path(output_path)
     manifest_path = Path(manifest_path) if manifest_path else output_path.with_name("corpus_manifest.json")
     report_path = Path(report_path) if report_path else output_path.with_name("corpus_report.md")
-    collected = _collect_corpus_sources(input_path, recipe_path, chat_input, eval_input)
+    collected = _collect_corpus_sources(input_path, recipe_path, chat_input, eval_input, dataset_pack)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     corpus_text = "\n\n".join(collected.documents)
@@ -541,6 +559,7 @@ def build_corpus_artifacts(
         eval_data=collected.eval_data,
         warnings=collected.warnings,
         recipe_path=collected.recipe_path,
+        dataset_pack=collected.dataset_pack,
     )
     if write_manifest:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -556,13 +575,15 @@ def preview_corpus_sources(
     preview_chars: int = 1000,
     chat_input: str | Path | None = None,
     eval_input: str | Path | None = None,
+    dataset_pack: str | Path | None = None,
 ) -> CorpusPreviewReport:
     """Inspect corpus sources without writing artifacts."""
-    collected = _collect_corpus_sources(input_path, recipe_path, chat_input, eval_input)
+    collected = _collect_corpus_sources(input_path, recipe_path, chat_input, eval_input, dataset_pack)
     corpus_text = "\n\n".join(collected.documents)
     return CorpusPreviewReport(
         input_path=collected.input_path,
         recipe_path=collected.recipe_path,
+        dataset_pack=collected.dataset_pack,
         stats=collected.stats,
         files=collected.files,
         readiness=collected.readiness,
@@ -590,6 +611,7 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         f"- Input path: `{report.input_path}`",
         f"- Output corpus: `{report.output_path}`",
         f"- Recipe: `{report.recipe_path}`" if report.recipe_path else "- Recipe: none",
+        f"- Dataset pack: `{report.dataset_pack}`" if report.dataset_pack else "- Dataset pack: none",
         f"- Files scanned: {len(report.files)}",
         f"- Files included: {len(included)}",
         f"- Files skipped: {len(skipped)}",
@@ -630,6 +652,7 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         "## Suggested Run Command",
         "",
         f"- Output run: `{report.training_command.out_dir}`",
+        f"- Dataset pack: `{report.training_command.dataset_pack}`" if report.training_command.dataset_pack else "- Dataset pack: none",
         f"- Chat SFT input: `{report.training_command.chat_input}`",
         f"- Eval input: `{report.training_command.eval_input}`",
         f"- Note: {report.training_command.note}",
@@ -684,11 +707,20 @@ def _collect_corpus_sources(
     recipe_path: str | Path | None = None,
     chat_input: str | Path | None = None,
     eval_input: str | Path | None = None,
+    dataset_pack: str | Path | None = None,
 ) -> _CollectedCorpus:
+    pack = load_dataset_pack(dataset_pack) if dataset_pack else None
+    input_path, recipe_path, chat_input, eval_input = _apply_dataset_pack(
+        pack,
+        input_path,
+        recipe_path,
+        chat_input,
+        eval_input,
+    )
     recipe = Path(recipe_path) if recipe_path else None
     input_root = Path(input_path) if input_path else None
     if recipe is None and input_root is None:
-        raise ValueError("Either input_path or recipe_path is required.")
+        raise ValueError("Either input_path, recipe_path, or dataset_pack is required.")
 
     input_display = str(input_root) if input_root is not None else str(recipe)
     candidates = _recipe_source_candidates(recipe) if recipe else _path_source_candidates(input_root)
@@ -709,6 +741,7 @@ def _collect_corpus_sources(
         budget,
         chat_input=chat_input,
         eval_input=eval_input,
+        dataset_pack=str(dataset_pack) if dataset_pack else None,
     )
     chat_data = inspect_chat_sft_data(training_command.chat_input)
     eval_data = inspect_chat_eval_data(training_command.eval_input)
@@ -716,6 +749,7 @@ def _collect_corpus_sources(
     return _CollectedCorpus(
         input_path=input_display,
         recipe_path=str(recipe) if recipe else None,
+        dataset_pack=str(dataset_pack) if dataset_pack else None,
         documents=tuple(documents),
         files=tuple(records),
         stats=stats,
@@ -726,6 +760,20 @@ def _collect_corpus_sources(
         eval_data=eval_data,
         warnings=tuple(warnings),
     )
+
+
+def _apply_dataset_pack(
+    pack: DatasetPack | None,
+    input_path: str | Path | None,
+    recipe_path: str | Path | None,
+    chat_input: str | Path | None,
+    eval_input: str | Path | None,
+) -> tuple[str | Path | None, str | Path | None, str | Path | None, str | Path | None]:
+    if pack is None:
+        return input_path, recipe_path, chat_input, eval_input
+    if input_path or recipe_path:
+        raise ValueError("Dataset pack cannot be combined with input_path or recipe_path.")
+    return pack.corpus_input, pack.corpus_recipe, pack.chat_input, pack.eval_input
 
 
 def _read_source_candidate(candidate: _SourceCandidate) -> tuple[str | None, CorpusFileRecord]:

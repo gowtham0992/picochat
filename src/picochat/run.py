@@ -17,6 +17,7 @@ from picochat.train import TrainConfig, train_base
 @dataclass(frozen=True)
 class TinyRunConfig:
     out_dir: str
+    dataset_pack: str | None = None
     corpus_input: str = "examples/tiny_corpus.txt"
     corpus_recipe: str | None = None
     chat_input: str = "examples/tiny_chat.jsonl"
@@ -47,10 +48,15 @@ def run_tiny(config: TinyRunConfig) -> dict:
 
     print(f"[1/5] build corpus -> {corpus_path}")
     corpus_build = build_corpus_artifacts(
-        config.corpus_input,
+        None if config.dataset_pack else config.corpus_input,
         corpus_path,
-        recipe_path=config.corpus_recipe,
+        recipe_path=None if config.dataset_pack else config.corpus_recipe,
+        chat_input=None if config.dataset_pack else config.chat_input,
+        eval_input=None if config.dataset_pack else config.eval_input,
+        dataset_pack=config.dataset_pack,
     )
+    chat_input = corpus_build.training_command.chat_input
+    eval_input = corpus_build.training_command.eval_input
 
     print(f"[2/5] train tokenizer -> {tokenizer_path}")
     text = corpus_path.read_text(encoding="utf-8")
@@ -77,7 +83,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
 
     print("[4/5] train chat SFT")
     sft_report = train_sft(SFTConfig(
-        input_path=config.chat_input,
+        input_path=chat_input,
         tokenizer_path=str(tokenizer_path),
         checkpoint_path=str(out_dir / "base" / "checkpoint"),
         out_dir=str(out_dir / "sft"),
@@ -92,7 +98,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
 
     print("[5/5] run chat eval")
     eval_report = run_chat_eval(ChatEvalConfig(
-        input_path=config.eval_input,
+        input_path=eval_input,
         checkpoint_path=str(out_dir / "sft" / "checkpoint"),
         tokenizer_path=str(tokenizer_path),
         out_dir=str(out_dir / "eval"),
@@ -101,9 +107,18 @@ def run_tiny(config: TinyRunConfig) -> dict:
         device=config.device,
     ))
 
+    effective_config = {
+        **config.__dict__,
+        "corpus_input": corpus_build.input_path,
+        "corpus_recipe": corpus_build.recipe_path,
+        "dataset_pack": corpus_build.dataset_pack,
+        "chat_input": chat_input,
+        "eval_input": eval_input,
+    }
     summary = {
-        "config": config.__dict__,
+        "config": effective_config,
         "artifacts": {
+            "dataset_pack": corpus_build.dataset_pack,
             "corpus": str(corpus_path),
             "corpus_manifest": corpus_build.manifest_path,
             "corpus_report": corpus_build.report_path,

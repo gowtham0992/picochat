@@ -56,6 +56,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     data_preview = data_subparsers.add_parser("preview", help="Preview corpus sources before building.")
     data_preview.add_argument(
+        "--dataset-pack",
+        "--pack",
+        dest="dataset_pack",
+        default=None,
+        help="Path to a dataset pack JSON with corpus, chat, and eval inputs.",
+    )
+    data_preview.add_argument(
         "--input",
         default=None,
         help="Path to a supported corpus file or folder.",
@@ -83,6 +90,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     data_build = data_subparsers.add_parser("build", help="Build a normalized text corpus.")
+    data_build.add_argument(
+        "--dataset-pack",
+        "--pack",
+        dest="dataset_pack",
+        default=None,
+        help="Path to a dataset pack JSON with corpus, chat, and eval inputs.",
+    )
     data_build.add_argument(
         "--input",
         default=None,
@@ -241,6 +255,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_subparsers = run_parser.add_subparsers(dest="run_command")
     run_tiny_parser = run_subparsers.add_parser("tiny", help="Run the full tiny pipeline.")
     run_tiny_parser.add_argument("--out-dir", required=True, help="Output run directory.")
+    run_tiny_parser.add_argument("--dataset-pack", "--pack", dest="dataset_pack", default=None)
     run_tiny_parser.add_argument("--corpus-input", default="examples/tiny_corpus.txt")
     run_tiny_parser.add_argument("--corpus-recipe", default=None)
     run_tiny_parser.add_argument("--chat-input", default="examples/tiny_chat.jsonl")
@@ -346,20 +361,22 @@ def inspect_data(args: argparse.Namespace) -> int:
 
 
 def preview_data(args: argparse.Namespace) -> int:
-    if not args.input and not args.recipe:
-        raise SystemExit("data preview requires --input or --recipe")
+    if not args.input and not args.recipe and not args.dataset_pack:
+        raise SystemExit("data preview requires --input, --recipe, or --dataset-pack")
     report = preview_corpus_sources(
         args.input,
         args.recipe,
         preview_chars=args.preview_chars,
         chat_input=args.chat_input,
         eval_input=args.eval_input,
+        dataset_pack=args.dataset_pack,
     )
     included = [record for record in report.files if record.included]
     skipped = [record for record in report.files if not record.included]
 
     print(f"input: {report.input_path}")
     print(f"recipe: {report.recipe_path or 'none'}")
+    print(f"dataset_pack: {report.dataset_pack or 'none'}")
     print(f"files_included: {len(included)}")
     print(f"files_skipped: {len(skipped)}")
     print_stats(report.stats)
@@ -388,8 +405,8 @@ def preview_data(args: argparse.Namespace) -> int:
 
 
 def build_data(args: argparse.Namespace) -> int:
-    if not args.input and not args.recipe:
-        raise SystemExit("data build requires --input or --recipe")
+    if not args.input and not args.recipe and not args.dataset_pack:
+        raise SystemExit("data build requires --input, --recipe, or --dataset-pack")
     report = build_corpus_artifacts(
         args.input,
         args.out,
@@ -398,6 +415,7 @@ def build_data(args: argparse.Namespace) -> int:
         recipe_path=args.recipe,
         chat_input=args.chat_input,
         eval_input=args.eval_input,
+        dataset_pack=args.dataset_pack,
     )
     print(f"built corpus: {args.out}")
     print(f"manifest: {report.manifest_path}")
@@ -555,6 +573,7 @@ def run_eval_chat(args: argparse.Namespace) -> int:
 def run_tiny_command(args: argparse.Namespace) -> int:
     summary = run_tiny(TinyRunConfig(
         out_dir=args.out_dir,
+        dataset_pack=args.dataset_pack,
         corpus_input=args.corpus_input,
         corpus_recipe=args.corpus_recipe,
         chat_input=args.chat_input,

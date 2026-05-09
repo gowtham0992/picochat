@@ -1,0 +1,9 @@
+{
+  "name": "tiny-demo-pack",
+  "description": "Example Picochat dataset pack that binds corpus, chat SFT, and eval files.",
+  "corpus": {
+    "recipe": "corpus_recipe.json"
+  },
+  "chat": "tiny_chat.jsonl",
+  "eval": "tiny_eval.jsonl"
+}
