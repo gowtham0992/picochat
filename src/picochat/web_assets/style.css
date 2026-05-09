@@ -748,7 +748,7 @@ h2 {
   align-items: end;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(180px, 1.4fr) minmax(130px, 1fr) 90px repeat(4, 92px) auto auto;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(130px, 1fr) 90px repeat(4, 92px) auto auto auto;
   margin-bottom: 10px;
 }
 
@@ -767,6 +767,34 @@ h2 {
 .run-log {
   max-height: 320px;
   overflow: auto;
+}
+
+.run-job-list {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.run-job-button {
+  align-items: start;
+  display: grid;
+  gap: 3px;
+  height: auto;
+  justify-items: start;
+  min-height: 46px;
+  padding: 7px;
+  text-align: left;
+}
+
+.run-job-button span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-job-button.active span,
+.run-job-button:hover span {
+  color: var(--inverse-muted);
 }
 
 .pack-builder-controls {
@@ -1326,6 +1354,7 @@ th {
   .pack-editor-controls,
   .run-launch-controls,
   .editor-grid,
+  .run-job-list,
   .pack-builder-controls,
   .pack-file-list,
   .tuning-preflight,

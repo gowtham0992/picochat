@@ -3,6 +3,7 @@ import json
 import pytest
 
 from picochat.web import (
+    cancel_run_plan,
     discover_runs,
     generate_run_text,
     init_dataset_pack_plan,
@@ -519,4 +520,104 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert str(pack_path) in captured["command"]
     assert captured["kwargs"]["cwd"].name == "picochat"
     assert (tmp_path / "runs" / "ui-run" / "web_run.log").exists()
-    assert run_status_plan(job["id"])["job"]["pid"] == 4321
+    assert run_status_plan(job["id"], tmp_path / "runs")["job"]["pid"] == 4321
+
+
+def test_run_status_discovers_completed_web_runs_from_disk(tmp_path):
+    run_dir = tmp_path / "runs" / "disk-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "web_run.log").write_text("$ python -m picochat.cli run tiny\ncompleted\n", encoding="utf-8")
+    (run_dir / "summary.json").write_text(json.dumps({
+        "config": {"dataset_pack": "pack/dataset_pack.json"},
+    }), encoding="utf-8")
+
+    status = run_status_plan(runs_dir=tmp_path / "runs")
+
+    assert status["job"]["run_name"] == "disk-run"
+    assert status["job"]["state"] == "succeeded"
+    assert status["job"]["source"] == "disk"
+    assert status["job"]["summary_exists"] is True
+    assert status["job"]["dataset_pack"] == "pack/dataset_pack.json"
+    assert status["job"]["command"] == "python -m picochat.cli run tiny"
+
+
+def test_start_run_plan_blocks_unready_dataset_pack(tmp_path):
+    pack_path = tmp_path / "dataset_pack.json"
+    pack_path.write_text(json.dumps({
+        "corpus": "missing.txt",
+        "chat": "missing_chat.jsonl",
+        "eval": "missing_eval.jsonl",
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="corpus readiness blocked"):
+        start_run_plan(tmp_path / "runs", {
+            "dataset_pack": str(pack_path),
+            "run_name": "bad-run",
+        })
+
+
+def test_cancel_run_plan_terminates_active_job(tmp_path, monkeypatch):
+    source_path = tmp_path / "lesson.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    source_path.write_text("lesson text " * 20, encoding="utf-8")
+    chat_path.write_text(
+        "\n".join(
+            json.dumps({"user": f"question {index}", "assistant": f"answer {index}"})
+            for index in range(8)
+        ),
+        encoding="utf-8",
+    )
+    eval_path.write_text(
+        "\n".join([
+            json.dumps({"user": "q1", "must_include": ["a1"]}),
+            json.dumps({"user": "q2", "must_include": ["a2"]}),
+            json.dumps({"user": "q3", "must_not_include": ["bad"]}),
+            json.dumps({"user": "q4", "answerable": False, "must_include_any": [["unknown"]]}),
+        ]),
+        encoding="utf-8",
+    )
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    class FakeProcess:
+        pid = 9876
+
+        def __init__(self, *args, **kwargs):
+            self.returncode = None
+            self.terminated = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+    fake_processes = []
+
+    def fake_popen(*args, **kwargs):
+        process = FakeProcess(*args, **kwargs)
+        fake_processes.append(process)
+        return process
+
+    monkeypatch.setattr("picochat.web.subprocess.Popen", fake_popen)
+    started = start_run_plan(tmp_path / "runs", {
+        "dataset_pack": str(pack_path),
+        "run_name": "cancel-me",
+        "base_steps": 1,
+        "sft_steps": 1,
+        "n_embd": 32,
+        "n_head": 4,
+        "n_layer": 1,
+    })
+
+    cancelled = cancel_run_plan(tmp_path / "runs", {"job_id": started["job"]["id"]})
+
+    assert fake_processes[0].terminated is True
+    assert cancelled["job"]["state"] == "failed"
+    assert cancelled["job"]["can_cancel"] is False

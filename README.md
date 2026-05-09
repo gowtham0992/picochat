@@ -198,7 +198,9 @@ at separate chat/eval JSONL files, to check row schemas, usable example counts,
 eval scoring rules, preview rows, and next actions before running training.
 The Pack JSONL Editor can load and save those chat/eval files directly, and
 the Run Launcher starts `run tiny` from a dataset pack while streaming a local
-`web_run.log` tail.
+`web_run.log` tail. Web-launched runs stay visible after page reload because
+the workbench rediscovers run folders that contain `web_run.log`; active runs
+can also be cancelled from the launcher.
 
 Pack paths are relative to the pack file unless absolute. Preview a pack:
 

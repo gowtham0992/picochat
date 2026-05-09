@@ -11,6 +11,7 @@ const state = {
   tuningInspection: null,
   packEditor: null,
   runJob: null,
+  runJobs: [],
   runJobLoaded: false,
   runPollTimer: null,
   tokenTimer: null,
@@ -88,6 +89,7 @@ async function postJson(url, body) {
 async function boot() {
   bindControls();
   await loadRuns();
+  await loadRunJobs();
 }
 
 function bindControls() {
@@ -150,7 +152,10 @@ function bindControls() {
     launchRun().catch((error) => renderRunJobError(error));
   });
   $("refresh-run-job-button").addEventListener("click", () => {
-    refreshRunJob().catch((error) => renderRunJobError(error));
+    loadRunJobs().catch((error) => renderRunJobError(error));
+  });
+  $("cancel-run-job-button").addEventListener("click", () => {
+    cancelRunJob().catch((error) => renderRunJobError(error));
   });
   $("tokenize-button").addEventListener("click", () => animateTokenizer());
   $("tokenize-sample-button").addEventListener("click", () => {
@@ -786,6 +791,7 @@ function renderDataset() {
   renderTuningInspection(state.tuningInspection);
   renderPackEditor(state.packEditor);
   renderRunJob(state.runJob);
+  renderRunJobList();
   $("corpus-preview").textContent = state.detail?.corpus_preview || "NO CORPUS PREVIEW ARTIFACT FOUND.";
 }
 
@@ -1153,8 +1159,10 @@ async function launchRun() {
       eval_max_new_tokens: $("launch-preset").value === "tiny" ? 120 : 80,
     });
     state.runJob = payload.job;
+    state.runJobs = payload.jobs || [payload.job];
     state.runJobLoaded = false;
     renderRunJob(state.runJob);
+    renderRunJobList();
     startRunPolling();
   } finally {
     $("launch-run-button").disabled = false;
@@ -1165,8 +1173,38 @@ async function refreshRunJob() {
   if (!state.runJob?.id) throw new Error("no run job to refresh");
   const payload = await fetchJson(`/api/run/status?job=${encodeURIComponent(state.runJob.id)}`);
   state.runJob = payload.job;
+  state.runJobs = mergeRunJobs(state.runJobs, payload.job ? [payload.job] : []);
   renderRunJob(state.runJob);
+  renderRunJobList();
   if (state.runJob?.state === "running") startRunPolling();
+}
+
+async function loadRunJobs() {
+  const payload = await fetchJson("/api/run/status");
+  state.runJobs = payload.jobs || [];
+  state.runJob = state.runJob || payload.job;
+  if (state.runJob) {
+    const refreshed = state.runJobs.find((job) => job.id === state.runJob.id || job.run_name === state.runJob.run_name);
+    if (refreshed) state.runJob = refreshed;
+  }
+  renderRunJob(state.runJob);
+  renderRunJobList();
+  if (state.runJob?.state === "running") startRunPolling();
+}
+
+async function cancelRunJob() {
+  if (!state.runJob?.id) throw new Error("no active run job selected");
+  if (!state.runJob.can_cancel) throw new Error("selected run cannot be cancelled");
+  $("cancel-run-job-button").disabled = true;
+  try {
+    const payload = await postJson("/api/run/cancel", { job_id: state.runJob.id });
+    state.runJob = payload.job;
+    state.runJobs = mergeRunJobs(state.runJobs, payload.job ? [payload.job] : []);
+    renderRunJob(state.runJob);
+    renderRunJobList();
+  } finally {
+    $("cancel-run-job-button").disabled = false;
+  }
 }
 
 function startRunPolling() {
@@ -1185,10 +1223,12 @@ function renderRunJob(job) {
     $("run-launch-status").textContent = "NO RUN LAUNCHED.";
     $("run-launch-command").innerHTML = "";
     $("run-launch-log").textContent = "READY.";
+    $("cancel-run-job-button").disabled = true;
     return;
   }
   $("run-launch-status").textContent =
-    `RUN ${String(job.state || "--").toUpperCase()} | ${escapeHtml(job.run_name)} | ${fmtLoss(job.elapsed_seconds || 0)}S | PID ${escapeHtml(job.pid || "--")}`;
+    `RUN ${String(job.state || "--").toUpperCase()} | ${escapeHtml(job.run_name)} | ${job.elapsed_seconds == null ? "--" : fmtLoss(job.elapsed_seconds)}S | PID ${escapeHtml(job.pid || "--")}`;
+  $("cancel-run-job-button").disabled = !job.can_cancel;
   $("run-launch-command").innerHTML = `
     <div class="command-head">
       <label>RUN COMMAND</label>
@@ -1198,6 +1238,7 @@ function renderRunJob(job) {
       <span>OUT ${escapeHtml(job.out_dir)}</span>
       <span>LOG ${escapeHtml(job.log_path)}</span>
       <span>SUMMARY ${job.summary_exists ? "READY" : "PENDING"}</span>
+      <span>SOURCE ${escapeHtml(job.source || "--")}</span>
     </div>
     <code>${escapeHtml(job.command || "")}</code>
   `;
@@ -1210,6 +1251,38 @@ function renderRunJob(job) {
       loadRuns().catch(() => {});
     }
   }
+}
+
+function renderRunJobList() {
+  const jobs = state.runJobs || [];
+  if (!jobs.length) {
+    $("run-job-list").innerHTML = '<div class="empty">NO WEB-LAUNCHED RUNS FOUND.</div>';
+    return;
+  }
+  $("run-job-list").innerHTML = jobs.slice(-8).reverse().map((job) => `
+    <button class="run-job-button ${state.runJob?.id === job.id ? "active" : ""}" type="button" data-run-job="${escapeHtml(job.id)}">
+      <strong>${escapeHtml(job.run_name)}</strong>
+      <span>${escapeHtml(String(job.state || "--").toUpperCase())} | ${job.summary_exists ? "SUMMARY" : "NO SUMMARY"} | ${escapeHtml(job.source || "--")}</span>
+    </button>
+  `).join("");
+  document.querySelectorAll("[data-run-job]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const job = state.runJobs.find((item) => item.id === button.dataset.runJob);
+      if (!job) return;
+      state.runJob = job;
+      renderRunJob(job);
+      renderRunJobList();
+      if (job.state === "running") startRunPolling();
+    });
+  });
+}
+
+function mergeRunJobs(existing, incoming) {
+  const byId = new Map((existing || []).map((job) => [job.id, job]));
+  (incoming || []).forEach((job) => {
+    if (job?.id) byId.set(job.id, job);
+  });
+  return [...byId.values()];
 }
 
 function renderRunJobError(error) {

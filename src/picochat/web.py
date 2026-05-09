@@ -314,6 +314,11 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     if not Path(dataset_pack).exists():
         raise FileNotFoundError(f"missing dataset pack: {dataset_pack}")
     load_dataset_pack(dataset_pack)
+    try:
+        launch_preview = preview_corpus_sources(dataset_pack=dataset_pack, preview_chars=0)
+    except FileNotFoundError as error:
+        raise ValueError(f"corpus readiness blocked: missing source {error}") from error
+    _validate_launch_readiness(launch_preview)
 
     run_name = _slug(_optional_string(payload.get("run_name")) or _default_run_name(dataset_pack))
     out_dir = _safe_child(Path(runs_dir), run_name)
@@ -392,27 +397,64 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         "command": _shell_command(*command),
         "started_at": time.time(),
         "process": process,
+        "launch_readiness": launch_preview.readiness.to_dict(),
+        "launch_tuning": {
+            "chat": launch_preview.chat_data.to_dict(),
+            "eval": launch_preview.eval_data.to_dict(),
+        },
     }
     with _RUN_JOBS_LOCK:
         _RUN_JOBS[job_id] = job
-    return run_status_plan(job_id)
+    return run_status_plan(job_id, runs_dir)
 
 
-def run_status_plan(job_id: str | None = None) -> dict:
+def run_status_plan(job_id: str | None = None, runs_dir: str | Path = "runs") -> dict:
     """Return status and log tail for a background run."""
+    runs_root = Path(runs_dir).resolve()
     with _RUN_JOBS_LOCK:
         if job_id:
             job = _RUN_JOBS.get(job_id)
-            if job is None:
-                raise ValueError(f"unknown run job: {job_id}")
-            jobs = [job]
+            jobs = [job] if job is not None else []
         else:
-            jobs = list(_RUN_JOBS.values())
-    statuses = [_run_job_status(job) for job in jobs]
+            jobs = [job for job in _RUN_JOBS.values() if _job_in_runs_dir(job, runs_root)]
+    active_statuses = [_run_job_status(job) for job in jobs]
+    if job_id and not active_statuses:
+        persisted = [job for job in _discover_run_jobs(runs_dir) if job["id"] == job_id or job["run_name"] == job_id]
+        if not persisted:
+            raise ValueError(f"unknown run job: {job_id}")
+        active_statuses = persisted[:1]
+
+    known_out_dirs = {str(Path(status["out_dir"]).resolve()) for status in active_statuses}
+    discovered = [
+        job for job in _discover_run_jobs(runs_dir)
+        if not job_id and str(Path(job["out_dir"]).resolve()) not in known_out_dirs
+    ]
+    statuses = sorted(
+        [*active_statuses, *discovered],
+        key=lambda item: item.get("updated_at", 0),
+    )
     return {
         "jobs": statuses,
         "job": statuses[-1] if statuses else None,
     }
+
+
+def cancel_run_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Terminate a running web-launched job."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    job_id = _optional_string(payload.get("job_id"))
+    if not job_id:
+        raise ValueError("job_id is required")
+    with _RUN_JOBS_LOCK:
+        job = _RUN_JOBS.get(job_id)
+    if job is None:
+        raise ValueError(f"unknown active run job: {job_id}")
+    process = job["process"]
+    if process.poll() is None:
+        process.terminate()
+        time.sleep(0.05)
+    return run_status_plan(job_id, runs_dir)
 
 
 def serve_web(config: WebConfig) -> None:
@@ -469,7 +511,7 @@ def _make_handler(config: WebConfig):
                 elif parsed.path == "/api/run/status":
                     query = parse_qs(parsed.query)
                     job_id = query.get("job", [None])[0]
-                    self._send_json(run_status_plan(job_id))
+                    self._send_json(run_status_plan(job_id, config.runs_dir))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -492,6 +534,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(save_pack_editor_plan(self._read_json_body()))
                 elif parsed.path == "/api/run/start":
                     self._send_json(start_run_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/run/cancel":
+                    self._send_json(cancel_run_plan(config.runs_dir, self._read_json_body()))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -705,6 +749,8 @@ def _run_job_status(job: dict) -> dict:
     returncode = process.poll()
     state = "running" if returncode is None else "succeeded" if returncode == 0 else "failed"
     summary_path = Path(job["out_dir"]) / "summary.json"
+    if returncode is not None:
+        _write_returncode(Path(job["out_dir"]) / "web_returncode.txt", returncode)
     return {
         "id": job["id"],
         "run_name": job["run_name"],
@@ -718,7 +764,107 @@ def _run_job_status(job: dict) -> dict:
         "elapsed_seconds": max(0, round(time.time() - job["started_at"], 1)),
         "summary_exists": summary_path.exists(),
         "log_tail": _read_log_tail(Path(job["log_path"])),
+        "can_cancel": state == "running",
+        "source": "active",
+        "updated_at": time.time(),
+        "launch_readiness": job.get("launch_readiness"),
+        "launch_tuning": job.get("launch_tuning"),
     }
+
+
+def _job_in_runs_dir(job: dict, runs_root: Path) -> bool:
+    try:
+        out_dir = Path(job["out_dir"]).resolve()
+    except (KeyError, OSError):
+        return False
+    return out_dir == runs_root or runs_root in out_dir.parents
+
+
+def _discover_run_jobs(runs_dir: str | Path, limit: int = 20) -> list[dict]:
+    root = Path(runs_dir)
+    if not root.exists():
+        return []
+    jobs = []
+    for run_dir in sorted(root.iterdir()):
+        log_path = run_dir / "web_run.log"
+        if not run_dir.is_dir() or not log_path.exists():
+            continue
+        summary_path = run_dir / "summary.json"
+        returncode_path = run_dir / "web_returncode.txt"
+        returncode = _read_returncode(returncode_path)
+        state = (
+            "succeeded" if summary_path.exists()
+            else "failed" if returncode not in (None, 0)
+            else "stopped"
+        )
+        updated_at = max(log_path.stat().st_mtime, summary_path.stat().st_mtime if summary_path.exists() else 0)
+        jobs.append({
+            "id": f"run-{_slug(run_dir.name)}",
+            "run_name": run_dir.name,
+            "out_dir": str(run_dir),
+            "dataset_pack": _dataset_pack_from_summary(summary_path),
+            "log_path": str(log_path),
+            "command": _command_from_log(log_path),
+            "pid": None,
+            "state": state,
+            "returncode": returncode,
+            "elapsed_seconds": None,
+            "summary_exists": summary_path.exists(),
+            "log_tail": _read_log_tail(log_path),
+            "can_cancel": False,
+            "source": "disk",
+            "updated_at": updated_at,
+            "launch_readiness": None,
+            "launch_tuning": None,
+        })
+    return sorted(jobs, key=lambda item: item["updated_at"])[-limit:]
+
+
+def _validate_launch_readiness(report) -> None:
+    problems = []
+    if report.readiness.status == "blocked":
+        problems.append(f"corpus readiness blocked: {report.readiness.summary}")
+    if report.chat_data.status == "blocked":
+        problems.append(f"chat SFT blocked: {report.chat_data.summary}")
+    if report.eval_data.status == "blocked":
+        problems.append(f"eval blocked: {report.eval_data.summary}")
+    if problems:
+        raise ValueError("; ".join(problems))
+
+
+def _read_returncode(path: Path) -> int | None:
+    if not path.exists():
+        return None
+    try:
+        return int(path.read_text(encoding="utf-8").strip())
+    except ValueError:
+        return None
+
+
+def _write_returncode(path: Path, returncode: int) -> None:
+    if path.exists():
+        return
+    try:
+        path.write_text(f"{returncode}\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _dataset_pack_from_summary(summary_path: Path) -> str | None:
+    if not summary_path.exists():
+        return None
+    try:
+        return _read_json(summary_path).get("config", {}).get("dataset_pack")
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _command_from_log(log_path: Path) -> str:
+    try:
+        first_line = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[0]
+    except (OSError, IndexError):
+        return ""
+    return first_line[2:] if first_line.startswith("$ ") else first_line
 
 
 def _read_log_tail(path: Path, limit: int = 12000) -> str:
