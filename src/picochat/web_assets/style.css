@@ -698,6 +698,51 @@ h2 {
   height: 100%;
 }
 
+.readiness-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.readiness-summary,
+.readiness-row {
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 4px;
+  padding: 7px;
+}
+
+.readiness-summary {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.readiness-row {
+  grid-template-columns: 160px 150px minmax(0, 1fr);
+}
+
+.readiness-summary span,
+.readiness-row p {
+  color: var(--muted);
+}
+
+.readiness-summary.ready strong,
+.readiness-row.pass strong,
+.readiness-row.pass span {
+  color: var(--green);
+}
+
+.readiness-summary.caution strong,
+.readiness-row.warn strong,
+.readiness-row.warn span {
+  color: var(--accent);
+}
+
+.readiness-summary.blocked strong,
+.readiness-row.fail strong,
+.readiness-row.fail span {
+  color: var(--red);
+}
+
 .source-list {
   display: grid;
   gap: 8px;
@@ -1066,6 +1111,8 @@ th {
   .doctor-list,
   .artifact-row,
   .stat-grid,
+  .readiness-summary,
+  .readiness-row,
   .preview-controls,
   .compare-layout,
   .compare-cards,

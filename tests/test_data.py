@@ -69,6 +69,7 @@ def test_build_corpus_artifacts_writes_manifest_and_report(tmp_path):
         "empty_text",
         "unsupported_extension",
     ]
+    assert report.readiness.status == "caution"
     assert "source file(s) were skipped" in report.warnings[-1]
 
 
@@ -113,6 +114,7 @@ def test_build_corpus_artifacts_records_missing_document_extractors(tmp_path, mo
         "missing_docx_dependency",
     ]
     assert report.stats.num_documents == 0
+    assert report.readiness.status == "blocked"
 
 
 def test_build_corpus_artifacts_uses_recipe_labels_and_exclusions(tmp_path):
@@ -163,4 +165,11 @@ def test_preview_corpus_sources_is_read_only(tmp_path):
     assert report.recipe_path == str(recipe_path)
     assert report.files[0].label == "lesson"
     assert report.stats.num_documents == 1
+    assert report.readiness.status == "caution"
+    assert {check.name for check in report.readiness.checks} >= {
+        "usable_documents",
+        "corpus_size",
+        "document_mix",
+        "skipped_sources",
+    }
     assert not output_path.exists()

@@ -821,6 +821,7 @@ async function previewCorpusSources() {
 
   $("preview-corpus-button").disabled = true;
   $("source-preview-status").innerHTML = 'PREVIEWING SOURCES<span class="cursor"></span>';
+  $("source-preview-readiness").innerHTML = "";
   $("source-preview-stats").innerHTML = "";
   $("source-preview-files").innerHTML = "";
   $("source-preview-text").textContent = "";
@@ -837,6 +838,7 @@ async function previewCorpusSources() {
 function renderCorpusSourcePreview(report) {
   if (!report) {
     $("source-preview-status").textContent = "NO SOURCE PREVIEW REQUESTED.";
+    $("source-preview-readiness").innerHTML = "";
     $("source-preview-stats").innerHTML = "";
     $("source-preview-files").innerHTML = '<div class="empty">NO PREVIEW PLAN LOADED.</div>';
     $("source-preview-text").textContent = "READY.";
@@ -847,7 +849,8 @@ function renderCorpusSourcePreview(report) {
   const skipped = files.length - included.length;
   const stats = report.stats || {};
   $("source-preview-status").textContent =
-    `${fmtInt(included.length)} INCLUDED | ${fmtInt(skipped)} SKIPPED | ${fmtInt(stats.num_characters)} CHARS`;
+    `${readinessBadge(report.readiness)} | ${fmtInt(included.length)} INCLUDED | ${fmtInt(skipped)} SKIPPED | ${fmtInt(stats.num_characters)} CHARS`;
+  $("source-preview-readiness").innerHTML = renderReadiness(report.readiness);
   $("source-preview-stats").innerHTML = statCards([
     ["Input", report.input_path || "unknown"],
     ["Recipe", report.recipe_path || "none"],
@@ -860,9 +863,33 @@ function renderCorpusSourcePreview(report) {
   $("source-preview-text").textContent = report.preview || "(EMPTY)";
 }
 
+function readinessBadge(readiness) {
+  if (!readiness) return "READINESS --";
+  return `READINESS ${String(readiness.status || "--").toUpperCase()}`;
+}
+
+function renderReadiness(readiness) {
+  if (!readiness) return "";
+  const checks = readiness.checks || [];
+  return `
+    <div class="readiness-summary ${escapeHtml(readiness.status || "unknown")}">
+      <strong>${escapeHtml(readinessBadge(readiness))}</strong>
+      <span>${escapeHtml(readiness.summary || "")}</span>
+    </div>
+    ${checks.map((check) => `
+      <div class="readiness-row ${escapeHtml(check.status)}">
+        <strong>${escapeHtml(check.name)}</strong>
+        <span>${escapeHtml(check.metric)} / ${escapeHtml(check.threshold)}</span>
+        <p>${escapeHtml(check.message)}</p>
+      </div>
+    `).join("")}
+  `;
+}
+
 function renderCorpusSourcePreviewError(error) {
   $("preview-corpus-button").disabled = false;
   $("source-preview-status").textContent = "SOURCE PREVIEW FAULT";
+  $("source-preview-readiness").innerHTML = "";
   $("source-preview-stats").innerHTML = "";
   $("source-preview-files").innerHTML = "";
   $("source-preview-text").textContent = `FAULT: ${error.message}`;

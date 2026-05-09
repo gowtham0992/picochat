@@ -252,6 +252,17 @@ def print_stats(stats) -> None:
             print(f"{key}: {value}")
 
 
+def print_readiness(readiness) -> None:
+    print(f"readiness: {readiness.status}")
+    print(f"readiness_summary: {readiness.summary}")
+    print("\nreadiness checks:")
+    for check in readiness.checks:
+        print(
+            f"- {check.status} {check.name}: {check.metric} "
+            f"(target {check.threshold}) - {check.message}"
+        )
+
+
 def inspect_data(args: argparse.Namespace) -> int:
     stats = inspect_path(args.input)
     print_stats(stats)
@@ -270,6 +281,7 @@ def preview_data(args: argparse.Namespace) -> int:
     print(f"files_included: {len(included)}")
     print(f"files_skipped: {len(skipped)}")
     print_stats(report.stats)
+    print_readiness(report.readiness)
 
     print("\nsource plan:")
     for record in report.files:
@@ -304,6 +316,7 @@ def build_data(args: argparse.Namespace) -> int:
     print(f"manifest: {report.manifest_path}")
     print(f"report: {report.report_path}")
     print_stats(report.stats)
+    print_readiness(report.readiness)
     return 0
 
 

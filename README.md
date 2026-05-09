@@ -144,8 +144,11 @@ Preview the same recipe before writing anything:
 PYTHONPATH=src python -m picochat.cli data preview --recipe examples/corpus_recipe.json
 ```
 
-The preview command prints included/skipped files, labels, warnings, corpus
-stats, and the first slice of the combined training text.
+The preview command prints included/skipped files, labels, corpus stats, a
+readiness checklist, warnings, and the first slice of the combined training
+text. The checklist is intentionally conservative: it does not promise a good
+model, but it tells you whether the corpus is blocked, trainable with cautions,
+or ready for a tiny experiment.
 
 Recipe files make the dataset choice reviewable:
 

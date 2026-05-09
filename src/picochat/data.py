@@ -63,6 +63,32 @@ class CorpusFileRecord:
 
 
 @dataclass(frozen=True)
+class CorpusReadinessCheck:
+    name: str
+    status: str
+    metric: str
+    threshold: str
+    message: str
+
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CorpusReadiness:
+    status: str
+    summary: str
+    checks: tuple[CorpusReadinessCheck, ...]
+
+    def to_dict(self) -> dict:
+        return {
+            "status": self.status,
+            "summary": self.summary,
+            "checks": [check.to_dict() for check in self.checks],
+        }
+
+
+@dataclass(frozen=True)
 class CorpusBuildReport:
     input_path: str
     output_path: str
@@ -70,6 +96,7 @@ class CorpusBuildReport:
     report_path: str
     stats: CorpusStats
     files: tuple[CorpusFileRecord, ...]
+    readiness: CorpusReadiness
     warnings: tuple[str, ...]
     recipe_path: str | None = None
 
@@ -82,6 +109,7 @@ class CorpusBuildReport:
             "recipe_path": self.recipe_path,
             "stats": self.stats.to_dict(),
             "files": [record.to_dict() for record in self.files],
+            "readiness": self.readiness.to_dict(),
             "warnings": list(self.warnings),
         }
 
@@ -92,6 +120,7 @@ class CorpusPreviewReport:
     recipe_path: str | None
     stats: CorpusStats
     files: tuple[CorpusFileRecord, ...]
+    readiness: CorpusReadiness
     warnings: tuple[str, ...]
     preview: str
 
@@ -101,6 +130,7 @@ class CorpusPreviewReport:
             "recipe_path": self.recipe_path,
             "stats": self.stats.to_dict(),
             "files": [record.to_dict() for record in self.files],
+            "readiness": self.readiness.to_dict(),
             "warnings": list(self.warnings),
             "preview": self.preview,
         }
@@ -113,6 +143,7 @@ class _CollectedCorpus:
     documents: tuple[str, ...]
     files: tuple[CorpusFileRecord, ...]
     stats: CorpusStats
+    readiness: CorpusReadiness
     warnings: tuple[str, ...]
 
 
@@ -203,6 +234,85 @@ def inspect_path(path: str | Path) -> CorpusStats:
     return inspect_documents(documents, num_files=len(files))
 
 
+def assess_corpus_readiness(
+    stats: CorpusStats,
+    records: list[CorpusFileRecord] | tuple[CorpusFileRecord, ...],
+) -> CorpusReadiness:
+    """Return structured, explainable readiness checks for tiny training."""
+    skipped = [record for record in records if not record.included]
+    checks = [
+        _readiness_check(
+            "usable_documents",
+            "fail" if stats.num_documents == 0 else "pass",
+            str(stats.num_documents),
+            ">= 1",
+            "At least one supported source needs usable text.",
+        ),
+        _readiness_check(
+            "corpus_size",
+            "fail" if stats.num_characters == 0 else "warn" if stats.num_characters < 1000 else "pass",
+            f"{stats.num_characters:,} chars",
+            ">= 1,000 chars",
+            "Very small corpora are useful for smoke tests, but they mostly teach memorization.",
+        ),
+        _readiness_check(
+            "document_mix",
+            "warn" if stats.num_documents == 1 else "pass" if stats.num_documents > 1 else "fail",
+            str(stats.num_documents),
+            ">= 2 for broader training",
+            "One document is fine for a focused overfit test; more documents give better variation.",
+        ),
+        _readiness_check(
+            "duplicate_lines",
+            "warn" if stats.duplicate_line_rate > 0.15 else "pass",
+            f"{stats.duplicate_line_rate * 100:.2f}%",
+            "<= 15%",
+            "Repeated lines can make a tiny model memorize phrasing instead of learning patterns.",
+        ),
+        _readiness_check(
+            "empty_lines",
+            "warn" if stats.empty_line_rate > 0.35 else "pass",
+            f"{stats.empty_line_rate * 100:.2f}%",
+            "<= 35%",
+            "Too many empty lines waste context windows during next-token training.",
+        ),
+        _readiness_check(
+            "non_ascii",
+            "warn" if stats.non_ascii_rate > 0.05 else "pass",
+            f"{stats.non_ascii_rate * 100:.2f}%",
+            "<= 5% unless intentional",
+            "High non-ASCII text is fine when expected; otherwise it may indicate extraction noise.",
+        ),
+        _readiness_check(
+            "skipped_sources",
+            "warn" if skipped else "pass",
+            str(len(skipped)),
+            "0 skipped preferred",
+            "Skipped files may mean unsupported formats, missing extractors, or recipe exclusions.",
+        ),
+    ]
+    if any(check.status == "fail" for check in checks):
+        status = "blocked"
+        summary = "Corpus is not trainable yet."
+    elif any(check.status == "warn" for check in checks):
+        status = "caution"
+        summary = "Corpus is trainable, but read the cautions before spending time on training."
+    else:
+        status = "ready"
+        summary = "Corpus looks ready for a tiny training run."
+    return CorpusReadiness(status=status, summary=summary, checks=tuple(checks))
+
+
+def _readiness_check(name: str, status: str, metric: str, threshold: str, message: str) -> CorpusReadinessCheck:
+    return CorpusReadinessCheck(
+        name=name,
+        status=status,
+        metric=metric,
+        threshold=threshold,
+        message=message,
+    )
+
+
 def build_corpus(input_path: str | Path, output_path: str | Path) -> CorpusStats:
     """Combine corpus sources into one normalized text file."""
     return build_corpus_artifacts(input_path, output_path, write_manifest=False).stats
@@ -233,6 +343,7 @@ def build_corpus_artifacts(
         report_path=str(report_path),
         stats=collected.stats,
         files=collected.files,
+        readiness=collected.readiness,
         warnings=collected.warnings,
         recipe_path=collected.recipe_path,
     )
@@ -257,6 +368,7 @@ def preview_corpus_sources(
         recipe_path=collected.recipe_path,
         stats=collected.stats,
         files=collected.files,
+        readiness=collected.readiness,
         warnings=collected.warnings,
         preview=corpus_text[:max(0, preview_chars)],
     )
@@ -287,9 +399,23 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         f"- Empty line rate: {stats.empty_line_rate * 100:.2f}%",
         f"- Non-ASCII rate: {stats.non_ascii_rate * 100:.2f}%",
         "",
+        "## Readiness",
+        "",
+        f"- Status: `{report.readiness.status}`",
+        f"- Summary: {report.readiness.summary}",
+        "",
+        "| Check | Status | Metric | Threshold | Note |",
+        "| --- | --- | ---: | --- | --- |",
+    ]
+    for check in report.readiness.checks:
+        lines.append(
+            f"| `{check.name}` | `{check.status}` | {check.metric} | `{check.threshold}` | {check.message} |"
+        )
+    lines.extend([
+        "",
         "## Warnings",
         "",
-    ]
+    ])
     if report.warnings:
         lines.extend(f"- {warning}" for warning in report.warnings)
     else:
@@ -338,6 +464,7 @@ def _collect_corpus_sources(
             documents.append(text)
 
     stats = inspect_documents(documents, num_files=len(candidates))
+    readiness = assess_corpus_readiness(stats, records)
     warnings = _corpus_warnings(stats, records)
     return _CollectedCorpus(
         input_path=input_display,
@@ -345,6 +472,7 @@ def _collect_corpus_sources(
         documents=tuple(documents),
         files=tuple(records),
         stats=stats,
+        readiness=readiness,
         warnings=tuple(warnings),
     )
 
@@ -564,6 +692,8 @@ def _corpus_warnings(stats: CorpusStats, records: list[CorpusFileRecord]) -> lis
         warnings.append("No usable text documents were included.")
     if stats.num_characters < 1000:
         warnings.append("Corpus is very small; expect memorization and weak generalization.")
+    if stats.num_documents == 1:
+        warnings.append("Only one usable document was included; add more sources for broader variation.")
     if stats.duplicate_line_rate > 0.15:
         warnings.append("Duplicate line rate is high; repeated text can encourage memorization.")
     if stats.empty_line_rate > 0.35:
