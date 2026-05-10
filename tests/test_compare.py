@@ -41,6 +41,7 @@ def write_summary(
             "num_passed": passed,
             "num_failed": total - passed,
             "pass_rate": passed / total,
+            "support_match_rate": 0.5,
         },
     }
     (path / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
@@ -55,6 +56,7 @@ def test_load_compare_row_reads_summary(tmp_path):
     assert row.run == "tiny-a"
     assert row.eval_score == "3/4"
     assert row.pass_rate == 0.75
+    assert row.support_match_rate == 0.5
     assert row.num_parameters == 114609
     assert row.tokenizer_type == "char"
     assert row.base_val_bpb == 1.5
@@ -92,6 +94,8 @@ def test_comparison_table_and_markdown_include_metrics(tmp_path):
     assert "tiny-a" in table
     assert "3/4" in table
     assert "Base BPB" in table
+    assert "Support" in table
+    assert "50.00%" in table
     assert "1.5000" in table
     assert "10/20" in table
     assert "max/early" in table
@@ -99,6 +103,7 @@ def test_comparison_table_and_markdown_include_metrics(tmp_path):
     assert "114.6k" in table
     assert "# Picochat Run Comparison" in markdown
     assert "Base Val BPB" in markdown
+    assert "Support Match" in markdown
     assert "`stable`" in markdown
     assert "114,609" in markdown
 

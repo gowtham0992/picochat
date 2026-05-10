@@ -22,6 +22,7 @@ class ChatEvalItem:
     must_not_include: tuple[str, ...] = ()
     answerable: bool = True
     category: str = "answerable"
+    split: str = "default"
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,9 @@ def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
         category = record.get("category", "answerable" if answerable else "unanswerable")
         if not isinstance(category, str):
             raise ValueError(f"line {line_number} category field must be a string")
+        split = record.get("split", record.get("eval_split", "default"))
+        if not isinstance(split, str):
+            raise ValueError(f"line {line_number} split field must be a string")
         items.append(ChatEvalItem(
             user=user,
             must_include=_as_string_tuple(must_include, line_number, "must_include"),
@@ -72,6 +76,7 @@ def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
             must_not_include=_as_string_tuple(must_not_include, line_number, "must_not_include"),
             answerable=answerable,
             category=category,
+            split=split or "default",
         ))
 
     if not items:
@@ -177,6 +182,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "user": item.user,
             "answerable": item.answerable,
             "category": item.category,
+            "split": item.split,
             "reply": reply,
             "must_include": list(item.must_include),
             "must_include_any": [list(group) for group in item.must_include_any],
@@ -192,7 +198,8 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     answerable_support_total = sum(int(row["support_total"]) for row in rows if row["answerable"])
     answerable_support_matched = sum(int(row["support_matched"]) for row in rows if row["answerable"])
     answerable = sum(1 for row in rows if row["answerable"])
-    category_breakdown = _category_breakdown(rows)
+    category_breakdown = _breakdown(rows, "category", "answerable")
+    split_breakdown = _breakdown(rows, "split", "default")
     report = {
         "config": config.__dict__,
         "checkpoint": {
@@ -219,6 +226,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
                 answerable_support_total,
             ),
             "category_breakdown": category_breakdown,
+            "split_breakdown": split_breakdown,
         },
         "examples": rows,
     }
@@ -227,14 +235,12 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     return report
 
 
-def _category_breakdown(rows: list[dict]) -> dict[str, dict]:
+def _breakdown(rows: list[dict], field: str, default: str) -> dict[str, dict]:
     buckets: dict[str, dict] = {}
     for row in rows:
-        category = row.get("category") or (
-            "answerable" if row.get("answerable", True) else "unanswerable"
-        )
+        value = row.get(field) or default
         bucket = buckets.setdefault(
-            str(category),
+            str(value),
             {
                 "num_examples": 0,
                 "num_passed": 0,

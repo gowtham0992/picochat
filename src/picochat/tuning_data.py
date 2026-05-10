@@ -56,6 +56,7 @@ class ChatEvalDataReport:
     must_include_any_groups: int
     must_not_include_rules: int
     categories: dict[str, int]
+    splits: dict[str, int]
     issues: tuple[TuningDataIssue, ...]
     preview: tuple[dict[str, Any], ...]
 
@@ -160,6 +161,7 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
             must_include_any_groups=0,
             must_not_include_rules=0,
             categories={},
+            splits={},
             issues=(read_issue,),
             preview=(),
         )
@@ -167,6 +169,7 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
     issues: list[TuningDataIssue] = []
     items: list[dict[str, Any]] = []
     categories: dict[str, int] = {}
+    splits: dict[str, int] = {}
     answerable_items = 0
     must_include_rules = 0
     must_include_any_groups = 0
@@ -179,6 +182,8 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
         items.append(item)
         category = item["category"]
         categories[category] = categories.get(category, 0) + 1
+        split = item["split"]
+        splits[split] = splits.get(split, 0) + 1
         if item["answerable"]:
             answerable_items += 1
         must_include_rules += len(item["must_include"])
@@ -208,6 +213,7 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
         must_include_any_groups=must_include_any_groups,
         must_not_include_rules=must_not_include_rules,
         categories=dict(sorted(categories.items())),
+        splits=dict(sorted(splits.items())),
         issues=tuple(issues[:8]),
         preview=tuple(items[:max(0, preview_items)]),
     )
@@ -274,6 +280,10 @@ def _parse_eval_item(line_number: int, record: Any) -> tuple[dict[str, Any], lis
     if not isinstance(category, str) or not category.strip():
         issues.append(TuningDataIssue(line_number, "category field must be a non-empty string"))
         category = "answerable" if answerable else "unanswerable"
+    split = record.get("split", record.get("eval_split", "default"))
+    if not isinstance(split, str) or not split.strip():
+        issues.append(TuningDataIssue(line_number, "split field must be a non-empty string when present"))
+        split = "default"
 
     if issues:
         return {}, issues
@@ -281,6 +291,7 @@ def _parse_eval_item(line_number: int, record: Any) -> tuple[dict[str, Any], lis
         "user": user,
         "answerable": answerable,
         "category": category,
+        "split": split,
         "must_include": must_include_values,
         "must_include_any": must_include_any_values,
         "must_not_include": must_not_include_values,

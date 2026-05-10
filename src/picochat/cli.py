@@ -522,6 +522,8 @@ def print_tuning_data(chat_data, eval_data) -> None:
     print(f"  {eval_data.path}: {eval_data.summary}")
     if eval_data.categories:
         print(f"  categories: {_format_counts(eval_data.categories)}")
+    if eval_data.splits:
+        print(f"  splits: {_format_counts(eval_data.splits)}")
     for issue in eval_data.issues[:3]:
         print(f"  issue line {issue.line}: {issue.message}")
 

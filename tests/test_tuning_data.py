@@ -68,12 +68,14 @@ def test_inspect_chat_eval_data_reports_rules_and_categories(tmp_path):
         {
             "user": "What is Picochat?",
             "category": "project",
+            "split": "knowledge",
             "must_include": ["Picochat"],
         },
         {
             "user": "Should it make things up?",
             "answerable": False,
             "category": "honesty",
+            "split": "safety",
             "must_include_any": [["No", "avoid unsupported claims"]],
         },
         {
@@ -98,6 +100,8 @@ def test_inspect_chat_eval_data_reports_rules_and_categories(tmp_path):
     assert report.must_include_any_groups == 1
     assert report.must_not_include_rules == 1
     assert report.categories["honesty"] == 1
+    assert report.splits["knowledge"] == 1
+    assert report.splits["safety"] == 1
 
 
 def test_inspect_chat_eval_data_blocks_missing_rules(tmp_path):

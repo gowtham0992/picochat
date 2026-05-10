@@ -1684,6 +1684,7 @@ function renderTuningPreflight(chatData, evalData) {
         <span>${fmtInt((evalData?.must_include_rules || 0) + (evalData?.must_include_any_groups || 0) + (evalData?.must_not_include_rules || 0))} rules</span>
       </div>
       ${renderCategoryCounts(evalData?.categories)}
+      ${renderSplitCounts(evalData?.splits)}
       ${renderIssues(evalData?.issues || [])}
       ${renderEvalPreview(evalData?.preview || [])}
     </div>
@@ -1696,6 +1697,16 @@ function renderCategoryCounts(categories) {
   return `
     <div class="mini-stat-row category-counts">
       ${entries.map(([name, count]) => `<span>${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function renderSplitCounts(splits) {
+  const entries = Object.entries(splits || {});
+  if (!entries.length) return "";
+  return `
+    <div class="mini-stat-row category-counts">
+      ${entries.map(([name, count]) => `<span>split:${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
     </div>
   `;
 }
@@ -2265,6 +2276,7 @@ function renderEval() {
   const report = latest.report;
   const honesty = evalHonestySummary(report);
   const categoryRows = evalCategoryRows(report);
+  const splitRows = evalSplitRows(report);
   $("eval-status").textContent = `${latest.name.toUpperCase()} ${report.summary.num_passed}/${report.summary.num_examples}`;
   $("score-table").innerHTML = `
     <label>HONESTY SUMMARY</label>
@@ -2287,6 +2299,7 @@ function renderEval() {
       </div>
     </div>
     ${renderEvalCategoryTable(categoryRows)}
+    ${renderEvalSplitTable(splitRows)}
     <label>ARCADE SCORE TABLE</label>
     <table>
       <thead><tr><th>Rank</th><th>Prompt</th><th>Kind</th><th>Status</th><th>Support</th><th>Forbidden</th></tr></thead>
@@ -2365,14 +2378,64 @@ function evalCategoryRows(report) {
 
 function renderEvalCategoryTable(rows) {
   if (!rows.length) return "";
+  return renderEvalBreakdownTable("CATEGORY BREAKDOWN", "Category", rows, "category");
+}
+
+function evalSplitRows(report) {
+  const breakdown = report.summary?.split_breakdown || {};
+  const rows = Object.entries(breakdown).map(([split, row]) => ({
+    split,
+    numExamples: row.num_examples ?? 0,
+    numPassed: row.num_passed ?? 0,
+    passRate: row.pass_rate ?? 0,
+    missingSupport: row.missing_support ?? 0,
+    unsupportedClaims: row.unsupported_claims ?? 0,
+  }));
+  if (rows.length) {
+    return rows.sort((left, right) => left.split.localeCompare(right.split));
+  }
+
+  const buckets = new Map();
+  for (const item of report.examples || []) {
+    const split = item.split || "default";
+    if (!buckets.has(split)) {
+      buckets.set(split, {
+        split,
+        numExamples: 0,
+        numPassed: 0,
+        passRate: 0,
+        missingSupport: 0,
+        unsupportedClaims: 0,
+      });
+    }
+    const bucket = buckets.get(split);
+    bucket.numExamples += 1;
+    bucket.numPassed += item.passed ? 1 : 0;
+    bucket.missingSupport += hasMissingSupport(item) ? 1 : 0;
+    bucket.unsupportedClaims += hasForbiddenClaim(item) ? 1 : 0;
+  }
+  return Array.from(buckets.values())
+    .map((row) => ({
+      ...row,
+      passRate: row.numPassed / Math.max(1, row.numExamples),
+    }))
+    .sort((left, right) => left.split.localeCompare(right.split));
+}
+
+function renderEvalSplitTable(rows) {
+  if (!rows.length) return "";
+  return renderEvalBreakdownTable("SPLIT BREAKDOWN", "Split", rows, "split");
+}
+
+function renderEvalBreakdownTable(label, firstColumn, rows, key) {
   return `
-    <label>CATEGORY BREAKDOWN</label>
+    <label>${label}</label>
     <table class="eval-category-table">
-      <thead><tr><th>Category</th><th>Passed</th><th>Pass</th><th>Missing</th><th>Forbidden</th></tr></thead>
+      <thead><tr><th>${firstColumn}</th><th>Passed</th><th>Pass</th><th>Missing</th><th>Forbidden</th></tr></thead>
       <tbody>
         ${rows.map((row) => `
           <tr>
-            <td>${escapeHtml(row.category)}</td>
+            <td>${escapeHtml(row[key])}</td>
             <td>${row.numPassed}/${row.numExamples}</td>
             <td>${fmtPercent(row.passRate)}</td>
             <td>${row.missingSupport}/${row.numExamples}</td>
@@ -2394,6 +2457,7 @@ function evalCard(item, index) {
       </summary>
       <div class="phrase-grid">
         <p>CATEGORY: ${escapeHtml(item.category || "answerable")}</p>
+        <p>SPLIT: ${escapeHtml(item.split || "default")}</p>
         <p>ANSWERABLE: ${escapeHtml(isAnswerable(item) ? "yes" : "no")}</p>
         <p>REQUIRED: ${escapeHtml((item.must_include || []).join(" | ") || "none")}</p>
         <p>ANY: ${escapeHtml((item.must_include_any || []).map((group) => `[${group.join(" / ")}]`).join(" ") || "none")}</p>

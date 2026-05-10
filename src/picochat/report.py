@@ -394,6 +394,12 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.extend(_category_breakdown_table(summary["category_breakdown"]))
         lines.append("")
 
+    if summary.get("split_breakdown"):
+        lines.append("## Split Breakdown")
+        lines.append("")
+        lines.extend(_split_breakdown_table(summary["split_breakdown"]))
+        lines.append("")
+
     if "unsupported_claim_rate" in summary:
         lines.append("## Honesty Metrics")
         lines.append("")
@@ -419,6 +425,7 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append(f"User: {item['user']}")
         lines.append("")
         lines.append(f"Category: `{item.get('category', 'answerable')}`")
+        lines.append(f"Split: `{item.get('split', 'default')}`")
         lines.append(f"Answerable: `{item.get('answerable', True)}`")
         lines.append("")
         lines.append("Required phrases:")
@@ -519,6 +526,12 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.extend(_category_breakdown_table(eval_summary["category_breakdown"]))
         lines.append("")
 
+    if eval_summary.get("split_breakdown"):
+        lines.append("## Eval Splits")
+        lines.append("")
+        lines.extend(_split_breakdown_table(eval_summary["split_breakdown"]))
+        lines.append("")
+
     lines.append("## Settings")
     lines.append("")
     lines.append(f"- Scale: `{config.get('scale', 'custom')}`")
@@ -602,17 +615,25 @@ def tiny_run_summary_markdown(summary: dict) -> str:
 
 
 def _category_breakdown_table(category_breakdown: dict) -> list[str]:
+    return _breakdown_table(category_breakdown, "Category")
+
+
+def _split_breakdown_table(split_breakdown: dict) -> list[str]:
+    return _breakdown_table(split_breakdown, "Split")
+
+
+def _breakdown_table(breakdown: dict, label: str) -> list[str]:
     lines = [
-        "| Category | Passed | Pass Rate | Support Match | Missing Support | Unsupported |",
+        f"| {label} | Passed | Pass Rate | Support Match | Missing Support | Unsupported |",
         "| --- | ---: | ---: | ---: | ---: | ---: |",
     ]
-    for category, row in sorted(category_breakdown.items()):
+    for name, row in sorted(breakdown.items()):
         passed = f"{row.get('num_passed', 0)} / {row.get('num_examples', 0)}"
         pass_rate = format_float(row.get("pass_rate", 0.0) * 100)
         support = format_float(row.get("support_match_rate", 0.0) * 100)
         missing = f"{row.get('missing_support', 0)} / {row.get('num_examples', 0)}"
         unsupported = f"{row.get('unsupported_claims', 0)} / {row.get('num_examples', 0)}"
-        lines.append(f"| `{category}` | {passed} | {pass_rate}% | {support}% | {missing} | {unsupported} |")
+        lines.append(f"| `{name}` | {passed} | {pass_rate}% | {support}% | {missing} | {unsupported} |")
     return lines
 
 

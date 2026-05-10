@@ -18,6 +18,7 @@ def test_load_chat_eval_items_supports_expected_alias(tmp_path):
         "must_include_any": [["hey", "hello"]],
         "answerable": False,
         "category": "refusal",
+        "split": "safety",
     }])
 
     items = load_chat_eval_items(input_path)
@@ -29,6 +30,7 @@ def test_load_chat_eval_items_supports_expected_alias(tmp_path):
             must_include_any=(("hey", "hello"),),
             answerable=False,
             category="refusal",
+            split="safety",
         )
     ]
 
@@ -90,5 +92,7 @@ def test_run_chat_eval_writes_artifacts(tmp_path):
     assert report["summary"]["support_match_rate"] == 1.0
     assert report["summary"]["category_breakdown"]["answerable"]["num_examples"] == 1
     assert report["summary"]["category_breakdown"]["answerable"]["num_passed"] == 1
+    assert report["summary"]["split_breakdown"]["default"]["num_examples"] == 1
     assert report["examples"][0]["answerable"] is True
     assert report["examples"][0]["category"] == "answerable"
+    assert report["examples"][0]["split"] == "default"

@@ -279,6 +279,43 @@ model copies requested subjects, required words, continuation details, and
 refusal behavior without exact prompt leakage. Unlike v3, its validation groups
 hold out prompt phrasings rather than entire subject/word concepts.
 
+For the current prompt-conditioning curriculum, use the v5 pack:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack_v5.json
+```
+
+The v5 pack uses `examples/tinystories_chat_v5.jsonl` and
+`examples/tinystories_eval_v5.jsonl`. It teaches a tiny model to bind requested
+subjects, lessons, and required words into a simple scaffold before writing the
+story. Its eval has explicit splits:
+
+- `prompt_conditioned`: did the model copy visible constraints from the prompt?
+- `transfer`: does the same behavior survive different wording?
+- `knowledge`: does it answer simple story-writing questions?
+- `refusal`: does it refuse non-story/live/medical/financial requests?
+- `safety`: does it avoid claiming to print memorized training text?
+
+To move beyond the 1k local sample, import a larger TinyStories subset and use
+the matching 10k pack:
+
+```bash
+.venv/bin/python -m picochat.cli data hf-import \
+  --dataset roneneldan/TinyStories \
+  --split train \
+  --text-column text \
+  --out runs/tinystories-10k/corpus.txt \
+  --documents-dir runs/tinystories-10k/documents \
+  --report runs/tinystories-10k/import_report.json \
+  --max-rows 10000 \
+  --min-chars 100
+
+PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack_v5_10k.json
+```
+
+Use the 10k pack for base pretraining experiments, then compare split-level
+eval results against the 1k pack before changing architecture again.
+
 For repeatable experiments, put the three dataset inputs in one pack:
 
 ```json
@@ -410,7 +447,7 @@ Run with a named local scale:
 ```bash
 PYTHONPATH=src python -m picochat.cli run tiny \
   --out-dir runs/tinystories-pico-v1 \
-  --dataset-pack examples/tinystories_dataset_pack_v4.json \
+  --dataset-pack examples/tinystories_dataset_pack_v5.json \
   --scale pico \
   --split-mode document
 ```
@@ -438,7 +475,7 @@ PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-bpe --
 Run with longer-training guardrails:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type bpe --tokenizer-vocab-size 512 --context-size 256 --base-steps 10000 --sft-steps 1000 --base-batch-size 4 --sft-batch-size 4 --base-lr-decay cosine --sft-lr-decay cosine --base-lr-warmup-steps 200 --sft-lr-warmup-steps 50 --base-grad-clip 1.0 --sft-grad-clip 1.0 --base-max-minutes 45 --sft-max-minutes 10 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded --dataset-pack examples/tinystories_dataset_pack_v5.json --tokenizer-type bpe --tokenizer-vocab-size 512 --context-size 256 --base-steps 10000 --sft-steps 1000 --base-batch-size 4 --sft-batch-size 4 --base-lr-decay cosine --sft-lr-decay cosine --base-lr-warmup-steps 200 --sft-lr-warmup-steps 50 --base-grad-clip 1.0 --sft-grad-clip 1.0 --base-max-minutes 45 --sft-max-minutes 10 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
 ```
 
 Inspect and build a corpus:

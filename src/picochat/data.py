@@ -722,6 +722,8 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         f"- Eval rules: {report.eval_data.must_include_rules} include, "
         f"{report.eval_data.must_include_any_groups} include-any groups, "
         f"{report.eval_data.must_not_include_rules} forbidden",
+        f"- Eval categories: {_format_counts(report.eval_data.categories)}" if report.eval_data.categories else "- Eval categories: none",
+        f"- Eval splits: {_format_counts(report.eval_data.splits)}" if report.eval_data.splits else "- Eval splits: none",
         "",
         "## Warnings",
         "",
@@ -763,6 +765,10 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         )
     lines.append("")
     return "\n".join(lines)
+
+
+def _format_counts(counts: dict[str, int]) -> str:
+    return ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
 
 
 def _document_records(
