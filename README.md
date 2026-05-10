@@ -427,6 +427,10 @@ Compare runs:
 PYTHONPATH=src python -m picochat.cli compare runs/tiny-v2 runs/tiny-v3 --out runs/compare-tiny.md
 ```
 
+The compare table reports raw validation loss and tokenizer-fair BPB. Use BPB
+when comparing `char`, `byte`, and `bpe` runs; raw loss is mainly useful when
+the tokenizer is the same.
+
 ## Eval Philosophy
 
 Picochat uses transparent phrase checks first because they are easy to inspect.

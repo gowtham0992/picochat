@@ -1958,10 +1958,16 @@ function renderComparison(comparison) {
       <thead>
         <tr>
           <th>Run</th>
+          <th>Tok</th>
           <th>Eval</th>
           <th>Pass</th>
+          <th>Base BPB</th>
+          <th>SFT BPB</th>
           <th>Base Val</th>
           <th>SFT Val</th>
+          <th>Best</th>
+          <th>Stop</th>
+          <th>Mem</th>
           <th>Params</th>
           <th>Ctx</th>
           <th>Trunc</th>
@@ -1971,10 +1977,16 @@ function renderComparison(comparison) {
         ${comparison.rows.map((row) => `
           <tr class="${row.run === comparison.best_run ? "best-row" : ""}">
             <td>${escapeHtml(row.run)}</td>
+            <td>${escapeHtml(row.tokenizer_type || "--")}</td>
             <td>${escapeHtml(row.eval_score)}</td>
             <td>${fmtPercent(row.pass_rate)}</td>
+            <td>${fmtLoss(row.base_val_bpb)}</td>
+            <td>${fmtLoss(row.sft_val_bpb)}</td>
             <td>${fmtLoss(row.base_val_loss)}</td>
             <td>${fmtLoss(row.sft_val_loss)}</td>
+            <td>${escapeHtml(compareBestSteps(row))}</td>
+            <td>${escapeHtml(compareStopReasons(row))}</td>
+            <td>${escapeHtml(row.memorization_status || "--")}</td>
             <td>${fmtInt(row.num_parameters)}</td>
             <td>${escapeHtml(row.context_size)}</td>
             <td>${escapeHtml(row.truncated_examples)}</td>
@@ -1988,14 +2000,18 @@ function renderComparison(comparison) {
 function compareSummary(comparison) {
   const rows = [...comparison.rows].sort((a, b) => b.pass_rate - a.pass_rate);
   const best = rows.find((row) => row.run === comparison.best_run) || rows[0];
+  const bestBaseBpb = rows.find((row) => row.run === comparison.best_base_bpb_run);
+  const bestSftBpb = rows.find((row) => row.run === comparison.best_sft_bpb_run);
   const baseline = rows[0]?.run === best?.run ? rows[1] : rows[0];
   if (!best) return "NO COMPARISON ROWS.";
   const passDelta = baseline ? best.pass_rate - baseline.pass_rate : 0;
-  const sftDelta = baseline ? best.sft_val_loss - baseline.sft_val_loss : 0;
+  const sftBpbDelta = baseline && best.sft_val_bpb != null && baseline.sft_val_bpb != null
+    ? best.sft_val_bpb - baseline.sft_val_bpb
+    : null;
   return `
     <div class="compare-cards">
       <div class="pipeline-stat">
-        <label>Best run</label>
+        <label>Best eval</label>
         <span>${escapeHtml(best.run)}</span>
       </div>
       <div class="pipeline-stat">
@@ -2007,12 +2023,32 @@ function compareSummary(comparison) {
         <span>${baseline ? signedPercent(passDelta) : "--"}</span>
       </div>
       <div class="pipeline-stat">
-        <label>SFT val delta</label>
-        <span>${baseline ? signedLoss(sftDelta) : "--"}</span>
+        <label>Best base BPB</label>
+        <span>${bestBaseBpb ? `${escapeHtml(bestBaseBpb.run)} / ${fmtLoss(bestBaseBpb.base_val_bpb)}` : "--"}</span>
+      </div>
+      <div class="pipeline-stat">
+        <label>SFT BPB delta</label>
+        <span>${sftBpbDelta == null ? "--" : signedLoss(sftBpbDelta)}</span>
       </div>
     </div>
-    <p class="notice">${baseline ? `Compared against ${escapeHtml(baseline.run)}. Higher pass rate is good; lower SFT validation loss is usually healthier.` : "Only one run selected."}</p>
+    <p class="notice">${baseline ? `Compared against ${escapeHtml(baseline.run)}. Higher pass rate is good; use BPB, not raw loss, when comparing tokenizers. Best SFT BPB: ${bestSftBpb ? escapeHtml(bestSftBpb.run) : "--"}.` : "Only one run selected."}</p>
   `;
+}
+
+function compareBestSteps(row) {
+  return `${row.base_best_step ?? "--"}/${row.sft_best_step ?? "--"}`;
+}
+
+function compareStopReasons(row) {
+  return `${shortStopReason(row.base_stop_reason)}/${shortStopReason(row.sft_stop_reason)}`;
+}
+
+function shortStopReason(reason) {
+  if (reason === "max_steps") return "max";
+  if (reason === "max_minutes") return "time";
+  if (reason === "early_stop") return "early";
+  if (!reason || reason === "unknown") return "--";
+  return reason;
 }
 
 function signedPercent(value) {
