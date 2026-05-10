@@ -363,6 +363,12 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append(f"- Missing support rate: {format_float(summary.get('missing_support_rate', 0.0) * 100)}%")
     lines.append("")
 
+    if summary.get("category_breakdown"):
+        lines.append("## Category Breakdown")
+        lines.append("")
+        lines.extend(_category_breakdown_table(summary["category_breakdown"]))
+        lines.append("")
+
     if "unsupported_claim_rate" in summary:
         lines.append("## Honesty Metrics")
         lines.append("")
@@ -456,6 +462,12 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.append(f"- Missing support rate: {format_float(eval_summary.get('missing_support_rate', 0.0) * 100)}%")
     lines.append("")
 
+    if eval_summary.get("category_breakdown"):
+        lines.append("## Eval Categories")
+        lines.append("")
+        lines.extend(_category_breakdown_table(eval_summary["category_breakdown"]))
+        lines.append("")
+
     lines.append("## Settings")
     lines.append("")
     lines.append(f"- Context size: {config['context_size']}")
@@ -527,6 +539,20 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     )
     lines.append("")
     return "\n".join(lines)
+
+
+def _category_breakdown_table(category_breakdown: dict) -> list[str]:
+    lines = [
+        "| Category | Passed | Pass Rate | Missing Support | Unsupported |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ]
+    for category, row in sorted(category_breakdown.items()):
+        passed = f"{row.get('num_passed', 0)} / {row.get('num_examples', 0)}"
+        pass_rate = format_float(row.get("pass_rate", 0.0) * 100)
+        missing = f"{row.get('missing_support', 0)} / {row.get('num_examples', 0)}"
+        unsupported = f"{row.get('unsupported_claims', 0)} / {row.get('num_examples', 0)}"
+        lines.append(f"| `{category}` | {passed} | {pass_rate}% | {missing} | {unsupported} |")
+    return lines
 
 
 def _phrase_list(phrases: list[str]) -> str:

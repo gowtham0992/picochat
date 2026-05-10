@@ -2253,6 +2253,7 @@ function renderEval() {
   const latest = reports.at(-1);
   const report = latest.report;
   const honesty = evalHonestySummary(report);
+  const categoryRows = evalCategoryRows(report);
   $("eval-status").textContent = `${latest.name.toUpperCase()} ${report.summary.num_passed}/${report.summary.num_examples}`;
   $("score-table").innerHTML = `
     <label>HONESTY SUMMARY</label>
@@ -2274,6 +2275,7 @@ function renderEval() {
         <span>${honesty.numUnanswerable}/${honesty.numExamples}</span>
       </div>
     </div>
+    ${renderEvalCategoryTable(categoryRows)}
     <label>ARCADE SCORE TABLE</label>
     <table>
       <thead><tr><th>Rank</th><th>Prompt</th><th>Kind</th><th>Status</th><th>Support</th><th>Forbidden</th></tr></thead>
@@ -2307,6 +2309,68 @@ function evalHonestySummary(report) {
     unsupportedClaimRate: summary.unsupported_claim_rate ?? unsupportedClaims / Math.max(1, numExamples),
     missingSupportRate: summary.missing_support_rate ?? missingSupport / Math.max(1, numExamples),
   };
+}
+
+function evalCategoryRows(report) {
+  const breakdown = report.summary?.category_breakdown || {};
+  const rows = Object.entries(breakdown).map(([category, row]) => ({
+    category,
+    numExamples: row.num_examples ?? 0,
+    numPassed: row.num_passed ?? 0,
+    passRate: row.pass_rate ?? 0,
+    missingSupport: row.missing_support ?? 0,
+    unsupportedClaims: row.unsupported_claims ?? 0,
+  }));
+  if (rows.length) {
+    return rows.sort((left, right) => left.category.localeCompare(right.category));
+  }
+
+  const buckets = new Map();
+  for (const item of report.examples || []) {
+    const category = item.category || (isAnswerable(item) ? "answerable" : "unanswerable");
+    if (!buckets.has(category)) {
+      buckets.set(category, {
+        category,
+        numExamples: 0,
+        numPassed: 0,
+        passRate: 0,
+        missingSupport: 0,
+        unsupportedClaims: 0,
+      });
+    }
+    const bucket = buckets.get(category);
+    bucket.numExamples += 1;
+    bucket.numPassed += item.passed ? 1 : 0;
+    bucket.missingSupport += hasMissingSupport(item) ? 1 : 0;
+    bucket.unsupportedClaims += hasForbiddenClaim(item) ? 1 : 0;
+  }
+  return Array.from(buckets.values())
+    .map((row) => ({
+      ...row,
+      passRate: row.numPassed / Math.max(1, row.numExamples),
+    }))
+    .sort((left, right) => left.category.localeCompare(right.category));
+}
+
+function renderEvalCategoryTable(rows) {
+  if (!rows.length) return "";
+  return `
+    <label>CATEGORY BREAKDOWN</label>
+    <table class="eval-category-table">
+      <thead><tr><th>Category</th><th>Passed</th><th>Pass</th><th>Missing</th><th>Forbidden</th></tr></thead>
+      <tbody>
+        ${rows.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.category)}</td>
+            <td>${row.numPassed}/${row.numExamples}</td>
+            <td>${fmtPercent(row.passRate)}</td>
+            <td>${row.missingSupport}/${row.numExamples}</td>
+            <td>${row.unsupportedClaims}/${row.numExamples}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
 }
 
 function evalCard(item, index) {

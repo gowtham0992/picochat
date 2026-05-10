@@ -183,6 +183,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     unsupported_claims = sum(1 for row in rows if row["found_forbidden"])
     missing_support = sum(1 for row in rows if row["missing"] or row["missing_any"])
     answerable = sum(1 for row in rows if row["answerable"])
+    category_breakdown = _category_breakdown(rows)
     report = {
         "config": config.__dict__,
         "checkpoint": {
@@ -201,12 +202,50 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "unsupported_claim_rate": unsupported_claims / len(rows),
             "missing_support": missing_support,
             "missing_support_rate": missing_support / len(rows),
+            "category_breakdown": category_breakdown,
         },
         "examples": rows,
     }
     (out_dir / "eval_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (out_dir / "report.md").write_text(chat_eval_report_markdown(report), encoding="utf-8")
     return report
+
+
+def _category_breakdown(rows: list[dict]) -> dict[str, dict]:
+    buckets: dict[str, dict] = {}
+    for row in rows:
+        category = row.get("category") or (
+            "answerable" if row.get("answerable", True) else "unanswerable"
+        )
+        bucket = buckets.setdefault(
+            str(category),
+            {
+                "num_examples": 0,
+                "num_passed": 0,
+                "num_failed": 0,
+                "pass_rate": 0.0,
+                "num_answerable": 0,
+                "num_unanswerable": 0,
+                "unsupported_claims": 0,
+                "unsupported_claim_rate": 0.0,
+                "missing_support": 0,
+                "missing_support_rate": 0.0,
+            },
+        )
+        bucket["num_examples"] += 1
+        bucket["num_passed"] += int(row["passed"])
+        bucket["num_failed"] += int(not row["passed"])
+        bucket["num_answerable"] += int(row.get("answerable", True))
+        bucket["num_unanswerable"] += int(not row.get("answerable", True))
+        bucket["unsupported_claims"] += int(bool(row.get("found_forbidden")))
+        bucket["missing_support"] += int(bool(row.get("missing") or row.get("missing_any")))
+
+    for bucket in buckets.values():
+        total = bucket["num_examples"]
+        bucket["pass_rate"] = bucket["num_passed"] / total
+        bucket["unsupported_claim_rate"] = bucket["unsupported_claims"] / total
+        bucket["missing_support_rate"] = bucket["missing_support"] / total
+    return dict(sorted(buckets.items()))
 
 
 @torch.no_grad()

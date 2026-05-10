@@ -1247,6 +1247,10 @@ th {
   margin: 8px 0 14px;
 }
 
+.eval-category-table {
+  margin-bottom: 14px;
+}
+
 .eval-tag {
   border: 1px solid var(--dim-line);
   display: inline-block;
