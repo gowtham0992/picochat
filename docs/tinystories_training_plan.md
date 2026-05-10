@@ -62,11 +62,12 @@ Picochat currently uses a character tokenizer. This is useful for learning
 because every character maps to a visible token id, but it is inefficient:
 `puppy` becomes five tokens instead of one or two subword tokens.
 
-The next tokenizer improvement should be measured, not assumed.
+The byte tokenizer is now available with `--tokenizer-type byte`. This is a
+comparison tool, not a replacement for the char baseline.
 
 1. Keep the current char tokenizer as the educational baseline.
-2. Add a byte-level tokenizer or a small BPE tokenizer behind a CLI option.
-3. Run the same TinyStories pack with each tokenizer.
+2. Run the same TinyStories pack with the byte tokenizer.
+3. Keep all other run settings the same.
 4. Compare validation loss, eval pass rate, training time, and sample quality.
 
 Do not replace the char tokenizer until a comparison run proves the new
@@ -84,9 +85,15 @@ That means the next likely bottleneck is not just SFT row count. The next
 comparison should target tokenizer efficiency and model capacity:
 
 1. Keep the 76-row SFT pack.
-2. Add a second tokenizer option.
-3. Run char vs the new tokenizer on the same dataset pack.
+2. Run char vs byte on the same dataset pack.
+3. Compare reports before changing model size.
 4. Only then scale model size.
+
+Run the byte-tokenizer comparison:
+
+```bash
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-byte-v1 --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type byte --context-size 256 --base-steps 1000 --sft-steps 300 --base-batch-size 4 --sft-batch-size 4 --sft-learning-rate 0.0003 --split-mode document
+```
 
 ## What Not To Do
 

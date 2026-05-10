@@ -26,7 +26,30 @@ def test_cli_tokenizer_train(tmp_path, capsys):
     assert tokenizer_path.exists()
     output = capsys.readouterr().out
     assert "trained tokenizer" in output
+    assert "type: char" in output
     assert "vocab_size" in output
+
+
+def test_cli_tokenizer_train_byte(tmp_path, capsys):
+    data_path = tmp_path / "data.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    data_path.write_text("hello café", encoding="utf-8")
+
+    exit_code = main([
+        "tok",
+        "train",
+        "--input",
+        str(data_path),
+        "--out",
+        str(tokenizer_path),
+        "--type",
+        "byte",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "type: byte" in output
+    assert "vocab_size: 260" in output
 
 
 def test_cli_data_inspect(tmp_path, capsys):
@@ -482,10 +505,15 @@ def test_cli_run_tiny(tmp_path, capsys):
         "1",
         "--eval-max-new-tokens",
         "0",
+        "--tokenizer-type",
+        "byte",
     ])
 
     assert exit_code == 0
     assert (out_dir / "summary.md").exists()
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["config"]["tokenizer_type"] == "byte"
+    assert summary["tokenizer"]["tokenizer_type"] == "byte"
     assert "tiny run: 1/1 passed" in capsys.readouterr().out
 
 

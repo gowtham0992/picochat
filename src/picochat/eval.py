@@ -11,7 +11,7 @@ import torch
 from picochat.chat import extract_assistant_reply, render_chat_prompt
 from picochat.checkpoint import load_checkpoint
 from picochat.report import chat_eval_report_markdown
-from picochat.tokenizer import CharTokenizer
+from picochat.tokenizer import Tokenizer, load_tokenizer
 
 
 @dataclass(frozen=True)
@@ -155,7 +155,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     out_dir = Path(config.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    tokenizer = CharTokenizer.load(config.tokenizer_path)
+    tokenizer = load_tokenizer(config.tokenizer_path)
     model, metadata = load_checkpoint(config.checkpoint_path, map_location=config.device)
     if model.config.vocab_size != len(tokenizer):
         raise ValueError("tokenizer vocabulary size does not match checkpoint")
@@ -212,7 +212,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
 @torch.no_grad()
 def _generate_eval_reply(
     model,
-    tokenizer: CharTokenizer,
+    tokenizer: Tokenizer,
     config: ChatEvalConfig,
     user_message: str,
     seed: int,

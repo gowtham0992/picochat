@@ -12,7 +12,7 @@ import torch
 from picochat.chat import render_chat_prompt
 from picochat.checkpoint import load_checkpoint, save_checkpoint
 from picochat.report import loss_diagnostics, sft_report_markdown
-from picochat.tokenizer import CharTokenizer
+from picochat.tokenizer import Tokenizer, load_tokenizer
 from picochat.train import evaluate_loss
 
 
@@ -54,7 +54,7 @@ class ChatSFTDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         examples: list[ChatExample],
-        tokenizer: CharTokenizer,
+        tokenizer: Tokenizer,
         context_size: int,
     ):
         if context_size < 2:
@@ -191,7 +191,7 @@ def train_sft(config: SFTConfig) -> dict:
     out_dir = Path(config.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    tokenizer = CharTokenizer.load(config.tokenizer_path)
+    tokenizer = load_tokenizer(config.tokenizer_path)
     model, metadata = load_checkpoint(config.checkpoint_path, map_location=config.device)
     if model.config.vocab_size != len(tokenizer):
         raise ValueError("tokenizer vocabulary size does not match checkpoint")

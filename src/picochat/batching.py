@@ -9,7 +9,7 @@ from typing import Any
 
 import torch
 
-from picochat.tokenizer import CharTokenizer
+from picochat.tokenizer import load_tokenizer
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ def load_token_dataset(
     add_eos: bool = True,
 ) -> TokenWindowDataset:
     """Load text, encode it, and return fixed next-token windows."""
-    tokenizer = CharTokenizer.load(tokenizer_path)
+    tokenizer = load_tokenizer(tokenizer_path)
     text = Path(corpus_path).read_text(encoding="utf-8")
     tokens = tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos)
     return TokenWindowDataset(tokens, context_size=context_size)
@@ -192,7 +192,7 @@ def _document_token_split(
     if len(documents) < 2:
         return None
     corpus_text = corpus_path.read_text(encoding="utf-8")
-    tokenizer = CharTokenizer.load(tokenizer_path)
+    tokenizer = load_tokenizer(tokenizer_path)
 
     generator = torch.Generator()
     generator.manual_seed(seed)

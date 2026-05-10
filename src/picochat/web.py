@@ -387,6 +387,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     n_layer = _bounded_int(payload.get("n_layer", preset["n_layer"]), 1, 8)
     if n_embd % n_head != 0:
         raise ValueError("n_embd must be divisible by n_head")
+    tokenizer_type = str(payload.get("tokenizer_type", "char"))
+    if tokenizer_type not in {"char", "byte"}:
+        raise ValueError("tokenizer_type must be 'char' or 'byte'")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "web_run.log"
@@ -420,6 +423,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(seed),
         "--eval-max-new-tokens",
         str(eval_max_new_tokens),
+        "--tokenizer-type",
+        tokenizer_type,
         "--split-mode",
         "document",
         "--min-score",

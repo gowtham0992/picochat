@@ -394,7 +394,7 @@ def assess_corpus_readiness(
 
 
 def estimate_training_budget(stats: CorpusStats) -> CorpusTrainingBudget:
-    """Estimate a conservative first training budget for the current char tokenizer."""
+    """Estimate a conservative first training budget before tokenizer training."""
     estimated_tokens = stats.num_characters
     if estimated_tokens == 0:
         context_size = 32

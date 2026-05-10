@@ -62,9 +62,9 @@ PYTHONPATH=src python -m picochat.cli data preview --input runs/fineweb-edu-samp
 
 Purpose: convert text into token IDs the model can read.
 
-Picochat currently starts with a character tokenizer because it is easy to
-inspect. That makes it slower and less efficient than modern BPE tokenizers,
-but it is ideal for learning the mechanics.
+Picochat starts with a character tokenizer because it is easy to inspect. It
+also supports a byte tokenizer for comparison experiments. Both are simpler
+than modern BPE tokenizers, but they keep the mechanics visible.
 
 Input:
 

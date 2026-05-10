@@ -1,8 +1,12 @@
-"""Small trainable character tokenizer.
+"""Small tokenizers for Picochat experiments.
 
 The first Picochat tokenizer is intentionally character-level. It is slower and
 less capable than BPE, but it makes the first training pipeline easy to inspect:
 each input character becomes one token, plus a few reserved control tokens.
+
+The byte tokenizer is the next comparison point. It is still simple and
+dependency-free, but it can represent any UTF-8 text with a fixed byte
+vocabulary.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ SPECIAL_TOKENS = ("<pad>", "<bos>", "<eos>", "<unk>")
 
 @dataclass(frozen=True)
 class TokenizerStats:
+    tokenizer_type: str
     vocab_size: int
     num_special_tokens: int
     num_text_tokens: int
@@ -25,6 +30,8 @@ class TokenizerStats:
 
 class CharTokenizer:
     """A tiny tokenizer that learns a vocabulary of characters from text."""
+
+    tokenizer_type = "char"
 
     def __init__(self, token_to_id: dict[str, int]):
         missing = [token for token in SPECIAL_TOKENS if token not in token_to_id]
@@ -86,6 +93,7 @@ class CharTokenizer:
 
     def stats(self) -> TokenizerStats:
         return TokenizerStats(
+            tokenizer_type=self.tokenizer_type,
             vocab_size=len(self),
             num_special_tokens=len(SPECIAL_TOKENS),
             num_text_tokens=len(self) - len(SPECIAL_TOKENS),
@@ -118,7 +126,7 @@ class CharTokenizer:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {
-            "type": "char",
+            "type": self.tokenizer_type,
             "special_tokens": list(SPECIAL_TOKENS),
             "token_to_id": self.token_to_id,
         }
@@ -126,10 +134,179 @@ class CharTokenizer:
 
     @classmethod
     def load(cls, path: str | Path) -> "CharTokenizer":
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        data = _read_tokenizer_json(path)
         if data.get("type") != "char":
             raise ValueError(f"Unsupported tokenizer type: {data.get('type')}")
+        return cls.from_data(data)
+
+    @classmethod
+    def from_data(cls, data: dict) -> "CharTokenizer":
         if tuple(data.get("special_tokens", [])) != SPECIAL_TOKENS:
             raise ValueError("Tokenizer special tokens do not match this version")
         return cls({token: int(idx) for token, idx in data["token_to_id"].items()})
 
+
+class ByteTokenizer:
+    """A fixed UTF-8 byte tokenizer with the same interface as CharTokenizer."""
+
+    tokenizer_type = "byte"
+
+    def __init__(self, token_to_id: dict[str, int] | None = None):
+        self.token_to_id = dict(token_to_id) if token_to_id is not None else _byte_token_to_id()
+        missing = [token for token in SPECIAL_TOKENS if token not in self.token_to_id]
+        if missing:
+            raise ValueError(f"Missing required special tokens: {missing}")
+        self.id_to_token = {idx: token for token, idx in self.token_to_id.items()}
+        if len(self.id_to_token) != len(self.token_to_id):
+            raise ValueError("Token ids must be unique")
+        self.byte_to_id = {
+            byte: self.token_to_id[_byte_token(byte)]
+            for byte in range(256)
+        }
+        self.id_to_byte = {token_id: byte for byte, token_id in self.byte_to_id.items()}
+
+    @classmethod
+    def train(
+        cls,
+        texts: list[str],
+        vocab_size: int | None = None,
+        min_freq: int = 1,
+    ) -> "ByteTokenizer":
+        """Return the fixed byte vocabulary.
+
+        The arguments match CharTokenizer.train so callers can switch tokenizer
+        type without changing the training flow.
+        """
+        if min_freq < 1:
+            raise ValueError("min_freq must be at least 1")
+        if vocab_size is not None and vocab_size != len(SPECIAL_TOKENS) + 256:
+            raise ValueError("byte tokenizer has a fixed vocab size of 260")
+        return cls()
+
+    @property
+    def pad_id(self) -> int:
+        return self.token_to_id["<pad>"]
+
+    @property
+    def bos_id(self) -> int:
+        return self.token_to_id["<bos>"]
+
+    @property
+    def eos_id(self) -> int:
+        return self.token_to_id["<eos>"]
+
+    @property
+    def unk_id(self) -> int:
+        return self.token_to_id["<unk>"]
+
+    def __len__(self) -> int:
+        return len(self.token_to_id)
+
+    def stats(self) -> TokenizerStats:
+        return TokenizerStats(
+            tokenizer_type=self.tokenizer_type,
+            vocab_size=len(self),
+            num_special_tokens=len(SPECIAL_TOKENS),
+            num_text_tokens=256,
+        )
+
+    def encode(
+        self,
+        text: str,
+        add_bos: bool = False,
+        add_eos: bool = False,
+    ) -> list[int]:
+        ids: list[int] = []
+        if add_bos:
+            ids.append(self.bos_id)
+        ids.extend(self.byte_to_id[byte] for byte in text.encode("utf-8"))
+        if add_eos:
+            ids.append(self.eos_id)
+        return ids
+
+    def decode(self, ids: list[int], skip_special: bool = True) -> str:
+        pieces: list[str] = []
+        buffer = bytearray()
+        for idx in ids:
+            token_id = int(idx)
+            byte = self.id_to_byte.get(token_id)
+            if byte is not None:
+                buffer.append(byte)
+                continue
+            if buffer:
+                pieces.append(bytes(buffer).decode("utf-8", errors="replace"))
+                buffer.clear()
+            token = self.id_to_token.get(token_id, "<unk>")
+            if skip_special and token in SPECIAL_TOKENS:
+                continue
+            pieces.append(token)
+        if buffer:
+            pieces.append(bytes(buffer).decode("utf-8", errors="replace"))
+        return "".join(pieces)
+
+    def save(self, path: str | Path) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "type": self.tokenizer_type,
+            "special_tokens": list(SPECIAL_TOKENS),
+            "token_to_id": self.token_to_id,
+        }
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: str | Path) -> "ByteTokenizer":
+        data = _read_tokenizer_json(path)
+        if data.get("type") != "byte":
+            raise ValueError(f"Unsupported tokenizer type: {data.get('type')}")
+        return cls.from_data(data)
+
+    @classmethod
+    def from_data(cls, data: dict) -> "ByteTokenizer":
+        if tuple(data.get("special_tokens", [])) != SPECIAL_TOKENS:
+            raise ValueError("Tokenizer special tokens do not match this version")
+        return cls({token: int(idx) for token, idx in data["token_to_id"].items()})
+
+
+Tokenizer = CharTokenizer | ByteTokenizer
+TOKENIZER_TYPES = ("char", "byte")
+
+
+def train_tokenizer(
+    tokenizer_type: str,
+    texts: list[str],
+    vocab_size: int | None = None,
+    min_freq: int = 1,
+) -> Tokenizer:
+    """Train or construct a tokenizer by type."""
+    if tokenizer_type == "char":
+        return CharTokenizer.train(texts, vocab_size=vocab_size, min_freq=min_freq)
+    if tokenizer_type == "byte":
+        return ByteTokenizer.train(texts, vocab_size=vocab_size, min_freq=min_freq)
+    raise ValueError(f"Unsupported tokenizer type: {tokenizer_type}")
+
+
+def load_tokenizer(path: str | Path) -> Tokenizer:
+    """Load any supported Picochat tokenizer."""
+    data = _read_tokenizer_json(path)
+    tokenizer_type = data.get("type")
+    if tokenizer_type == "char":
+        return CharTokenizer.from_data(data)
+    if tokenizer_type == "byte":
+        return ByteTokenizer.from_data(data)
+    raise ValueError(f"Unsupported tokenizer type: {tokenizer_type}")
+
+
+def _read_tokenizer_json(path: str | Path) -> dict:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _byte_token(byte: int) -> str:
+    return f"<byte:{byte:02x}>"
+
+
+def _byte_token_to_id() -> dict[str, int]:
+    token_to_id = {token: idx for idx, token in enumerate(SPECIAL_TOKENS)}
+    for byte in range(256):
+        token_to_id[_byte_token(byte)] = len(SPECIAL_TOKENS) + byte
+    return token_to_id

@@ -10,7 +10,7 @@ from picochat.data import build_corpus_artifacts
 from picochat.eval import ChatEvalConfig, run_chat_eval
 from picochat.report import tiny_run_summary_markdown
 from picochat.sft import SFTConfig, train_sft
-from picochat.tokenizer import CharTokenizer
+from picochat.tokenizer import TOKENIZER_TYPES, train_tokenizer
 from picochat.train import TrainConfig, train_base
 
 
@@ -37,6 +37,7 @@ class TinyRunConfig:
     eval_max_new_tokens: int = 120
     min_quality_score: int = 0
     split_mode: str = "document"
+    tokenizer_type: str = "char"
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -61,9 +62,12 @@ def run_tiny(config: TinyRunConfig) -> dict:
     chat_input = corpus_build.training_command.chat_input
     eval_input = corpus_build.training_command.eval_input
 
-    print(f"[2/5] train tokenizer -> {tokenizer_path}")
+    if config.tokenizer_type not in TOKENIZER_TYPES:
+        raise ValueError(f"Unsupported tokenizer type: {config.tokenizer_type}")
+
+    print(f"[2/5] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
     text = corpus_path.read_text(encoding="utf-8")
-    tokenizer = CharTokenizer.train([text])
+    tokenizer = train_tokenizer(config.tokenizer_type, [text])
     tokenizer.save(tokenizer_path)
 
     print("[3/5] train base model")

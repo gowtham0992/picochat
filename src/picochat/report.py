@@ -383,6 +383,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     base = summary["base"]
     sft = summary["sft"]
     artifacts = summary["artifacts"]
+    tokenizer = summary.get("tokenizer", {})
     base_diagnostics = base.get("loss_diagnostics", {})
     sft_diagnostics = sft.get("loss_diagnostics", {})
     base_memorization = base.get("memorization", {})
@@ -414,6 +415,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Attention heads: {config['n_head']}")
     lines.append(f"- Base steps: {config['base_steps']}")
     lines.append(f"- SFT steps: {config['sft_steps']}")
+    lines.append(f"- Tokenizer type: `{tokenizer.get('tokenizer_type', 'unknown')}`")
     lines.append(f"- Device: `{config['device']}`")
     if config.get("dataset_pack"):
         lines.append(f"- Dataset pack: `{config['dataset_pack']}`")

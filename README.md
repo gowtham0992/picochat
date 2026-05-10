@@ -76,7 +76,7 @@ not show fake training data.
 - **Factory Flow:** the real pipeline from dataset to report.
 - **Dataset Bay:** corpus stats, quality checks, training windows, pack builder,
   JSONL editor, tuning-data inspection, run launcher, and preview.
-- **Tokenizer Lab:** character-to-token-ID inspection from the trained tokenizer.
+- **Tokenizer Lab:** text-to-token-ID inspection from the trained tokenizer.
 - **Training Dash:** base and SFT loss traces, including memorization warnings.
 - **Generation Deck:** live generation from the selected base or SFT checkpoint.
 - **Eval Scoreboard:** pass/fail results plus honesty metrics.
@@ -349,6 +349,13 @@ Run a configurable tiny experiment:
 PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tiny-v4
 ```
 
+Compare tokenizer choices on the same dataset pack:
+
+```bash
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-char --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type char --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-byte --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type byte --split-mode document
+```
+
 Inspect and build a corpus:
 
 ```bash
@@ -361,6 +368,13 @@ Train a tokenizer:
 
 ```bash
 PYTHONPATH=src python -m picochat.cli tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer.json
+```
+
+Choose the tokenizer explicitly when comparing experiments:
+
+```bash
+PYTHONPATH=src python -m picochat.cli tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer-char.json --type char
+PYTHONPATH=src python -m picochat.cli tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer-byte.json --type byte
 ```
 
 Inspect next-token training windows:

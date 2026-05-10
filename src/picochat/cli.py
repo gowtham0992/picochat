@@ -12,7 +12,7 @@ from picochat.data import (
     preview_corpus_sources,
 )
 from picochat.batching import load_token_dataset
-from picochat.tokenizer import CharTokenizer
+from picochat.tokenizer import TOKENIZER_TYPES, load_tokenizer, train_tokenizer as build_tokenizer
 from picochat.train import TrainConfig, train_base
 from picochat.sft import SFTConfig, train_sft
 from picochat.generate import GenerateConfig, generate_text
@@ -199,6 +199,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Where to write tokenizer JSON.",
     )
     tok_train.add_argument(
+        "--type",
+        choices=TOKENIZER_TYPES,
+        default="char",
+        help="Tokenizer type to train. Use char for the educational baseline or byte for UTF-8 bytes.",
+    )
+    tok_train.add_argument(
         "--vocab-size",
         type=int,
         default=None,
@@ -335,6 +341,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--seed", type=int, default=42)
     run_tiny_parser.add_argument("--device", default="cpu")
     run_tiny_parser.add_argument("--eval-max-new-tokens", type=int, default=120)
+    run_tiny_parser.add_argument(
+        "--tokenizer-type",
+        choices=TOKENIZER_TYPES,
+        default="char",
+        help="Tokenizer used for this run. Compare char vs byte on the same dataset pack.",
+    )
     run_tiny_parser.add_argument(
         "--min-score",
         type=int,
@@ -570,7 +582,8 @@ def train_tokenizer(args: argparse.Namespace) -> int:
     output_path = Path(args.out)
     text = input_path.read_text(encoding="utf-8")
 
-    tokenizer = CharTokenizer.train(
+    tokenizer = build_tokenizer(
+        args.type,
         [text],
         vocab_size=args.vocab_size,
         min_freq=args.min_freq,
@@ -579,6 +592,7 @@ def train_tokenizer(args: argparse.Namespace) -> int:
 
     stats = tokenizer.stats()
     print(f"trained tokenizer: {output_path}")
+    print(f"type: {stats.tokenizer_type}")
     print(f"vocab_size: {stats.vocab_size}")
     print(f"text_tokens: {stats.num_text_tokens}")
     print(f"special_tokens: {stats.num_special_tokens}")
@@ -586,7 +600,7 @@ def train_tokenizer(args: argparse.Namespace) -> int:
 
 
 def inspect_batches(args: argparse.Namespace) -> int:
-    tokenizer = CharTokenizer.load(args.tokenizer)
+    tokenizer = load_tokenizer(args.tokenizer)
     dataset = load_token_dataset(args.corpus, args.tokenizer, args.context_size)
     stats = dataset.stats()
 
@@ -730,6 +744,7 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         eval_max_new_tokens=args.eval_max_new_tokens,
         min_quality_score=args.min_score,
         split_mode=args.split_mode,
+        tokenizer_type=args.tokenizer_type,
     ))
     print(
         f"tiny run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "

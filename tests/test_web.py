@@ -540,6 +540,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert job["min_quality_score"] == 0
     assert "--dataset-pack" in captured["command"]
     assert "--min-score" in captured["command"]
+    assert "--tokenizer-type" in captured["command"]
     assert str(pack_path) in captured["command"]
     assert captured["kwargs"]["cwd"].name == "picochat"
     assert (tmp_path / "runs" / "ui-run" / "web_run.log").exists()

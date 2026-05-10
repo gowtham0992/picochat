@@ -320,6 +320,7 @@ function pipelineStages() {
   const baseCheckpoint = summary.base?.checkpoint || `${outDir}/base/checkpoint`;
   const sftCheckpoint = summary.sft?.checkpoint || `${outDir}/sft/checkpoint`;
   const tokenizer = detail?.tokenizer_detail || summary.tokenizer || {};
+  const tokenizerType = tokenizer.type || summary.tokenizer?.tokenizer_type || config.tokenizer_type || "char";
   const baseLast = detail?.base_report?.losses?.at(-1);
   const sftLast = detail?.sft_report?.losses?.at(-1);
   const evalReport = detail?.eval_reports?.at(-1)?.report;
@@ -348,9 +349,9 @@ function pipelineStages() {
     {
       id: "tokenizer",
       label: "TOKENIZER",
-      summary: tokenizer.vocab_size ? `${tokenizer.vocab_size} vocab / ${tokenizer.special_tokens?.length || 0} special` : "not trained",
+      summary: tokenizer.vocab_size ? `${tokenizerType} / ${tokenizer.vocab_size} vocab / ${tokenizer.special_tokens?.length || 0} special` : "not trained",
       stats: [
-        ["Type", tokenizer.type || "unknown"],
+        ["Type", tokenizerType],
         ["Vocab", tokenizer.vocab_size ?? "--"],
         ["Special", tokenizer.special_tokens?.length ?? "--"],
         ["Text tokens", summary.tokenizer?.num_text_tokens ?? "--"],
@@ -360,6 +361,7 @@ function pipelineStages() {
         "PYTHONPATH=src", "python", "-m", "picochat.cli", "tok", "train",
         "--input", corpusPath,
         "--out", tokenizerPath,
+        "--type", tokenizerType,
       ]),
       ledger: [
         artifactItem("INPUT", "Corpus", corpusPath),
@@ -1722,7 +1724,7 @@ function renderTokenizer() {
   const tokenizer = state.detail?.tokenizer_detail;
   const summary = state.detail?.summary;
   $("tokenizer-summary").textContent = tokenizer
-    ? `TOK ${tokenizer.vocab_size} | SPECIAL ${tokenizer.special_tokens.length}`
+    ? `${(tokenizer.type || summary?.tokenizer?.tokenizer_type || "TOK").toUpperCase()} ${tokenizer.vocab_size} | SPECIAL ${tokenizer.special_tokens.length}`
     : "TOK --";
   $("special-tokens").innerHTML = (tokenizer?.special_tokens || [])
     .map((token) => `<span class="token-pill special">${escapeHtml(token)}:${tokenizer.token_to_id[token]}</span>`)
@@ -1741,25 +1743,39 @@ function animateTokenizer() {
   }
   clearInterval(state.tokenTimer);
   const text = $("tokenizer-input").value;
-  const chars = [...text];
+  const units = tokenizer.type === "byte" ? byteTokenUnits(text) : charTokenUnits(text);
   const stream = $("token-stream");
   stream.innerHTML = "";
   let index = 0;
   state.tokenTimer = setInterval(() => {
-    if (index >= chars.length) {
+    if (index >= units.length) {
       clearInterval(state.tokenTimer);
       stream.insertAdjacentHTML("beforeend", '<span class="cursor"></span>');
       return;
     }
-    const char = chars[index];
-    const id = tokenizer.token_to_id[char] ?? tokenizer.token_to_id["<unk>"];
-    const label = char === " " ? "space" : char === "\n" ? "\\n" : char;
+    const unit = units[index];
+    const id = tokenizer.token_to_id[unit.token] ?? tokenizer.token_to_id["<unk>"];
     stream.insertAdjacentHTML(
       "beforeend",
-      `<span class="token-step"><b>${escapeHtml(label)}</b><em>${id}</em></span>`
+      `<span class="token-step"><b>${escapeHtml(unit.label)}</b><em>${id}</em></span>`
     );
     index += 1;
   }, 80);
+}
+
+function charTokenUnits(text) {
+  return [...text].map((char) => ({
+    token: char,
+    label: char === " " ? "space" : char === "\n" ? "\\n" : char,
+  }));
+}
+
+function byteTokenUnits(text) {
+  return Array.from(new TextEncoder().encode(text)).map((byte) => {
+    const hex = byte.toString(16).padStart(2, "0");
+    const printable = byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : `0x${hex}`;
+    return { token: `<byte:${hex}>`, label: printable === " " ? "space" : printable };
+  });
 }
 
 function renderTraining() {

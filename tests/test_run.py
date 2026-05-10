@@ -49,6 +49,8 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert (out_dir / "summary.json").exists()
     assert (out_dir / "summary.md").exists()
     assert summary["eval"]["num_examples"] == 1
+    assert summary["config"]["tokenizer_type"] == "char"
+    assert summary["tokenizer"]["tokenizer_type"] == "char"
     assert "corpus_manifest" in summary["artifacts"]
     assert summary["artifacts"]["sft_eval_checkpoint"] == str(out_dir / "sft" / "best_checkpoint")
     assert summary["sft"]["eval_checkpoint"] == str(out_dir / "sft" / "best_checkpoint")

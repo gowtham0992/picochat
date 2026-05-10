@@ -14,7 +14,7 @@ from picochat.checkpoint import save_checkpoint
 from picochat.memorization import memorization_diagnostics
 from picochat.model import GPTConfig, TinyGPT
 from picochat.report import loss_diagnostics, training_report_markdown
-from picochat.tokenizer import CharTokenizer
+from picochat.tokenizer import load_tokenizer
 
 
 @dataclass(frozen=True)
@@ -65,7 +65,7 @@ def train_base(config: TrainConfig) -> dict:
     out_dir = Path(config.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    tokenizer = CharTokenizer.load(config.tokenizer_path)
+    tokenizer = load_tokenizer(config.tokenizer_path)
     split = load_token_split(
         corpus_path=config.corpus_path,
         tokenizer_path=config.tokenizer_path,
