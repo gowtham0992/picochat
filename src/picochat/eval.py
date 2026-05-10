@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 
 import torch
 
@@ -114,6 +115,8 @@ def _as_phrase_groups(value, line_number: int, field: str) -> tuple[tuple[str, .
 
 def score_reply(reply: str, item: ChatEvalItem, case_sensitive: bool = False) -> dict:
     """Score a reply with visible substring rules."""
+    prompt_echo_reasons = detect_prompt_echo(reply, item.user, case_sensitive=case_sensitive)
+    prompt_echo = bool(prompt_echo_reasons)
     if case_sensitive:
         haystack = reply
         includes = item.must_include
@@ -150,14 +153,49 @@ def score_reply(reply: str, item: ChatEvalItem, case_sensitive: bool = False) ->
     support_total = len(item.must_include) + len(item.must_include_any)
     support_matched = support_total - len(missing) - len(missing_any)
     return {
-        "passed": not missing and not missing_any and not found_forbidden,
+        "passed": not missing and not missing_any and not found_forbidden and not prompt_echo,
         "missing": missing,
         "missing_any": missing_any,
         "found_forbidden": found_forbidden,
+        "prompt_echo": prompt_echo,
+        "prompt_echo_reasons": prompt_echo_reasons,
         "support_total": support_total,
         "support_matched": support_matched,
         "support_match_rate": support_matched / support_total if support_total else 1.0,
     }
+
+
+def detect_prompt_echo(
+    reply: str,
+    user_message: str,
+    case_sensitive: bool = False,
+) -> list[str]:
+    """Return visible reasons a reply appears to echo the chat prompt."""
+    if not reply.strip():
+        return []
+
+    if case_sensitive:
+        text = reply
+        user_text = user_message
+        role_pattern = r"(^|\n)\s*(User|Assistant)\s*:"
+    else:
+        text = reply.lower()
+        user_text = user_message.lower()
+        role_pattern = r"(^|\n)\s*(user|assistant)\s*:"
+
+    reasons: list[str] = []
+    if re.search(role_pattern, text):
+        reasons.append("chat_role_label")
+
+    compact_reply = _normalize_for_echo(text)
+    compact_user = _normalize_for_echo(user_text)
+    if len(compact_user) >= 12 and (
+        compact_reply.startswith(compact_user[:80])
+        or compact_reply.startswith(f"user {compact_user[:80]}")
+    ):
+        reasons.append("starts_with_user_prompt")
+
+    return reasons
 
 
 def run_chat_eval(config: ChatEvalConfig) -> dict:
@@ -192,6 +230,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
 
     passed = sum(1 for row in rows if row["passed"])
     unsupported_claims = sum(1 for row in rows if row["found_forbidden"])
+    prompt_echoes = sum(1 for row in rows if row.get("prompt_echo"))
     missing_support = sum(1 for row in rows if row["missing"] or row["missing_any"])
     support_total = sum(int(row["support_total"]) for row in rows)
     support_matched = sum(int(row["support_matched"]) for row in rows)
@@ -216,6 +255,8 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "num_unanswerable": len(rows) - answerable,
             "unsupported_claims": unsupported_claims,
             "unsupported_claim_rate": unsupported_claims / len(rows),
+            "prompt_echoes": prompt_echoes,
+            "prompt_echo_rate": prompt_echoes / len(rows),
             "missing_support": missing_support,
             "missing_support_rate": missing_support / len(rows),
             "support_requirements": support_total,
@@ -250,6 +291,8 @@ def _breakdown(rows: list[dict], field: str, default: str) -> dict[str, dict]:
                 "num_unanswerable": 0,
                 "unsupported_claims": 0,
                 "unsupported_claim_rate": 0.0,
+                "prompt_echoes": 0,
+                "prompt_echo_rate": 0.0,
                 "missing_support": 0,
                 "missing_support_rate": 0.0,
                 "support_requirements": 0,
@@ -263,6 +306,7 @@ def _breakdown(rows: list[dict], field: str, default: str) -> dict[str, dict]:
         bucket["num_answerable"] += int(row.get("answerable", True))
         bucket["num_unanswerable"] += int(not row.get("answerable", True))
         bucket["unsupported_claims"] += int(bool(row.get("found_forbidden")))
+        bucket["prompt_echoes"] += int(bool(row.get("prompt_echo")))
         bucket["missing_support"] += int(bool(row.get("missing") or row.get("missing_any")))
         bucket["support_requirements"] += int(row.get("support_total", 0))
         bucket["support_matches"] += int(row.get("support_matched", 0))
@@ -271,6 +315,7 @@ def _breakdown(rows: list[dict], field: str, default: str) -> dict[str, dict]:
         total = bucket["num_examples"]
         bucket["pass_rate"] = bucket["num_passed"] / total
         bucket["unsupported_claim_rate"] = bucket["unsupported_claims"] / total
+        bucket["prompt_echo_rate"] = bucket["prompt_echoes"] / total
         bucket["missing_support_rate"] = bucket["missing_support"] / total
         bucket["support_match_rate"] = _safe_rate(
             bucket["support_matches"],
@@ -281,6 +326,10 @@ def _breakdown(rows: list[dict], field: str, default: str) -> dict[str, dict]:
 
 def _safe_rate(numerator: int, denominator: int) -> float:
     return float(numerator) / float(denominator) if denominator else 1.0
+
+
+def _normalize_for_echo(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
 
 
 @torch.no_grad()
@@ -305,5 +354,6 @@ def _generate_eval_reply(
         seed=seed,
         eos_id=tokenizer.eos_id,
     )
-    generated_text = tokenizer.decode(generated[0].tolist())
-    return extract_assistant_reply(prompt, generated_text)
+    new_token_ids = generated[0, input_ids.shape[1]:].tolist()
+    generated_text = tokenizer.decode(new_token_ids)
+    return extract_assistant_reply("", generated_text)

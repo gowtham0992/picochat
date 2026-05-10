@@ -140,6 +140,8 @@ def test_chat_eval_report_markdown_contains_key_sections():
             "num_unanswerable": 0,
             "unsupported_claims": 1,
             "unsupported_claim_rate": 1.0,
+            "prompt_echoes": 1,
+            "prompt_echo_rate": 1.0,
             "missing_support": 1,
             "missing_support_rate": 1.0,
             "category_breakdown": {
@@ -152,6 +154,8 @@ def test_chat_eval_report_markdown_contains_key_sections():
                     "num_unanswerable": 0,
                     "unsupported_claims": 1,
                     "unsupported_claim_rate": 1.0,
+                    "prompt_echoes": 1,
+                    "prompt_echo_rate": 1.0,
                     "missing_support": 1,
                     "missing_support_rate": 1.0,
                 },
@@ -166,6 +170,8 @@ def test_chat_eval_report_markdown_contains_key_sections():
                     "num_unanswerable": 0,
                     "unsupported_claims": 1,
                     "unsupported_claim_rate": 1.0,
+                    "prompt_echoes": 1,
+                    "prompt_echo_rate": 1.0,
                     "missing_support": 1,
                     "missing_support_rate": 1.0,
                 },
@@ -181,6 +187,8 @@ def test_chat_eval_report_markdown_contains_key_sections():
             "missing": ["Picochat"],
             "missing_any": [["educational", "learning"]],
             "found_forbidden": ["I do not know"],
+            "prompt_echo": True,
+            "prompt_echo_reasons": ["chat_role_label"],
             "passed": False,
         }],
     }
@@ -195,6 +203,8 @@ def test_chat_eval_report_markdown_contains_key_sections():
     assert "## Split Breakdown" in markdown
     assert "`story_generation`" in markdown
     assert "`transfer`" in markdown
+    assert "Prompt echo rate" in markdown
+    assert "Prompt echo: `chat_role_label`" in markdown
     assert "does not prove semantic truth" in markdown
     assert "Required any-phrase groups" in markdown
     assert "Missing any-group" in markdown
@@ -243,6 +253,7 @@ def test_tiny_run_summary_markdown_contains_key_sections():
             "num_failed": 1,
             "pass_rate": 0.75,
             "unsupported_claim_rate": 0.25,
+            "prompt_echo_rate": 0.25,
             "missing_support_rate": 0.5,
             "category_breakdown": {
                 "story_generation": {
@@ -251,6 +262,7 @@ def test_tiny_run_summary_markdown_contains_key_sections():
                     "num_failed": 1,
                     "pass_rate": 0.75,
                     "unsupported_claims": 1,
+                    "prompt_echoes": 1,
                     "missing_support": 2,
                 },
             },
@@ -261,6 +273,7 @@ def test_tiny_run_summary_markdown_contains_key_sections():
                     "num_failed": 1,
                     "pass_rate": 0.75,
                     "unsupported_claims": 1,
+                    "prompt_echoes": 1,
                     "missing_support": 2,
                 },
             },
@@ -287,6 +300,7 @@ def test_tiny_run_summary_markdown_contains_key_sections():
     assert "`story_generation`" in markdown
     assert "`prompt_conditioned`" in markdown
     assert "Unsupported claim rate: 25.0000%" in markdown
+    assert "Prompt echo rate: 25.0000%" in markdown
     assert "Base final train loss" in markdown
     assert "SFT loss status: `memorization-risk`" in markdown
     assert "eval/report.md" in markdown

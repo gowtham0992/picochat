@@ -379,6 +379,7 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append(f"- Answerable examples: {summary.get('num_answerable', 0)}")
         lines.append(f"- Unanswerable examples: {summary.get('num_unanswerable', 0)}")
         lines.append(f"- Unsupported claim rate: {format_float(summary['unsupported_claim_rate'] * 100)}%")
+        lines.append(f"- Prompt echo rate: {format_float(summary.get('prompt_echo_rate', 0.0) * 100)}%")
         lines.append(f"- Missing support rate: {format_float(summary.get('missing_support_rate', 0.0) * 100)}%")
         lines.append(f"- Support match rate: {format_float(summary.get('support_match_rate', 0.0) * 100)}%")
         if summary.get("answerable_support_match_rate") is not None:
@@ -406,8 +407,9 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append(
             "These metrics are deliberately narrow and inspectable. "
             "Unsupported claim rate counts replies that contain forbidden phrases "
-            "from the eval row. Missing support rate counts replies that missed "
-            "required phrases or any-phrase groups."
+            "from the eval row. Prompt echo rate counts replies that regenerate "
+            "chat role labels or visibly start with the user prompt. Missing "
+            "support rate counts replies that missed required phrases or any-phrase groups."
         )
         lines.append("")
         lines.append(
@@ -445,6 +447,9 @@ def chat_eval_report_markdown(report: dict) -> str:
             lines.append("")
         if item["found_forbidden"]:
             lines.append(f"Found forbidden: {_inline_list(item['found_forbidden'])}")
+            lines.append("")
+        if item.get("prompt_echo"):
+            lines.append(f"Prompt echo: {_inline_list(item.get('prompt_echo_reasons', []))}")
             lines.append("")
         if item.get("support_total") is not None:
             lines.append(
@@ -498,6 +503,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Failed examples: {eval_summary['num_failed']}")
     if "unsupported_claim_rate" in eval_summary:
         lines.append(f"- Unsupported claim rate: {format_float(eval_summary['unsupported_claim_rate'] * 100)}%")
+        lines.append(f"- Prompt echo rate: {format_float(eval_summary.get('prompt_echo_rate', 0.0) * 100)}%")
         lines.append(f"- Missing support rate: {format_float(eval_summary.get('missing_support_rate', 0.0) * 100)}%")
         lines.append(f"- Support match rate: {format_float(eval_summary.get('support_match_rate', 0.0) * 100)}%")
     lines.append("")
@@ -607,8 +613,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(
         "Use this summary to compare tiny runs. If eval improves but SFT validation "
         "loss rises, the model is likely memorizing the tiny chat data rather than "
-        "generalizing. Unsupported claim and missing support rates are rule-based "
-        "signals from the eval file, not proof of semantic truth."
+        "generalizing. Unsupported claim, prompt echo, and missing support rates "
+        "are rule-based signals from the eval file, not proof of semantic truth."
     )
     lines.append("")
     return "\n".join(lines)
@@ -624,16 +630,17 @@ def _split_breakdown_table(split_breakdown: dict) -> list[str]:
 
 def _breakdown_table(breakdown: dict, label: str) -> list[str]:
     lines = [
-        f"| {label} | Passed | Pass Rate | Support Match | Missing Support | Unsupported |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        f"| {label} | Passed | Pass Rate | Support Match | Missing Support | Prompt Echo | Unsupported |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for name, row in sorted(breakdown.items()):
         passed = f"{row.get('num_passed', 0)} / {row.get('num_examples', 0)}"
         pass_rate = format_float(row.get("pass_rate", 0.0) * 100)
         support = format_float(row.get("support_match_rate", 0.0) * 100)
         missing = f"{row.get('missing_support', 0)} / {row.get('num_examples', 0)}"
+        prompt_echo = f"{row.get('prompt_echoes', 0)} / {row.get('num_examples', 0)}"
         unsupported = f"{row.get('unsupported_claims', 0)} / {row.get('num_examples', 0)}"
-        lines.append(f"| `{name}` | {passed} | {pass_rate}% | {support}% | {missing} | {unsupported} |")
+        lines.append(f"| `{name}` | {passed} | {pass_rate}% | {support}% | {missing} | {prompt_echo} | {unsupported} |")
     return lines
 
 

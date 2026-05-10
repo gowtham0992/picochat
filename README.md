@@ -144,6 +144,8 @@ Longer runs add guardrails instead of blind optimism:
   and per-checkpoint LR/gradient-norm traces when those controls are enabled
 - chat eval reports include support-match rate so a failed run can show whether
   the model matched some prompt constraints or ignored them entirely
+- chat eval reports also track prompt echo, so generated `User:`/`Assistant:`
+  turns or visible user-prompt copying cannot count as a clean pass
 - `--early-stop-patience` and `--max-minutes` can stop wasted runs
 
 ## Bring Your Own Corpus

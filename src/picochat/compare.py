@@ -15,6 +15,7 @@ class CompareRow:
     eval_score: str
     pass_rate: float
     support_match_rate: float | None
+    prompt_echo_rate: float | None
     base_val_loss: float
     sft_val_loss: float
     base_val_bpb: float | None
@@ -58,6 +59,7 @@ def load_compare_row(run_dir: str | Path) -> CompareRow:
         eval_score=f"{eval_summary['num_passed']}/{eval_summary['num_examples']}",
         pass_rate=float(eval_summary["pass_rate"]),
         support_match_rate=_optional_float(eval_summary.get("support_match_rate")),
+        prompt_echo_rate=_optional_float(eval_summary.get("prompt_echo_rate")),
         base_val_loss=float(base["final_val_loss"]),
         sft_val_loss=float(sft["final_val_loss"]),
         base_val_bpb=_optional_float(base.get("final_val_bpb")),
@@ -102,6 +104,7 @@ def comparison_table(comparison: dict) -> str:
             row["eval_score"],
             f"{row['pass_rate'] * 100:.2f}%",
             _format_optional_percent(row["support_match_rate"]),
+            _format_optional_percent(row["prompt_echo_rate"]),
             _format_optional_float(row["base_val_bpb"]),
             _format_optional_float(row["sft_val_bpb"]),
             f"{row['base_val_loss']:.4f}",
@@ -121,6 +124,7 @@ def comparison_table(comparison: dict) -> str:
         "Eval",
         "Pass",
         "Support",
+        "Echo",
         "Base BPB",
         "SFT BPB",
         "Base Val",
@@ -161,13 +165,14 @@ def comparison_markdown(comparison: dict) -> str:
         "",
         f"Best SFT BPB run: `{comparison.get('best_sft_bpb_run') or 'n/a'}`",
         "",
-        "| Run | Tokenizer | Eval | Pass Rate | Support Match | Base Val BPB | SFT Val BPB | Base Val Loss | SFT Val Loss | Best Steps | Stop Reasons | Base Loss Status | SFT Loss Status | Memorization | Params | Context | Truncated Examples |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | ---: | ---: | ---: |",
+        "| Run | Tokenizer | Eval | Pass Rate | Support Match | Prompt Echo | Base Val BPB | SFT Val BPB | Base Val Loss | SFT Val Loss | Best Steps | Stop Reasons | Base Loss Status | SFT Loss Status | Memorization | Params | Context | Truncated Examples |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | ---: | ---: | ---: |",
     ]
     for row in comparison["rows"]:
         lines.append(
             f"| `{row['run']}` | `{row['tokenizer_type']}` | {row['eval_score']} | "
             f"{row['pass_rate'] * 100:.2f}% | {_format_optional_percent(row['support_match_rate'])} | "
+            f"{_format_optional_percent(row['prompt_echo_rate'])} | "
             f"{_format_optional_float(row['base_val_bpb'])} | "
             f"{_format_optional_float(row['sft_val_bpb'])} | {row['base_val_loss']:.4f} | "
             f"{row['sft_val_loss']:.4f} | {_format_best_steps(row)} | "

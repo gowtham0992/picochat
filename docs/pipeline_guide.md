@@ -207,13 +207,14 @@ What to inspect:
 
 - pass rate
 - unsupported claim rate
+- prompt echo rate
 - missing support rate
 - matched and missing phrases
 - forbidden phrases found in replies
 
 Important idea: this is not semantic truth evaluation. It is an inspectable
 measurement for a tiny model, especially for whether it makes unsupported
-answers when it should refuse.
+answers when it should refuse or echoes the prompt instead of answering.
 
 Useful command:
 

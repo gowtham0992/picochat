@@ -1,7 +1,7 @@
 import json
 
 from picochat.checkpoint import save_checkpoint
-from picochat.eval import ChatEvalConfig, ChatEvalItem, load_chat_eval_items, run_chat_eval, score_reply
+from picochat.eval import ChatEvalConfig, ChatEvalItem, detect_prompt_echo, load_chat_eval_items, run_chat_eval, score_reply
 from picochat.model import GPTConfig, TinyGPT
 from picochat.tokenizer import CharTokenizer
 
@@ -59,6 +59,20 @@ def test_score_reply_checks_required_and_forbidden_phrases():
     assert failing["found_forbidden"] == ["unknown"]
 
 
+def test_score_reply_blocks_prompt_echo():
+    item = ChatEvalItem(
+        user="Subject = turtle; lesson = sharing.",
+        must_include=("turtle",),
+    )
+
+    score = score_reply("User: Subject = turtle; lesson = sharing.\nAssistant: turtle", item)
+
+    assert score["passed"] is False
+    assert score["prompt_echo"] is True
+    assert score["prompt_echo_reasons"] == ["chat_role_label", "starts_with_user_prompt"]
+    assert detect_prompt_echo("Subject: turtle. Story: One day.", item.user) == []
+
+
 def test_run_chat_eval_writes_artifacts(tmp_path):
     input_path = tmp_path / "eval.jsonl"
     tokenizer_path = tmp_path / "tokenizer.json"
@@ -89,6 +103,7 @@ def test_run_chat_eval_writes_artifacts(tmp_path):
     assert report["summary"]["num_examples"] == 1
     assert report["summary"]["num_passed"] == 1
     assert report["summary"]["unsupported_claim_rate"] == 0.0
+    assert report["summary"]["prompt_echo_rate"] == 0.0
     assert report["summary"]["support_match_rate"] == 1.0
     assert report["summary"]["category_breakdown"]["answerable"]["num_examples"] == 1
     assert report["summary"]["category_breakdown"]["answerable"]["num_passed"] == 1

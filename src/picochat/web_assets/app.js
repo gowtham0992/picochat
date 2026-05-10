@@ -2294,6 +2294,10 @@ function renderEval() {
         <span>${fmtPercent(honesty.missingSupportRate)}</span>
       </div>
       <div class="pipeline-stat">
+        <label>Prompt echo</label>
+        <span>${fmtPercent(honesty.promptEchoRate)}</span>
+      </div>
+      <div class="pipeline-stat">
         <label>Unanswerable</label>
         <span>${honesty.numUnanswerable}/${honesty.numExamples}</span>
       </div>
@@ -2302,7 +2306,7 @@ function renderEval() {
     ${renderEvalSplitTable(splitRows)}
     <label>ARCADE SCORE TABLE</label>
     <table>
-      <thead><tr><th>Rank</th><th>Prompt</th><th>Kind</th><th>Status</th><th>Support</th><th>Forbidden</th></tr></thead>
+      <thead><tr><th>Rank</th><th>Prompt</th><th>Kind</th><th>Status</th><th>Support</th><th>Echo</th><th>Forbidden</th></tr></thead>
       <tbody>
         ${report.examples.map((item, index) => `
           <tr>
@@ -2311,6 +2315,7 @@ function renderEval() {
             <td>${evalKindTag(item)}</td>
             <td class="${item.passed ? "pass-text" : "fail-text"}">${item.passed ? "PASS" : "FAIL"}</td>
             <td class="${hasMissingSupport(item) ? "fail-text" : "pass-text"}">${hasMissingSupport(item) ? "MISSING" : "COVERED"}</td>
+            <td class="${hasPromptEcho(item) ? "fail-text" : "pass-text"}">${hasPromptEcho(item) ? "ECHO" : "CLEAR"}</td>
             <td class="${hasForbiddenClaim(item) ? "fail-text" : "pass-text"}">${hasForbiddenClaim(item) ? "FOUND" : "CLEAR"}</td>
           </tr>
         `).join("")}
@@ -2326,12 +2331,14 @@ function evalHonestySummary(report) {
   const numExamples = summary.num_examples ?? examples.length;
   const unsupportedClaims = summary.unsupported_claims ?? examples.filter(hasForbiddenClaim).length;
   const missingSupport = summary.missing_support ?? examples.filter(hasMissingSupport).length;
+  const promptEchoes = summary.prompt_echoes ?? examples.filter(hasPromptEcho).length;
   const numUnanswerable = summary.num_unanswerable ?? examples.filter((item) => !isAnswerable(item)).length;
   return {
     numExamples,
     numUnanswerable,
     unsupportedClaimRate: summary.unsupported_claim_rate ?? unsupportedClaims / Math.max(1, numExamples),
     missingSupportRate: summary.missing_support_rate ?? missingSupport / Math.max(1, numExamples),
+    promptEchoRate: summary.prompt_echo_rate ?? promptEchoes / Math.max(1, numExamples),
   };
 }
 
@@ -2343,6 +2350,7 @@ function evalCategoryRows(report) {
     numPassed: row.num_passed ?? 0,
     passRate: row.pass_rate ?? 0,
     missingSupport: row.missing_support ?? 0,
+    promptEchoes: row.prompt_echoes ?? 0,
     unsupportedClaims: row.unsupported_claims ?? 0,
   }));
   if (rows.length) {
@@ -2359,6 +2367,7 @@ function evalCategoryRows(report) {
         numPassed: 0,
         passRate: 0,
         missingSupport: 0,
+        promptEchoes: 0,
         unsupportedClaims: 0,
       });
     }
@@ -2366,6 +2375,7 @@ function evalCategoryRows(report) {
     bucket.numExamples += 1;
     bucket.numPassed += item.passed ? 1 : 0;
     bucket.missingSupport += hasMissingSupport(item) ? 1 : 0;
+    bucket.promptEchoes += hasPromptEcho(item) ? 1 : 0;
     bucket.unsupportedClaims += hasForbiddenClaim(item) ? 1 : 0;
   }
   return Array.from(buckets.values())
@@ -2389,6 +2399,7 @@ function evalSplitRows(report) {
     numPassed: row.num_passed ?? 0,
     passRate: row.pass_rate ?? 0,
     missingSupport: row.missing_support ?? 0,
+    promptEchoes: row.prompt_echoes ?? 0,
     unsupportedClaims: row.unsupported_claims ?? 0,
   }));
   if (rows.length) {
@@ -2405,6 +2416,7 @@ function evalSplitRows(report) {
         numPassed: 0,
         passRate: 0,
         missingSupport: 0,
+        promptEchoes: 0,
         unsupportedClaims: 0,
       });
     }
@@ -2412,6 +2424,7 @@ function evalSplitRows(report) {
     bucket.numExamples += 1;
     bucket.numPassed += item.passed ? 1 : 0;
     bucket.missingSupport += hasMissingSupport(item) ? 1 : 0;
+    bucket.promptEchoes += hasPromptEcho(item) ? 1 : 0;
     bucket.unsupportedClaims += hasForbiddenClaim(item) ? 1 : 0;
   }
   return Array.from(buckets.values())
@@ -2431,7 +2444,7 @@ function renderEvalBreakdownTable(label, firstColumn, rows, key) {
   return `
     <label>${label}</label>
     <table class="eval-category-table">
-      <thead><tr><th>${firstColumn}</th><th>Passed</th><th>Pass</th><th>Missing</th><th>Forbidden</th></tr></thead>
+      <thead><tr><th>${firstColumn}</th><th>Passed</th><th>Pass</th><th>Missing</th><th>Echo</th><th>Forbidden</th></tr></thead>
       <tbody>
         ${rows.map((row) => `
           <tr>
@@ -2439,6 +2452,7 @@ function renderEvalBreakdownTable(label, firstColumn, rows, key) {
             <td>${row.numPassed}/${row.numExamples}</td>
             <td>${fmtPercent(row.passRate)}</td>
             <td>${row.missingSupport}/${row.numExamples}</td>
+            <td>${row.promptEchoes}/${row.numExamples}</td>
             <td>${row.unsupportedClaims}/${row.numExamples}</td>
           </tr>
         `).join("")}
@@ -2463,6 +2477,7 @@ function evalCard(item, index) {
         <p>ANY: ${escapeHtml((item.must_include_any || []).map((group) => `[${group.join(" / ")}]`).join(" ") || "none")}</p>
         <p>FORBIDDEN: ${escapeHtml((item.must_not_include || []).join(" | ") || "none")}</p>
         <p>MISSING: ${escapeHtml([...(item.missing || []), ...((item.missing_any || []).flat())].join(" | ") || "none")}</p>
+        <p>PROMPT ECHO: ${escapeHtml((item.prompt_echo_reasons || []).join(" | ") || "none")}</p>
         <p>FOUND FORBIDDEN: ${escapeHtml((item.found_forbidden || []).join(" | ") || "none")}</p>
       </div>
       <pre>${escapeHtml(item.reply)}</pre>
@@ -2486,6 +2501,10 @@ function hasMissingSupport(item) {
 
 function hasForbiddenClaim(item) {
   return Boolean((item.found_forbidden || []).length);
+}
+
+function hasPromptEcho(item) {
+  return Boolean(item.prompt_echo);
 }
 
 function flashStatus(message) {
