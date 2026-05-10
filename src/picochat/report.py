@@ -437,6 +437,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     sft = summary["sft"]
     artifacts = summary["artifacts"]
     tokenizer = summary.get("tokenizer", {})
+    honesty = summary.get("honesty", {})
     base_diagnostics = base.get("loss_diagnostics", {})
     sft_diagnostics = sft.get("loss_diagnostics", {})
     base_memorization = base.get("memorization", {})
@@ -461,6 +462,22 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.append(f"- Unsupported claim rate: {format_float(eval_summary['unsupported_claim_rate'] * 100)}%")
         lines.append(f"- Missing support rate: {format_float(eval_summary.get('missing_support_rate', 0.0) * 100)}%")
     lines.append("")
+
+    if honesty:
+        lines.append("## Data Honesty")
+        lines.append("")
+        lines.append(f"- Status: `{honesty.get('status', 'unknown')}`")
+        lines.append(f"- Summary: {honesty.get('summary', 'No data honesty report was recorded.')}")
+        lines.append(f"- Exact SFT prompt leaks: {honesty.get('exact_prompt_leaks', 0)}")
+        lines.append(f"- Near SFT prompt leaks: {honesty.get('near_prompt_leaks', 0)}")
+        lines.append(f"- Eval prompts found in corpus: {honesty.get('corpus_prompt_hits', 0)}")
+        lines.append(f"- Duplicate eval prompts: {honesty.get('duplicate_eval_prompts', 0)}")
+        if honesty.get("max_sft_prompt_similarity") is not None:
+            lines.append(
+                f"- Max SFT/eval prompt similarity: "
+                f"{format_float(honesty.get('max_sft_prompt_similarity', 0.0))}"
+            )
+        lines.append("")
 
     if eval_summary.get("category_breakdown"):
         lines.append("## Eval Categories")
@@ -518,6 +535,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     if artifacts.get("dataset_pack"):
         lines.append(f"- Dataset pack: `{artifacts['dataset_pack']}`")
     lines.append(f"- Corpus: `{artifacts['corpus']}`")
+    if artifacts.get("honesty_report"):
+        lines.append(f"- Data honesty report: `{artifacts['honesty_report']}`")
     lines.append(f"- Tokenizer: `{artifacts['tokenizer']}`")
     lines.append(f"- Base report: `{artifacts['base_report']}`")
     if artifacts.get("base_eval_checkpoint"):

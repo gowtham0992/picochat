@@ -141,7 +141,7 @@ def load_run_report(runs_dir: str | Path, run_name: str, report_name: str) -> di
     summary = _read_json(summary_path)
     reports = _load_report_status(run_dir, summary)
     if report_name not in reports:
-        raise ValueError("report must be one of: summary, base, sft, eval")
+        raise ValueError("report must be one of: summary, honesty, base, sft, eval")
 
     report = reports[report_name]
     path = Path(report["path"])
@@ -1010,6 +1010,7 @@ def _load_report_status(run_dir: Path, summary: dict) -> dict:
     artifacts = summary.get("artifacts", {})
     report_paths = {
         "summary": run_dir / "summary.md",
+        "honesty": Path(artifacts.get("honesty_report", run_dir / "honesty" / "report.md")),
         "base": Path(artifacts.get("base_report", run_dir / "base" / "report.md")),
         "sft": Path(artifacts.get("sft_report", run_dir / "sft" / "report.md")),
         "eval": Path(artifacts.get("eval_report", run_dir / "eval" / "report.md")),
@@ -1039,6 +1040,8 @@ def _load_artifact_inventory(run_dir: Path, summary: dict) -> dict:
         "corpus": artifacts.get("corpus", run_dir / "corpus.txt"),
         "corpus_manifest": artifacts.get("corpus_manifest", run_dir / "corpus_manifest.json"),
         "corpus_report": artifacts.get("corpus_report", run_dir / "corpus_report.md"),
+        "honesty_json": artifacts.get("honesty_json", run_dir / "honesty" / "honesty_report.json"),
+        "honesty_report": artifacts.get("honesty_report", run_dir / "honesty" / "report.md"),
         "tokenizer": artifacts.get("tokenizer", run_dir / "tokenizer.json"),
         "summary_json": run_dir / "summary.json",
         "summary_report": run_dir / "summary.md",

@@ -20,8 +20,9 @@ from picochat.chat import ChatConfig, chat_loop
 from picochat.eval import ChatEvalConfig, run_chat_eval
 from picochat.run import TinyRunConfig, run_tiny
 from picochat.compare import compare_runs, comparison_table, write_comparison_report
-from picochat.dataset_pack import init_dataset_pack
+from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.hf_import import HFImportConfig, import_hf_dataset
+from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.web import WebConfig, serve_web
 
 
@@ -148,6 +149,28 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="Minimum 0-100 source quality score required for a file to enter the built corpus.",
+    )
+
+    data_honesty = data_subparsers.add_parser(
+        "honesty",
+        help="Check chat/eval leakage before trusting a score.",
+    )
+    data_honesty.add_argument(
+        "--dataset-pack",
+        "--pack",
+        dest="dataset_pack",
+        default=None,
+        help="Dataset pack whose corpus, chat, and eval files should be checked.",
+    )
+    data_honesty.add_argument("--corpus", default=None, help="Optional corpus file or folder.")
+    data_honesty.add_argument("--chat-input", default=DEFAULT_CHAT_INPUT, help="Chat SFT JSONL path.")
+    data_honesty.add_argument("--eval-input", default=DEFAULT_EVAL_INPUT, help="Eval JSONL path.")
+    data_honesty.add_argument("--out-dir", default=None, help="Optional output folder for honesty_report.json and report.md.")
+    data_honesty.add_argument(
+        "--near-threshold",
+        type=float,
+        default=0.86,
+        help="Similarity threshold for near-duplicate prompt warnings.",
     )
 
     data_init_pack = data_subparsers.add_parser("init-pack", help="Create a starter dataset pack folder.")
@@ -601,6 +624,50 @@ def hf_import_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def honesty_data(args: argparse.Namespace) -> int:
+    corpus = args.corpus
+    chat_input = args.chat_input
+    eval_input = args.eval_input
+    if args.dataset_pack:
+        if corpus is not None or args.chat_input != DEFAULT_CHAT_INPUT or args.eval_input != DEFAULT_EVAL_INPUT:
+            raise SystemExit("data honesty --dataset-pack cannot be combined with explicit corpus/chat/eval paths")
+        pack = load_dataset_pack(args.dataset_pack)
+        corpus = pack.corpus_input
+        chat_input = pack.chat_input
+        eval_input = pack.eval_input
+
+    report = inspect_data_honesty(
+        corpus_path=corpus,
+        chat_input=chat_input,
+        eval_input=eval_input,
+        near_threshold=args.near_threshold,
+    )
+    print(f"honesty: {report.status}")
+    print(f"summary: {report.summary}")
+    print(f"sft_examples: {report.num_sft_examples}")
+    print(f"eval_items: {report.num_eval_items}")
+    print(f"exact_sft_prompt_leaks: {report.exact_prompt_leaks}")
+    print(f"near_sft_prompt_leaks: {report.near_prompt_leaks}")
+    print(f"eval_prompts_found_in_corpus: {report.corpus_prompt_hits}")
+    print(f"duplicate_eval_prompts: {report.duplicate_eval_prompts}")
+    print(f"max_sft_prompt_similarity: {report.max_sft_prompt_similarity:.4f}")
+    for finding in report.findings[:8]:
+        message = (
+            f"- {finding.severity} {finding.kind} eval_line={finding.eval_line} "
+            f"matched={finding.matched_source or 'none'}"
+        )
+        if finding.similarity is not None:
+            message += f" similarity={finding.similarity:.4f}"
+        print(message)
+    if len(report.findings) > 8:
+        print(f"- ... {len(report.findings) - 8} more finding(s)")
+    if args.out_dir:
+        json_path, markdown_path = write_data_honesty_report(report, args.out_dir)
+        print(f"json_report: {json_path}")
+        print(f"markdown_report: {markdown_path}")
+    return 0
+
+
 def train_tokenizer(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -850,6 +917,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "hf-import":
         return hf_import_data(args)
+
+    if args.command == "data" and args.data_command == "honesty":
+        return honesty_data(args)
 
     if args.command == "tok" and args.tok_command == "train":
         return train_tokenizer(args)

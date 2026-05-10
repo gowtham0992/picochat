@@ -34,6 +34,8 @@ def write_run(root, name):
         "artifacts": {
             "corpus": str(run_dir / "corpus.txt"),
             "tokenizer": str(run_dir / "tokenizer.json"),
+            "honesty_report": str(run_dir / "honesty" / "report.md"),
+            "honesty_json": str(run_dir / "honesty" / "honesty_report.json"),
         },
         "base": {
             "final_val_loss": 2.0,
@@ -48,6 +50,15 @@ def write_run(root, name):
             "num_passed": 1,
             "num_failed": 1,
             "pass_rate": 0.5,
+        },
+        "honesty": {
+            "status": "ready",
+            "summary": "No obvious eval leakage was detected.",
+            "exact_prompt_leaks": 0,
+            "near_prompt_leaks": 0,
+            "corpus_prompt_hits": 0,
+            "duplicate_eval_prompts": 0,
+            "max_sft_prompt_similarity": 0.0,
         },
     }
     tokenizer = {
@@ -102,6 +113,9 @@ def write_run(root, name):
     (run_dir / "tokenizer.json").write_text(json.dumps(tokenizer), encoding="utf-8")
     (run_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
     (run_dir / "summary.md").write_text("# Summary", encoding="utf-8")
+    (run_dir / "honesty").mkdir()
+    (run_dir / "honesty" / "honesty_report.json").write_text(json.dumps(summary["honesty"]), encoding="utf-8")
+    (run_dir / "honesty" / "report.md").write_text("# Honesty", encoding="utf-8")
     (run_dir / "base" / "train_report.json").write_text(json.dumps(train_report), encoding="utf-8")
     (run_dir / "base" / "report.md").write_text("# Base", encoding="utf-8")
     (run_dir / "sft" / "sft_report.json").write_text(json.dumps(sft_report), encoding="utf-8")
@@ -150,6 +164,7 @@ def test_load_run_detail_reads_eval_reports_and_samples(tmp_path):
     assert detail["base_sample"] == "base sample"
     assert detail["sft_sample"] == "sft sample"
     assert detail["reports"]["summary"]["exists"] is True
+    assert detail["reports"]["honesty"]["exists"] is True
     assert detail["reports"]["base"]["exists"] is True
     assert detail["reports"]["sft"]["exists"] is True
     assert detail["reports"]["eval"]["exists"] is True

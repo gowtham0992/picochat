@@ -47,12 +47,17 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert (out_dir / "sft" / "checkpoint" / "model.pt").exists()
     assert (out_dir / "sft" / "best_checkpoint" / "model.pt").exists()
     assert (out_dir / "eval" / "eval_report.json").exists()
+    assert (out_dir / "honesty" / "honesty_report.json").exists()
+    assert (out_dir / "honesty" / "report.md").exists()
     assert (out_dir / "summary.json").exists()
     assert (out_dir / "summary.md").exists()
     assert summary["eval"]["num_examples"] == 1
     assert summary["config"]["tokenizer_type"] == "char"
     assert summary["tokenizer"]["tokenizer_type"] == "char"
     assert "corpus_manifest" in summary["artifacts"]
+    assert "honesty_report" in summary["artifacts"]
+    assert summary["honesty"]["status"] == "blocked"
+    assert summary["honesty"]["exact_prompt_leaks"] == 1
     assert summary["artifacts"]["sft_eval_checkpoint"] == str(out_dir / "sft" / "best_checkpoint")
     assert summary["artifacts"]["base_eval_checkpoint"] == str(out_dir / "base" / "best_checkpoint")
     assert summary["base"]["eval_checkpoint"] == str(out_dir / "base" / "best_checkpoint")

@@ -132,6 +132,8 @@ text, overlap with held-out text, longest copied span, and any
 Longer runs add guardrails instead of blind optimism:
 
 - base and SFT save both final checkpoints and best-validation checkpoints
+- every `run tiny` writes a data honesty report that checks obvious SFT/eval
+  leakage before you trust the score
 - base training reports validation BPB, a tokenizer-fair bits-per-byte metric
 - base training can inject train-only `pico-canary-*` phrases when document
   split is available
@@ -194,6 +196,17 @@ The same preview also preflights both JSONL files: chat SFT rows need string
 `user` and `assistant` fields, while eval rows need a string `user` plus visible
 pass/fail rules such as `must_include`, `must_include_any`, `must_not_include`,
 or `expected`.
+
+Before a serious run, check that the eval is not accidentally copied from the
+SFT file or base corpus:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data honesty --dataset-pack examples/tinystories_dataset_pack_v2.json --out-dir runs/tinystories-honesty
+```
+
+The honesty report does not prove semantic truth. It catches practical cheating
+risks: exact eval prompts in SFT, near-duplicate SFT/eval prompts, duplicated
+eval prompts, and eval prompts that appear in the base corpus.
 
 You can also import a small sample from a Hugging Face dataset into a local
 plain-text corpus. This is intentionally a separate intake step: first export

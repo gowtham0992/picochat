@@ -201,6 +201,7 @@ def test_tiny_run_summary_markdown_contains_key_sections():
             "base_report": "base/report.md",
             "sft_report": "sft/report.md",
             "eval_report": "eval/report.md",
+            "honesty_report": "honesty/report.md",
         },
         "base": {
             "final_train_loss": 2.0,
@@ -237,12 +238,23 @@ def test_tiny_run_summary_markdown_contains_key_sections():
                 },
             },
         },
+        "honesty": {
+            "status": "ready",
+            "summary": "No obvious eval leakage was detected.",
+            "exact_prompt_leaks": 0,
+            "near_prompt_leaks": 0,
+            "corpus_prompt_hits": 0,
+            "duplicate_eval_prompts": 0,
+            "max_sft_prompt_similarity": 0.25,
+        },
     }
 
     markdown = tiny_run_summary_markdown(summary)
 
     assert "# Picochat Tiny Run Summary" in markdown
     assert "Eval passed: 3 / 4" in markdown
+    assert "## Data Honesty" in markdown
+    assert "Data honesty report" in markdown
     assert "## Eval Categories" in markdown
     assert "`story_generation`" in markdown
     assert "Unsupported claim rate: 25.0000%" in markdown

@@ -325,6 +325,7 @@ function pipelineStages() {
   const sftLast = detail?.sft_report?.losses?.at(-1);
   const evalReport = detail?.eval_reports?.at(-1)?.report;
   const evalSummary = evalReport?.summary || summary.eval;
+  const honesty = summary.honesty || {};
   const reportCount = Object.values(detail?.reports || {}).filter((report) => report.exists).length;
   return [
     {
@@ -336,14 +337,16 @@ function pipelineStages() {
         ["Documents", fmtInt(corpus.num_documents)],
         ["Characters", fmtInt(corpus.num_characters)],
         ["Duplicate lines", fmtPercent(corpus.duplicate_line_rate || 0)],
+        ["Honesty", honesty.status || "--"],
       ],
-      note: detail?.corpus_preview ? `Preview: ${compactPreview(detail.corpus_preview, 220)}` : "No corpus preview artifact found.",
+      note: honesty.summary || (detail?.corpus_preview ? `Preview: ${compactPreview(detail.corpus_preview, 220)}` : "No corpus preview artifact found."),
       command: datasetCommand(config, artifacts),
       ledger: [
         artifactItem("INPUT", "Source", config.corpus_recipe || config.corpus_input || "examples/tiny_corpus.txt"),
         artifactItem("OUTPUT", "Corpus", corpusPath),
         artifactItem("OUTPUT", "Manifest", artifacts.corpus_manifest || `${outDir}/corpus_manifest.json`),
         artifactItem("OUTPUT", "Report", artifacts.corpus_report || `${outDir}/corpus_report.md`),
+        artifactItem("OUTPUT", "Honesty", artifacts.honesty_report || `${outDir}/honesty/report.md`),
       ],
     },
     {
@@ -501,9 +504,10 @@ function pipelineStages() {
     {
       id: "report",
       label: "REPORT",
-      summary: `${reportCount}/4 markdown reports`,
+      summary: `${reportCount}/5 markdown reports`,
       stats: [
         ["Summary", detail?.reports?.summary?.exists ? "ready" : "missing"],
+        ["Honesty", detail?.reports?.honesty?.exists ? "ready" : "missing"],
         ["Base", detail?.reports?.base?.exists ? "ready" : "missing"],
         ["SFT", detail?.reports?.sft?.exists ? "ready" : "missing"],
         ["Eval", detail?.reports?.eval?.exists ? "ready" : "missing"],
@@ -516,6 +520,7 @@ function pipelineStages() {
       ]),
       ledger: [
         artifactItem("INPUT", "Summary JSON", `${outDir}/summary.json`),
+        artifactItem("INPUT", "Honesty report", artifacts.honesty_report || `${outDir}/honesty/report.md`),
         artifactItem("INPUT", "Base report", artifacts.base_report || `${outDir}/base/report.md`),
         artifactItem("INPUT", "SFT report", artifacts.sft_report || `${outDir}/sft/report.md`),
         artifactItem("INPUT", "Eval report", artifacts.eval_report || `${outDir}/eval/report.md`),
@@ -1920,6 +1925,7 @@ function renderReportList() {
   const reports = state.detail?.reports || {};
   const rows = [
     ["summary", "SUMMARY"],
+    ["honesty", "DATA HONESTY"],
     ["base", "BASE TRAINING"],
     ["sft", "CHAT SFT"],
     ["eval", "EVAL"],
@@ -1936,7 +1942,7 @@ function renderReportList() {
     `;
   }).join("");
   const ready = Object.values(reports).filter((report) => report.exists).length;
-  $("report-status").textContent = `${ready}/4 REPORTS`;
+  $("report-status").textContent = `${ready}/5 REPORTS`;
 }
 
 function renderCompareControls() {

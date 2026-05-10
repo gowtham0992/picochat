@@ -8,6 +8,7 @@ from pathlib import Path
 
 from picochat.data import build_corpus_artifacts
 from picochat.eval import ChatEvalConfig, run_chat_eval
+from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.report import tiny_run_summary_markdown
 from picochat.sft import SFTConfig, train_sft
 from picochat.tokenizer import TOKENIZER_TYPES, train_tokenizer
@@ -71,12 +72,23 @@ def run_tiny(config: TinyRunConfig) -> dict:
     if config.tokenizer_type not in TOKENIZER_TYPES:
         raise ValueError(f"Unsupported tokenizer type: {config.tokenizer_type}")
 
-    print(f"[2/5] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
+    print("[2/6] check data honesty")
+    honesty_report = inspect_data_honesty(
+        corpus_path=corpus_path,
+        chat_input=chat_input,
+        eval_input=eval_input,
+    )
+    honesty_json_path, honesty_markdown_path = write_data_honesty_report(
+        honesty_report,
+        out_dir / "honesty",
+    )
+
+    print(f"[3/6] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
     text = corpus_path.read_text(encoding="utf-8")
     tokenizer = train_tokenizer(config.tokenizer_type, [text])
     tokenizer.save(tokenizer_path)
 
-    print("[3/5] train base model")
+    print("[4/6] train base model")
     base_report = train_base(TrainConfig(
         corpus_path=str(corpus_path),
         tokenizer_path=str(tokenizer_path),
@@ -104,7 +116,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         str(out_dir / "base" / "checkpoint"),
     )
 
-    print("[4/5] train chat SFT")
+    print("[5/6] train chat SFT")
     sft_report = train_sft(SFTConfig(
         input_path=chat_input,
         tokenizer_path=str(tokenizer_path),
@@ -126,7 +138,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         str(out_dir / "sft" / "checkpoint"),
     )
 
-    print("[5/5] run chat eval")
+    print("[6/6] run chat eval")
     eval_report = run_chat_eval(ChatEvalConfig(
         input_path=eval_input,
         checkpoint_path=sft_eval_checkpoint,
@@ -152,6 +164,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "corpus": str(corpus_path),
             "corpus_manifest": corpus_build.manifest_path,
             "corpus_report": corpus_build.report_path,
+            "honesty_json": honesty_json_path,
+            "honesty_report": honesty_markdown_path,
             "tokenizer": str(tokenizer_path),
             "base_report": str(out_dir / "base" / "report.md"),
             "base_best_checkpoint": base_report.get("best_checkpoint", {}).get("path"),
@@ -162,6 +176,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "eval_report": str(out_dir / "eval" / "report.md"),
         },
         "corpus": corpus_build.stats.to_dict(),
+        "honesty": honesty_report.to_dict(),
         "tokenizer": tokenizer.stats().__dict__,
         "base": {
             "checkpoint": base_report["checkpoint"],
