@@ -29,6 +29,7 @@ class ChatSFTDataReport:
     average_user_chars: float
     average_assistant_chars: float
     duplicate_user_rate: float
+    categories: dict[str, int]
     issues: tuple[TuningDataIssue, ...]
     preview: tuple[dict[str, str], ...]
 
@@ -82,6 +83,7 @@ def inspect_chat_sft_data(path: str | Path, preview_items: int = 3) -> ChatSFTDa
             average_user_chars=0.0,
             average_assistant_chars=0.0,
             duplicate_user_rate=0.0,
+            categories={},
             issues=(read_issue,),
             preview=(),
         )
@@ -89,6 +91,7 @@ def inspect_chat_sft_data(path: str | Path, preview_items: int = 3) -> ChatSFTDa
     issues: list[TuningDataIssue] = []
     examples: list[dict[str, str]] = []
     users: list[str] = []
+    categories: dict[str, int] = {}
     user_chars = 0
     assistant_chars = 0
     for line_number, record in records:
@@ -106,8 +109,14 @@ def inspect_chat_sft_data(path: str | Path, preview_items: int = 3) -> ChatSFTDa
         if not user.strip() or not assistant.strip():
             issues.append(TuningDataIssue(line_number, "user and assistant fields should not be empty"))
             continue
-        examples.append({"user": user, "assistant": assistant})
+        category = record.get("category", "chat")
+        if not isinstance(category, str) or not category.strip():
+            issues.append(TuningDataIssue(line_number, "category field must be a non-empty string when present"))
+            continue
+        category = category.strip()
+        examples.append({"user": user, "assistant": assistant, "category": category})
         users.append(user)
+        categories[category] = categories.get(category, 0) + 1
         user_chars += len(user)
         assistant_chars += len(assistant)
 
@@ -126,6 +135,7 @@ def inspect_chat_sft_data(path: str | Path, preview_items: int = 3) -> ChatSFTDa
         average_user_chars=(user_chars / len(examples)) if examples else 0.0,
         average_assistant_chars=(assistant_chars / len(examples)) if examples else 0.0,
         duplicate_user_rate=duplicate_user_rate,
+        categories=dict(sorted(categories.items())),
         issues=tuple(issues[:8]),
         preview=tuple(examples[:max(0, preview_items)]),
     )

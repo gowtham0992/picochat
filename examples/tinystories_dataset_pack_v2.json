@@ -1,0 +1,9 @@
+{
+  "name": "tinystories-local-pack-v2",
+  "description": "TinyStories sample with expanded category-balanced SFT and transparent eval v2 files.",
+  "corpus": {
+    "input": "../runs/tinystories-1k/documents"
+  },
+  "chat": "tinystories_chat_v2.jsonl",
+  "eval": "tinystories_eval_v2.jsonl"
+}

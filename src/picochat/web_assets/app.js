@@ -1657,6 +1657,7 @@ function renderTuningPreflight(chatData, evalData) {
         <span>${fmtInt(chatData?.invalid_rows)} invalid</span>
         <span>${fmtPercent(chatData?.duplicate_user_rate || 0)} dup prompts</span>
       </div>
+      ${renderCategoryCounts(chatData?.categories)}
       ${renderIssues(chatData?.issues || [])}
       ${renderChatPreview(chatData?.preview || [])}
     </div>
@@ -1672,8 +1673,19 @@ function renderTuningPreflight(chatData, evalData) {
         <span>${fmtInt(evalData?.unanswerable_items)} unanswerable</span>
         <span>${fmtInt((evalData?.must_include_rules || 0) + (evalData?.must_include_any_groups || 0) + (evalData?.must_not_include_rules || 0))} rules</span>
       </div>
+      ${renderCategoryCounts(evalData?.categories)}
       ${renderIssues(evalData?.issues || [])}
       ${renderEvalPreview(evalData?.preview || [])}
+    </div>
+  `;
+}
+
+function renderCategoryCounts(categories) {
+  const entries = Object.entries(categories || {});
+  if (!entries.length) return "";
+  return `
+    <div class="mini-stat-row category-counts">
+      ${entries.map(([name, count]) => `<span>${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
     </div>
   `;
 }

@@ -235,6 +235,17 @@ small educational setup: the eval checks story shape, constraint following,
 simple refusal behavior, and one memorization probe instead of claiming broad
 intelligence.
 
+For the expanded TinyStories instruction curriculum, use the v2 pack:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack_v2.json
+```
+
+The v2 pack keeps the same local corpus but uses
+`examples/tinystories_chat_v2.jsonl` and `examples/tinystories_eval_v2.jsonl`.
+The preview report shows SFT/eval category counts so runs can be interpreted
+as curriculum experiments, not just raw training loops.
+
 For repeatable experiments, put the three dataset inputs in one pack:
 
 ```json

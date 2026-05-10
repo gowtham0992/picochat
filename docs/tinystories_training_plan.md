@@ -36,6 +36,21 @@ The pack points to:
 The corpus rows are separate files so document-level validation can hold out
 complete stories.
 
+Use the v2 pack for the expanded instruction/eval curriculum:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack_v2.json
+```
+
+The v2 pack keeps the same corpus and points to:
+
+- SFT: `examples/tinystories_chat_v2.jsonl`
+- eval: `examples/tinystories_eval_v2.jsonl`
+
+The SFT v2 file has category labels for story generation, required words,
+continuation, lessons, story knowledge, refusal, and memorization refusal.
+The eval v2 file expands transparent checks across the same behavior families.
+
 ## Near-Term Experiments
 
 Run these as separate run folders and compare `summary.md` files.

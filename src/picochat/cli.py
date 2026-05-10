@@ -441,6 +441,8 @@ def print_tuning_data(chat_data, eval_data) -> None:
         f"| avg_assistant_chars {chat_data.average_assistant_chars:.1f}"
     )
     print(f"  {chat_data.path}: {chat_data.summary}")
+    if chat_data.categories:
+        print(f"  categories: {_format_counts(chat_data.categories)}")
     for issue in chat_data.issues[:3]:
         print(f"  issue line {issue.line}: {issue.message}")
     print(
@@ -454,8 +456,14 @@ def print_tuning_data(chat_data, eval_data) -> None:
         f"forbidden {eval_data.must_not_include_rules}"
     )
     print(f"  {eval_data.path}: {eval_data.summary}")
+    if eval_data.categories:
+        print(f"  categories: {_format_counts(eval_data.categories)}")
     for issue in eval_data.issues[:3]:
         print(f"  issue line {issue.line}: {issue.message}")
+
+
+def _format_counts(counts: dict[str, int]) -> str:
+    return ", ".join(f"{key}={value}" for key, value in sorted(counts.items()))
 
 
 def inspect_data(args: argparse.Namespace) -> int:

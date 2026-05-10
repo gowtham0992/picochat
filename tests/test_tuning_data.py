@@ -6,7 +6,11 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 def test_inspect_chat_sft_data_reports_ready_file(tmp_path):
     chat_path = tmp_path / "chat.jsonl"
     rows = [
-        {"user": f"Question {index}?", "assistant": f"Answer {index}."}
+        {
+            "user": f"Question {index}?",
+            "assistant": f"Answer {index}.",
+            "category": "story_generation" if index < 4 else "refusal",
+        }
         for index in range(8)
     ]
     chat_path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
@@ -18,6 +22,8 @@ def test_inspect_chat_sft_data_reports_ready_file(tmp_path):
     assert report.num_rows == 8
     assert report.invalid_rows == 0
     assert report.preview[0]["user"] == "Question 0?"
+    assert report.preview[0]["category"] == "story_generation"
+    assert report.categories == {"refusal": 4, "story_generation": 4}
     assert report.average_assistant_chars > 0
 
 
@@ -40,6 +46,20 @@ def test_inspect_chat_sft_data_blocks_invalid_rows(tmp_path):
     assert report.issues[0].line == 2
     assert "assistant" in report.issues[0].message
     assert "invalid JSON" in report.issues[1].message
+
+
+def test_inspect_chat_sft_data_rejects_invalid_category(tmp_path):
+    chat_path = tmp_path / "chat.jsonl"
+    chat_path.write_text(
+        json.dumps({"user": "valid", "assistant": "ok", "category": ""}),
+        encoding="utf-8",
+    )
+
+    report = inspect_chat_sft_data(chat_path)
+
+    assert report.status == "blocked"
+    assert report.invalid_rows == 1
+    assert "category" in report.issues[0].message
 
 
 def test_inspect_chat_eval_data_reports_rules_and_categories(tmp_path):

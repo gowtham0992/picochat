@@ -54,10 +54,31 @@ def test_tinystories_chat_examples_are_valid_jsonl():
     assert any("medical" in example.assistant.lower() for example in examples)
 
 
+def test_tinystories_chat_v2_examples_are_valid_jsonl():
+    examples = load_chat_examples(Path("examples/tinystories_chat_v2.jsonl"))
+
+    assert len(examples) >= 300
+    assert any("tiny story model" in example.assistant for example in examples)
+    assert any("I do not know" in example.assistant for example in examples)
+    assert any("puppy" in example.user.lower() for example in examples)
+    assert all("Example " not in example.user for example in examples)
+    assert all("Version " not in example.user for example in examples)
+
+
 def test_tinystories_eval_examples_are_valid_jsonl():
     items = load_chat_eval_items(Path("examples/tinystories_eval.jsonl"))
 
     assert len(items) >= 10
+    assert any(item.category == "memorization_probe" for item in items)
+    assert any(not item.answerable for item in items)
+    assert any("needle" in item.must_not_include for item in items)
+
+
+def test_tinystories_eval_v2_examples_are_valid_jsonl():
+    items = load_chat_eval_items(Path("examples/tinystories_eval_v2.jsonl"))
+
+    assert len(items) >= 40
+    assert any(item.category == "required_words" for item in items)
     assert any(item.category == "memorization_probe" for item in items)
     assert any(not item.answerable for item in items)
     assert any("needle" in item.must_not_include for item in items)
@@ -69,3 +90,11 @@ def test_tinystories_dataset_pack_points_at_local_import_and_examples():
     assert pack.corpus_input == "examples/../runs/tinystories-1k/documents"
     assert pack.chat_input == "examples/tinystories_chat.jsonl"
     assert pack.eval_input == "examples/tinystories_eval.jsonl"
+
+
+def test_tinystories_dataset_pack_v2_points_at_expanded_examples():
+    pack = load_dataset_pack(Path("examples/tinystories_dataset_pack_v2.json"))
+
+    assert pack.corpus_input == "examples/../runs/tinystories-1k/documents"
+    assert pack.chat_input == "examples/tinystories_chat_v2.jsonl"
+    assert pack.eval_input == "examples/tinystories_eval_v2.jsonl"
