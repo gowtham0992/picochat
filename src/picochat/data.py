@@ -488,6 +488,7 @@ def suggest_training_command(
         "--out-dir",
         out_dir,
         *source_args,
+        *(["--scale", "pico"] if budget.preset == "small-preview" else []),
         "--context-size",
         budget.suggested_context_size,
         "--base-batch-size",

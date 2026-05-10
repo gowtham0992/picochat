@@ -18,6 +18,7 @@ from picochat.train import TrainConfig, train_base
 @dataclass(frozen=True)
 class TinyRunConfig:
     out_dir: str
+    scale: str = "custom"
     dataset_pack: str | None = None
     corpus_input: str = "examples/tiny_corpus.txt"
     corpus_recipe: str | None = None
@@ -39,12 +40,23 @@ class TinyRunConfig:
     min_quality_score: int = 0
     split_mode: str = "document"
     tokenizer_type: str = "char"
+    tokenizer_vocab_size: int | None = None
+    tokenizer_min_freq: int = 1
     base_early_stop_patience: int = 6
     sft_early_stop_patience: int = 6
     early_stop_min_delta: float = 0.0
     base_max_minutes: float | None = None
     sft_max_minutes: float | None = None
     canary_count: int = 1
+    allow_leaky_eval: bool = False
+    base_lr_warmup_steps: int = 0
+    sft_lr_warmup_steps: int = 0
+    base_lr_decay: str = "none"
+    sft_lr_decay: str = "none"
+    base_min_lr_ratio: float = 1.0
+    sft_min_lr_ratio: float = 1.0
+    base_grad_clip: float = 0.0
+    sft_grad_clip: float = 0.0
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -82,10 +94,20 @@ def run_tiny(config: TinyRunConfig) -> dict:
         honesty_report,
         out_dir / "honesty",
     )
+    if honesty_report.status == "blocked" and not config.allow_leaky_eval:
+        raise ValueError(
+            "data honesty blocked this run; inspect "
+            f"{honesty_markdown_path} or rerun with --allow-leaky-eval for a diagnostic-only run"
+        )
 
     print(f"[3/6] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
     text = corpus_path.read_text(encoding="utf-8")
-    tokenizer = train_tokenizer(config.tokenizer_type, [text])
+    tokenizer = train_tokenizer(
+        config.tokenizer_type,
+        [text],
+        vocab_size=config.tokenizer_vocab_size,
+        min_freq=config.tokenizer_min_freq,
+    )
     tokenizer.save(tokenizer_path)
 
     print("[4/6] train base model")
@@ -110,6 +132,10 @@ def run_tiny(config: TinyRunConfig) -> dict:
         early_stop_min_delta=config.early_stop_min_delta,
         max_minutes=config.base_max_minutes,
         canary_count=config.canary_count,
+        lr_warmup_steps=config.base_lr_warmup_steps,
+        lr_decay=config.base_lr_decay,
+        min_lr_ratio=config.base_min_lr_ratio,
+        grad_clip=config.base_grad_clip,
     ))
     base_eval_checkpoint = base_report.get("best_checkpoint", {}).get(
         "path",
@@ -132,6 +158,10 @@ def run_tiny(config: TinyRunConfig) -> dict:
         early_stop_patience=config.sft_early_stop_patience,
         early_stop_min_delta=config.early_stop_min_delta,
         max_minutes=config.sft_max_minutes,
+        lr_warmup_steps=config.sft_lr_warmup_steps,
+        lr_decay=config.sft_lr_decay,
+        min_lr_ratio=config.sft_min_lr_ratio,
+        grad_clip=config.sft_grad_clip,
     ))
     sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",

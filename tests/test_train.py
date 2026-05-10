@@ -24,6 +24,10 @@ def test_train_base_writes_artifacts(tmp_path):
         val_fraction=0.2,
         eval_batches=1,
         sample_tokens=8,
+        lr_warmup_steps=1,
+        lr_decay="cosine",
+        min_lr_ratio=0.5,
+        grad_clip=1.0,
     ))
 
     assert (out_dir / "checkpoint" / "model.pt").exists()
@@ -35,6 +39,8 @@ def test_train_base_writes_artifacts(tmp_path):
     assert report["model"]["num_parameters"] > 0
     assert "val_loss" in report["losses"][-1]
     assert "val_bpb" in report["losses"][-1]
+    assert "learning_rate" in report["losses"][-1]
+    assert "grad_norm" in report["losses"][-1]
     assert report["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
     assert report["coverage"]["actual_steps"] == 2
     assert report["stop_reason"] == "max_steps"

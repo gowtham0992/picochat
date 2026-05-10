@@ -11,6 +11,7 @@ import torch
 
 from picochat.chat import render_chat_prompt
 from picochat.checkpoint import load_checkpoint, save_checkpoint
+from picochat.optim import learning_rate_for_step, maybe_clip_grad_norm, set_optimizer_lr, validate_optim_controls
 from picochat.report import loss_diagnostics, sft_report_markdown
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 from picochat.train import evaluate_metrics
@@ -20,6 +21,8 @@ from picochat.train import evaluate_metrics
 class ChatExample:
     user: str
     assistant: str
+    category: str = "chat"
+    group: str | None = None
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,17 @@ class ChatDatasetStats:
     context_size: int
     supervised_tokens: int
     truncated_examples: int
+    num_groups: int
+
+
+@dataclass(frozen=True)
+class ChatSplit:
+    train: torch.utils.data.Subset
+    val: torch.utils.data.Subset
+    method: str
+    num_groups: int
+    train_groups: int
+    val_groups: int
 
 
 @dataclass(frozen=True)
@@ -49,6 +63,10 @@ class SFTConfig:
     early_stop_patience: int = 0
     early_stop_min_delta: float = 0.0
     max_minutes: float | None = None
+    lr_warmup_steps: int = 0
+    lr_decay: str = "none"
+    min_lr_ratio: float = 1.0
+    grad_clip: float = 0.0
 
 
 class ChatSFTDataset(torch.utils.data.Dataset):
@@ -65,6 +83,8 @@ class ChatSFTDataset(torch.utils.data.Dataset):
 
         self.context_size = context_size
         self.rows: list[tuple[torch.Tensor, torch.Tensor]] = []
+        self.groups: list[str | None] = []
+        self.categories: list[str] = []
         supervised_tokens = 0
         truncated_examples = 0
 
@@ -102,16 +122,20 @@ class ChatSFTDataset(torch.utils.data.Dataset):
                 torch.tensor(x, dtype=torch.long),
                 torch.tensor(labels, dtype=torch.long),
             ))
+            self.groups.append(example.group)
+            self.categories.append(example.category)
             supervised_tokens += supervised
 
         if not self.rows:
             raise ValueError("no usable chat examples fit inside the model context")
 
+        explicit_groups = {group for group in self.groups if group is not None}
         self._stats = ChatDatasetStats(
             num_examples=len(self.rows),
             context_size=context_size,
             supervised_tokens=supervised_tokens,
             truncated_examples=truncated_examples,
+            num_groups=len(explicit_groups),
         )
 
     def __len__(self) -> int:
@@ -124,6 +148,11 @@ class ChatSFTDataset(torch.utils.data.Dataset):
 
     def stats(self) -> ChatDatasetStats:
         return self._stats
+
+    def group_key(self, index: int) -> str | None:
+        if index < 0 or index >= len(self.groups):
+            raise IndexError(index)
+        return self.groups[index]
 
 
 def load_chat_examples(path: str | Path) -> list[ChatExample]:
@@ -138,35 +167,137 @@ def load_chat_examples(path: str | Path) -> list[ChatExample]:
         assistant = record.get("assistant")
         if not isinstance(user, str) or not isinstance(assistant, str):
             raise ValueError(f"line {line_number} must contain string user and assistant fields")
-        examples.append(ChatExample(user=user, assistant=assistant))
+        category = record.get("category", "chat")
+        if not isinstance(category, str):
+            raise ValueError(f"line {line_number} category field must be a string when present")
+        group = _optional_string(
+            record.get("group", record.get("group_id", record.get("template"))),
+            line_number,
+            "group",
+        )
+        examples.append(ChatExample(user=user, assistant=assistant, category=category, group=group))
     if not examples:
         raise ValueError("chat dataset is empty")
     return examples
+
+
+def _optional_string(value, line_number: int, field: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"line {line_number} {field} field must be a string when present")
+    value = value.strip()
+    return value or None
 
 
 def split_chat_dataset(
     dataset: ChatSFTDataset,
     val_fraction: float,
     seed: int,
-) -> tuple[torch.utils.data.Subset, torch.utils.data.Subset]:
+) -> ChatSplit:
     """Deterministically split chat examples into train and validation subsets."""
     if len(dataset) == 1:
-        return torch.utils.data.Subset(dataset, [0]), torch.utils.data.Subset(dataset, [0])
+        subset = torch.utils.data.Subset(dataset, [0])
+        return ChatSplit(
+            train=subset,
+            val=subset,
+            method="single_example",
+            num_groups=0,
+            train_groups=0,
+            val_groups=0,
+        )
     if not 0.0 < val_fraction < 1.0:
         raise ValueError("val_fraction must be between 0 and 1")
 
-    num_val = max(1, int(len(dataset) * val_fraction))
-    num_train = len(dataset) - num_val
+    grouped_split = _grouped_split_indices(dataset, val_fraction, seed)
+    if grouped_split is not None:
+        train_indices, val_indices, num_groups, train_groups, val_groups = grouped_split
+        return ChatSplit(
+            train=torch.utils.data.Subset(dataset, train_indices),
+            val=torch.utils.data.Subset(dataset, val_indices),
+            method="group",
+            num_groups=num_groups,
+            train_groups=train_groups,
+            val_groups=val_groups,
+        )
+
+    train_indices, val_indices = _random_split_indices(len(dataset), val_fraction, seed)
+    return ChatSplit(
+        train=torch.utils.data.Subset(dataset, train_indices),
+        val=torch.utils.data.Subset(dataset, val_indices),
+        method="random",
+        num_groups=0,
+        train_groups=0,
+        val_groups=0,
+    )
+
+
+def _random_split_indices(
+    size: int,
+    val_fraction: float,
+    seed: int,
+) -> tuple[list[int], list[int]]:
+    num_val = max(1, int(size * val_fraction))
+    num_train = size - num_val
     if num_train < 1:
         num_train = 1
-        num_val = len(dataset) - 1
+        num_val = size - 1
 
     generator = torch.Generator()
     generator.manual_seed(seed)
-    indices = torch.randperm(len(dataset), generator=generator).tolist()
+    indices = torch.randperm(size, generator=generator).tolist()
+    return indices[:num_train], indices[num_train: num_train + num_val]
+
+
+def _grouped_split_indices(
+    dataset: ChatSFTDataset,
+    val_fraction: float,
+    seed: int,
+) -> tuple[list[int], list[int], int, int, int] | None:
+    groups: dict[str, list[int]] = {}
+    for index in range(len(dataset)):
+        group = dataset.group_key(index)
+        if group is None:
+            return None
+        groups.setdefault(group, []).append(index)
+
+    if len(groups) < 2:
+        return None
+
+    target_val = max(1, int(len(dataset) * val_fraction))
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    group_names = list(groups)
+    order = torch.randperm(len(group_names), generator=generator).tolist()
+
+    val_groups: set[str] = set()
+    val_indices: list[int] = []
+    for position in order:
+        group = group_names[position]
+        if len(val_groups) >= len(groups) - 1:
+            break
+        val_groups.add(group)
+        val_indices.extend(groups[group])
+        if len(val_indices) >= target_val:
+            break
+
+    train_indices = [
+        index
+        for group, indices in groups.items()
+        if group not in val_groups
+        for index in indices
+    ]
+    if not train_indices or not val_indices:
+        return None
+
+    val_indices.sort()
+    train_indices.sort()
     return (
-        torch.utils.data.Subset(dataset, indices[:num_train]),
-        torch.utils.data.Subset(dataset, indices[num_train: num_train + num_val]),
+        train_indices,
+        val_indices,
+        len(groups),
+        len(groups) - len(val_groups),
+        len(val_groups),
     )
 
 
@@ -190,6 +321,13 @@ def make_chat_dataloader(
 
 def train_sft(config: SFTConfig) -> dict:
     """Fine-tune a base checkpoint on small chat examples."""
+    validate_optim_controls(
+        max_steps=config.max_steps,
+        lr_warmup_steps=config.lr_warmup_steps,
+        lr_decay=config.lr_decay,
+        min_lr_ratio=config.min_lr_ratio,
+        grad_clip=config.grad_clip,
+    )
     torch.manual_seed(config.seed)
     out_dir = Path(config.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -204,7 +342,9 @@ def train_sft(config: SFTConfig) -> dict:
         tokenizer=tokenizer,
         context_size=model.config.context_size,
     )
-    train_dataset, val_dataset = split_chat_dataset(dataset, config.val_fraction, config.seed)
+    split = split_chat_dataset(dataset, config.val_fraction, config.seed)
+    train_dataset = split.train
+    val_dataset = split.val
     train_loader = make_chat_dataloader(train_dataset, config.batch_size, shuffle=True, seed=config.seed)
     train_eval_loader = make_chat_dataloader(train_dataset, config.batch_size, shuffle=False, seed=config.seed)
     val_loader = make_chat_dataloader(val_dataset, config.batch_size, shuffle=False, seed=config.seed)
@@ -238,8 +378,18 @@ def train_sft(config: SFTConfig) -> dict:
         _, loss = model(x, y)
         assert loss is not None
 
+        learning_rate = learning_rate_for_step(
+            base_learning_rate=config.learning_rate,
+            step=step,
+            max_steps=config.max_steps,
+            warmup_steps=config.lr_warmup_steps,
+            decay=config.lr_decay,
+            min_lr_ratio=config.min_lr_ratio,
+        )
+        set_optimizer_lr(optimizer, learning_rate)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
+        grad_norm = maybe_clip_grad_norm(model, config.grad_clip)
         optimizer.step()
 
         last_loss = float(loss.item())
@@ -268,6 +418,8 @@ def train_sft(config: SFTConfig) -> dict:
                 "val_loss": val_loss,
                 "train_bpb": train_metrics["bpb"],
                 "val_bpb": val_metrics["bpb"],
+                "learning_rate": learning_rate,
+                "grad_norm": grad_norm,
                 "elapsed_sec": elapsed,
             })
             if val_loss < best_loss - config.early_stop_min_delta:
@@ -369,6 +521,9 @@ def train_sft(config: SFTConfig) -> dict:
             **dataset.stats().__dict__,
             "train_examples": len(train_dataset),
             "val_examples": len(val_dataset),
+            "split_method": split.method,
+            "train_groups": split.train_groups,
+            "val_groups": split.val_groups,
         },
         "coverage": _coverage_report(len(train_dataset), len(dataset), config, final_step),
         "model": {

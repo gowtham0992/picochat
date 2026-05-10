@@ -41,6 +41,8 @@ class DataHonestyReport:
     exact_prompt_leaks: int
     near_prompt_leaks: int
     corpus_prompt_hits: int
+    sft_support_phrase_hits: int
+    corpus_support_phrase_hits: int
     duplicate_eval_prompts: int
     max_sft_prompt_similarity: float
     findings: tuple[HonestyFinding, ...]
@@ -68,8 +70,14 @@ def inspect_data_honesty(
     exact_prompt_leaks = 0
     near_prompt_leaks = 0
     corpus_prompt_hits = 0
+    sft_support_phrase_hits = 0
+    corpus_support_phrase_hits = 0
     duplicate_eval_prompts = 0
     max_similarity = 0.0
+    normalized_assistant_rows = [
+        (chat_row, _normalize(chat_row["assistant"]))
+        for chat_row in chat_rows
+    ]
 
     seen_eval_prompts: dict[str, int] = {}
     for eval_row in eval_rows:
@@ -141,6 +149,49 @@ def inspect_data_honesty(
                 snippet=_preview(eval_row["user"]),
             ))
 
+        for phrase in eval_row["support_phrases"]:
+            normalized_phrase = _normalize(phrase)
+            if not _is_specific_support_phrase(normalized_phrase):
+                continue
+            assistant_hit = next(
+                (
+                    chat_row
+                    for chat_row, normalized_assistant in normalized_assistant_rows
+                    if normalized_phrase in normalized_assistant
+                ),
+                None,
+            )
+            if assistant_hit is not None:
+                sft_support_phrase_hits += 1
+                findings.append(HonestyFinding(
+                    kind="eval_support_phrase_in_sft",
+                    severity="warn",
+                    eval_line=eval_row["line"],
+                    eval_category=eval_row["category"],
+                    matched_line=assistant_hit["line"],
+                    matched_source=str(chat_input),
+                    message=(
+                        "A specific eval support phrase appears in a chat SFT answer; "
+                        "this can make phrase-based evals easier to pass by memorization."
+                    ),
+                    snippet=_preview(phrase),
+                ))
+
+            if normalized_corpus and normalized_phrase in normalized_corpus:
+                corpus_support_phrase_hits += 1
+                findings.append(HonestyFinding(
+                    kind="eval_support_phrase_in_corpus",
+                    severity="warn",
+                    eval_line=eval_row["line"],
+                    eval_category=eval_row["category"],
+                    matched_source=str(corpus_path),
+                    message=(
+                        "A specific eval support phrase appears in the base corpus; "
+                        "inspect whether the eval is measuring recall instead of behavior."
+                    ),
+                    snippet=_preview(phrase),
+                ))
+
     status = _status(findings)
     return DataHonestyReport(
         status=status,
@@ -153,6 +204,8 @@ def inspect_data_honesty(
         exact_prompt_leaks=exact_prompt_leaks,
         near_prompt_leaks=near_prompt_leaks,
         corpus_prompt_hits=corpus_prompt_hits,
+        sft_support_phrase_hits=sft_support_phrase_hits,
+        corpus_support_phrase_hits=corpus_support_phrase_hits,
         duplicate_eval_prompts=duplicate_eval_prompts,
         max_sft_prompt_similarity=max_similarity,
         findings=tuple(findings),
@@ -190,6 +243,8 @@ def data_honesty_markdown(report: DataHonestyReport) -> str:
         f"- Exact SFT prompt leaks: {report.exact_prompt_leaks}",
         f"- Near SFT prompt leaks: {report.near_prompt_leaks}",
         f"- Eval prompts found in corpus: {report.corpus_prompt_hits}",
+        f"- Specific eval support phrases found in SFT answers: {report.sft_support_phrase_hits}",
+        f"- Specific eval support phrases found in corpus: {report.corpus_support_phrase_hits}",
         f"- Duplicate eval prompts: {report.duplicate_eval_prompts}",
         f"- Max SFT/eval prompt similarity: {report.max_sft_prompt_similarity:.4f}",
         "",
@@ -252,6 +307,7 @@ def _read_eval_rows(path: str | Path) -> list[dict[str, Any]]:
                 "line": line_number,
                 "user": user,
                 "category": category if isinstance(category, str) else "eval",
+                "support_phrases": _support_phrases(record),
             })
     return rows
 
@@ -272,6 +328,22 @@ def _read_jsonl(path: str | Path) -> list[tuple[int, dict[str, Any]]]:
         if isinstance(record, dict):
             rows.append((line_number, record))
     return rows
+
+
+def _support_phrases(record: dict[str, Any]) -> list[str]:
+    phrases: list[str] = []
+    expected = record.get("expected")
+    if isinstance(expected, str):
+        phrases.append(expected)
+    must_include = record.get("must_include")
+    if isinstance(must_include, list):
+        phrases.extend(item for item in must_include if isinstance(item, str))
+    must_include_any = record.get("must_include_any")
+    if isinstance(must_include_any, list):
+        for group in must_include_any:
+            if isinstance(group, list):
+                phrases.extend(item for item in group if isinstance(item, str))
+    return phrases
 
 
 def _read_corpus_text(path: str | Path | None) -> str:
@@ -309,6 +381,12 @@ def _prompt_similarity(left: str, right: str) -> float:
         return sequence
     jaccard = len(left_words & right_words) / len(left_words | right_words)
     return max(sequence, jaccard)
+
+
+def _is_specific_support_phrase(phrase: str) -> bool:
+    if len(phrase) < 18:
+        return False
+    return len(phrase.split()) >= 3
 
 
 def _status(findings: list[HonestyFinding]) -> str:

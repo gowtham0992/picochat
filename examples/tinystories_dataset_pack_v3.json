@@ -1,0 +1,7 @@
+{
+  "name": "TinyStories v3 prompt-following pack",
+  "description": "TinyStories corpus plus grouped SFT/eval examples for prompt anchoring, required words, continuations, lessons, refusals, and memorization checks.",
+  "corpus": "../runs/tinystories-1k/documents",
+  "chat": "tinystories_chat_v3.jsonl",
+  "eval": "tinystories_eval_v3.jsonl"
+}

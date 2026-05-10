@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from picochat.run import TinyRunConfig, run_tiny
 
 
@@ -36,6 +38,7 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
         base_batch_size=2,
         sft_batch_size=1,
         eval_max_new_tokens=0,
+        allow_leaky_eval=True,
     ))
 
     assert (out_dir / "corpus.txt").exists()
@@ -67,3 +70,40 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert summary["config"]["dataset_pack"] == str(pack_path)
     assert summary["config"]["chat_input"] == str(chat_path)
     assert summary["config"]["eval_input"] == str(eval_path)
+
+
+def test_run_tiny_blocks_leaky_eval_by_default(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    out_dir = tmp_path / "run"
+    corpus_path.write_text("A clean training story.\n" * 8, encoding="utf-8")
+    chat_path.write_text(
+        json.dumps({"user": "hi", "assistant": "hello"}),
+        encoding="utf-8",
+    )
+    eval_path.write_text(json.dumps({"user": "hi"}), encoding="utf-8")
+    pack_path.write_text(json.dumps({
+        "corpus": "corpus.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="data honesty blocked"):
+        run_tiny(TinyRunConfig(
+            out_dir=str(out_dir),
+            dataset_pack=str(pack_path),
+            context_size=16,
+            n_embd=16,
+            n_head=4,
+            n_layer=1,
+            base_steps=1,
+            sft_steps=1,
+            base_batch_size=2,
+            sft_batch_size=1,
+            eval_max_new_tokens=0,
+        ))
+
+    assert (out_dir / "honesty" / "honesty_report.json").exists()
+    assert not (out_dir / "tokenizer.json").exists()

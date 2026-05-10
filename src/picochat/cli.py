@@ -23,6 +23,8 @@ from picochat.compare import compare_runs, comparison_table, write_comparison_re
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
+from picochat.optim import LR_DECAYS
+from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.web import WebConfig, serve_web
 
 
@@ -284,6 +286,10 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--early-stop-patience", type=int, default=0)
     train_base_parser.add_argument("--early-stop-min-delta", type=float, default=0.0)
     train_base_parser.add_argument("--max-minutes", type=float, default=None)
+    train_base_parser.add_argument("--lr-warmup-steps", type=int, default=0)
+    train_base_parser.add_argument("--lr-decay", choices=LR_DECAYS, default="none")
+    train_base_parser.add_argument("--min-lr-ratio", type=float, default=1.0)
+    train_base_parser.add_argument("--grad-clip", type=float, default=0.0)
     train_base_parser.add_argument(
         "--canary-count",
         type=int,
@@ -320,6 +326,10 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_parser.add_argument("--early-stop-patience", type=int, default=0)
     train_sft_parser.add_argument("--early-stop-min-delta", type=float, default=0.0)
     train_sft_parser.add_argument("--max-minutes", type=float, default=None)
+    train_sft_parser.add_argument("--lr-warmup-steps", type=int, default=0)
+    train_sft_parser.add_argument("--lr-decay", choices=LR_DECAYS, default="none")
+    train_sft_parser.add_argument("--min-lr-ratio", type=float, default=1.0)
+    train_sft_parser.add_argument("--grad-clip", type=float, default=0.0)
 
     generate_parser = subparsers.add_parser("generate", help="Generate from a checkpoint.")
     generate_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
@@ -358,36 +368,62 @@ def build_parser() -> argparse.ArgumentParser:
     run_subparsers = run_parser.add_subparsers(dest="run_command")
     run_tiny_parser = run_subparsers.add_parser("tiny", help="Run the full tiny pipeline.")
     run_tiny_parser.add_argument("--out-dir", required=True, help="Output run directory.")
+    run_tiny_parser.add_argument(
+        "--scale",
+        choices=("custom", *RUN_SCALE_NAMES),
+        default="custom",
+        help="Named local run scale. Explicit numeric flags override preset values.",
+    )
     run_tiny_parser.add_argument("--dataset-pack", "--pack", dest="dataset_pack", default=None)
     run_tiny_parser.add_argument("--corpus-input", default="examples/tiny_corpus.txt")
     run_tiny_parser.add_argument("--corpus-recipe", default=None)
     run_tiny_parser.add_argument("--chat-input", default="examples/tiny_chat.jsonl")
     run_tiny_parser.add_argument("--eval-input", default="examples/tiny_eval.jsonl")
-    run_tiny_parser.add_argument("--context-size", type=int, default=128)
-    run_tiny_parser.add_argument("--n-embd", type=int, default=64)
-    run_tiny_parser.add_argument("--n-head", type=int, default=4)
-    run_tiny_parser.add_argument("--n-layer", type=int, default=2)
-    run_tiny_parser.add_argument("--base-steps", type=int, default=300)
-    run_tiny_parser.add_argument("--sft-steps", type=int, default=600)
-    run_tiny_parser.add_argument("--base-batch-size", type=int, default=8)
-    run_tiny_parser.add_argument("--sft-batch-size", type=int, default=7)
-    run_tiny_parser.add_argument("--base-learning-rate", type=float, default=3e-4)
-    run_tiny_parser.add_argument("--sft-learning-rate", type=float, default=1e-3)
-    run_tiny_parser.add_argument("--base-early-stop-patience", type=int, default=6)
-    run_tiny_parser.add_argument("--sft-early-stop-patience", type=int, default=6)
-    run_tiny_parser.add_argument("--early-stop-min-delta", type=float, default=0.0)
+    run_tiny_parser.add_argument("--context-size", type=int, default=None)
+    run_tiny_parser.add_argument("--n-embd", type=int, default=None)
+    run_tiny_parser.add_argument("--n-head", type=int, default=None)
+    run_tiny_parser.add_argument("--n-layer", type=int, default=None)
+    run_tiny_parser.add_argument("--base-steps", type=int, default=None)
+    run_tiny_parser.add_argument("--sft-steps", type=int, default=None)
+    run_tiny_parser.add_argument("--base-batch-size", type=int, default=None)
+    run_tiny_parser.add_argument("--sft-batch-size", type=int, default=None)
+    run_tiny_parser.add_argument("--base-learning-rate", type=float, default=None)
+    run_tiny_parser.add_argument("--sft-learning-rate", type=float, default=None)
+    run_tiny_parser.add_argument("--base-early-stop-patience", type=int, default=None)
+    run_tiny_parser.add_argument("--sft-early-stop-patience", type=int, default=None)
+    run_tiny_parser.add_argument("--early-stop-min-delta", type=float, default=None)
     run_tiny_parser.add_argument("--base-max-minutes", type=float, default=None)
     run_tiny_parser.add_argument("--sft-max-minutes", type=float, default=None)
-    run_tiny_parser.add_argument("--canary-count", type=int, default=1)
+    run_tiny_parser.add_argument("--canary-count", type=int, default=None)
     run_tiny_parser.add_argument("--seed", type=int, default=42)
     run_tiny_parser.add_argument("--device", default="cpu")
-    run_tiny_parser.add_argument("--eval-max-new-tokens", type=int, default=120)
+    run_tiny_parser.add_argument("--eval-max-new-tokens", type=int, default=None)
     run_tiny_parser.add_argument(
         "--tokenizer-type",
         choices=TOKENIZER_TYPES,
-        default="char",
+        default=None,
         help="Tokenizer used for this run. Compare char, byte, and bpe on the same dataset pack.",
     )
+    run_tiny_parser.add_argument(
+        "--tokenizer-vocab-size",
+        type=int,
+        default=None,
+        help="Optional tokenizer vocabulary size including special tokens. Useful for BPE.",
+    )
+    run_tiny_parser.add_argument(
+        "--tokenizer-min-freq",
+        type=int,
+        default=None,
+        help="Minimum BPE merge frequency or character frequency.",
+    )
+    run_tiny_parser.add_argument("--base-lr-warmup-steps", type=int, default=None)
+    run_tiny_parser.add_argument("--sft-lr-warmup-steps", type=int, default=None)
+    run_tiny_parser.add_argument("--base-lr-decay", choices=LR_DECAYS, default=None)
+    run_tiny_parser.add_argument("--sft-lr-decay", choices=LR_DECAYS, default=None)
+    run_tiny_parser.add_argument("--base-min-lr-ratio", type=float, default=None)
+    run_tiny_parser.add_argument("--sft-min-lr-ratio", type=float, default=None)
+    run_tiny_parser.add_argument("--base-grad-clip", type=float, default=None)
+    run_tiny_parser.add_argument("--sft-grad-clip", type=float, default=None)
     run_tiny_parser.add_argument(
         "--min-score",
         type=int,
@@ -399,6 +435,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("window", "document"),
         default="document",
         help="Base training validation split. 'document' holds out complete corpus documents when possible.",
+    )
+    run_tiny_parser.add_argument(
+        "--allow-leaky-eval",
+        action="store_true",
+        help="Allow a diagnostic run to continue when data honesty detects blocking eval leakage.",
     )
 
     compare_parser = subparsers.add_parser("compare", help="Compare completed run summaries.")
@@ -649,6 +690,8 @@ def honesty_data(args: argparse.Namespace) -> int:
     print(f"exact_sft_prompt_leaks: {report.exact_prompt_leaks}")
     print(f"near_sft_prompt_leaks: {report.near_prompt_leaks}")
     print(f"eval_prompts_found_in_corpus: {report.corpus_prompt_hits}")
+    print(f"sft_support_phrase_hits: {report.sft_support_phrase_hits}")
+    print(f"corpus_support_phrase_hits: {report.corpus_support_phrase_hits}")
     print(f"duplicate_eval_prompts: {report.duplicate_eval_prompts}")
     print(f"max_sft_prompt_similarity: {report.max_sft_prompt_similarity:.4f}")
     for finding in report.findings[:8]:
@@ -736,6 +779,10 @@ def run_train_base(args: argparse.Namespace) -> int:
         early_stop_min_delta=args.early_stop_min_delta,
         max_minutes=args.max_minutes,
         canary_count=args.canary_count,
+        lr_warmup_steps=args.lr_warmup_steps,
+        lr_decay=args.lr_decay,
+        min_lr_ratio=args.min_lr_ratio,
+        grad_clip=args.grad_clip,
     )
     report = train_base(config)
     print(f"saved checkpoint: {report['checkpoint']}")
@@ -762,6 +809,10 @@ def run_train_sft(args: argparse.Namespace) -> int:
         early_stop_patience=args.early_stop_patience,
         early_stop_min_delta=args.early_stop_min_delta,
         max_minutes=args.max_minutes,
+        lr_warmup_steps=args.lr_warmup_steps,
+        lr_decay=args.lr_decay,
+        min_lr_ratio=args.min_lr_ratio,
+        grad_clip=args.grad_clip,
     )
     report = train_sft(config)
     print(f"saved sft checkpoint: {report['checkpoint']}")
@@ -821,36 +872,60 @@ def run_eval_chat(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_tiny_value(args: argparse.Namespace, defaults: TinyRunConfig, field: str):
+    value = getattr(args, field)
+    if value is not None:
+        return value
+    if args.scale != "custom":
+        preset = RUN_SCALES[args.scale].tiny_run_values()
+        if field in preset:
+            return preset[field]
+    return getattr(defaults, field)
+
+
 def run_tiny_command(args: argparse.Namespace) -> int:
+    defaults = TinyRunConfig(out_dir=args.out_dir)
     summary = run_tiny(TinyRunConfig(
         out_dir=args.out_dir,
+        scale=args.scale,
         dataset_pack=args.dataset_pack,
         corpus_input=args.corpus_input,
         corpus_recipe=args.corpus_recipe,
         chat_input=args.chat_input,
         eval_input=args.eval_input,
-        context_size=args.context_size,
-        n_embd=args.n_embd,
-        n_head=args.n_head,
-        n_layer=args.n_layer,
-        base_steps=args.base_steps,
-        sft_steps=args.sft_steps,
-        base_batch_size=args.base_batch_size,
-        sft_batch_size=args.sft_batch_size,
-        base_learning_rate=args.base_learning_rate,
-        sft_learning_rate=args.sft_learning_rate,
+        context_size=_resolve_tiny_value(args, defaults, "context_size"),
+        n_embd=_resolve_tiny_value(args, defaults, "n_embd"),
+        n_head=_resolve_tiny_value(args, defaults, "n_head"),
+        n_layer=_resolve_tiny_value(args, defaults, "n_layer"),
+        base_steps=_resolve_tiny_value(args, defaults, "base_steps"),
+        sft_steps=_resolve_tiny_value(args, defaults, "sft_steps"),
+        base_batch_size=_resolve_tiny_value(args, defaults, "base_batch_size"),
+        sft_batch_size=_resolve_tiny_value(args, defaults, "sft_batch_size"),
+        base_learning_rate=_resolve_tiny_value(args, defaults, "base_learning_rate"),
+        sft_learning_rate=_resolve_tiny_value(args, defaults, "sft_learning_rate"),
         seed=args.seed,
         device=args.device,
-        eval_max_new_tokens=args.eval_max_new_tokens,
+        eval_max_new_tokens=_resolve_tiny_value(args, defaults, "eval_max_new_tokens"),
         min_quality_score=args.min_score,
         split_mode=args.split_mode,
-        tokenizer_type=args.tokenizer_type,
-        base_early_stop_patience=args.base_early_stop_patience,
-        sft_early_stop_patience=args.sft_early_stop_patience,
-        early_stop_min_delta=args.early_stop_min_delta,
+        tokenizer_type=_resolve_tiny_value(args, defaults, "tokenizer_type"),
+        tokenizer_vocab_size=_resolve_tiny_value(args, defaults, "tokenizer_vocab_size"),
+        tokenizer_min_freq=_resolve_tiny_value(args, defaults, "tokenizer_min_freq"),
+        base_early_stop_patience=_resolve_tiny_value(args, defaults, "base_early_stop_patience"),
+        sft_early_stop_patience=_resolve_tiny_value(args, defaults, "sft_early_stop_patience"),
+        early_stop_min_delta=_resolve_tiny_value(args, defaults, "early_stop_min_delta"),
         base_max_minutes=args.base_max_minutes,
         sft_max_minutes=args.sft_max_minutes,
-        canary_count=args.canary_count,
+        canary_count=_resolve_tiny_value(args, defaults, "canary_count"),
+        allow_leaky_eval=args.allow_leaky_eval,
+        base_lr_warmup_steps=_resolve_tiny_value(args, defaults, "base_lr_warmup_steps"),
+        sft_lr_warmup_steps=_resolve_tiny_value(args, defaults, "sft_lr_warmup_steps"),
+        base_lr_decay=_resolve_tiny_value(args, defaults, "base_lr_decay"),
+        sft_lr_decay=_resolve_tiny_value(args, defaults, "sft_lr_decay"),
+        base_min_lr_ratio=_resolve_tiny_value(args, defaults, "base_min_lr_ratio"),
+        sft_min_lr_ratio=_resolve_tiny_value(args, defaults, "sft_min_lr_ratio"),
+        base_grad_clip=_resolve_tiny_value(args, defaults, "base_grad_clip"),
+        sft_grad_clip=_resolve_tiny_value(args, defaults, "sft_grad_clip"),
     ))
     print(
         f"tiny run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "

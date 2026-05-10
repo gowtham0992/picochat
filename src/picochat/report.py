@@ -106,19 +106,25 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Steps: {config['max_steps']}")
     lines.append(f"- Batch size: {config['batch_size']}")
     lines.append(f"- Learning rate: {config['learning_rate']}")
+    lines.append(f"- LR decay: `{config.get('lr_decay', 'none')}`")
+    lines.append(f"- LR warmup steps: {config.get('lr_warmup_steps', 0)}")
+    lines.append(f"- Min LR ratio: {config.get('min_lr_ratio', 1.0)}")
+    lines.append(f"- Gradient clip: {config.get('grad_clip', 0.0) or 'disabled'}")
     lines.append(f"- Validation fraction: {config['val_fraction']}")
     lines.append(f"- Early stop patience: {config.get('early_stop_patience', 0)}")
     lines.append(f"- Max minutes: {config.get('max_minutes') or 'disabled'}")
     lines.append(f"- Device: `{config['device']}`")
     lines.append("")
-    lines.append("| Step | Train Loss | Train BPB | Val Loss | Val BPB | Elapsed Seconds |")
-    lines.append("| ---: | ---: | ---: | ---: | ---: | ---: |")
+    lines.append("| Step | Train Loss | Train BPB | Val Loss | Val BPB | LR | Grad Norm | Elapsed Seconds |")
+    lines.append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for item in losses:
         lines.append(
             f"| {item['step']} | {format_float(item['train_loss'])} | "
             f"{format_optional_float(item.get('train_bpb'))} | "
             f"{format_float(item['val_loss'])} | "
             f"{format_optional_float(item.get('val_bpb'))} | "
+            f"{format_optional_float(item.get('learning_rate'))} | "
+            f"{format_optional_float(item.get('grad_norm'))} | "
             f"{format_float(item['elapsed_sec'])} |"
         )
     lines.append("")
@@ -229,6 +235,13 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Truncated examples: {dataset.get('truncated_examples', 0)}")
     lines.append(f"- Train examples: {dataset['train_examples']}")
     lines.append(f"- Validation examples: {dataset['val_examples']}")
+    if dataset.get("split_method"):
+        lines.append(f"- Validation split: `{dataset['split_method']}`")
+    if dataset.get("num_groups"):
+        lines.append(
+            f"- Groups: {dataset['num_groups']} total "
+            f"({dataset.get('train_groups', 0)} train / {dataset.get('val_groups', 0)} validation)"
+        )
     lines.append("")
 
     lines.append("## Base Checkpoint")
@@ -253,18 +266,24 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Steps: {config['max_steps']}")
     lines.append(f"- Batch size: {config['batch_size']}")
     lines.append(f"- Learning rate: {config['learning_rate']}")
+    lines.append(f"- LR decay: `{config.get('lr_decay', 'none')}`")
+    lines.append(f"- LR warmup steps: {config.get('lr_warmup_steps', 0)}")
+    lines.append(f"- Min LR ratio: {config.get('min_lr_ratio', 1.0)}")
+    lines.append(f"- Gradient clip: {config.get('grad_clip', 0.0) or 'disabled'}")
     lines.append(f"- Early stop patience: {config.get('early_stop_patience', 0)}")
     lines.append(f"- Max minutes: {config.get('max_minutes') or 'disabled'}")
     lines.append(f"- Device: `{config['device']}`")
     lines.append("")
-    lines.append("| Step | Train Loss | Train BPB | Val Loss | Val BPB | Elapsed Seconds |")
-    lines.append("| ---: | ---: | ---: | ---: | ---: | ---: |")
+    lines.append("| Step | Train Loss | Train BPB | Val Loss | Val BPB | LR | Grad Norm | Elapsed Seconds |")
+    lines.append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for item in losses:
         lines.append(
             f"| {item['step']} | {format_float(item['train_loss'])} | "
             f"{format_optional_float(item.get('train_bpb'))} | "
             f"{format_float(item['val_loss'])} | "
             f"{format_optional_float(item.get('val_bpb'))} | "
+            f"{format_optional_float(item.get('learning_rate'))} | "
+            f"{format_optional_float(item.get('grad_norm'))} | "
             f"{format_float(item['elapsed_sec'])} |"
         )
     lines.append("")
@@ -361,6 +380,12 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append(f"- Unanswerable examples: {summary.get('num_unanswerable', 0)}")
         lines.append(f"- Unsupported claim rate: {format_float(summary['unsupported_claim_rate'] * 100)}%")
         lines.append(f"- Missing support rate: {format_float(summary.get('missing_support_rate', 0.0) * 100)}%")
+        lines.append(f"- Support match rate: {format_float(summary.get('support_match_rate', 0.0) * 100)}%")
+        if summary.get("answerable_support_match_rate") is not None:
+            lines.append(
+                f"- Answerable support match rate: "
+                f"{format_float(summary.get('answerable_support_match_rate', 0.0) * 100)}%"
+            )
     lines.append("")
 
     if summary.get("category_breakdown"):
@@ -414,6 +439,12 @@ def chat_eval_report_markdown(report: dict) -> str:
         if item["found_forbidden"]:
             lines.append(f"Found forbidden: {_inline_list(item['found_forbidden'])}")
             lines.append("")
+        if item.get("support_total") is not None:
+            lines.append(
+                f"Support matched: {item.get('support_matched', 0)} / "
+                f"{item.get('support_total', 0)}"
+            )
+            lines.append("")
         lines.append("Reply:")
         lines.append("")
         lines.append("```text")
@@ -461,6 +492,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     if "unsupported_claim_rate" in eval_summary:
         lines.append(f"- Unsupported claim rate: {format_float(eval_summary['unsupported_claim_rate'] * 100)}%")
         lines.append(f"- Missing support rate: {format_float(eval_summary.get('missing_support_rate', 0.0) * 100)}%")
+        lines.append(f"- Support match rate: {format_float(eval_summary.get('support_match_rate', 0.0) * 100)}%")
     lines.append("")
 
     if honesty:
@@ -471,6 +503,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.append(f"- Exact SFT prompt leaks: {honesty.get('exact_prompt_leaks', 0)}")
         lines.append(f"- Near SFT prompt leaks: {honesty.get('near_prompt_leaks', 0)}")
         lines.append(f"- Eval prompts found in corpus: {honesty.get('corpus_prompt_hits', 0)}")
+        lines.append(f"- Specific eval support phrases found in SFT answers: {honesty.get('sft_support_phrase_hits', 0)}")
+        lines.append(f"- Specific eval support phrases found in corpus: {honesty.get('corpus_support_phrase_hits', 0)}")
         lines.append(f"- Duplicate eval prompts: {honesty.get('duplicate_eval_prompts', 0)}")
         if honesty.get("max_sft_prompt_similarity") is not None:
             lines.append(
@@ -487,6 +521,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
 
     lines.append("## Settings")
     lines.append("")
+    lines.append(f"- Scale: `{config.get('scale', 'custom')}`")
     lines.append(f"- Context size: {config['context_size']}")
     lines.append(f"- Embedding size: {config['n_embd']}")
     lines.append(f"- Layers: {config['n_layer']}")
@@ -494,6 +529,12 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Base steps: {config['base_steps']}")
     lines.append(f"- SFT steps: {config['sft_steps']}")
     lines.append(f"- Tokenizer type: `{tokenizer.get('tokenizer_type', 'unknown')}`")
+    if config.get("tokenizer_vocab_size"):
+        lines.append(f"- Tokenizer vocab size target: {config.get('tokenizer_vocab_size')}")
+    lines.append(f"- Base LR decay: `{config.get('base_lr_decay', 'none')}`")
+    lines.append(f"- SFT LR decay: `{config.get('sft_lr_decay', 'none')}`")
+    lines.append(f"- Base grad clip: {config.get('base_grad_clip', 0.0) or 'disabled'}")
+    lines.append(f"- SFT grad clip: {config.get('sft_grad_clip', 0.0) or 'disabled'}")
     lines.append(f"- Base early stop patience: {config.get('base_early_stop_patience', 0)}")
     lines.append(f"- SFT early stop patience: {config.get('sft_early_stop_patience', 0)}")
     lines.append(f"- Train-only canaries: {config.get('canary_count', 0)}")
@@ -562,15 +603,16 @@ def tiny_run_summary_markdown(summary: dict) -> str:
 
 def _category_breakdown_table(category_breakdown: dict) -> list[str]:
     lines = [
-        "| Category | Passed | Pass Rate | Missing Support | Unsupported |",
-        "| --- | ---: | ---: | ---: | ---: |",
+        "| Category | Passed | Pass Rate | Support Match | Missing Support | Unsupported |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for category, row in sorted(category_breakdown.items()):
         passed = f"{row.get('num_passed', 0)} / {row.get('num_examples', 0)}"
         pass_rate = format_float(row.get("pass_rate", 0.0) * 100)
+        support = format_float(row.get("support_match_rate", 0.0) * 100)
         missing = f"{row.get('missing_support', 0)} / {row.get('num_examples', 0)}"
         unsupported = f"{row.get('unsupported_claims', 0)} / {row.get('num_examples', 0)}"
-        lines.append(f"| `{category}` | {passed} | {pass_rate}% | {missing} | {unsupported} |")
+        lines.append(f"| `{category}` | {passed} | {pass_rate}% | {support}% | {missing} | {unsupported} |")
     return lines
 
 

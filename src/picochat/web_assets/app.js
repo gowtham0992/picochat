@@ -1175,6 +1175,8 @@ function applyLaunchPreset(quiet = false) {
   $("launch-context-size").value = values.context_size;
   $("launch-base-steps").value = values.base_steps;
   $("launch-sft-steps").value = values.sft_steps;
+  if (values.tokenizer_type) $("launch-tokenizer-type").value = values.tokenizer_type;
+  $("launch-tokenizer-vocab-size").value = values.tokenizer_vocab_size || "";
   if (!quiet) {
     flashStatus(`APPLIED ${String(values.label || preset).toUpperCase()} PRESET. | ${values.description || ""}`);
   }
@@ -1210,6 +1212,9 @@ async function launchRun() {
       sft_steps: Number($("launch-sft-steps").value),
       seed: Number($("launch-seed").value),
       tokenizer_type: $("launch-tokenizer-type").value,
+      tokenizer_vocab_size: $("launch-tokenizer-vocab-size").value
+        ? Number($("launch-tokenizer-vocab-size").value)
+        : null,
       min_quality_score: Number($("launch-min-score").value || 0),
     });
     state.runJob = payload.job;

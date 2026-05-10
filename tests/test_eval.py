@@ -47,7 +47,10 @@ def test_score_reply_checks_required_and_forbidden_phrases():
 
     assert passing["passed"] is False
     assert passing["missing_any"] == [["factory", "lab"]]
+    assert passing["support_matched"] == 2
+    assert passing["support_total"] == 3
     assert passing_with_any["passed"] is True
+    assert passing_with_any["support_match_rate"] == 1.0
     assert failing["passed"] is False
     assert failing["missing"] == ["educational", "LLM"]
     assert failing["missing_any"] == [["factory", "lab"]]
@@ -84,6 +87,7 @@ def test_run_chat_eval_writes_artifacts(tmp_path):
     assert report["summary"]["num_examples"] == 1
     assert report["summary"]["num_passed"] == 1
     assert report["summary"]["unsupported_claim_rate"] == 0.0
+    assert report["summary"]["support_match_rate"] == 1.0
     assert report["summary"]["category_breakdown"]["answerable"]["num_examples"] == 1
     assert report["summary"]["category_breakdown"]["answerable"]["num_passed"] == 1
     assert report["examples"][0]["answerable"] is True

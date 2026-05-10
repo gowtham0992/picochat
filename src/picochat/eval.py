@@ -142,11 +142,16 @@ def score_reply(reply: str, item: ChatEvalItem, case_sensitive: bool = False) ->
         for original, normalized in zip(item.must_not_include, forbidden, strict=True)
         if normalized in haystack
     ]
+    support_total = len(item.must_include) + len(item.must_include_any)
+    support_matched = support_total - len(missing) - len(missing_any)
     return {
         "passed": not missing and not missing_any and not found_forbidden,
         "missing": missing,
         "missing_any": missing_any,
         "found_forbidden": found_forbidden,
+        "support_total": support_total,
+        "support_matched": support_matched,
+        "support_match_rate": support_matched / support_total if support_total else 1.0,
     }
 
 
@@ -182,6 +187,10 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     passed = sum(1 for row in rows if row["passed"])
     unsupported_claims = sum(1 for row in rows if row["found_forbidden"])
     missing_support = sum(1 for row in rows if row["missing"] or row["missing_any"])
+    support_total = sum(int(row["support_total"]) for row in rows)
+    support_matched = sum(int(row["support_matched"]) for row in rows)
+    answerable_support_total = sum(int(row["support_total"]) for row in rows if row["answerable"])
+    answerable_support_matched = sum(int(row["support_matched"]) for row in rows if row["answerable"])
     answerable = sum(1 for row in rows if row["answerable"])
     category_breakdown = _category_breakdown(rows)
     report = {
@@ -202,6 +211,13 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "unsupported_claim_rate": unsupported_claims / len(rows),
             "missing_support": missing_support,
             "missing_support_rate": missing_support / len(rows),
+            "support_requirements": support_total,
+            "support_matches": support_matched,
+            "support_match_rate": _safe_rate(support_matched, support_total),
+            "answerable_support_match_rate": _safe_rate(
+                answerable_support_matched,
+                answerable_support_total,
+            ),
             "category_breakdown": category_breakdown,
         },
         "examples": rows,
@@ -230,6 +246,9 @@ def _category_breakdown(rows: list[dict]) -> dict[str, dict]:
                 "unsupported_claim_rate": 0.0,
                 "missing_support": 0,
                 "missing_support_rate": 0.0,
+                "support_requirements": 0,
+                "support_matches": 0,
+                "support_match_rate": 1.0,
             },
         )
         bucket["num_examples"] += 1
@@ -239,13 +258,23 @@ def _category_breakdown(rows: list[dict]) -> dict[str, dict]:
         bucket["num_unanswerable"] += int(not row.get("answerable", True))
         bucket["unsupported_claims"] += int(bool(row.get("found_forbidden")))
         bucket["missing_support"] += int(bool(row.get("missing") or row.get("missing_any")))
+        bucket["support_requirements"] += int(row.get("support_total", 0))
+        bucket["support_matches"] += int(row.get("support_matched", 0))
 
     for bucket in buckets.values():
         total = bucket["num_examples"]
         bucket["pass_rate"] = bucket["num_passed"] / total
         bucket["unsupported_claim_rate"] = bucket["unsupported_claims"] / total
         bucket["missing_support_rate"] = bucket["missing_support"] / total
+        bucket["support_match_rate"] = _safe_rate(
+            bucket["support_matches"],
+            bucket["support_requirements"],
+        )
     return dict(sorted(buckets.items()))
+
+
+def _safe_rate(numerator: int, denominator: int) -> float:
+    return float(numerator) / float(denominator) if denominator else 1.0
 
 
 @torch.no_grad()

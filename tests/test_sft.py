@@ -2,7 +2,14 @@ import json
 
 from picochat.checkpoint import save_checkpoint
 from picochat.model import GPTConfig, TinyGPT
-from picochat.sft import ChatExample, ChatSFTDataset, SFTConfig, load_chat_examples, train_sft
+from picochat.sft import (
+    ChatExample,
+    ChatSFTDataset,
+    SFTConfig,
+    load_chat_examples,
+    split_chat_dataset,
+    train_sft,
+)
 from picochat.tokenizer import CharTokenizer
 
 
@@ -12,11 +19,11 @@ def write_jsonl(path, rows):
 
 def test_load_chat_examples_from_jsonl(tmp_path):
     input_path = tmp_path / "chat.jsonl"
-    write_jsonl(input_path, [{"user": "hi", "assistant": "hello"}])
+    write_jsonl(input_path, [{"user": "hi", "assistant": "hello", "category": "greet", "group": "greet-basic"}])
 
     examples = load_chat_examples(input_path)
 
-    assert examples == [ChatExample(user="hi", assistant="hello")]
+    assert examples == [ChatExample(user="hi", assistant="hello", category="greet", group="greet-basic")]
 
 
 def test_chat_sft_dataset_masks_prompt_tokens():
@@ -53,6 +60,33 @@ def test_chat_sft_dataset_keeps_answer_tokens_when_prompt_is_too_long():
     assert dataset.stats().supervised_tokens > 0
 
 
+def test_split_chat_dataset_keeps_groups_out_of_both_sides():
+    tokenizer = CharTokenizer.train([
+        "User: a\nAssistant: one\n"
+        "User: b\nAssistant: two\n"
+        "User: c\nAssistant: three\n"
+        "User: d\nAssistant: four\n"
+    ])
+    dataset = ChatSFTDataset(
+        [
+            ChatExample(user="a", assistant="one", group="alpha"),
+            ChatExample(user="b", assistant="two", group="alpha"),
+            ChatExample(user="c", assistant="three", group="beta"),
+            ChatExample(user="d", assistant="four", group="gamma"),
+        ],
+        tokenizer=tokenizer,
+        context_size=32,
+    )
+
+    split = split_chat_dataset(dataset, val_fraction=0.25, seed=1)
+    train_groups = {dataset.group_key(index) for index in split.train.indices}
+    val_groups = {dataset.group_key(index) for index in split.val.indices}
+
+    assert split.method == "group"
+    assert train_groups.isdisjoint(val_groups)
+    assert split.num_groups == 3
+
+
 def test_train_sft_writes_artifacts(tmp_path):
     input_path = tmp_path / "chat.jsonl"
     tokenizer_path = tmp_path / "tokenizer.json"
@@ -87,6 +121,10 @@ def test_train_sft_writes_artifacts(tmp_path):
         log_every=1,
         eval_batches=1,
         sample_tokens=8,
+        lr_warmup_steps=1,
+        lr_decay="linear",
+        min_lr_ratio=0.5,
+        grad_clip=1.0,
     ))
 
     assert (out_dir / "checkpoint" / "model.pt").exists()
@@ -99,6 +137,8 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert report["dataset"]["supervised_tokens"] > 0
     assert report["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
     assert "val_bpb" in report["losses"][-1]
+    assert "learning_rate" in report["losses"][-1]
+    assert "grad_norm" in report["losses"][-1]
     assert report["coverage"]["actual_steps"] == 2
     assert report["stop_reason"] == "max_steps"
     assert report["loss_diagnostics"]["final_step"] == 2

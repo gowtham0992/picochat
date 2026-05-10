@@ -14,6 +14,7 @@ from picochat.batching import load_token_split, make_dataloader
 from picochat.checkpoint import save_checkpoint
 from picochat.memorization import memorization_diagnostics
 from picochat.model import GPTConfig, TinyGPT
+from picochat.optim import learning_rate_for_step, maybe_clip_grad_norm, set_optimizer_lr, validate_optim_controls
 from picochat.report import loss_diagnostics, training_report_markdown
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 
@@ -43,6 +44,10 @@ class TrainConfig:
     early_stop_min_delta: float = 0.0
     max_minutes: float | None = None
     canary_count: int = 0
+    lr_warmup_steps: int = 0
+    lr_decay: str = "none"
+    min_lr_ratio: float = 1.0
+    grad_clip: float = 0.0
 
 
 @torch.no_grad()
@@ -102,6 +107,13 @@ def evaluate_metrics(
 
 def train_base(config: TrainConfig) -> dict:
     """Train a tiny next-token model and save artifacts."""
+    validate_optim_controls(
+        max_steps=config.max_steps,
+        lr_warmup_steps=config.lr_warmup_steps,
+        lr_decay=config.lr_decay,
+        min_lr_ratio=config.min_lr_ratio,
+        grad_clip=config.grad_clip,
+    )
     torch.manual_seed(config.seed)
     out_dir = Path(config.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -159,8 +171,18 @@ def train_base(config: TrainConfig) -> dict:
         _, loss = model(x, y)
         assert loss is not None
 
+        learning_rate = learning_rate_for_step(
+            base_learning_rate=config.learning_rate,
+            step=step,
+            max_steps=config.max_steps,
+            warmup_steps=config.lr_warmup_steps,
+            decay=config.lr_decay,
+            min_lr_ratio=config.min_lr_ratio,
+        )
+        set_optimizer_lr(optimizer, learning_rate)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
+        grad_norm = maybe_clip_grad_norm(model, config.grad_clip)
         optimizer.step()
 
         last_loss = float(loss.item())
@@ -192,6 +214,8 @@ def train_base(config: TrainConfig) -> dict:
                 "val_loss": val_loss,
                 "train_bpb": train_bpb,
                 "val_bpb": val_bpb,
+                "learning_rate": learning_rate,
+                "grad_norm": grad_norm,
                 "elapsed_sec": elapsed,
             })
             metric = val_bpb if val_bpb is not None else val_loss

@@ -20,6 +20,8 @@ from picochat.compare import compare_runs
 from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus_sources
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.generate import GenerateConfig, generate_text_with_trace
+from picochat.optim import LR_DECAYS
+from picochat.scales import RUN_SCALES
 from picochat.tokenizer import TOKENIZER_TYPES
 from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
@@ -37,6 +39,17 @@ RUN_PRESETS = {
         "n_embd": 32,
         "n_head": 4,
         "n_layer": 1,
+        "tokenizer_type": "char",
+        "tokenizer_vocab_size": None,
+        "tokenizer_min_freq": 1,
+        "base_lr_warmup_steps": 0,
+        "sft_lr_warmup_steps": 0,
+        "base_lr_decay": "none",
+        "sft_lr_decay": "none",
+        "base_min_lr_ratio": 1.0,
+        "sft_min_lr_ratio": 1.0,
+        "base_grad_clip": 0.0,
+        "sft_grad_clip": 0.0,
         "eval_max_new_tokens": 80,
     },
     "tiny": {
@@ -50,6 +63,17 @@ RUN_PRESETS = {
         "n_embd": 64,
         "n_head": 4,
         "n_layer": 2,
+        "tokenizer_type": "char",
+        "tokenizer_vocab_size": None,
+        "tokenizer_min_freq": 1,
+        "base_lr_warmup_steps": 0,
+        "sft_lr_warmup_steps": 0,
+        "base_lr_decay": "none",
+        "sft_lr_decay": "none",
+        "base_min_lr_ratio": 1.0,
+        "sft_min_lr_ratio": 1.0,
+        "base_grad_clip": 0.0,
+        "sft_grad_clip": 0.0,
         "eval_max_new_tokens": 120,
     },
     "small-local": {
@@ -63,8 +87,21 @@ RUN_PRESETS = {
         "n_embd": 96,
         "n_head": 4,
         "n_layer": 3,
+        "tokenizer_type": "bpe",
+        "tokenizer_vocab_size": 512,
+        "tokenizer_min_freq": 2,
+        "base_lr_warmup_steps": 200,
+        "sft_lr_warmup_steps": 50,
+        "base_lr_decay": "cosine",
+        "sft_lr_decay": "cosine",
+        "base_min_lr_ratio": 0.1,
+        "sft_min_lr_ratio": 0.1,
+        "base_grad_clip": 1.0,
+        "sft_grad_clip": 1.0,
         "eval_max_new_tokens": 120,
     },
+    "small": RUN_SCALES["small"].to_dict(),
+    "medium": RUN_SCALES["medium"].to_dict(),
 }
 
 
@@ -376,21 +413,37 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
 
     preset_name = _optional_string(payload.get("preset")) or "smoke"
     preset = _run_preset(preset_name)
-    context_size = _bounded_int(payload.get("context_size", preset["context_size"]), 8, 512)
-    base_steps = _bounded_int(payload.get("base_steps", preset["base_steps"]), 1, 2000)
-    sft_steps = _bounded_int(payload.get("sft_steps", preset["sft_steps"]), 1, 4000)
+    context_size = _bounded_int(payload.get("context_size", preset["context_size"]), 8, 1024)
+    base_steps = _bounded_int(payload.get("base_steps", preset["base_steps"]), 1, 100000)
+    sft_steps = _bounded_int(payload.get("sft_steps", preset["sft_steps"]), 1, 10000)
     base_batch_size = _bounded_int(payload.get("base_batch_size", preset["base_batch_size"]), 1, 64)
     sft_batch_size = _bounded_int(payload.get("sft_batch_size", preset["sft_batch_size"]), 1, 64)
     seed = _bounded_int(payload.get("seed", 42), 0, 9999)
-    eval_max_new_tokens = _bounded_int(payload.get("eval_max_new_tokens", preset["eval_max_new_tokens"]), 1, 240)
-    n_embd = _bounded_int(payload.get("n_embd", preset["n_embd"]), 16, 256)
-    n_head = _bounded_int(payload.get("n_head", preset["n_head"]), 1, 8)
-    n_layer = _bounded_int(payload.get("n_layer", preset["n_layer"]), 1, 8)
+    eval_max_new_tokens = _bounded_int(payload.get("eval_max_new_tokens", preset["eval_max_new_tokens"]), 1, 320)
+    n_embd = _bounded_int(payload.get("n_embd", preset["n_embd"]), 16, 512)
+    n_head = _bounded_int(payload.get("n_head", preset["n_head"]), 1, 16)
+    n_layer = _bounded_int(payload.get("n_layer", preset["n_layer"]), 1, 12)
     if n_embd % n_head != 0:
         raise ValueError("n_embd must be divisible by n_head")
-    tokenizer_type = str(payload.get("tokenizer_type", "char"))
+    tokenizer_type = str(payload.get("tokenizer_type", preset.get("tokenizer_type", "char")))
     if tokenizer_type not in TOKENIZER_TYPES:
         raise ValueError(f"tokenizer_type must be one of {', '.join(TOKENIZER_TYPES)}")
+    tokenizer_vocab_size = _optional_int(
+        payload.get("tokenizer_vocab_size", preset.get("tokenizer_vocab_size")),
+        minimum=4,
+        maximum=8192,
+    )
+    tokenizer_min_freq = _bounded_int(payload.get("tokenizer_min_freq", preset.get("tokenizer_min_freq", 1)), 1, 1000)
+    base_lr_warmup_steps = _bounded_int(payload.get("base_lr_warmup_steps", preset.get("base_lr_warmup_steps", 0)), 0, base_steps)
+    sft_lr_warmup_steps = _bounded_int(payload.get("sft_lr_warmup_steps", preset.get("sft_lr_warmup_steps", 0)), 0, sft_steps)
+    base_lr_decay = str(payload.get("base_lr_decay", preset.get("base_lr_decay", "none")))
+    sft_lr_decay = str(payload.get("sft_lr_decay", preset.get("sft_lr_decay", "none")))
+    if base_lr_decay not in LR_DECAYS or sft_lr_decay not in LR_DECAYS:
+        raise ValueError(f"lr decay must be one of {', '.join(LR_DECAYS)}")
+    base_min_lr_ratio = _bounded_float(payload.get("base_min_lr_ratio", preset.get("base_min_lr_ratio", 1.0)), 0.0, 1.0)
+    sft_min_lr_ratio = _bounded_float(payload.get("sft_min_lr_ratio", preset.get("sft_min_lr_ratio", 1.0)), 0.0, 1.0)
+    base_grad_clip = _bounded_float(payload.get("base_grad_clip", preset.get("base_grad_clip", 0.0)), 0.0, 100.0)
+    sft_grad_clip = _bounded_float(payload.get("sft_grad_clip", preset.get("sft_grad_clip", 0.0)), 0.0, 100.0)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "web_run.log"
@@ -426,6 +479,24 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(eval_max_new_tokens),
         "--tokenizer-type",
         tokenizer_type,
+        "--tokenizer-min-freq",
+        str(tokenizer_min_freq),
+        "--base-lr-warmup-steps",
+        str(base_lr_warmup_steps),
+        "--sft-lr-warmup-steps",
+        str(sft_lr_warmup_steps),
+        "--base-lr-decay",
+        base_lr_decay,
+        "--sft-lr-decay",
+        sft_lr_decay,
+        "--base-min-lr-ratio",
+        str(base_min_lr_ratio),
+        "--sft-min-lr-ratio",
+        str(sft_min_lr_ratio),
+        "--base-grad-clip",
+        str(base_grad_clip),
+        "--sft-grad-clip",
+        str(sft_grad_clip),
         "--split-mode",
         "document",
         "--min-score",
@@ -433,6 +504,10 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         "--device",
         "cpu",
     ]
+    if preset_name in RUN_SCALES:
+        command.extend(["--scale", preset_name])
+    if tokenizer_vocab_size is not None:
+        command.extend(["--tokenizer-vocab-size", str(tokenizer_vocab_size)])
     log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
     log_file = log_path.open("a", encoding="utf-8")
     try:
@@ -459,6 +534,17 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         "process": process,
         "preset": preset_name,
         "min_quality_score": min_quality_score,
+        "launch_config": {
+            "context_size": context_size,
+            "base_steps": base_steps,
+            "sft_steps": sft_steps,
+            "tokenizer_type": tokenizer_type,
+            "tokenizer_vocab_size": tokenizer_vocab_size,
+            "base_lr_decay": base_lr_decay,
+            "sft_lr_decay": sft_lr_decay,
+            "base_grad_clip": base_grad_clip,
+            "sft_grad_clip": sft_grad_clip,
+        },
         "launch_readiness": launch_preview.readiness.to_dict(),
         "launch_tuning": {
             "chat": launch_preview.chat_data.to_dict(),
@@ -659,6 +745,12 @@ def _read_json(path: Path) -> dict:
 
 def _bounded_int(value: object, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, int(value)))
+
+
+def _optional_int(value: object, minimum: int, maximum: int) -> int | None:
+    if value is None or value == "":
+        return None
+    return _bounded_int(value, minimum, maximum)
 
 
 def _bounded_float(value: object, minimum: float, maximum: float) -> float:

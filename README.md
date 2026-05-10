@@ -133,11 +133,17 @@ Longer runs add guardrails instead of blind optimism:
 
 - base and SFT save both final checkpoints and best-validation checkpoints
 - every `run tiny` writes a data honesty report that checks obvious SFT/eval
-  leakage before you trust the score
+  leakage before you trust the score; blocking leakage stops the run unless
+  you explicitly pass `--allow-leaky-eval` for a diagnostic-only experiment
 - base training reports validation BPB, a tokenizer-fair bits-per-byte metric
 - base training can inject train-only `pico-canary-*` phrases when document
   split is available
-- base and SFT reports estimate how many tokens/examples were actually seen
+- base and SFT reports estimate how many tokens/examples were actually seen;
+  SFT uses group-aware validation when examples provide a `group` field
+- base and SFT reports record learning-rate schedule, warmup, gradient clipping,
+  and per-checkpoint LR/gradient-norm traces when those controls are enabled
+- chat eval reports include support-match rate so a failed run can show whether
+  the model matched some prompt constraints or ignored them entirely
 - `--early-stop-patience` and `--max-minutes` can stop wasted runs
 
 ## Bring Your Own Corpus
@@ -201,12 +207,13 @@ Before a serious run, check that the eval is not accidentally copied from the
 SFT file or base corpus:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli data honesty --dataset-pack examples/tinystories_dataset_pack_v2.json --out-dir runs/tinystories-honesty
+PYTHONPATH=src python -m picochat.cli data honesty --dataset-pack examples/tinystories_dataset_pack_v3.json --out-dir runs/tinystories-honesty
 ```
 
 The honesty report does not prove semantic truth. It catches practical cheating
 risks: exact eval prompts in SFT, near-duplicate SFT/eval prompts, duplicated
-eval prompts, and eval prompts that appear in the base corpus.
+eval prompts, eval prompts that appear in the base corpus, and specific
+multi-word eval support phrases copied into SFT answers or corpus text.
 
 You can also import a small sample from a Hugging Face dataset into a local
 plain-text corpus. This is intentionally a separate intake step: first export
@@ -259,6 +266,19 @@ The v2 pack keeps the same local corpus but uses
 The preview report shows SFT/eval category counts so runs can be interpreted
 as curriculum experiments, not just raw training loops.
 
+For the current prompt-following curriculum, use the v4 pack:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack_v4.json
+```
+
+The v4 pack uses template-grouped SFT examples in
+`examples/tinystories_chat_v4.jsonl` and a held-out transparent eval in
+`examples/tinystories_eval_v4.jsonl`. It is designed to test whether the tiny
+model copies requested subjects, required words, continuation details, and
+refusal behavior without exact prompt leakage. Unlike v3, its validation groups
+hold out prompt phrasings rather than entire subject/word concepts.
+
 For repeatable experiments, put the three dataset inputs in one pack:
 
 ```json
@@ -293,8 +313,8 @@ the Run Launcher starts `run tiny` from a dataset pack while streaming a local
 `web_run.log` tail. Web-launched runs stay visible after page reload because
 the workbench rediscovers run folders that contain `web_run.log`; active runs
 can also be cancelled from the launcher. Launcher presets (`smoke`, `tiny`,
-and `small-local`) keep run sizes explicit, and Source Preview's budget
-estimate can be applied directly to the launcher controls.
+`small-local`, `small`, and `medium`) keep run sizes explicit, and Source
+Preview's budget estimate can be applied directly to the launcher controls.
 
 Source Preview and `data build` score every corpus source from 0-100 using
 local, explainable heuristics such as short documents, duplicate lines,
@@ -385,18 +405,40 @@ Run a configurable tiny experiment:
 PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tiny-v4
 ```
 
+Run with a named local scale:
+
+```bash
+PYTHONPATH=src python -m picochat.cli run tiny \
+  --out-dir runs/tinystories-pico-v1 \
+  --dataset-pack examples/tinystories_dataset_pack_v4.json \
+  --scale pico \
+  --split-mode document
+```
+
+Scales are starting recipes, not quality promises:
+
+- `smoke`: fast wiring check
+- `pico`: first serious local BPE run with a stronger tiny model, LR decay, and
+  gradient clipping
+- `small`: slower local SLM experiment after a pico run is healthy
+- `medium`: overnight-class Mac experiment after data/tokenizer diagnostics look
+  good
+
+Explicit flags override scale values, so you can do a one-step smoke of the
+`pico` recipe by passing smaller `--base-steps`, `--sft-steps`, or model sizes.
+
 Compare tokenizer choices on the same dataset pack:
 
 ```bash
 PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-char --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type char --split-mode document
 PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-byte --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type byte --split-mode document
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-bpe --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type bpe --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-bpe --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type bpe --tokenizer-vocab-size 512 --tokenizer-min-freq 2 --split-mode document
 ```
 
 Run with longer-training guardrails:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type bpe --context-size 256 --base-steps 10000 --sft-steps 1000 --base-batch-size 4 --sft-batch-size 4 --base-max-minutes 45 --sft-max-minutes 10 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type bpe --tokenizer-vocab-size 512 --context-size 256 --base-steps 10000 --sft-steps 1000 --base-batch-size 4 --sft-batch-size 4 --base-lr-decay cosine --sft-lr-decay cosine --base-lr-warmup-steps 200 --sft-lr-warmup-steps 50 --base-grad-clip 1.0 --sft-grad-clip 1.0 --base-max-minutes 45 --sft-max-minutes 10 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
 ```
 
 Inspect and build a corpus:

@@ -537,6 +537,7 @@ def test_cli_run_tiny(tmp_path, capsys):
         "0",
         "--tokenizer-type",
         "byte",
+        "--allow-leaky-eval",
     ])
 
     assert exit_code == 0
