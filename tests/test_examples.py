@@ -46,9 +46,12 @@ def test_tiny_dataset_pack_points_at_example_files():
 def test_tinystories_chat_examples_are_valid_jsonl():
     examples = load_chat_examples(Path("examples/tinystories_chat.jsonl"))
 
-    assert len(examples) >= 12
+    assert len(examples) >= 70
     assert any("tiny story model" in example.assistant for example in examples)
     assert any("I do not know" in example.assistant for example in examples)
+    assert any("puppy" in example.user.lower() for example in examples)
+    assert any("robot" in example.user.lower() for example in examples)
+    assert any("medical" in example.assistant.lower() for example in examples)
 
 
 def test_tinystories_eval_examples_are_valid_jsonl():
