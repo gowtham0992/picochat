@@ -52,6 +52,36 @@ def test_cli_tokenizer_train_byte(tmp_path, capsys):
     assert "vocab_size: 260" in output
 
 
+def test_cli_tokenizer_train_bpe(tmp_path, capsys):
+    import json
+
+    data_path = tmp_path / "data.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    data_path.write_text("picochat picochat learns small stories", encoding="utf-8")
+
+    exit_code = main([
+        "tok",
+        "train",
+        "--input",
+        str(data_path),
+        "--out",
+        str(tokenizer_path),
+        "--type",
+        "bpe",
+        "--vocab-size",
+        "32",
+        "--min-freq",
+        "2",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    data = json.loads(tokenizer_path.read_text(encoding="utf-8"))
+    assert "type: bpe" in output
+    assert data["type"] == "bpe"
+    assert data["merges"]
+
+
 def test_cli_data_inspect(tmp_path, capsys):
     data_path = tmp_path / "data.txt"
     data_path.write_text("hello\npicochat\n", encoding="utf-8")

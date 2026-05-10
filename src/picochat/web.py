@@ -20,6 +20,7 @@ from picochat.compare import compare_runs
 from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus_sources
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.generate import GenerateConfig, generate_text_with_trace
+from picochat.tokenizer import TOKENIZER_TYPES
 from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
 _RUN_JOBS: dict[str, dict] = {}
@@ -388,8 +389,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     if n_embd % n_head != 0:
         raise ValueError("n_embd must be divisible by n_head")
     tokenizer_type = str(payload.get("tokenizer_type", "char"))
-    if tokenizer_type not in {"char", "byte"}:
-        raise ValueError("tokenizer_type must be 'char' or 'byte'")
+    if tokenizer_type not in TOKENIZER_TYPES:
+        raise ValueError(f"tokenizer_type must be one of {', '.join(TOKENIZER_TYPES)}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "web_run.log"
@@ -988,6 +989,7 @@ def _load_tokenizer_detail(path: Path) -> dict | None:
         "special_tokens": data.get("special_tokens", []),
         "vocab_size": len(token_to_id),
         "token_to_id": {token: int(idx) for token, idx in token_to_id.items()},
+        "merges": data.get("merges", []),
         "sample_tokens": text_tokens[:32],
     }
 

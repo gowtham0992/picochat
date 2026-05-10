@@ -366,12 +366,13 @@ Compare tokenizer choices on the same dataset pack:
 ```bash
 PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-char --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type char --split-mode document
 PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-byte --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type byte --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-bpe --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type bpe --split-mode document
 ```
 
 Run with longer-training guardrails:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type byte --context-size 256 --base-steps 10000 --sft-steps 1000 --base-batch-size 4 --sft-batch-size 4 --base-max-minutes 45 --sft-max-minutes 10 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type bpe --context-size 256 --base-steps 10000 --sft-steps 1000 --base-batch-size 4 --sft-batch-size 4 --base-max-minutes 45 --sft-max-minutes 10 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
 ```
 
 Inspect and build a corpus:
@@ -393,7 +394,12 @@ Choose the tokenizer explicitly when comparing experiments:
 ```bash
 PYTHONPATH=src python -m picochat.cli tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer-char.json --type char
 PYTHONPATH=src python -m picochat.cli tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer-byte.json --type byte
+PYTHONPATH=src python -m picochat.cli tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer-bpe.json --type bpe --vocab-size 512 --min-freq 2
 ```
+
+The BPE tokenizer is Picochat's dependency-free educational BPE. It learns
+frequent adjacent-token merges from the corpus and saves those merges in
+`tokenizer.json`; it is not a tiktoken or SentencePiece clone.
 
 Inspect next-token training windows:
 
@@ -466,7 +472,7 @@ Near-term v0.1 polish:
 After that, dataset and training upgrades should come next:
 
 - stronger dataset scoring and filtering
-- larger tokenizer option, likely BPE
+- tokenizer comparisons using char, byte, and dependency-free BPE
 - richer train/validation split controls
 - longer base pretraining runs
 - better eval suites for unsupported claims

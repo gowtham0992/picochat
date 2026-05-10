@@ -202,7 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         choices=TOKENIZER_TYPES,
         default="char",
-        help="Tokenizer type to train. Use char for the educational baseline or byte for UTF-8 bytes.",
+        help="Tokenizer type to train. Use char for the baseline, byte for UTF-8 bytes, or bpe for learned merges.",
     )
     tok_train.add_argument(
         "--vocab-size",
@@ -214,7 +214,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--min-freq",
         type=int,
         default=1,
-        help="Minimum character frequency required to enter the vocabulary.",
+        help="Minimum character frequency for char, or merge frequency for bpe.",
     )
 
     batch_parser = subparsers.add_parser("batch", help="Token batching commands.")
@@ -363,7 +363,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--tokenizer-type",
         choices=TOKENIZER_TYPES,
         default="char",
-        help="Tokenizer used for this run. Compare char vs byte on the same dataset pack.",
+        help="Tokenizer used for this run. Compare char, byte, and bpe on the same dataset pack.",
     )
     run_tiny_parser.add_argument(
         "--min-score",

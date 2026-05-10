@@ -63,8 +63,9 @@ PYTHONPATH=src python -m picochat.cli data preview --input runs/fineweb-edu-samp
 Purpose: convert text into token IDs the model can read.
 
 Picochat starts with a character tokenizer because it is easy to inspect. It
-also supports a byte tokenizer for comparison experiments. Both are simpler
-than modern BPE tokenizers, but they keep the mechanics visible.
+also supports a byte tokenizer for UTF-8 coverage experiments and a small
+dependency-free BPE tokenizer for learned merge experiments. These are simpler
+than production tokenizers, but they keep the mechanics visible.
 
 Input:
 
@@ -85,6 +86,12 @@ Useful command:
 
 ```bash
 PYTHONPATH=src python -m picochat.cli tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer.json
+```
+
+To compare BPE against the educational baseline:
+
+```bash
+PYTHONPATH=src python -m picochat.cli tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer-bpe.json --type bpe --vocab-size 512 --min-freq 2
 ```
 
 ## 3. Base Pretraining

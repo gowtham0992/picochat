@@ -1204,6 +1204,7 @@ async function launchRun() {
       base_steps: Number($("launch-base-steps").value),
       sft_steps: Number($("launch-sft-steps").value),
       seed: Number($("launch-seed").value),
+      tokenizer_type: $("launch-tokenizer-type").value,
       min_quality_score: Number($("launch-min-score").value || 0),
     });
     state.runJob = payload.job;
@@ -1751,7 +1752,11 @@ function animateTokenizer() {
   }
   clearInterval(state.tokenTimer);
   const text = $("tokenizer-input").value;
-  const units = tokenizer.type === "byte" ? byteTokenUnits(text) : charTokenUnits(text);
+  const units = tokenizer.type === "byte"
+    ? byteTokenUnits(text)
+    : tokenizer.type === "bpe"
+      ? bpeTokenUnits(text, tokenizer)
+      : charTokenUnits(text);
   const stream = $("token-stream");
   stream.innerHTML = "";
   let index = 0;
@@ -1774,7 +1779,7 @@ function animateTokenizer() {
 function charTokenUnits(text) {
   return [...text].map((char) => ({
     token: char,
-    label: char === " " ? "space" : char === "\n" ? "\\n" : char,
+    label: tokenLabel(char),
   }));
 }
 
@@ -1784,6 +1789,29 @@ function byteTokenUnits(text) {
     const printable = byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : `0x${hex}`;
     return { token: `<byte:${hex}>`, label: printable === " " ? "space" : printable };
   });
+}
+
+function bpeTokenUnits(text, tokenizer) {
+  let units = [...text];
+  for (const pair of tokenizer.merges || []) {
+    if (!Array.isArray(pair) || pair.length !== 2) continue;
+    const [left, right] = pair;
+    const next = [];
+    for (let index = 0; index < units.length; index += 1) {
+      if (index < units.length - 1 && units[index] === left && units[index + 1] === right) {
+        next.push(left + right);
+        index += 1;
+      } else {
+        next.push(units[index]);
+      }
+    }
+    units = next;
+  }
+  return units.map((token) => ({ token, label: tokenLabel(token) }));
+}
+
+function tokenLabel(token) {
+  return token === " " ? "space" : token === "\n" ? "\\n" : token;
 }
 
 function renderTraining() {

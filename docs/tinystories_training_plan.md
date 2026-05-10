@@ -58,17 +58,18 @@ PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-sft-30
 PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-model-128x3 --dataset-pack examples/tinystories_dataset_pack.json --context-size 256 --n-embd 128 --n-layer 3 --n-head 4 --base-steps 1500 --sft-steps 300 --base-batch-size 4 --sft-batch-size 4 --sft-learning-rate 0.0003 --split-mode document
 ```
 
-## Tokenizer Roadmap
+## Tokenizer Comparisons
 
-Picochat currently uses a character tokenizer. This is useful for learning
+Picochat keeps the character tokenizer as the educational baseline. This is useful for learning
 because every character maps to a visible token id, but it is inefficient:
 `puppy` becomes five tokens instead of one or two subword tokens.
 
-The byte tokenizer is now available with `--tokenizer-type byte`. This is a
-comparison tool, not a replacement for the char baseline.
+The byte tokenizer is available with `--tokenizer-type byte`, and the
+dependency-free BPE tokenizer is available with `--tokenizer-type bpe`. Both are
+comparison tools, not automatic replacements for the char baseline.
 
 1. Keep the current char tokenizer as the educational baseline.
-2. Run the same TinyStories pack with the byte tokenizer.
+2. Run the same TinyStories pack with byte and BPE tokenizers.
 3. Keep all other run settings the same.
 4. Compare validation loss, eval pass rate, training time, and sample quality.
 
@@ -87,14 +88,14 @@ That means the next likely bottleneck is not just SFT row count. The next
 comparison should target tokenizer efficiency and model capacity:
 
 1. Keep the 76-row SFT pack.
-2. Run char vs byte on the same dataset pack.
+2. Run char vs byte vs BPE on the same dataset pack.
 3. Compare reports before changing model size.
 4. Only then scale model size.
 
-Run the byte-tokenizer comparison:
+Run the BPE tokenizer comparison:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-byte-v1 --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type byte --context-size 256 --base-steps 1000 --sft-steps 300 --base-batch-size 4 --sft-batch-size 4 --sft-learning-rate 0.0003 --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-bpe-v1 --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type bpe --context-size 256 --base-steps 1000 --sft-steps 300 --base-batch-size 4 --sft-batch-size 4 --sft-learning-rate 0.0003 --split-mode document
 ```
 
 ## Longer Guarded Runs
@@ -104,7 +105,7 @@ guarded. Use document split, best-validation checkpoints, BPB, train-only
 canaries, and early stopping:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded-v1 --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type byte --context-size 256 --base-steps 10000 --sft-steps 1000 --base-batch-size 4 --sft-batch-size 4 --sft-learning-rate 0.0003 --base-max-minutes 45 --sft-max-minutes 10 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded-v1 --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type bpe --context-size 256 --base-steps 10000 --sft-steps 1000 --base-batch-size 4 --sft-batch-size 4 --sft-learning-rate 0.0003 --base-max-minutes 45 --sft-max-minutes 10 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
 ```
 
 Interpretation rules:
