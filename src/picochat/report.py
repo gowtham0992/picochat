@@ -235,6 +235,7 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Truncated examples: {dataset.get('truncated_examples', 0)}")
     lines.append(f"- Train examples: {dataset['train_examples']}")
     lines.append(f"- Validation examples: {dataset['val_examples']}")
+    lines.append(f"- SFT sampling: `{dataset.get('sampling', config.get('sampling', 'uniform'))}`")
     if dataset.get("split_method"):
         lines.append(f"- Validation split: `{dataset['split_method']}`")
     if dataset.get("num_groups"):
@@ -242,6 +243,12 @@ def sft_report_markdown(report: dict) -> str:
             f"- Groups: {dataset['num_groups']} total "
             f"({dataset.get('train_groups', 0)} train / {dataset.get('val_groups', 0)} validation)"
         )
+    if dataset.get("category_counts"):
+        lines.append(f"- Categories: {_format_counts(dataset['category_counts'])}")
+    if dataset.get("train_category_counts"):
+        lines.append(f"- Train categories: {_format_counts(dataset['train_category_counts'])}")
+    if dataset.get("val_category_counts"):
+        lines.append(f"- Validation categories: {_format_counts(dataset['val_category_counts'])}")
     lines.append("")
 
     lines.append("## Base Checkpoint")
@@ -662,6 +669,10 @@ def _phrase_group_inline(groups: list[list[str]]) -> str:
 
 def _inline_list(items: list[str]) -> str:
     return ", ".join(f"`{item}`" for item in items)
+
+
+def _format_counts(counts: dict) -> str:
+    return ", ".join(f"`{key}` {value}" for key, value in sorted(counts.items()))
 
 
 def _number(value) -> float | None:

@@ -31,6 +31,7 @@ class RunScale:
     sft_min_lr_ratio: float
     base_grad_clip: float
     sft_grad_clip: float
+    sft_sampling: str
     base_early_stop_patience: int
     sft_early_stop_patience: int
     canary_count: int
@@ -73,6 +74,7 @@ RUN_SCALES: dict[str, RunScale] = {
         sft_min_lr_ratio=1.0,
         base_grad_clip=0.0,
         sft_grad_clip=0.0,
+        sft_sampling="uniform",
         base_early_stop_patience=4,
         sft_early_stop_patience=4,
         canary_count=1,
@@ -103,6 +105,7 @@ RUN_SCALES: dict[str, RunScale] = {
         sft_min_lr_ratio=0.1,
         base_grad_clip=1.0,
         sft_grad_clip=1.0,
+        sft_sampling="category_balanced",
         base_early_stop_patience=8,
         sft_early_stop_patience=6,
         canary_count=3,
@@ -133,6 +136,7 @@ RUN_SCALES: dict[str, RunScale] = {
         sft_min_lr_ratio=0.1,
         base_grad_clip=1.0,
         sft_grad_clip=1.0,
+        sft_sampling="category_balanced",
         base_early_stop_patience=10,
         sft_early_stop_patience=6,
         canary_count=5,
@@ -163,6 +167,7 @@ RUN_SCALES: dict[str, RunScale] = {
         sft_min_lr_ratio=0.1,
         base_grad_clip=1.0,
         sft_grad_clip=1.0,
+        sft_sampling="category_balanced",
         base_early_stop_patience=12,
         sft_early_stop_patience=8,
         canary_count=5,

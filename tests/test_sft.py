@@ -6,6 +6,8 @@ from picochat.sft import (
     ChatExample,
     ChatSFTDataset,
     SFTConfig,
+    category_balanced_weights,
+    category_counts,
     load_chat_examples,
     split_chat_dataset,
     train_sft,
@@ -87,6 +89,29 @@ def test_split_chat_dataset_keeps_groups_out_of_both_sides():
     assert split.num_groups == 3
 
 
+def test_category_balanced_weights_boost_rare_categories():
+    tokenizer = CharTokenizer.train([
+        "User: a\nAssistant: one\n"
+        "User: b\nAssistant: two\n"
+        "User: c\nAssistant: three\n"
+    ])
+    dataset = ChatSFTDataset(
+        [
+            ChatExample(user="a", assistant="one", category="story"),
+            ChatExample(user="b", assistant="two", category="story"),
+            ChatExample(user="c", assistant="three", category="refusal"),
+        ],
+        tokenizer=tokenizer,
+        context_size=32,
+    )
+
+    weights = category_balanced_weights(dataset).tolist()
+
+    assert category_counts(dataset) == {"refusal": 1, "story": 2}
+    assert weights[2] == weights[0] * 2
+    assert dataset.stats().category_counts == {"refusal": 1, "story": 2}
+
+
 def test_train_sft_writes_artifacts(tmp_path):
     input_path = tmp_path / "chat.jsonl"
     tokenizer_path = tmp_path / "tokenizer.json"
@@ -125,6 +150,7 @@ def test_train_sft_writes_artifacts(tmp_path):
         lr_decay="linear",
         min_lr_ratio=0.5,
         grad_clip=1.0,
+        sampling="category_balanced",
     ))
 
     assert (out_dir / "checkpoint" / "model.pt").exists()
@@ -142,6 +168,9 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert report["coverage"]["actual_steps"] == 2
     assert report["stop_reason"] == "max_steps"
     assert report["loss_diagnostics"]["final_step"] == 2
+    assert report["dataset"]["sampling"] == "category_balanced"
+    assert report["dataset"]["category_counts"] == {"chat": 2}
     report_text = (out_dir / "report.md").read_text(encoding="utf-8")
     assert "Loss Diagnostics" in report_text
     assert "Best validation checkpoint" in report_text
+    assert "SFT sampling" in report_text

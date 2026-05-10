@@ -10,7 +10,7 @@ from picochat.data import build_corpus_artifacts
 from picochat.eval import ChatEvalConfig, run_chat_eval
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.report import tiny_run_summary_markdown
-from picochat.sft import SFTConfig, train_sft
+from picochat.sft import SFTConfig, SFT_SAMPLING_MODES, train_sft
 from picochat.tokenizer import TOKENIZER_TYPES, train_tokenizer
 from picochat.train import TrainConfig, train_base
 
@@ -57,6 +57,7 @@ class TinyRunConfig:
     sft_min_lr_ratio: float = 1.0
     base_grad_clip: float = 0.0
     sft_grad_clip: float = 0.0
+    sft_sampling: str = "uniform"
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -83,6 +84,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
 
     if config.tokenizer_type not in TOKENIZER_TYPES:
         raise ValueError(f"Unsupported tokenizer type: {config.tokenizer_type}")
+    if config.sft_sampling not in SFT_SAMPLING_MODES:
+        raise ValueError(f"Unsupported SFT sampling mode: {config.sft_sampling}")
 
     print("[2/6] check data honesty")
     honesty_report = inspect_data_honesty(
@@ -162,6 +165,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         lr_decay=config.sft_lr_decay,
         min_lr_ratio=config.sft_min_lr_ratio,
         grad_clip=config.sft_grad_clip,
+        sampling=config.sft_sampling,
     ))
     sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",

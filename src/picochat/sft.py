@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -15,6 +16,9 @@ from picochat.optim import learning_rate_for_step, maybe_clip_grad_norm, set_opt
 from picochat.report import loss_diagnostics, sft_report_markdown
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 from picochat.train import evaluate_metrics
+
+
+SFT_SAMPLING_MODES = ("uniform", "category_balanced")
 
 
 @dataclass(frozen=True)
@@ -32,6 +36,7 @@ class ChatDatasetStats:
     supervised_tokens: int
     truncated_examples: int
     num_groups: int
+    category_counts: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -67,6 +72,7 @@ class SFTConfig:
     lr_decay: str = "none"
     min_lr_ratio: float = 1.0
     grad_clip: float = 0.0
+    sampling: str = "uniform"
 
 
 class ChatSFTDataset(torch.utils.data.Dataset):
@@ -136,6 +142,7 @@ class ChatSFTDataset(torch.utils.data.Dataset):
             supervised_tokens=supervised_tokens,
             truncated_examples=truncated_examples,
             num_groups=len(explicit_groups),
+            category_counts=dict(sorted(Counter(self.categories).items())),
         )
 
     def __len__(self) -> int:
@@ -153,6 +160,11 @@ class ChatSFTDataset(torch.utils.data.Dataset):
         if index < 0 or index >= len(self.groups):
             raise IndexError(index)
         return self.groups[index]
+
+    def category_key(self, index: int) -> str:
+        if index < 0 or index >= len(self.categories):
+            raise IndexError(index)
+        return self.categories[index]
 
 
 def load_chat_examples(path: str | Path) -> list[ChatExample]:
@@ -306,10 +318,26 @@ def make_chat_dataloader(
     batch_size: int,
     shuffle: bool,
     seed: int,
+    sampling: str = "uniform",
 ) -> torch.utils.data.DataLoader:
     """Create a deterministic dataloader for small chat datasets."""
+    if sampling not in SFT_SAMPLING_MODES:
+        raise ValueError(f"unsupported SFT sampling mode: {sampling}")
     generator = torch.Generator()
     generator.manual_seed(seed)
+    if sampling == "category_balanced":
+        sampler = torch.utils.data.WeightedRandomSampler(
+            weights=category_balanced_weights(dataset),
+            num_samples=len(dataset),
+            replacement=True,
+            generator=generator,
+        )
+        return torch.utils.data.DataLoader(
+            dataset,
+            batch_size=batch_size,
+            sampler=sampler,
+            drop_last=False,
+        )
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -319,8 +347,33 @@ def make_chat_dataloader(
     )
 
 
+def category_balanced_weights(dataset) -> torch.Tensor:
+    """Return per-row weights that give each SFT category equal probability."""
+    categories = [_category_key(dataset, index) for index in range(len(dataset))]
+    if not categories:
+        raise ValueError("cannot sample from an empty chat dataset")
+    counts = Counter(categories)
+    return torch.tensor([1.0 / counts[category] for category in categories], dtype=torch.double)
+
+
+def category_counts(dataset) -> dict[str, int]:
+    """Count SFT categories in a dataset or subset."""
+    counts = Counter(_category_key(dataset, index) for index in range(len(dataset)))
+    return dict(sorted(counts.items()))
+
+
+def _category_key(dataset, index: int) -> str:
+    if isinstance(dataset, torch.utils.data.Subset):
+        return _category_key(dataset.dataset, dataset.indices[index])
+    if hasattr(dataset, "category_key"):
+        return dataset.category_key(index)
+    return "chat"
+
+
 def train_sft(config: SFTConfig) -> dict:
     """Fine-tune a base checkpoint on small chat examples."""
+    if config.sampling not in SFT_SAMPLING_MODES:
+        raise ValueError(f"sampling must be one of: {', '.join(SFT_SAMPLING_MODES)}")
     validate_optim_controls(
         max_steps=config.max_steps,
         lr_warmup_steps=config.lr_warmup_steps,
@@ -345,7 +398,13 @@ def train_sft(config: SFTConfig) -> dict:
     split = split_chat_dataset(dataset, config.val_fraction, config.seed)
     train_dataset = split.train
     val_dataset = split.val
-    train_loader = make_chat_dataloader(train_dataset, config.batch_size, shuffle=True, seed=config.seed)
+    train_loader = make_chat_dataloader(
+        train_dataset,
+        config.batch_size,
+        shuffle=True,
+        seed=config.seed,
+        sampling=config.sampling,
+    )
     train_eval_loader = make_chat_dataloader(train_dataset, config.batch_size, shuffle=False, seed=config.seed)
     val_loader = make_chat_dataloader(val_dataset, config.batch_size, shuffle=False, seed=config.seed)
     data_iter = iter(train_loader)
@@ -524,6 +583,10 @@ def train_sft(config: SFTConfig) -> dict:
             "split_method": split.method,
             "train_groups": split.train_groups,
             "val_groups": split.val_groups,
+            "category_counts": dataset.stats().category_counts,
+            "train_category_counts": category_counts(train_dataset),
+            "val_category_counts": category_counts(val_dataset),
+            "sampling": config.sampling,
         },
         "coverage": _coverage_report(len(train_dataset), len(dataset), config, final_step),
         "model": {

@@ -533,6 +533,8 @@ def test_cli_run_tiny(tmp_path, capsys):
         "2",
         "--sft-batch-size",
         "1",
+        "--sft-sampling",
+        "category_balanced",
         "--eval-max-new-tokens",
         "0",
         "--tokenizer-type",
@@ -544,6 +546,7 @@ def test_cli_run_tiny(tmp_path, capsys):
     assert (out_dir / "summary.md").exists()
     summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     assert summary["config"]["tokenizer_type"] == "byte"
+    assert summary["config"]["sft_sampling"] == "category_balanced"
     assert summary["tokenizer"]["tokenizer_type"] == "byte"
     assert "tiny run: 1/1 passed" in capsys.readouterr().out
 

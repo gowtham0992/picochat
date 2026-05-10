@@ -14,7 +14,7 @@ from picochat.data import (
 from picochat.batching import load_token_dataset
 from picochat.tokenizer import TOKENIZER_TYPES, load_tokenizer, train_tokenizer as build_tokenizer
 from picochat.train import TrainConfig, train_base
-from picochat.sft import SFTConfig, train_sft
+from picochat.sft import SFTConfig, SFT_SAMPLING_MODES, train_sft
 from picochat.generate import GenerateConfig, generate_text
 from picochat.chat import ChatConfig, chat_loop
 from picochat.eval import ChatEvalConfig, run_chat_eval
@@ -330,6 +330,12 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_parser.add_argument("--lr-decay", choices=LR_DECAYS, default="none")
     train_sft_parser.add_argument("--min-lr-ratio", type=float, default=1.0)
     train_sft_parser.add_argument("--grad-clip", type=float, default=0.0)
+    train_sft_parser.add_argument(
+        "--sampling",
+        choices=SFT_SAMPLING_MODES,
+        default="uniform",
+        help="SFT row sampling strategy. category_balanced gives rare categories equal training probability.",
+    )
 
     generate_parser = subparsers.add_parser("generate", help="Generate from a checkpoint.")
     generate_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
@@ -424,6 +430,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--sft-min-lr-ratio", type=float, default=None)
     run_tiny_parser.add_argument("--base-grad-clip", type=float, default=None)
     run_tiny_parser.add_argument("--sft-grad-clip", type=float, default=None)
+    run_tiny_parser.add_argument(
+        "--sft-sampling",
+        choices=SFT_SAMPLING_MODES,
+        default=None,
+        help="SFT row sampling strategy. category_balanced gives rare categories equal training probability.",
+    )
     run_tiny_parser.add_argument(
         "--min-score",
         type=int,
@@ -785,6 +797,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         lr_decay=args.lr_decay,
         min_lr_ratio=args.min_lr_ratio,
         grad_clip=args.grad_clip,
+        sampling=args.sampling,
     )
     report = train_base(config)
     print(f"saved checkpoint: {report['checkpoint']}")
@@ -928,6 +941,7 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         sft_min_lr_ratio=_resolve_tiny_value(args, defaults, "sft_min_lr_ratio"),
         base_grad_clip=_resolve_tiny_value(args, defaults, "base_grad_clip"),
         sft_grad_clip=_resolve_tiny_value(args, defaults, "sft_grad_clip"),
+        sft_sampling=_resolve_tiny_value(args, defaults, "sft_sampling"),
     ))
     print(
         f"tiny run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "

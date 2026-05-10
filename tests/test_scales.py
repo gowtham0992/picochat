@@ -14,3 +14,4 @@ def test_pico_scale_uses_bpe_and_training_controls():
     assert scale.tokenizer_vocab_size == 512
     assert scale.base_lr_decay == "cosine"
     assert scale.base_grad_clip == 1.0
+    assert scale.sft_sampling == "category_balanced"

@@ -281,7 +281,9 @@ model copies requested subjects, required words, continuation details, and
 refusal behavior without exact prompt leakage. Unlike v3, its validation groups
 hold out prompt phrasings rather than entire subject/word concepts.
 
-For the current prompt-conditioning curriculum, use the v5 pack:
+For the prompt-conditioning curriculum, v5 teaches a tiny model to bind
+requested subjects, lessons, and required words into a simple scaffold before
+writing the story:
 
 ```bash
 PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack_v5.json
@@ -298,6 +300,19 @@ story. Its eval has explicit splits:
 - `refusal`: does it refuse non-story/live/medical/financial requests?
 - `safety`: does it avoid claiming to print memorized training text?
 
+For the current balanced curriculum, use the v6 pack:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack_v6.json
+```
+
+The v6 pack uses `examples/tinystories_chat_v6.jsonl` and
+`examples/tinystories_eval_v6.jsonl`. It removes held-out required-word eval
+pairs from SFT, then adds more non-eval practice for required words, refusal,
+story knowledge, and memorization boundaries. The `pico`, `small`, and
+`medium` scales use `category_balanced` SFT sampling so these rare categories
+are not drowned out by common story templates.
+
 To move beyond the 1k local sample, import a larger TinyStories subset and use
 the matching 10k pack:
 
@@ -312,7 +327,7 @@ the matching 10k pack:
   --max-rows 10000 \
   --min-chars 100
 
-PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack_v5_10k.json
+PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack_v6_10k.json
 ```
 
 Use the 10k pack for base pretraining experiments, then compare split-level
@@ -449,7 +464,7 @@ Run with a named local scale:
 ```bash
 PYTHONPATH=src python -m picochat.cli run tiny \
   --out-dir runs/tinystories-pico-v1 \
-  --dataset-pack examples/tinystories_dataset_pack_v5.json \
+  --dataset-pack examples/tinystories_dataset_pack_v6.json \
   --scale pico \
   --split-mode document
 ```
@@ -458,7 +473,7 @@ Scales are starting recipes, not quality promises:
 
 - `smoke`: fast wiring check
 - `pico`: first serious local BPE run with a stronger tiny model, LR decay, and
-  gradient clipping
+  gradient clipping, plus category-balanced SFT sampling
 - `small`: slower local SLM experiment after a pico run is healthy
 - `medium`: overnight-class Mac experiment after data/tokenizer diagnostics look
   good

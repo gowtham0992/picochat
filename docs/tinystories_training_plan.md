@@ -58,8 +58,10 @@ Use the 10k pack after importing a larger local TinyStories sample:
 PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack_v5_10k.json
 ```
 
-The 10k pack uses the same SFT/eval files as v5, but gives base pretraining
-about ten times more story text before chat SFT.
+The 10k pack gives base pretraining about ten times more story text before
+chat SFT. The current recommended curriculum is v6: it keeps the v5 scaffold,
+removes held-out required-word eval pairs from SFT, and adds more refusal,
+story-knowledge, memorization-boundary, and word-binding practice.
 
 ## Near-Term Experiments
 
@@ -71,16 +73,16 @@ Run these as separate run folders and compare `summary.md` files.
 PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-v5-pico-v1 --dataset-pack examples/tinystories_dataset_pack_v5.json --scale pico --split-mode document
 ```
 
-### Larger Corpus Baseline
+### Larger Corpus Balanced Curriculum
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-v5-10k-pico-v1 --dataset-pack examples/tinystories_dataset_pack_v5_10k.json --scale pico --base-steps 3000 --sft-steps 1200 --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-v6-10k-pico-v1 --dataset-pack examples/tinystories_dataset_pack_v6_10k.json --scale pico --base-steps 3000 --sft-steps 1200 --split-mode document
 ```
 
 ### Bigger Tiny Model
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-v5-128x4-v1 --dataset-pack examples/tinystories_dataset_pack_v5_10k.json --scale pico --tokenizer-vocab-size 1024 --n-embd 128 --n-layer 4 --n-head 4 --base-steps 12000 --sft-steps 1200 --base-lr-decay none --sft-lr-decay none --base-lr-warmup-steps 0 --sft-lr-warmup-steps 0 --base-grad-clip 0 --sft-grad-clip 0 --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-v6-128x4-v1 --dataset-pack examples/tinystories_dataset_pack_v6_10k.json --scale pico --tokenizer-vocab-size 1024 --n-embd 128 --n-layer 4 --n-head 4 --base-steps 12000 --sft-steps 1200 --split-mode document
 ```
 
 ## Tokenizer Comparisons
@@ -104,17 +106,21 @@ tokenizer helps.
 ## Current Finding
 
 The previous BPE and larger-model runs lowered validation BPB but did not
-reliably improve phrase-based eval. That means the bottleneck is not only raw
-LM loss. Picochat now checks three things separately:
+reliably improve phrase-based eval. The 1-hour 2.9M-parameter run improved
+support match and prompt-conditioned story generation, but still struggled on
+required words, refusals, safety, and story knowledge. That means the bottleneck
+is not only raw LM loss. Picochat now checks four things separately:
 
 1. More base data with the 10k TinyStories pack.
-2. Prompt binding with v5 scaffolded SFT examples.
+2. Prompt binding with scaffolded SFT examples.
 3. Split-level eval, so prompt-conditioned failures and transfer failures are
    visible separately.
+4. SFT category balance, so rare categories are not drowned out by story
+   templates.
 
-Compare runs using both pass rate and support match rate. A useful next run
-should first improve `prompt_conditioned` support match before we expect broad
-`transfer` gains.
+Compare runs using pass rate, support match rate, prompt echo rate, BPB, and
+memorization diagnostics. A useful next run should improve weak splits without
+increasing prompt echo or data leakage.
 
 ## Longer Guarded Runs
 
@@ -123,7 +129,7 @@ guarded. Use document split, best-validation checkpoints, BPB, train-only
 canaries, and early stopping:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded-v1 --dataset-pack examples/tinystories_dataset_pack_v5_10k.json --scale pico --base-steps 12000 --sft-steps 1200 --base-max-minutes 60 --sft-max-minutes 15 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-v6-guarded-v1 --dataset-pack examples/tinystories_dataset_pack_v6_10k.json --scale pico --base-steps 12000 --sft-steps 1200 --base-max-minutes 60 --sft-max-minutes 15 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
 ```
 
 Interpretation rules:
@@ -136,7 +142,7 @@ Interpretation rules:
 
 ## What Not To Do
 
-- Do not train on `examples/tinystories_eval_v5.jsonl`.
+- Do not train on `examples/tinystories_eval_v6.jsonl`.
 - Do not tune only until the 10 eval rows pass.
 - Do not call the result a general assistant.
 - Do not judge the model only by one generated sample.
