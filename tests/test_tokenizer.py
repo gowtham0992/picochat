@@ -5,6 +5,7 @@ from picochat.tokenizer import (
     CharTokenizer,
     SPECIAL_TOKENS,
     load_tokenizer,
+    token_byte_lengths,
     train_tokenizer,
 )
 
@@ -80,3 +81,16 @@ def test_train_tokenizer_factory_supports_byte():
 def test_byte_tokenizer_rejects_custom_vocab_size():
     with pytest.raises(ValueError, match="fixed vocab"):
         ByteTokenizer.train(["hello"], vocab_size=100)
+
+
+def test_token_byte_lengths_count_text_bytes_not_specials():
+    char_tokenizer = CharTokenizer.train(["éa"])
+    byte_tokenizer = ByteTokenizer.train(["éa"])
+
+    char_lengths = token_byte_lengths(char_tokenizer)
+    byte_lengths = token_byte_lengths(byte_tokenizer)
+
+    assert char_lengths[char_tokenizer.bos_id] == 0
+    assert char_lengths[char_tokenizer.token_to_id["é"]] == 2
+    assert byte_lengths[byte_tokenizer.bos_id] == 0
+    assert byte_lengths[byte_tokenizer.token_to_id["<byte:c3>"]] == 1

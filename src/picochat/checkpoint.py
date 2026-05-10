@@ -15,6 +15,7 @@ def save_checkpoint(
     model: TinyGPT,
     step: int,
     train_loss: float,
+    extra_metadata: dict | None = None,
 ) -> None:
     """Save model weights and lightweight metadata."""
     path = Path(path)
@@ -25,6 +26,8 @@ def save_checkpoint(
         "train_loss": train_loss,
         "model_config": model.config.to_dict(),
     }
+    if extra_metadata:
+        metadata.update(extra_metadata)
     (path / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
 
@@ -37,4 +40,3 @@ def load_checkpoint(path: str | Path, map_location: str | torch.device = "cpu") 
     state = torch.load(path / "model.pt", map_location=map_location)
     model.load_state_dict(state)
     return model, metadata
-

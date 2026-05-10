@@ -15,6 +15,8 @@ Good progress means:
 - higher TinyStories eval pass rate
 - lower SFT train/validation gap
 - low memorization overlap
+- low or zero canary hits
+- improving validation BPB when tokenizer/model settings change
 - readable generated samples
 
 ## Current Pack
@@ -94,6 +96,24 @@ Run the byte-tokenizer comparison:
 ```bash
 PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-byte-v1 --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type byte --context-size 256 --base-steps 1000 --sft-steps 300 --base-batch-size 4 --sft-batch-size 4 --sft-learning-rate 0.0003 --split-mode document
 ```
+
+## Longer Guarded Runs
+
+Before running overnight or on a larger TinyStories import, keep the run
+guarded. Use document split, best-validation checkpoints, BPB, train-only
+canaries, and early stopping:
+
+```bash
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded-v1 --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type byte --context-size 256 --base-steps 10000 --sft-steps 1000 --base-batch-size 4 --sft-batch-size 4 --sft-learning-rate 0.0003 --base-max-minutes 45 --sft-max-minutes 10 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
+```
+
+Interpretation rules:
+
+- If train loss falls but validation BPB stops improving, the run is probably done.
+- If the final checkpoint is worse than `best_checkpoint`, use `best_checkpoint`.
+- If canary hits appear, treat the run as memorization-risk.
+- If estimated train epochs get very high while eval stays flat, stop scaling
+  steps and change tokenizer/model/data instead.
 
 ## What Not To Do
 

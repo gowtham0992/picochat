@@ -26,6 +26,7 @@ class TokenSplitBundle:
     stats: dict[str, Any]
     train_text: str
     val_text: str
+    canary_values: tuple[str, ...] = ()
 
 
 class TokenWindowDataset(torch.utils.data.Dataset):
@@ -123,6 +124,7 @@ def load_token_split(
     seed: int = 42,
     split_mode: str = "window",
     corpus_manifest_path: str | Path | None = None,
+    canary_values: tuple[str, ...] | list[str] = (),
 ) -> TokenSplitBundle:
     """Load train/validation token windows with either window or document splitting."""
     if split_mode not in {"window", "document"}:
@@ -135,6 +137,7 @@ def load_token_split(
             context_size=context_size,
             val_fraction=val_fraction,
             seed=seed,
+            canary_values=tuple(canary_values),
         )
         if bundle is not None:
             return bundle
@@ -146,6 +149,7 @@ def load_token_split(
         val_fraction=val_fraction,
         seed=seed,
         split_reason=reason,
+        canary_values=tuple(canary_values),
     )
 
 
@@ -156,6 +160,7 @@ def _window_token_split(
     val_fraction: float,
     seed: int,
     split_reason: str,
+    canary_values: tuple[str, ...],
 ) -> TokenSplitBundle:
     dataset = load_token_dataset(corpus_path, tokenizer_path, context_size=context_size)
     train_dataset, val_dataset = split_dataset(dataset, val_fraction=val_fraction, seed=seed)
@@ -166,10 +171,18 @@ def _window_token_split(
         "split_reason": split_reason,
         "train_sequences": len(train_dataset),
         "val_sequences": len(val_dataset),
+        "train_tokens": None,
+        "val_tokens": None,
         "num_documents": None,
         "train_documents": None,
         "val_documents": None,
         "val_document_paths": [],
+        "canary_values": [],
+        "canaries_enabled": False,
+        "canary_note": (
+            "canaries require document split to guarantee train-only placement"
+            if canary_values else "disabled"
+        ),
     }
     return TokenSplitBundle(
         train_dataset=train_dataset,
@@ -177,6 +190,7 @@ def _window_token_split(
         stats=stats,
         train_text=text,
         val_text=text,
+        canary_values=(),
     )
 
 
@@ -187,6 +201,7 @@ def _document_token_split(
     context_size: int,
     val_fraction: float,
     seed: int,
+    canary_values: tuple[str, ...],
 ) -> TokenSplitBundle | None:
     documents = _manifest_documents(manifest_path)
     if len(documents) < 2:
@@ -205,6 +220,9 @@ def _document_token_split(
     val_docs = [documents[index] for index in indices[num_train: num_train + num_val]]
     train_text = "\n\n".join(_slice_document(corpus_text, document) for document in train_docs)
     val_text = "\n\n".join(_slice_document(corpus_text, document) for document in val_docs)
+    canary_block = _canary_block(canary_values)
+    if canary_block:
+        train_text = f"{train_text}\n\n{canary_block}" if train_text else canary_block
 
     train_tokens = tokenizer.encode(train_text, add_bos=True, add_eos=True)
     val_tokens = tokenizer.encode(val_text, add_bos=True, add_eos=True)
@@ -213,19 +231,25 @@ def _document_token_split(
 
     train_dataset = TokenWindowDataset(train_tokens, context_size=context_size)
     val_dataset = TokenWindowDataset(val_tokens, context_size=context_size)
-    full_tokens = tokenizer.encode(corpus_text, add_bos=True, add_eos=True)
+    source_tokens = tokenizer.encode(corpus_text, add_bos=True, add_eos=True)
     stats = {
-        "num_tokens": len(full_tokens),
+        "num_tokens": len(train_tokens) + len(val_tokens),
+        "source_num_tokens": len(source_tokens),
         "context_size": context_size,
         "num_sequences": len(train_dataset) + len(val_dataset),
         "split_mode": "document",
         "split_reason": "held_out_complete_documents",
         "train_sequences": len(train_dataset),
         "val_sequences": len(val_dataset),
+        "train_tokens": len(train_tokens),
+        "val_tokens": len(val_tokens),
         "num_documents": len(documents),
         "train_documents": len(train_docs),
         "val_documents": len(val_docs),
         "val_document_paths": [document.get("path", "") for document in val_docs],
+        "canary_values": list(canary_values),
+        "canaries_enabled": bool(canary_values),
+        "canary_note": "train split only" if canary_values else "disabled",
     }
     return TokenSplitBundle(
         train_dataset=train_dataset,
@@ -233,6 +257,7 @@ def _document_token_split(
         stats=stats,
         train_text=train_text,
         val_text=val_text,
+        canary_values=canary_values,
     )
 
 
@@ -260,3 +285,10 @@ def _slice_document(corpus_text: str, document: dict[str, Any]) -> str:
     start = max(0, int(document["char_start"]))
     end = max(start, int(document["char_end"]))
     return corpus_text[start:end].strip()
+
+
+def _canary_block(canary_values: tuple[str, ...]) -> str:
+    return "\n".join(
+        f"Memorization canary phrase: {value}."
+        for value in canary_values
+    )

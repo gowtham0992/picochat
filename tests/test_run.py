@@ -43,6 +43,7 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert (out_dir / "corpus_report.md").exists()
     assert (out_dir / "tokenizer.json").exists()
     assert (out_dir / "base" / "checkpoint" / "model.pt").exists()
+    assert (out_dir / "base" / "best_checkpoint" / "model.pt").exists()
     assert (out_dir / "sft" / "checkpoint" / "model.pt").exists()
     assert (out_dir / "sft" / "best_checkpoint" / "model.pt").exists()
     assert (out_dir / "eval" / "eval_report.json").exists()
@@ -53,6 +54,10 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert summary["tokenizer"]["tokenizer_type"] == "char"
     assert "corpus_manifest" in summary["artifacts"]
     assert summary["artifacts"]["sft_eval_checkpoint"] == str(out_dir / "sft" / "best_checkpoint")
+    assert summary["artifacts"]["base_eval_checkpoint"] == str(out_dir / "base" / "best_checkpoint")
+    assert summary["base"]["eval_checkpoint"] == str(out_dir / "base" / "best_checkpoint")
+    assert summary["base"]["coverage"]["actual_steps"] == 1
+    assert summary["base"]["stop_reason"] == "max_steps"
     assert summary["sft"]["eval_checkpoint"] == str(out_dir / "sft" / "best_checkpoint")
     assert summary["config"]["dataset_pack"] == str(pack_path)
     assert summary["config"]["chat_input"] == str(chat_path)

@@ -317,7 +317,7 @@ function pipelineStages() {
   const outDir = config.out_dir || "runs/manual";
   const corpusPath = artifacts.corpus || `${outDir}/corpus.txt`;
   const tokenizerPath = artifacts.tokenizer || `${outDir}/tokenizer.json`;
-  const baseCheckpoint = summary.base?.checkpoint || `${outDir}/base/checkpoint`;
+  const baseCheckpoint = artifacts.base_eval_checkpoint || summary.base?.eval_checkpoint || summary.base?.checkpoint || `${outDir}/base/checkpoint`;
   const sftCheckpoint = summary.sft?.checkpoint || `${outDir}/sft/checkpoint`;
   const tokenizer = detail?.tokenizer_detail || summary.tokenizer || {};
   const tokenizerType = tokenizer.type || summary.tokenizer?.tokenizer_type || config.tokenizer_type || "char";
@@ -371,11 +371,13 @@ function pipelineStages() {
     {
       id: "base",
       label: "BASE TRAIN",
-      summary: baseLast ? `val ${fmtLoss(baseLast.val_loss)} / ${fmtInt(summary.base?.num_parameters)} params` : "no trace",
+      summary: baseLast ? `val ${fmtLoss(baseLast.val_loss)} / bpb ${fmtLoss(baseLast.val_bpb)} / ${fmtInt(summary.base?.num_parameters)} params` : "no trace",
       stats: [
         ["Steps", config.base_steps ?? detail?.base_report?.config?.max_steps ?? "--"],
         ["Train loss", baseLast ? fmtLoss(baseLast.train_loss) : "--"],
         ["Val loss", baseLast ? fmtLoss(baseLast.val_loss) : "--"],
+        ["Val BPB", baseLast ? fmtLoss(baseLast.val_bpb) : "--"],
+        ["Stop", summary.base?.stop_reason || detail?.base_report?.stop_reason || "--"],
         ["Params", fmtInt(summary.base?.num_parameters)],
       ],
       note: "Learns next-token prediction from the corpus. This is the actual tiny language model training stage.",
@@ -391,6 +393,8 @@ function pipelineStages() {
         "--max-steps", config.base_steps ?? 300,
         "--batch-size", config.base_batch_size ?? 8,
         "--learning-rate", config.base_learning_rate ?? "3e-4",
+        "--early-stop-patience", config.base_early_stop_patience ?? 6,
+        "--canary-count", config.canary_count ?? 1,
         "--seed", config.seed ?? 42,
         "--device", config.device || "cpu",
       ]),
@@ -398,6 +402,7 @@ function pipelineStages() {
         artifactItem("INPUT", "Corpus", corpusPath),
         artifactItem("INPUT", "Tokenizer", tokenizerPath),
         artifactItem("OUTPUT", "Checkpoint", baseCheckpoint),
+        artifactItem("OUTPUT", "Best checkpoint", artifacts.base_best_checkpoint || summary.base?.best_checkpoint?.path),
         artifactItem("OUTPUT", "Trace JSON", `${outDir}/base/train_report.json`),
         artifactItem("OUTPUT", "Report", artifacts.base_report || `${outDir}/base/report.md`),
         artifactItem("OUTPUT", "Sample", `${outDir}/base/sample.txt`),
@@ -411,6 +416,8 @@ function pipelineStages() {
         ["Steps", config.sft_steps ?? detail?.sft_report?.config?.max_steps ?? "--"],
         ["Train loss", sftLast ? fmtLoss(sftLast.train_loss) : "--"],
         ["Val loss", sftLast ? fmtLoss(sftLast.val_loss) : "--"],
+        ["Val BPB", sftLast ? fmtLoss(sftLast.val_bpb) : "--"],
+        ["Stop", summary.sft?.stop_reason || detail?.sft_report?.stop_reason || "--"],
         ["Truncated", summary.sft?.truncated_examples ?? "--"],
       ],
       note: "Tunes the base model on User/Assistant examples. A large loss gap is a memorization warning.",
@@ -423,6 +430,7 @@ function pipelineStages() {
         "--max-steps", config.sft_steps ?? 600,
         "--batch-size", config.sft_batch_size ?? 7,
         "--learning-rate", config.sft_learning_rate ?? "1e-3",
+        "--early-stop-patience", config.sft_early_stop_patience ?? 6,
         "--seed", config.seed ?? 42,
         "--device", config.device || "cpu",
       ]),
@@ -1820,7 +1828,7 @@ function trainingRows(baseLosses, sftLosses) {
   return `
     <label>LAST CHECKPOINT ROWS</label>
     <table>
-      <thead><tr><th>Stage</th><th>Step</th><th>Train</th><th>Val</th><th>Gap</th></tr></thead>
+      <thead><tr><th>Stage</th><th>Step</th><th>Train</th><th>Val</th><th>BPB</th><th>Gap</th></tr></thead>
       <tbody>
         ${rows.map(([name, row]) => row ? `
           <tr>
@@ -1828,6 +1836,7 @@ function trainingRows(baseLosses, sftLosses) {
             <td>${row.step}</td>
             <td>${fmtLoss(row.train_loss)}</td>
             <td>${fmtLoss(row.val_loss)}</td>
+            <td>${fmtLoss(row.val_bpb)}</td>
             <td>${fmtLoss(row.val_loss - row.train_loss)}</td>
           </tr>
         ` : "").join("")}
@@ -1838,9 +1847,10 @@ function trainingRows(baseLosses, sftLosses) {
 
 function trainingDiagnostics(detail) {
   const dataset = detail?.base_report?.dataset || {};
+  const coverage = detail?.base_report?.coverage || {};
   const memory = detail?.base_report?.memorization;
   const loss = detail?.base_report?.loss_diagnostics;
-  if (!memory && !loss && !dataset.split_mode) return "";
+  if (!memory && !loss && !dataset.split_mode && !coverage.actual_steps) return "";
   return `
     <label>LEARNING CHECKS</label>
     <div class="stat-grid">
@@ -1848,6 +1858,9 @@ function trainingDiagnostics(detail) {
         ["Split", dataset.split_mode || "--"],
         ["Held-out docs", dataset.val_documents == null ? "--" : `${dataset.val_documents}/${dataset.num_documents}`],
         ["Loss status", loss?.status || "--"],
+        ["Stop", detail?.base_report?.stop_reason || "--"],
+        ["Train epochs", fmtLoss(coverage.estimated_train_epochs)],
+        ["Canaries", dataset.canary_values?.length ?? 0],
         ["Copy risk", memory?.status || "--"],
         ["Train copy", memory ? fmtPercent(memory.train_overlap_rate) : "--"],
         ["Held-out overlap", memory ? fmtPercent(memory.validation_overlap_rate) : "--"],

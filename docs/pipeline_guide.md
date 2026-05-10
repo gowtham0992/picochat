@@ -102,14 +102,19 @@ Inputs:
 Output artifacts:
 
 - `base/checkpoint/`
+- `base/best_checkpoint/`
 - `base/train_report.json`
 - `base/report.md`
 - `base/sample.txt`
+- `base/canary_probe.txt` when train-only canaries are enabled
 
 What to inspect:
 
 - train loss
 - validation loss
+- validation BPB, which compares tokenizers more fairly than plain loss
+- estimated tokens seen and dataset passes
+- stop reason: max steps, time budget, or early stop
 - final train/validation gap
 - best validation step
 - split mode: random token windows or held-out complete documents
@@ -127,6 +132,12 @@ Useful command:
 
 ```bash
 PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --corpus-manifest runs/manual/corpus_manifest.json --split-mode document --out-dir runs/manual/base --context-size 128 --max-steps 300
+```
+
+For longer runs, add guardrails:
+
+```bash
+PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --corpus-manifest runs/manual/corpus_manifest.json --split-mode document --out-dir runs/manual/base --context-size 128 --max-steps 10000 --max-minutes 45 --early-stop-patience 6 --canary-count 3
 ```
 
 ## 4. Chat SFT
@@ -164,7 +175,7 @@ of hiding the gap.
 Useful command:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli train sft --input examples/tiny_chat.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/base/checkpoint --out-dir runs/manual/sft --max-steps 600
+PYTHONPATH=src python -m picochat.cli train sft --input examples/tiny_chat.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/base/best_checkpoint --out-dir runs/manual/sft --max-steps 600 --early-stop-patience 6
 ```
 
 ## 5. Eval

@@ -1026,6 +1026,7 @@ def _load_artifact_inventory(run_dir: Path, summary: dict) -> dict:
     config = summary.get("config", {})
     out_dir = Path(config.get("out_dir") or run_dir)
     base_checkpoint = Path(summary.get("base", {}).get("checkpoint", out_dir / "base" / "checkpoint"))
+    base_best_checkpoint = Path(summary.get("base", {}).get("best_checkpoint", {}).get("path", out_dir / "base" / "best_checkpoint"))
     sft_checkpoint = Path(summary.get("sft", {}).get("checkpoint", out_dir / "sft" / "checkpoint"))
 
     known_paths = {
@@ -1040,6 +1041,7 @@ def _load_artifact_inventory(run_dir: Path, summary: dict) -> dict:
         "summary_json": run_dir / "summary.json",
         "summary_report": run_dir / "summary.md",
         "base_checkpoint": base_checkpoint,
+        "base_best_checkpoint": base_best_checkpoint,
         "base_trace": out_dir / "base" / "train_report.json",
         "base_report": artifacts.get("base_report", out_dir / "base" / "report.md"),
         "base_sample": out_dir / "base" / "sample.txt",

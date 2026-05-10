@@ -258,6 +258,15 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--val-fraction", type=float, default=0.1)
     train_base_parser.add_argument("--eval-batches", type=int, default=10)
     train_base_parser.add_argument("--sample-tokens", type=int, default=120)
+    train_base_parser.add_argument("--early-stop-patience", type=int, default=0)
+    train_base_parser.add_argument("--early-stop-min-delta", type=float, default=0.0)
+    train_base_parser.add_argument("--max-minutes", type=float, default=None)
+    train_base_parser.add_argument(
+        "--canary-count",
+        type=int,
+        default=0,
+        help="Number of fake train-only canary phrases to inject when document split is available.",
+    )
     train_base_parser.add_argument(
         "--split-mode",
         choices=("window", "document"),
@@ -285,6 +294,9 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_parser.add_argument("--eval-batches", type=int, default=10)
     train_sft_parser.add_argument("--sample-prompt", default="What is Picochat?")
     train_sft_parser.add_argument("--sample-tokens", type=int, default=120)
+    train_sft_parser.add_argument("--early-stop-patience", type=int, default=0)
+    train_sft_parser.add_argument("--early-stop-min-delta", type=float, default=0.0)
+    train_sft_parser.add_argument("--max-minutes", type=float, default=None)
 
     generate_parser = subparsers.add_parser("generate", help="Generate from a checkpoint.")
     generate_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
@@ -338,6 +350,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--sft-batch-size", type=int, default=7)
     run_tiny_parser.add_argument("--base-learning-rate", type=float, default=3e-4)
     run_tiny_parser.add_argument("--sft-learning-rate", type=float, default=1e-3)
+    run_tiny_parser.add_argument("--base-early-stop-patience", type=int, default=6)
+    run_tiny_parser.add_argument("--sft-early-stop-patience", type=int, default=6)
+    run_tiny_parser.add_argument("--early-stop-min-delta", type=float, default=0.0)
+    run_tiny_parser.add_argument("--base-max-minutes", type=float, default=None)
+    run_tiny_parser.add_argument("--sft-max-minutes", type=float, default=None)
+    run_tiny_parser.add_argument("--canary-count", type=int, default=1)
     run_tiny_parser.add_argument("--seed", type=int, default=42)
     run_tiny_parser.add_argument("--device", default="cpu")
     run_tiny_parser.add_argument("--eval-max-new-tokens", type=int, default=120)
@@ -639,6 +657,10 @@ def run_train_base(args: argparse.Namespace) -> int:
         sample_tokens=args.sample_tokens,
         split_mode=args.split_mode,
         corpus_manifest_path=args.corpus_manifest,
+        early_stop_patience=args.early_stop_patience,
+        early_stop_min_delta=args.early_stop_min_delta,
+        max_minutes=args.max_minutes,
+        canary_count=args.canary_count,
     )
     report = train_base(config)
     print(f"saved checkpoint: {report['checkpoint']}")
@@ -662,6 +684,9 @@ def run_train_sft(args: argparse.Namespace) -> int:
         eval_batches=args.eval_batches,
         sample_prompt=args.sample_prompt,
         sample_tokens=args.sample_tokens,
+        early_stop_patience=args.early_stop_patience,
+        early_stop_min_delta=args.early_stop_min_delta,
+        max_minutes=args.max_minutes,
     )
     report = train_sft(config)
     print(f"saved sft checkpoint: {report['checkpoint']}")
@@ -745,6 +770,12 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         min_quality_score=args.min_score,
         split_mode=args.split_mode,
         tokenizer_type=args.tokenizer_type,
+        base_early_stop_patience=args.base_early_stop_patience,
+        sft_early_stop_patience=args.sft_early_stop_patience,
+        early_stop_min_delta=args.early_stop_min_delta,
+        base_max_minutes=args.base_max_minutes,
+        sft_max_minutes=args.sft_max_minutes,
+        canary_count=args.canary_count,
     ))
     print(
         f"tiny run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "

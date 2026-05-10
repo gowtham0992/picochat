@@ -97,11 +97,14 @@ runs/pico-demo/
   summary.md
   base/
     checkpoint/
+    best_checkpoint/
     train_report.json
     report.md
     sample.txt
+    canary_probe.txt
   sft/
     checkpoint/
+    best_checkpoint/
     sft_report.json
     report.md
     sample.txt
@@ -125,6 +128,15 @@ instead of mixing random token windows from the same source. Base reports then
 add memorization diagnostics: generated sample n-gram overlap with training
 text, overlap with held-out text, longest copied span, and any
 `pico-canary-*` strings reproduced by the model.
+
+Longer runs add guardrails instead of blind optimism:
+
+- base and SFT save both final checkpoints and best-validation checkpoints
+- base training reports validation BPB, a tokenizer-fair bits-per-byte metric
+- base training can inject train-only `pico-canary-*` phrases when document
+  split is available
+- base and SFT reports estimate how many tokens/examples were actually seen
+- `--early-stop-patience` and `--max-minutes` can stop wasted runs
 
 ## Bring Your Own Corpus
 
@@ -166,8 +178,8 @@ readiness checklist, a first-pass training budget estimate, warnings, and the
 first slice of the combined training text. The checklist is intentionally
 conservative: it does not promise a good model, but it tells you whether the
 corpus is blocked, trainable with cautions, or ready for a tiny experiment.
-The budget estimate is also deliberately simple: it assumes the current
-character tokenizer and suggests a starting context size, batch size, and base
+The budget estimate is also deliberately simple: it estimates token windows
+from corpus size and suggests a starting context size, batch size, and base
 training step count. Picochat also prints a copyable `run tiny` command based
 on that estimate. Add `--chat-input` and `--eval-input` to `data preview` or
 `data build` when you already have domain-specific SFT/eval JSONL files:
@@ -356,6 +368,12 @@ PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-char -
 PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-byte --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type byte --split-mode document
 ```
 
+Run with longer-training guardrails:
+
+```bash
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded --dataset-pack examples/tinystories_dataset_pack.json --tokenizer-type byte --context-size 256 --base-steps 10000 --sft-steps 1000 --base-batch-size 4 --sft-batch-size 4 --base-max-minutes 45 --sft-max-minutes 10 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
+```
+
 Inspect and build a corpus:
 
 ```bash
@@ -386,8 +404,8 @@ PYTHONPATH=src python -m picochat.cli batch inspect --corpus runs/manual/corpus.
 Train base and SFT stages manually:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/base --context-size 128 --n-embd 64 --n-layer 2 --max-steps 300
-PYTHONPATH=src python -m picochat.cli train sft --input examples/tiny_chat.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/base/checkpoint --out-dir runs/manual/sft --max-steps 600
+PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/base --context-size 128 --n-embd 64 --n-layer 2 --max-steps 300 --early-stop-patience 6 --canary-count 1
+PYTHONPATH=src python -m picochat.cli train sft --input examples/tiny_chat.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/base/best_checkpoint --out-dir runs/manual/sft --max-steps 600 --early-stop-patience 6
 ```
 
 Evaluate and chat:

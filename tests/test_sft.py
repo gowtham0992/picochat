@@ -98,6 +98,9 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert report["dataset"]["num_examples"] == 2
     assert report["dataset"]["supervised_tokens"] > 0
     assert report["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
+    assert "val_bpb" in report["losses"][-1]
+    assert report["coverage"]["actual_steps"] == 2
+    assert report["stop_reason"] == "max_steps"
     assert report["loss_diagnostics"]["final_step"] == 2
     report_text = (out_dir / "report.md").read_text(encoding="utf-8")
     assert "Loss Diagnostics" in report_text

@@ -12,8 +12,8 @@ import torch
 from picochat.chat import render_chat_prompt
 from picochat.checkpoint import load_checkpoint, save_checkpoint
 from picochat.report import loss_diagnostics, sft_report_markdown
-from picochat.tokenizer import Tokenizer, load_tokenizer
-from picochat.train import evaluate_loss
+from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
+from picochat.train import evaluate_metrics
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,9 @@ class SFTConfig:
     eval_batches: int = 10
     sample_prompt: str = "What is Picochat?"
     sample_tokens: int = 120
+    early_stop_patience: int = 0
+    early_stop_min_delta: float = 0.0
+    max_minutes: float | None = None
 
 
 class ChatSFTDataset(torch.utils.data.Dataset):
@@ -203,12 +206,14 @@ def train_sft(config: SFTConfig) -> dict:
     )
     train_dataset, val_dataset = split_chat_dataset(dataset, config.val_fraction, config.seed)
     train_loader = make_chat_dataloader(train_dataset, config.batch_size, shuffle=True, seed=config.seed)
+    train_eval_loader = make_chat_dataloader(train_dataset, config.batch_size, shuffle=False, seed=config.seed)
     val_loader = make_chat_dataloader(val_dataset, config.batch_size, shuffle=False, seed=config.seed)
     data_iter = iter(train_loader)
 
     device = torch.device(config.device)
     model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+    token_bytes = torch.tensor(token_byte_lengths(tokenizer), dtype=torch.long, device=device)
 
     losses: list[dict[str, float | int]] = []
     start = time.time()
@@ -216,6 +221,9 @@ def train_sft(config: SFTConfig) -> dict:
     best_loss = float("inf")
     best_checkpoint: dict[str, float | int | str] | None = None
     best_checkpoint_dir = out_dir / "best_checkpoint"
+    evals_without_improvement = 0
+    final_step = 0
+    stop_reason = "max_steps"
 
     model.train()
     for step in range(1, config.max_steps + 1):
@@ -235,31 +243,103 @@ def train_sft(config: SFTConfig) -> dict:
         optimizer.step()
 
         last_loss = float(loss.item())
+        final_step = step
         if step == 1 or step % config.log_every == 0 or step == config.max_steps:
-            val_loss = evaluate_loss(model, val_loader, device, max_batches=config.eval_batches)
+            train_metrics = evaluate_metrics(
+                model,
+                train_eval_loader,
+                device,
+                max_batches=config.eval_batches,
+                token_bytes=token_bytes,
+            )
+            val_metrics = evaluate_metrics(
+                model,
+                val_loader,
+                device,
+                max_batches=config.eval_batches,
+                token_bytes=token_bytes,
+            )
+            val_loss = float(val_metrics["loss"])
             elapsed = time.time() - start
             losses.append({
                 "step": step,
                 "train_loss": last_loss,
+                "train_eval_loss": float(train_metrics["loss"]),
                 "val_loss": val_loss,
+                "train_bpb": train_metrics["bpb"],
+                "val_bpb": val_metrics["bpb"],
                 "elapsed_sec": elapsed,
             })
-            if val_loss < best_loss:
+            if val_loss < best_loss - config.early_stop_min_delta:
                 best_loss = val_loss
-                save_checkpoint(best_checkpoint_dir, model, step=step, train_loss=last_loss)
+                evals_without_improvement = 0
+                save_checkpoint(
+                    best_checkpoint_dir,
+                    model,
+                    step=step,
+                    train_loss=last_loss,
+                    extra_metadata={
+                        "checkpoint_kind": "best_validation",
+                        "val_loss": val_loss,
+                        "val_bpb": val_metrics["bpb"],
+                    },
+                )
                 best_checkpoint = {
                     "path": str(best_checkpoint_dir),
                     "step": step,
                     "train_loss": last_loss,
                     "val_loss": val_loss,
+                    "val_bpb": val_metrics["bpb"],
                 }
+            else:
+                evals_without_improvement += 1
             print(
                 f"sft step {step:04d}/{config.max_steps:04d} | "
-                f"train {last_loss:.4f} | val {val_loss:.4f} | {elapsed:.1f}s"
+                f"train {last_loss:.4f} | val {val_loss:.4f} | "
+                f"val_bpb {_format_optional(val_metrics['bpb'])} | {elapsed:.1f}s"
             )
+            if (
+                config.early_stop_patience > 0
+                and evals_without_improvement >= config.early_stop_patience
+            ):
+                stop_reason = "early_stop"
+                print(
+                    f"sft early stop: validation did not improve for "
+                    f"{config.early_stop_patience} evals"
+                )
+                break
+        if config.max_minutes is not None and time.time() - start >= config.max_minutes * 60:
+            stop_reason = "max_minutes"
+            print(f"sft time stop: reached {config.max_minutes:.2f} minute budget")
+            break
 
     checkpoint_dir = out_dir / "checkpoint"
-    save_checkpoint(checkpoint_dir, model, step=config.max_steps, train_loss=last_loss)
+    save_checkpoint(
+        checkpoint_dir,
+        model,
+        step=final_step,
+        train_loss=last_loss,
+        extra_metadata={
+            "checkpoint_kind": "final",
+            "stop_reason": stop_reason,
+            "best_checkpoint": best_checkpoint,
+        },
+    )
+    if best_checkpoint is None:
+        save_checkpoint(
+            best_checkpoint_dir,
+            model,
+            step=final_step,
+            train_loss=last_loss,
+            extra_metadata={"checkpoint_kind": "best_validation_fallback"},
+        )
+        best_checkpoint = {
+            "path": str(best_checkpoint_dir),
+            "step": final_step,
+            "train_loss": last_loss,
+            "val_loss": losses[-1]["val_loss"] if losses else None,
+            "val_bpb": losses[-1].get("val_bpb") if losses else None,
+        }
 
     model.eval()
     prompt_text = render_chat_prompt([], config.sample_prompt)
@@ -290,6 +370,7 @@ def train_sft(config: SFTConfig) -> dict:
             "train_examples": len(train_dataset),
             "val_examples": len(val_dataset),
         },
+        "coverage": _coverage_report(len(train_dataset), len(dataset), config, final_step),
         "model": {
             "config": model.config.to_dict(),
             "num_parameters": model.num_parameters(),
@@ -298,14 +379,35 @@ def train_sft(config: SFTConfig) -> dict:
         "loss_diagnostics": loss_diagnostics(losses),
         "sample": sample,
         "checkpoint": str(checkpoint_dir),
-        "best_checkpoint": best_checkpoint or {
-            "path": str(checkpoint_dir),
-            "step": config.max_steps,
-            "train_loss": last_loss,
-            "val_loss": None,
-        },
+        "best_checkpoint": best_checkpoint,
+        "stop_reason": stop_reason,
     }
     (out_dir / "sft_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (out_dir / "report.md").write_text(sft_report_markdown(report), encoding="utf-8")
     (out_dir / "sample.txt").write_text(sample, encoding="utf-8")
     return report
+
+
+def _coverage_report(train_examples: int, total_examples: int, config: SFTConfig, actual_steps: int) -> dict:
+    examples_seen = actual_steps * config.batch_size
+    return {
+        "actual_steps": actual_steps,
+        "planned_steps": config.max_steps,
+        "examples_per_step_estimate": config.batch_size,
+        "planned_example_updates": config.max_steps * config.batch_size,
+        "actual_example_updates": examples_seen,
+        "train_examples": train_examples,
+        "total_examples": total_examples,
+        "estimated_train_epochs": _safe_ratio(examples_seen, train_examples),
+        "estimated_dataset_passes": _safe_ratio(examples_seen, total_examples),
+    }
+
+
+def _safe_ratio(numerator: int | float, denominator: int | float) -> float | None:
+    if denominator <= 0:
+        return None
+    return float(numerator) / float(denominator)
+
+
+def _format_optional(value: float | None) -> str:
+    return "--" if value is None else f"{value:.4f}"

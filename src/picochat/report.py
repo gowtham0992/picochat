@@ -79,10 +79,15 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Training windows: {dataset['num_sequences']}")
     lines.append(f"- Train windows: {dataset['train_sequences']}")
     lines.append(f"- Validation windows: {dataset['val_sequences']}")
+    if dataset.get("train_tokens") is not None:
+        lines.append(f"- Train tokens: {dataset.get('train_tokens')}")
+        lines.append(f"- Validation tokens: {dataset.get('val_tokens')}")
     lines.append(f"- Split mode: `{dataset.get('split_mode', 'window')}`")
     lines.append(f"- Split reason: {dataset.get('split_reason', 'not recorded')}")
     if dataset.get("val_documents") is not None:
         lines.append(f"- Held-out documents: {dataset.get('val_documents')} / {dataset.get('num_documents')}")
+    if dataset.get("canaries_enabled"):
+        lines.append(f"- Train-only canaries: {len(dataset.get('canary_values', []))}")
     lines.append("")
 
     lines.append("## Model")
@@ -102,16 +107,32 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Batch size: {config['batch_size']}")
     lines.append(f"- Learning rate: {config['learning_rate']}")
     lines.append(f"- Validation fraction: {config['val_fraction']}")
+    lines.append(f"- Early stop patience: {config.get('early_stop_patience', 0)}")
+    lines.append(f"- Max minutes: {config.get('max_minutes') or 'disabled'}")
     lines.append(f"- Device: `{config['device']}`")
     lines.append("")
-    lines.append("| Step | Train Loss | Val Loss | Elapsed Seconds |")
-    lines.append("| ---: | ---: | ---: | ---: |")
+    lines.append("| Step | Train Loss | Train BPB | Val Loss | Val BPB | Elapsed Seconds |")
+    lines.append("| ---: | ---: | ---: | ---: | ---: | ---: |")
     for item in losses:
         lines.append(
             f"| {item['step']} | {format_float(item['train_loss'])} | "
-            f"{format_float(item['val_loss'])} | {format_float(item['elapsed_sec'])} |"
+            f"{format_optional_float(item.get('train_bpb'))} | "
+            f"{format_float(item['val_loss'])} | "
+            f"{format_optional_float(item.get('val_bpb'))} | "
+            f"{format_float(item['elapsed_sec'])} |"
         )
     lines.append("")
+
+    if report.get("coverage"):
+        coverage = report["coverage"]
+        lines.append("## Coverage")
+        lines.append("")
+        lines.append(f"- Stop reason: `{report.get('stop_reason', 'unknown')}`")
+        lines.append(f"- Actual steps: {coverage.get('actual_steps')} / {coverage.get('planned_steps')}")
+        lines.append(f"- Estimated training tokens: {coverage.get('actual_training_tokens')}")
+        lines.append(f"- Estimated train epochs: {format_optional_float(coverage.get('estimated_train_epochs'))}")
+        lines.append(f"- Estimated dataset passes: {format_optional_float(coverage.get('estimated_dataset_passes'))}")
+        lines.append("")
 
     lines.append("## Loss Diagnostics")
     lines.append("")
@@ -154,8 +175,17 @@ def training_report_markdown(report: dict) -> str:
     lines.append("## Artifacts")
     lines.append("")
     lines.append(f"- Checkpoint: `{report['checkpoint']}`")
+    if report.get("best_checkpoint"):
+        best = report["best_checkpoint"]
+        lines.append(
+            f"- Best validation checkpoint: `{best['path']}` "
+            f"(step {best['step']}, val {format_optional_float(best.get('val_loss'))}, "
+            f"bpb {format_optional_float(best.get('val_bpb'))})"
+        )
     lines.append("- Machine-readable report: `train_report.json`")
     lines.append("- Generated sample: `sample.txt`")
+    if report.get("canary_probe"):
+        lines.append("- Canary probe: `canary_probe.txt`")
     lines.append("")
 
     lines.append("## Notes")
@@ -223,16 +253,32 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Steps: {config['max_steps']}")
     lines.append(f"- Batch size: {config['batch_size']}")
     lines.append(f"- Learning rate: {config['learning_rate']}")
+    lines.append(f"- Early stop patience: {config.get('early_stop_patience', 0)}")
+    lines.append(f"- Max minutes: {config.get('max_minutes') or 'disabled'}")
     lines.append(f"- Device: `{config['device']}`")
     lines.append("")
-    lines.append("| Step | Train Loss | Val Loss | Elapsed Seconds |")
-    lines.append("| ---: | ---: | ---: | ---: |")
+    lines.append("| Step | Train Loss | Train BPB | Val Loss | Val BPB | Elapsed Seconds |")
+    lines.append("| ---: | ---: | ---: | ---: | ---: | ---: |")
     for item in losses:
         lines.append(
             f"| {item['step']} | {format_float(item['train_loss'])} | "
-            f"{format_float(item['val_loss'])} | {format_float(item['elapsed_sec'])} |"
+            f"{format_optional_float(item.get('train_bpb'))} | "
+            f"{format_float(item['val_loss'])} | "
+            f"{format_optional_float(item.get('val_bpb'))} | "
+            f"{format_float(item['elapsed_sec'])} |"
         )
     lines.append("")
+
+    if report.get("coverage"):
+        coverage = report["coverage"]
+        lines.append("## Coverage")
+        lines.append("")
+        lines.append(f"- Stop reason: `{report.get('stop_reason', 'unknown')}`")
+        lines.append(f"- Actual steps: {coverage.get('actual_steps')} / {coverage.get('planned_steps')}")
+        lines.append(f"- Estimated chat example updates: {coverage.get('actual_example_updates')}")
+        lines.append(f"- Estimated train epochs: {format_optional_float(coverage.get('estimated_train_epochs'))}")
+        lines.append(f"- Estimated dataset passes: {format_optional_float(coverage.get('estimated_dataset_passes'))}")
+        lines.append("")
 
     lines.append("## Loss Diagnostics")
     lines.append("")
@@ -260,7 +306,8 @@ def sft_report_markdown(report: dict) -> str:
     if best_checkpoint:
         lines.append(
             f"- Best validation checkpoint: `{best_checkpoint['path']}` "
-            f"(step {best_checkpoint['step']}, val {format_optional_float(best_checkpoint.get('val_loss'))})"
+            f"(step {best_checkpoint['step']}, val {format_optional_float(best_checkpoint.get('val_loss'))}, "
+            f"bpb {format_optional_float(best_checkpoint.get('val_bpb'))})"
         )
     lines.append("- Machine-readable report: `sft_report.json`")
     lines.append("- Generated sample: `sample.txt`")
@@ -387,6 +434,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     base_diagnostics = base.get("loss_diagnostics", {})
     sft_diagnostics = sft.get("loss_diagnostics", {})
     base_memorization = base.get("memorization", {})
+    base_coverage = base.get("coverage", {})
+    sft_coverage = sft.get("coverage", {})
 
     lines: list[str] = []
     lines.append("# Picochat Tiny Run Summary")
@@ -416,6 +465,9 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Base steps: {config['base_steps']}")
     lines.append(f"- SFT steps: {config['sft_steps']}")
     lines.append(f"- Tokenizer type: `{tokenizer.get('tokenizer_type', 'unknown')}`")
+    lines.append(f"- Base early stop patience: {config.get('base_early_stop_patience', 0)}")
+    lines.append(f"- SFT early stop patience: {config.get('sft_early_stop_patience', 0)}")
+    lines.append(f"- Train-only canaries: {config.get('canary_count', 0)}")
     lines.append(f"- Device: `{config['device']}`")
     if config.get("dataset_pack"):
         lines.append(f"- Dataset pack: `{config['dataset_pack']}`")
@@ -425,9 +477,19 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append("")
     lines.append(f"- Base final train loss: {format_float(base['final_train_loss'])}")
     lines.append(f"- Base final val loss: {format_float(base['final_val_loss'])}")
+    if base.get("final_val_bpb") is not None:
+        lines.append(f"- Base final val BPB: {format_optional_float(base.get('final_val_bpb'))}")
     lines.append(f"- SFT final train loss: {format_float(sft['final_train_loss'])}")
     lines.append(f"- SFT final val loss: {format_float(sft['final_val_loss'])}")
+    if sft.get("final_val_bpb") is not None:
+        lines.append(f"- SFT final val BPB: {format_optional_float(sft.get('final_val_bpb'))}")
     lines.append(f"- SFT truncated examples: {sft['truncated_examples']}")
+    if base_coverage:
+        lines.append(f"- Base stop reason: `{base.get('stop_reason', 'unknown')}`")
+        lines.append(f"- Base estimated train epochs: {format_optional_float(base_coverage.get('estimated_train_epochs'))}")
+    if sft_coverage:
+        lines.append(f"- SFT stop reason: `{sft.get('stop_reason', 'unknown')}`")
+        lines.append(f"- SFT estimated train epochs: {format_optional_float(sft_coverage.get('estimated_train_epochs'))}")
     if base_diagnostics:
         lines.append(f"- Base loss status: `{base_diagnostics.get('status', 'unknown')}`")
         lines.append(f"- Base final train/val gap: {format_optional_float(base_diagnostics.get('final_gap'))}")
@@ -446,6 +508,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Corpus: `{artifacts['corpus']}`")
     lines.append(f"- Tokenizer: `{artifacts['tokenizer']}`")
     lines.append(f"- Base report: `{artifacts['base_report']}`")
+    if artifacts.get("base_eval_checkpoint"):
+        lines.append(f"- Base checkpoint used for SFT: `{artifacts['base_eval_checkpoint']}`")
     lines.append(f"- SFT report: `{artifacts['sft_report']}`")
     if artifacts.get("sft_eval_checkpoint"):
         lines.append(f"- SFT checkpoint used for eval: `{artifacts['sft_eval_checkpoint']}`")

@@ -38,6 +38,12 @@ class TinyRunConfig:
     min_quality_score: int = 0
     split_mode: str = "document"
     tokenizer_type: str = "char"
+    base_early_stop_patience: int = 6
+    sft_early_stop_patience: int = 6
+    early_stop_min_delta: float = 0.0
+    base_max_minutes: float | None = None
+    sft_max_minutes: float | None = None
+    canary_count: int = 1
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -88,13 +94,21 @@ def run_tiny(config: TinyRunConfig) -> dict:
         sample_tokens=160,
         split_mode=config.split_mode,
         corpus_manifest_path=corpus_build.manifest_path,
+        early_stop_patience=config.base_early_stop_patience,
+        early_stop_min_delta=config.early_stop_min_delta,
+        max_minutes=config.base_max_minutes,
+        canary_count=config.canary_count,
     ))
+    base_eval_checkpoint = base_report.get("best_checkpoint", {}).get(
+        "path",
+        str(out_dir / "base" / "checkpoint"),
+    )
 
     print("[4/5] train chat SFT")
     sft_report = train_sft(SFTConfig(
         input_path=chat_input,
         tokenizer_path=str(tokenizer_path),
-        checkpoint_path=str(out_dir / "base" / "checkpoint"),
+        checkpoint_path=base_eval_checkpoint,
         out_dir=str(out_dir / "sft"),
         batch_size=config.sft_batch_size,
         max_steps=config.sft_steps,
@@ -103,6 +117,9 @@ def run_tiny(config: TinyRunConfig) -> dict:
         device=config.device,
         log_every=max(1, config.sft_steps // 6),
         sample_tokens=160,
+        early_stop_patience=config.sft_early_stop_patience,
+        early_stop_min_delta=config.early_stop_min_delta,
+        max_minutes=config.sft_max_minutes,
     ))
     sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",
@@ -137,6 +154,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "corpus_report": corpus_build.report_path,
             "tokenizer": str(tokenizer_path),
             "base_report": str(out_dir / "base" / "report.md"),
+            "base_best_checkpoint": base_report.get("best_checkpoint", {}).get("path"),
+            "base_eval_checkpoint": base_eval_checkpoint,
             "sft_report": str(out_dir / "sft" / "report.md"),
             "sft_best_checkpoint": sft_report.get("best_checkpoint", {}).get("path"),
             "sft_eval_checkpoint": sft_eval_checkpoint,
@@ -146,20 +165,28 @@ def run_tiny(config: TinyRunConfig) -> dict:
         "tokenizer": tokenizer.stats().__dict__,
         "base": {
             "checkpoint": base_report["checkpoint"],
+            "best_checkpoint": base_report.get("best_checkpoint", {}),
+            "eval_checkpoint": base_eval_checkpoint,
             "final_train_loss": base_report["losses"][-1]["train_loss"],
             "final_val_loss": base_report["losses"][-1]["val_loss"],
+            "final_val_bpb": base_report["losses"][-1].get("val_bpb"),
             "num_parameters": base_report["model"]["num_parameters"],
             "loss_diagnostics": base_report.get("loss_diagnostics", {}),
             "memorization": base_report.get("memorization", {}),
+            "coverage": base_report.get("coverage", {}),
+            "stop_reason": base_report.get("stop_reason"),
         },
         "sft": {
             "checkpoint": sft_report["checkpoint"],
             "final_train_loss": sft_report["losses"][-1]["train_loss"],
             "final_val_loss": sft_report["losses"][-1]["val_loss"],
+            "final_val_bpb": sft_report["losses"][-1].get("val_bpb"),
             "truncated_examples": sft_report["dataset"]["truncated_examples"],
             "loss_diagnostics": sft_report.get("loss_diagnostics", {}),
             "best_checkpoint": sft_report.get("best_checkpoint", {}),
             "eval_checkpoint": sft_eval_checkpoint,
+            "coverage": sft_report.get("coverage", {}),
+            "stop_reason": sft_report.get("stop_reason"),
         },
         "eval": eval_report["summary"],
     }

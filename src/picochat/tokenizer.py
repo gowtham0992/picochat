@@ -272,6 +272,20 @@ Tokenizer = CharTokenizer | ByteTokenizer
 TOKENIZER_TYPES = ("char", "byte")
 
 
+def token_byte_lengths(tokenizer: Tokenizer) -> list[int]:
+    """Return byte length for each token id, with special tokens counted as zero."""
+    lengths = [0] * len(tokenizer)
+    for token_id, token in tokenizer.id_to_token.items():
+        token_id = int(token_id)
+        if token in SPECIAL_TOKENS:
+            lengths[token_id] = 0
+        elif isinstance(tokenizer, ByteTokenizer) and token_id in tokenizer.id_to_byte:
+            lengths[token_id] = 1
+        else:
+            lengths[token_id] = len(token.encode("utf-8"))
+    return lengths
+
+
 def train_tokenizer(
     tokenizer_type: str,
     texts: list[str],

@@ -99,6 +99,47 @@ def test_load_token_split_can_hold_out_complete_documents(tmp_path):
     assert split.val_text not in split.train_text
 
 
+def test_load_token_split_places_canaries_only_in_train_text(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    manifest_path = tmp_path / "corpus_manifest.json"
+    docs = [
+        "alpha story " * 20,
+        "beta story " * 20,
+        "gamma story " * 20,
+    ]
+    corpus_text = "\n\n".join(doc.strip() for doc in docs)
+    corpus_path.write_text(f"{corpus_text}\n", encoding="utf-8")
+    CharTokenizer.train([corpus_text, "pico-canary-0042-00"]).save(tokenizer_path)
+    offset = 0
+    manifest_docs = []
+    for index, doc in enumerate(doc.strip() for doc in docs):
+        manifest_docs.append({
+            "document_id": index,
+            "path": f"doc-{index}.txt",
+            "char_start": offset,
+            "char_end": offset + len(doc),
+        })
+        offset += len(doc) + 2
+    manifest_path.write_text(json.dumps({"documents": manifest_docs}), encoding="utf-8")
+
+    split = load_token_split(
+        corpus_path,
+        tokenizer_path,
+        context_size=8,
+        val_fraction=0.34,
+        seed=1,
+        split_mode="document",
+        corpus_manifest_path=manifest_path,
+        canary_values=("pico-canary-0042-00",),
+    )
+
+    assert split.canary_values == ("pico-canary-0042-00",)
+    assert "pico-canary-0042-00" in split.train_text
+    assert "pico-canary-0042-00" not in split.val_text
+    assert split.stats["canaries_enabled"] is True
+
+
 def test_load_token_split_falls_back_to_window_without_document_manifest(tmp_path):
     corpus_path = tmp_path / "corpus.txt"
     tokenizer_path = tmp_path / "tokenizer.json"
