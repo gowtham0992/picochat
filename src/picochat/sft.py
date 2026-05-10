@@ -213,6 +213,9 @@ def train_sft(config: SFTConfig) -> dict:
     losses: list[dict[str, float | int]] = []
     start = time.time()
     last_loss = float("nan")
+    best_loss = float("inf")
+    best_checkpoint: dict[str, float | int | str] | None = None
+    best_checkpoint_dir = out_dir / "best_checkpoint"
 
     model.train()
     for step in range(1, config.max_steps + 1):
@@ -241,6 +244,15 @@ def train_sft(config: SFTConfig) -> dict:
                 "val_loss": val_loss,
                 "elapsed_sec": elapsed,
             })
+            if val_loss < best_loss:
+                best_loss = val_loss
+                save_checkpoint(best_checkpoint_dir, model, step=step, train_loss=last_loss)
+                best_checkpoint = {
+                    "path": str(best_checkpoint_dir),
+                    "step": step,
+                    "train_loss": last_loss,
+                    "val_loss": val_loss,
+                }
             print(
                 f"sft step {step:04d}/{config.max_steps:04d} | "
                 f"train {last_loss:.4f} | val {val_loss:.4f} | {elapsed:.1f}s"
@@ -286,6 +298,12 @@ def train_sft(config: SFTConfig) -> dict:
         "loss_diagnostics": loss_diagnostics(losses),
         "sample": sample,
         "checkpoint": str(checkpoint_dir),
+        "best_checkpoint": best_checkpoint or {
+            "path": str(checkpoint_dir),
+            "step": config.max_steps,
+            "train_loss": last_loss,
+            "val_loss": None,
+        },
     }
     (out_dir / "sft_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (out_dir / "report.md").write_text(sft_report_markdown(report), encoding="utf-8")

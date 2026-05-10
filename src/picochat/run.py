@@ -100,11 +100,15 @@ def run_tiny(config: TinyRunConfig) -> dict:
         log_every=max(1, config.sft_steps // 6),
         sample_tokens=160,
     ))
+    sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
+        "path",
+        str(out_dir / "sft" / "checkpoint"),
+    )
 
     print("[5/5] run chat eval")
     eval_report = run_chat_eval(ChatEvalConfig(
         input_path=eval_input,
-        checkpoint_path=str(out_dir / "sft" / "checkpoint"),
+        checkpoint_path=sft_eval_checkpoint,
         tokenizer_path=str(tokenizer_path),
         out_dir=str(out_dir / "eval"),
         max_new_tokens=config.eval_max_new_tokens,
@@ -130,6 +134,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "tokenizer": str(tokenizer_path),
             "base_report": str(out_dir / "base" / "report.md"),
             "sft_report": str(out_dir / "sft" / "report.md"),
+            "sft_best_checkpoint": sft_report.get("best_checkpoint", {}).get("path"),
+            "sft_eval_checkpoint": sft_eval_checkpoint,
             "eval_report": str(out_dir / "eval" / "report.md"),
         },
         "corpus": corpus_build.stats.to_dict(),
@@ -148,6 +154,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "final_val_loss": sft_report["losses"][-1]["val_loss"],
             "truncated_examples": sft_report["dataset"]["truncated_examples"],
             "loss_diagnostics": sft_report.get("loss_diagnostics", {}),
+            "best_checkpoint": sft_report.get("best_checkpoint", {}),
+            "eval_checkpoint": sft_eval_checkpoint,
         },
         "eval": eval_report["summary"],
     }

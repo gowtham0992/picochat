@@ -210,6 +210,19 @@ when you want document-level holdout checks:
 PYTHONPATH=src python -m picochat.cli data preview --input runs/fineweb-edu-sample/documents
 ```
 
+For the local TinyStories sample used in this repo's walkthrough, preview the
+dataset pack after importing `runs/tinystories-1k/documents`:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack.json
+```
+
+That pack uses `examples/tinystories_chat.jsonl` for chat SFT and
+`examples/tinystories_eval.jsonl` for visible pass/fail scoring. It is still a
+small educational setup: the eval checks story shape, constraint following,
+simple refusal behavior, and one memorization probe instead of claiming broad
+intelligence.
+
 For repeatable experiments, put the three dataset inputs in one pack:
 
 ```json

@@ -91,10 +91,14 @@ def test_train_sft_writes_artifacts(tmp_path):
 
     assert (out_dir / "checkpoint" / "model.pt").exists()
     assert (out_dir / "checkpoint" / "metadata.json").exists()
+    assert (out_dir / "best_checkpoint" / "model.pt").exists()
     assert (out_dir / "sft_report.json").exists()
     assert (out_dir / "report.md").exists()
     assert (out_dir / "sample.txt").exists()
     assert report["dataset"]["num_examples"] == 2
     assert report["dataset"]["supervised_tokens"] > 0
+    assert report["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
     assert report["loss_diagnostics"]["final_step"] == 2
-    assert "Loss Diagnostics" in (out_dir / "report.md").read_text(encoding="utf-8")
+    report_text = (out_dir / "report.md").read_text(encoding="utf-8")
+    assert "Loss Diagnostics" in report_text
+    assert "Best validation checkpoint" in report_text

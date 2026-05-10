@@ -44,11 +44,14 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert (out_dir / "tokenizer.json").exists()
     assert (out_dir / "base" / "checkpoint" / "model.pt").exists()
     assert (out_dir / "sft" / "checkpoint" / "model.pt").exists()
+    assert (out_dir / "sft" / "best_checkpoint" / "model.pt").exists()
     assert (out_dir / "eval" / "eval_report.json").exists()
     assert (out_dir / "summary.json").exists()
     assert (out_dir / "summary.md").exists()
     assert summary["eval"]["num_examples"] == 1
     assert "corpus_manifest" in summary["artifacts"]
+    assert summary["artifacts"]["sft_eval_checkpoint"] == str(out_dir / "sft" / "best_checkpoint")
+    assert summary["sft"]["eval_checkpoint"] == str(out_dir / "sft" / "best_checkpoint")
     assert summary["config"]["dataset_pack"] == str(pack_path)
     assert summary["config"]["chat_input"] == str(chat_path)
     assert summary["config"]["eval_input"] == str(eval_path)

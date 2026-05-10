@@ -178,6 +178,7 @@ def sft_report_markdown(report: dict) -> str:
     sample = report["sample"]
     base_checkpoint = report["base_checkpoint"]
     diagnostics = report.get("loss_diagnostics") or loss_diagnostics(losses)
+    best_checkpoint = report.get("best_checkpoint")
 
     lines: list[str] = []
     lines.append("# Picochat SFT Report")
@@ -256,6 +257,11 @@ def sft_report_markdown(report: dict) -> str:
     lines.append("## Artifacts")
     lines.append("")
     lines.append(f"- Checkpoint: `{report['checkpoint']}`")
+    if best_checkpoint:
+        lines.append(
+            f"- Best validation checkpoint: `{best_checkpoint['path']}` "
+            f"(step {best_checkpoint['step']}, val {format_optional_float(best_checkpoint.get('val_loss'))})"
+        )
     lines.append("- Machine-readable report: `sft_report.json`")
     lines.append("- Generated sample: `sample.txt`")
     lines.append("")
@@ -439,6 +445,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Tokenizer: `{artifacts['tokenizer']}`")
     lines.append(f"- Base report: `{artifacts['base_report']}`")
     lines.append(f"- SFT report: `{artifacts['sft_report']}`")
+    if artifacts.get("sft_eval_checkpoint"):
+        lines.append(f"- SFT checkpoint used for eval: `{artifacts['sft_eval_checkpoint']}`")
     lines.append(f"- Eval report: `{artifacts['eval_report']}`")
     lines.append("- Machine-readable summary: `summary.json`")
     lines.append("")

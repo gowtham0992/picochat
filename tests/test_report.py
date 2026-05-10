@@ -98,6 +98,12 @@ def test_sft_report_markdown_contains_key_sections():
         "losses": [{"step": 1, "train_loss": 3.2, "val_loss": 3.4, "elapsed_sec": 0.1}],
         "sample": "User: hello\nAssistant:",
         "checkpoint": "checkpoint",
+        "best_checkpoint": {
+            "path": "best_checkpoint",
+            "step": 1,
+            "train_loss": 3.2,
+            "val_loss": 3.4,
+        },
     }
 
     markdown = sft_report_markdown(report)
@@ -107,6 +113,7 @@ def test_sft_report_markdown_contains_key_sections():
     assert "## Base Checkpoint" in markdown
     assert "## Training" in markdown
     assert "## Loss Diagnostics" in markdown
+    assert "Best validation checkpoint" in markdown
     assert "User: hello" in markdown
 
 
