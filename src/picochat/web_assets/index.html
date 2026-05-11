@@ -40,6 +40,8 @@
             </div>
             <div id="pipeline-strip" class="pipeline-strip"></div>
             <div id="pipeline-verdict" class="learning-verdict learn-only">LOAD A RUN TO SEE THE EXPERIMENT VERDICT.</div>
+            <div id="run-storyline" class="run-storyline learn-only">LOAD A RUN TO SEE THE TRAINING STORY.</div>
+            <div id="run-trust-panel" class="trust-panel learn-only">LOAD A RUN TO SEE TRUST CHECKS.</div>
             <div id="pipeline-detail" class="pipeline-detail inspect-only">LOAD A RUN TO INSPECT THE PIPELINE.</div>
             <div id="run-doctor" class="run-doctor inspect-only">RUN DOCTOR WAITING FOR A RUN.</div>
           </section>
@@ -54,6 +56,7 @@
             <button class="tab-button" type="button" data-panel="compare">COMPARE RUNS</button>
           </nav>
           <div id="panel-guide" class="guide-strip" aria-live="polite"></div>
+          <div id="metric-glossary" class="metric-glossary learn-only"></div>
 
           <section id="panel-dataset" class="panel-screen active">
             <div class="panel-head">
@@ -423,6 +426,8 @@ Assistant:</textarea>
               </div>
             </div>
             <div id="compare-table" class="terminal-card"></div>
+            <div id="experiment-notebook" class="terminal-card learn-only">SELECT RUNS TO BUILD THE EXPERIMENT NOTEBOOK.</div>
+            <div id="config-diff" class="terminal-card inspect-only">SELECT RUNS TO INSPECT CONFIG DIFFS.</div>
           </section>
         </section>
       </main>

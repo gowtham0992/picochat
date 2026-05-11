@@ -7,6 +7,7 @@ const state = {
   viewMode: readInitialViewMode(),
   activeReport: "summary",
   compareRuns: [],
+  compareDetails: {},
   corpusSourcePreview: null,
   datasetPackInit: null,
   tuningInspection: null,
@@ -66,6 +67,54 @@ const PANEL_GUIDES = {
     signal: "Compare pass rate with BPB and memorization, not raw loss alone.",
     caution: "Raw loss is only comparable when tokenizer and eval are the same.",
   },
+};
+
+const PANEL_METRICS = {
+  dataset: [
+    ["Documents", "How many separate text units the corpus builder found."],
+    ["Duplicate rate", "Repeated data can make a tiny model look smarter than it is."],
+    ["Held-out split", "Validation text should be separate enough to catch memorization."],
+  ],
+  tokenizer: [
+    ["Vocab", "How many token IDs the model can choose from."],
+    ["BPB", "Bits per byte; lower means the tokenizer/model compresses text better."],
+    ["Special tokens", "Control markers like BOS, EOS, PAD, and UNK."],
+  ],
+  training: [
+    ["Train loss", "How well the model predicts text it trains on."],
+    ["Val loss", "How well it predicts held-out text it did not directly train on."],
+    ["Gap", "Val loss minus train loss; a growing gap is an overfitting warning."],
+  ],
+  generation: [
+    ["Temperature", "Higher values make sampling more random."],
+    ["Top K / Top P", "Limits the token choices during generation."],
+    ["Logprob", "Model confidence for each generated token; less negative is more confident."],
+  ],
+  eval: [
+    ["Pass rate", "How many checks passed; useful only with a good eval set."],
+    ["Ladder level", "Heldout, transfer, adversarial, and memorization checks separate failure types."],
+    ["Unsupported claim", "The model said something the eval says it should not say."],
+  ],
+  report: [
+    ["Artifacts", "Files that let us reproduce and inspect the run later."],
+    ["Honesty report", "Leakage and overlap checks for the dataset/eval split."],
+    ["Summary", "The run's compact ledger of config, scores, and warnings."],
+  ],
+  compare: [
+    ["Delta", "Change versus another run; this is how we learn what helped."],
+    ["Best eval", "Highest pass rate on the selected eval set."],
+    ["Comparable", "Runs are most comparable when tokenizer, eval, and dataset are controlled."],
+  ],
+};
+
+const STAGE_LESSONS = {
+  dataset: "This is the raw reading material. Bad data makes every later metric suspicious.",
+  tokenizer: "This is the text-to-number bridge. Better compression usually lowers BPB.",
+  base: "This is the actual language-model training loop: predict the next token.",
+  sft: "This teaches the base model the chat format and preferred behavior.",
+  eval: "This checks behavior on prompts the model should answer, refuse, or avoid memorizing.",
+  chat: "This samples from the checkpoint; settings change style, not learned knowledge.",
+  report: "This keeps receipts so the experiment can be reviewed later.",
 };
 
 function escapeHtml(value) {
@@ -158,6 +207,11 @@ function bindControls() {
     if (!button) return;
     setStage(button.dataset.stage);
   });
+  $("run-storyline").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-stage]");
+    if (!button) return;
+    setStage(button.dataset.stage);
+  });
   $("run-doctor").addEventListener("click", (event) => {
     const button = event.target.closest("[data-stage]");
     if (!button) return;
@@ -176,6 +230,7 @@ function bindControls() {
         state.compareRuns = state.compareRuns.filter((name) => name !== run);
       }
       renderCompareControls();
+      resetCompareLearningPanels();
     }
   });
   $("compare-button").addEventListener("click", () => {
@@ -384,6 +439,22 @@ function renderPanelGuide() {
     <p><b>Healthy</b> ${escapeHtml(guide.signal)}</p>
     <p><b>Watch</b> ${escapeHtml(guide.caution)}</p>
   `;
+  renderMetricGlossary();
+}
+
+function renderMetricGlossary() {
+  const metrics = PANEL_METRICS[state.activePanel] || PANEL_METRICS.dataset;
+  $("metric-glossary").innerHTML = `
+    <label>METRIC DECODER</label>
+    <div class="metric-pill-row">
+      ${metrics.map(([label, note]) => `
+        <div class="metric-pill">
+          <strong>${escapeHtml(label)}</strong>
+          <span>${escapeHtml(note)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
 }
 
 function renderPipeline() {
@@ -392,6 +463,8 @@ function renderPipeline() {
   $("pipeline-strip").innerHTML = stages.map((stage) => renderPipelineStage(stage)).join("");
   const active = stages.find((stage) => stage.id === state.activeStage) || stages[0];
   $("pipeline-verdict").innerHTML = learningVerdict(stages);
+  $("run-storyline").innerHTML = runStoryTimeline(stages);
+  $("run-trust-panel").innerHTML = runTrustPanel();
   $("pipeline-detail").innerHTML = active ? stageDetail(active) : "LOAD A RUN TO INSPECT THE PIPELINE.";
   $("run-doctor").innerHTML = runDoctor(stages);
 }
@@ -809,6 +882,157 @@ function learningVerdict(stages) {
       </div>
     </div>
   `;
+}
+
+function runStoryTimeline(stages) {
+  if (!state.detail) return "LOAD A RUN TO SEE THE TRAINING STORY.";
+  return `
+    <div class="story-head">
+      <div>
+        <label>RUN STORY TIMELINE</label>
+        <strong>${escapeHtml(state.selectedRun || "current run")}</strong>
+      </div>
+      <span>${escapeHtml(currentRunOneLineVerdict())}</span>
+    </div>
+    <div class="story-grid">
+      ${stages.map((stage, index) => {
+        const health = stageHealth(stage);
+        return `
+          <button class="story-step ${health.className} ${stage.id === state.activeStage ? "active" : ""}" type="button" data-stage="${stage.id}">
+            <span>${String(index + 1).padStart(2, "0")}</span>
+            <strong>${escapeHtml(stage.label)}</strong>
+            <em>${escapeHtml(stageLearningSignal(stage))}</em>
+            <p>${escapeHtml(STAGE_LESSONS[stage.id] || stage.note || "")}</p>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function currentRunOneLineVerdict() {
+  const summary = state.detail?.summary || {};
+  const evalSummary = state.detail?.eval_reports?.at(-1)?.report?.summary || summary.eval;
+  if (!evalSummary) return "Train, tune, then eval to get a verdict.";
+  const passRate = Number(evalSummary.pass_rate || 0);
+  if (passRate >= 0.7) return "Promising run; inspect weak levels before scaling.";
+  if (passRate >= 0.35) return "Learning signal exists; target the weakest eval group.";
+  return "Early run; use failures to build better SFT/eval data.";
+}
+
+function stageLearningSignal(stage) {
+  const summary = state.detail?.summary || {};
+  const corpus = summary.corpus || {};
+  const config = summary.config || {};
+  const evalSummary = state.detail?.eval_reports?.at(-1)?.report?.summary || summary.eval;
+  if (stage.id === "dataset") {
+    return `${fmtInt(corpus.num_documents)} docs / dup ${fmtPercent(corpus.duplicate_line_rate || 0)}`;
+  }
+  if (stage.id === "tokenizer") {
+    return `${config.tokenizer_type || summary.tokenizer?.tokenizer_type || "--"} / vocab ${summary.tokenizer?.vocab_size ?? "--"}`;
+  }
+  if (stage.id === "base") {
+    const loss = summary.base?.val_bpb ?? state.detail?.base_report?.losses?.at(-1)?.val_bpb;
+    return `base BPB ${fmtLoss(loss)}`;
+  }
+  if (stage.id === "sft") {
+    const loss = summary.sft?.val_bpb ?? state.detail?.sft_report?.losses?.at(-1)?.val_bpb;
+    const truncated = summary.sft?.truncated_examples ?? state.detail?.sft_report?.dataset?.truncated_examples;
+    return `SFT BPB ${fmtLoss(loss)} / trunc ${truncated ?? "--"}`;
+  }
+  if (stage.id === "eval") {
+    return evalSummary ? `${evalSummary.num_passed}/${evalSummary.num_examples} pass` : "not evaluated";
+  }
+  if (stage.id === "chat") {
+    return `seed ${padSeed(config.seed)} / ctx ${config.context_size ?? "--"}`;
+  }
+  return `${Object.values(state.detail?.reports || {}).filter((report) => report.exists).length}/5 reports`;
+}
+
+function runTrustPanel() {
+  if (!state.detail) return "LOAD A RUN TO SEE TRUST CHECKS.";
+  const checks = trustChecks();
+  return `
+    <div class="trust-head">
+      <div>
+        <label>TRUST PANEL</label>
+        <strong>${escapeHtml(trustVerdict(checks))}</strong>
+      </div>
+      <span>${checks.filter((check) => check.status === "pass").length}/${checks.length} CLEAN</span>
+    </div>
+    <div class="trust-grid">
+      ${checks.map((check) => `
+        <div class="trust-check ${check.status}">
+          <span>${escapeHtml(check.status.toUpperCase())}</span>
+          <strong>${escapeHtml(check.label)}</strong>
+          <p>${escapeHtml(check.value)}</p>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function trustChecks() {
+  const summary = state.detail?.summary || {};
+  const corpus = summary.corpus || {};
+  const honesty = summary.honesty || {};
+  const evalReport = state.detail?.eval_reports?.at(-1)?.report;
+  const evalSummary = evalReport?.summary || summary.eval || {};
+  const baseMem = summary.base?.memorization || state.detail?.base_report?.memorization || {};
+  const sft = summary.sft || {};
+  const duplicateDocs = Number(corpus.duplicate_document_rate || 0);
+  const duplicateLines = Number(corpus.duplicate_line_rate || 0);
+  const unsupportedRate = Number(evalSummary.unsupported_claim_rate || 0);
+  const missingSupportRate = Number(evalSummary.missing_support_rate || 0);
+  const promptEchoRate = Number(evalSummary.prompt_echo_rate || 0);
+  const truncation = Number(sft.truncated_examples || 0);
+  const leakageSummary = honesty.summary || "No honesty report summary found.";
+  const leakageClean = /no obvious eval leakage/i.test(leakageSummary) || honesty.status === "ready";
+  return [
+    {
+      label: "Eval leakage",
+      status: leakageClean ? "pass" : "warn",
+      value: leakageSummary,
+    },
+    {
+      label: "Duplicate data",
+      status: duplicateDocs <= 0.01 && duplicateLines <= 0.02 ? "pass" : duplicateDocs <= 0.05 && duplicateLines <= 0.08 ? "warn" : "fail",
+      value: `docs ${fmtPercent(duplicateDocs)} / lines ${fmtPercent(duplicateLines)}`,
+    },
+    {
+      label: "Memorization",
+      status: String(baseMem.status || "low") === "low" ? "pass" : String(baseMem.status || "").includes("high") ? "fail" : "warn",
+      value: baseMem.summary || "No memorization probe summary found.",
+    },
+    {
+      label: "Unsupported claims",
+      status: unsupportedRate <= 0.05 ? "pass" : unsupportedRate <= 0.15 ? "warn" : "fail",
+      value: `${fmtPercent(unsupportedRate)} of eval replies triggered unsupported-claim checks.`,
+    },
+    {
+      label: "Missing support",
+      status: missingSupportRate <= 0.1 ? "pass" : missingSupportRate <= 0.25 ? "warn" : "fail",
+      value: `${fmtPercent(missingSupportRate)} missing required support phrases/entities.`,
+    },
+    {
+      label: "Prompt echo",
+      status: promptEchoRate <= 0.03 ? "pass" : promptEchoRate <= 0.1 ? "warn" : "fail",
+      value: `${fmtPercent(promptEchoRate)} prompt echo rate.`,
+    },
+    {
+      label: "SFT truncation",
+      status: truncation === 0 ? "pass" : truncation <= 3 ? "warn" : "fail",
+      value: `${fmtInt(truncation)} examples truncated during SFT.`,
+    },
+  ];
+}
+
+function trustVerdict(checks) {
+  const fail = checks.filter((check) => check.status === "fail").length;
+  const warn = checks.filter((check) => check.status === "warn").length;
+  if (fail) return "Do not trust this run yet; inspect failed trust checks.";
+  if (warn) return "Mostly usable, but verify warnings before making claims.";
+  return "No obvious cheating signals in available artifacts.";
 }
 
 function bestLevel(rows, direction) {
@@ -2138,19 +2362,40 @@ function renderCompareControls() {
   $("compare-status").textContent = `${state.compareRuns.length} SELECTED`;
 }
 
+function resetCompareLearningPanels() {
+  if ($("experiment-notebook")) {
+    $("experiment-notebook").textContent = "RUN SET CHANGED. PRESS COMPARE SELECTED TO REBUILD THE EXPERIMENT NOTEBOOK.";
+  }
+  if ($("config-diff")) {
+    $("config-diff").textContent = "RUN SET CHANGED. PRESS COMPARE SELECTED TO REBUILD CONFIG DIFFS.";
+  }
+}
+
 async function loadComparison() {
   if (!state.compareRuns.length) {
     throw new Error("select at least one run");
   }
   $("compare-status").textContent = "COMPARING";
   const query = state.compareRuns.map((run) => `run=${encodeURIComponent(run)}`).join("&");
-  const comparison = await fetchJson(`/api/compare?${query}`);
+  const [comparison, detailEntries] = await Promise.all([
+    fetchJson(`/api/compare?${query}`),
+    Promise.all(state.compareRuns.map(async (run) => {
+      try {
+        return [run, await fetchJson(`/api/run?name=${encodeURIComponent(run)}`)];
+      } catch {
+        return [run, null];
+      }
+    })),
+  ]);
+  state.compareDetails = Object.fromEntries(detailEntries);
   renderComparison(comparison);
 }
 
 function renderComparison(comparison) {
   $("compare-status").textContent = `BEST ${comparison.best_run}`;
   $("compare-summary").innerHTML = compareSummary(comparison);
+  $("experiment-notebook").innerHTML = experimentNotebook(comparison);
+  $("config-diff").innerHTML = configDiff(comparison);
   $("compare-table").innerHTML = `
     <label>COMPARISON TABLE</label>
     <table>
@@ -2234,6 +2479,162 @@ function compareSummary(comparison) {
   `;
 }
 
+function experimentNotebook(comparison) {
+  const rows = comparison.rows || [];
+  if (!rows.length) return "SELECT RUNS TO BUILD THE EXPERIMENT NOTEBOOK.";
+  const sorted = rows
+    .map((row) => ({ row, detail: state.compareDetails[row.run] }))
+    .sort((left, right) => state.compareRuns.indexOf(left.row.run) - state.compareRuns.indexOf(right.row.run));
+  return `
+    <label>EXPERIMENT NOTEBOOK</label>
+    <div class="notebook-grid">
+      ${sorted.map((item, index) => {
+        const previous = sorted[index - 1];
+        return `
+          <div class="notebook-entry ${item.row.run === comparison.best_run ? "best" : ""}">
+            <div>
+              <span>RUN ${String(index + 1).padStart(2, "0")}</span>
+              <strong>${escapeHtml(item.row.run)}</strong>
+            </div>
+            <p><b>Hypothesis</b> ${escapeHtml(runHypothesis(item, previous))}</p>
+            <p><b>Config</b> ${escapeHtml(runConfigLine(item))}</p>
+            <p><b>Result</b> ${escapeHtml(runResultLine(item.row))}</p>
+            <p><b>Verdict</b> ${escapeHtml(runNotebookVerdict(item.row, comparison.best_run))}</p>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function runHypothesis(item, previous) {
+  if (!previous) return "Baseline for this comparison set.";
+  const current = item.detail?.summary?.config || {};
+  const prior = previous.detail?.summary?.config || {};
+  const changes = importantConfigChanges(prior, current);
+  if (!changes.length) return "Same visible config; result difference may be data, seed, runtime, or artifact changes.";
+  if (changes.some((change) => change.key.includes("tokenizer"))) return "Test whether tokenizer changes improve compression and downstream eval.";
+  if (changes.some((change) => ["n_embd", "n_layer", "n_head"].includes(change.key))) return "Test whether more model capacity improves learning without extra memorization.";
+  if (changes.some((change) => change.key.includes("steps"))) return "Test whether more optimization time improves validation and eval.";
+  if (changes.some((change) => change.key.includes("learning_rate") || change.key.includes("lr_"))) return "Test whether the optimizer schedule trains more cleanly.";
+  if (changes.some((change) => change.key.includes("dataset") || change.key.includes("input"))) return "Test whether different data improves the behavior target.";
+  return `Test config changes: ${changes.slice(0, 3).map((change) => change.label).join(", ")}.`;
+}
+
+function runConfigLine(item) {
+  const config = item.detail?.summary?.config || {};
+  const row = item.row || {};
+  const shape = [config.n_embd, config.n_layer, config.n_head].every((value) => value !== undefined)
+    ? `${config.n_embd}x${config.n_layer} h${config.n_head}`
+    : `${fmtInt(row.num_parameters)} params`;
+  return `${config.tokenizer_type || row.tokenizer_type || "--"} vocab ${config.tokenizer_vocab_size || "--"} | ${shape} | ctx ${config.context_size || row.context_size || "--"} | base ${config.base_steps || "--"} / sft ${config.sft_steps || "--"}`;
+}
+
+function runResultLine(row) {
+  return `${row.eval_score || "--"} (${fmtPercent(row.pass_rate)}) | base BPB ${fmtLoss(row.base_val_bpb)} | SFT BPB ${fmtLoss(row.sft_val_bpb)} | mem ${row.memorization_status || "--"}`;
+}
+
+function runNotebookVerdict(row, bestRun) {
+  if (row.run === bestRun && Number(row.pass_rate || 0) >= 0.7) return "Keep as current reference, then attack weakest eval category.";
+  if (row.run === bestRun) return "Best selected run, but still needs targeted eval/SFT work.";
+  if (Number(row.pass_rate || 0) < 0.1) return "Reject for now; use failures to improve data before scaling.";
+  return "Archive as comparison evidence unless it beats the reference on a specific metric.";
+}
+
+function configDiff(comparison) {
+  const selected = state.compareRuns
+    .map((run) => ({ run, detail: state.compareDetails[run], row: (comparison.rows || []).find((item) => item.run === run) }))
+    .filter((item) => item.detail || item.row);
+  if (selected.length < 2) {
+    return "SELECT AT LEAST TWO RUNS TO INSPECT CONFIG DIFFS.";
+  }
+  const baseline = selected[0];
+  const candidate = selected.at(-1);
+  const changes = importantConfigChanges(
+    baseline.detail?.summary?.config || {},
+    candidate.detail?.summary?.config || {},
+  );
+  const metricRows = [
+    ["eval pass", fmtPercent(baseline.row?.pass_rate), fmtPercent(candidate.row?.pass_rate), signedPercent(Number(candidate.row?.pass_rate || 0) - Number(baseline.row?.pass_rate || 0))],
+    ["base BPB", fmtLoss(baseline.row?.base_val_bpb), fmtLoss(candidate.row?.base_val_bpb), signedLoss(Number(candidate.row?.base_val_bpb || 0) - Number(baseline.row?.base_val_bpb || 0))],
+    ["SFT BPB", fmtLoss(baseline.row?.sft_val_bpb), fmtLoss(candidate.row?.sft_val_bpb), signedLoss(Number(candidate.row?.sft_val_bpb || 0) - Number(baseline.row?.sft_val_bpb || 0))],
+  ];
+  return `
+    <label>CONFIG DIFF INSPECTOR</label>
+    <div class="diff-head">
+      <strong>${escapeHtml(baseline.run)}</strong>
+      <span>VERSUS</span>
+      <strong>${escapeHtml(candidate.run)}</strong>
+    </div>
+    <table class="config-diff-table">
+      <thead><tr><th>Field</th><th>Baseline</th><th>Candidate</th><th>Meaning</th></tr></thead>
+      <tbody>
+        ${changes.length ? changes.map((change) => `
+          <tr>
+            <td>${escapeHtml(change.label)}</td>
+            <td>${escapeHtml(change.before)}</td>
+            <td>${escapeHtml(change.after)}</td>
+            <td>${escapeHtml(changeTeachingNote(change.key))}</td>
+          </tr>
+        `).join("") : `<tr><td colspan="4">No visible config differences in the selected run summaries.</td></tr>`}
+      </tbody>
+    </table>
+    <label>METRIC MOVEMENT</label>
+    <table class="config-diff-table">
+      <thead><tr><th>Metric</th><th>Baseline</th><th>Candidate</th><th>Delta</th></tr></thead>
+      <tbody>
+        ${metricRows.map(([metric, before, after, delta]) => `
+          <tr><td>${escapeHtml(metric)}</td><td>${escapeHtml(before)}</td><td>${escapeHtml(after)}</td><td>${escapeHtml(delta)}</td></tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function importantConfigChanges(before, after) {
+  const fields = [
+    ["dataset_pack", "Dataset pack"],
+    ["corpus_input", "Corpus input"],
+    ["chat_input", "SFT data"],
+    ["eval_input", "Eval data"],
+    ["tokenizer_type", "Tokenizer"],
+    ["tokenizer_vocab_size", "Vocab size"],
+    ["context_size", "Context"],
+    ["n_embd", "Embedding"],
+    ["n_layer", "Layers"],
+    ["n_head", "Heads"],
+    ["base_steps", "Base steps"],
+    ["sft_steps", "SFT steps"],
+    ["base_learning_rate", "Base LR"],
+    ["sft_learning_rate", "SFT LR"],
+    ["base_lr_decay", "Base LR decay"],
+    ["sft_lr_decay", "SFT LR decay"],
+    ["base_grad_clip", "Base grad clip"],
+    ["sft_grad_clip", "SFT grad clip"],
+    ["seed", "Seed"],
+  ];
+  return fields
+    .map(([key, label]) => ({
+      key,
+      label,
+      before: before[key] == null || before[key] === "" ? "--" : String(before[key]),
+      after: after[key] == null || after[key] === "" ? "--" : String(after[key]),
+    }))
+    .filter((change) => change.before !== change.after);
+}
+
+function changeTeachingNote(key) {
+  if (key.includes("tokenizer")) return "Changes compression and model vocabulary.";
+  if (key === "context_size") return "Changes how much text the model sees at once.";
+  if (["n_embd", "n_layer", "n_head"].includes(key)) return "Changes model capacity and compute cost.";
+  if (key.includes("steps")) return "Changes optimization time.";
+  if (key.includes("learning_rate") || key.includes("lr_")) return "Changes optimizer behavior.";
+  if (key.includes("data") || key.includes("input") || key.includes("corpus")) return "Changes what behavior/data the run can learn.";
+  if (key.includes("grad_clip")) return "Controls unstable gradient spikes.";
+  if (key === "seed") return "Changes randomness; useful for reproducibility checks.";
+  return "Inspect whether this explains the metric movement.";
+}
+
 function compareBestSteps(row) {
   return `${row.base_best_step ?? "--"}/${row.sft_best_step ?? "--"}`;
 }
@@ -2264,6 +2665,8 @@ function renderCompareError(error) {
   $("compare-status").textContent = "COMPARE FAULT";
   $("compare-summary").textContent = `FAULT: ${error.message}`;
   $("compare-table").innerHTML = "";
+  $("experiment-notebook").textContent = "COMPARISON FAILED. FIX THE RUN SET, THEN TRY AGAIN.";
+  $("config-diff").textContent = "COMPARISON FAILED. CONFIG DIFF UNAVAILABLE.";
 }
 
 async function loadReport() {
@@ -2520,7 +2923,7 @@ function renderEvalReadout(report, levelRows) {
 }
 
 function renderEvalLearningFocus(report, levelRows) {
-  const failed = (report.analysis?.failed_examples || []).slice(0, 3);
+  const failed = evalFailureCoachRows(report).slice(0, 4);
   const weakest = levelRows
     .filter((row) => row.numExamples > 0)
     .sort((left, right) => left.passRate - right.passRate)[0];
@@ -2538,13 +2941,53 @@ function renderEvalLearningFocus(report, levelRows) {
         <p>${escapeHtml(recommendation?.action || "Inspect failed examples and add targeted SFT rows.")}</p>
       </div>
       <div>
-        <label>FAILURE SAMPLES</label>
+        <label>FAILURE COACH</label>
         ${failed.length ? failed.map((item) => `
-          <p><b>#${escapeHtml(item.index)}</b> ${escapeHtml(item.level || item.split || "--")} / ${escapeHtml((item.clusters || item.reasons || []).join(", ") || "inspect")}</p>
+          <p><b>#${escapeHtml(item.index)}</b> ${escapeHtml(item.reason)} -> ${escapeHtml(item.fix)}</p>
         `).join("") : "<p>No failed examples in this report.</p>"}
       </div>
     </div>
   `;
+}
+
+function evalFailureCoachRows(report) {
+  const analysisFailures = report.analysis?.failed_examples || [];
+  const directFailures = (report.examples || [])
+    .map((item, index) => ({ ...item, index: index + 1 }))
+    .filter((item) => !item.passed);
+  const failures = analysisFailures.length ? analysisFailures : directFailures;
+  const examplesByIndex = new Map((report.examples || []).map((item, index) => [index + 1, item]));
+  return failures.map((failure) => {
+    const index = Number(failure.index);
+    const item = examplesByIndex.get(index) || failure;
+    return {
+      index: Number.isFinite(index) ? index : "?",
+      reason: evalFailureReason(item, failure),
+      fix: evalFailureFix(item, failure),
+    };
+  });
+}
+
+function evalFailureReason(item, failure = {}) {
+  const clusters = [...(failure.clusters || []), ...(failure.reasons || [])].join(" ").toLowerCase();
+  if (hasForbiddenClaim(item) || clusters.includes("unsupported") || clusters.includes("forbidden")) return "unsupported claim";
+  if (hasPromptEcho(item) || clusters.includes("echo")) return "prompt echo";
+  if (hasMissingSupport(item) || clusters.includes("missing")) return "missed required evidence";
+  if (String(item.category || "").includes("memorization")) return "memorization refusal too weak";
+  if (!isAnswerable(item)) return "refusal behavior too weak";
+  return item.level ? `${item.level} generalization gap` : "behavior mismatch";
+}
+
+function evalFailureFix(item, failure = {}) {
+  const category = String(item.category || failure.category || "").toLowerCase();
+  const level = String(item.level || failure.level || "").toLowerCase();
+  if (category.includes("memorization")) return "add refusal rows for verbatim-copy requests";
+  if (category.includes("refusal") || !isAnswerable(item)) return "add refusal rows with short safe answers";
+  if (level.includes("transfer")) return "add paraphrased versions, not duplicate target answers";
+  if (level.includes("adversarial")) return "add harder negatives and format traps";
+  if (hasMissingSupport(item)) return "add SFT rows that include the missing phrases/entities";
+  if (hasPromptEcho(item)) return "add examples that answer without repeating the prompt";
+  return "add 5-10 targeted SFT rows, then rerun eval";
 }
 
 function evalHonestySummary(report) {
