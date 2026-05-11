@@ -3540,12 +3540,38 @@ function compareSummary(comparison) {
         <span>${sftBpbDelta == null ? "--" : signedLoss(sftBpbDelta)}</span>
       </div>
     </div>
-    ${compareDecisionBoard(best, baseline, bestBaseBpb, bestSftBpb)}
+    ${compareDecisionBoard(comparison.decision, best, baseline, bestBaseBpb, bestSftBpb)}
     <p class="notice">${baseline ? `Compared against ${escapeHtml(baseline.run)}. Higher pass rate is good; use BPB, not raw loss, when comparing tokenizers. Best SFT BPB: ${bestSftBpb ? escapeHtml(bestSftBpb.run) : "--"}.` : "Only one run selected."}</p>
   `;
 }
 
-function compareDecisionBoard(best, baseline, bestBaseBpb, bestSftBpb) {
+function compareDecisionBoard(decision, best, baseline, bestBaseBpb, bestSftBpb) {
+  const view = decision || buildCompareDecision(best, baseline, bestBaseBpb, bestSftBpb);
+  const championStatus = view.champion_status || "warn";
+  const regressionStatus = view.regression_status || "warn";
+  const nextStatus = view.next_status || "warn";
+  return `
+    <div class="compare-decision-grid">
+      <div class="compare-decision-card ${escapeHtml(championStatus)}">
+        <label>CHAMPION GATE</label>
+        <strong>${escapeHtml(view.champion_title || "Need a baseline")}</strong>
+        <p>${escapeHtml(view.champion_message || "Compare at least two runs before promoting a checkpoint.")}</p>
+      </div>
+      <div class="compare-decision-card ${escapeHtml(regressionStatus)}">
+        <label>REGRESSION WATCH</label>
+        <strong>${escapeHtml(view.regression_title || "No regression check")}</strong>
+        <p>${escapeHtml(view.regression_message || "Regression checks need both a candidate and a baseline.")}</p>
+      </div>
+      <div class="compare-decision-card ${escapeHtml(nextStatus)}">
+        <label>NEXT EXPERIMENT</label>
+        <strong>${escapeHtml(view.next_title || "Add a comparison run")}</strong>
+        <p>${escapeHtml(view.next_message || "Compare before changing model size or training time.")}</p>
+      </div>
+    </div>
+  `;
+}
+
+function buildCompareDecision(best, baseline, bestBaseBpb, bestSftBpb) {
   const issues = compareRegressionIssues(best, baseline);
   const passDelta = baseline ? Number(best.pass_rate || 0) - Number(baseline.pass_rate || 0) : null;
   const championStatus = !baseline
@@ -3576,25 +3602,17 @@ function compareDecisionBoard(best, baseline, bestBaseBpb, bestSftBpb) {
       ? issues.map((issue) => issue.message).join(" ")
       : "Eval pass, support, echo, SFT BPB, truncation, and memorization look acceptable.";
   const next = compareNextExperiment(best, baseline, issues, bestBaseBpb, bestSftBpb);
-  return `
-    <div class="compare-decision-grid">
-      <div class="compare-decision-card ${championStatus}">
-        <label>CHAMPION GATE</label>
-        <strong>${escapeHtml(championTitle)}</strong>
-        <p>${escapeHtml(championMessage)}</p>
-      </div>
-      <div class="compare-decision-card ${issues.some((issue) => issue.severity === "fail") ? "fail" : issues.length ? "warn" : "pass"}">
-        <label>REGRESSION WATCH</label>
-        <strong>${escapeHtml(regressionTitle)}</strong>
-        <p>${escapeHtml(regressionMessage)}</p>
-      </div>
-      <div class="compare-decision-card ${escapeHtml(next.status)}">
-        <label>NEXT EXPERIMENT</label>
-        <strong>${escapeHtml(next.title)}</strong>
-        <p>${escapeHtml(next.message)}</p>
-      </div>
-    </div>
-  `;
+  return {
+    champion_status: championStatus,
+    champion_title: championTitle,
+    champion_message: championMessage,
+    regression_status: !baseline ? "warn" : issues.some((issue) => issue.severity === "fail") ? "fail" : issues.length ? "warn" : "pass",
+    regression_title: regressionTitle,
+    regression_message: regressionMessage,
+    next_status: next.status,
+    next_title: next.title,
+    next_message: next.message,
+  };
 }
 
 function compareRegressionIssues(best, baseline) {
