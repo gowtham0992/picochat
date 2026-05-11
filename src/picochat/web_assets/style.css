@@ -277,6 +277,20 @@ h2 {
   padding: 10px;
 }
 
+.run-bank-actions {
+  border-bottom: 1px solid var(--line);
+  padding: 8px 10px;
+}
+
+.run-bank-actions button {
+  width: 100%;
+}
+
+.run-bank-actions button.armed {
+  background: var(--ink);
+  color: var(--paper);
+}
+
 .run-button {
   display: grid;
   gap: 6px;

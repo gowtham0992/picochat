@@ -1,6 +1,7 @@
 const state = {
   runs: [],
   selectedRun: null,
+  pendingArchiveRun: null,
   detail: null,
   activePanel: "dataset",
   activeStage: "dataset",
@@ -243,6 +244,9 @@ function bindControls() {
   $("classic-theme-button").addEventListener("click", () => setTheme("classic"));
   $("paper-theme-button").addEventListener("click", () => setTheme("paper"));
   $("refresh-button").addEventListener("click", loadRuns);
+  $("archive-selected-button").addEventListener("click", () => {
+    archiveSelectedRun().catch((error) => flashStatus(`ARCHIVE FAULT. | ${error.message}`));
+  });
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-copy-command]");
     if (!button) return;
@@ -387,10 +391,14 @@ async function loadRuns() {
   const payload = await fetchJson("/api/runs");
   state.runs = payload.runs;
   $("run-count").textContent = `${state.runs.length} RUNS`;
+  const runNames = state.runs.map((run) => run.name);
+  if (state.selectedRun && !runNames.includes(state.selectedRun)) {
+    state.selectedRun = null;
+    state.pendingArchiveRun = null;
+  }
   if (!state.selectedRun && state.runs.length) {
     state.selectedRun = state.runs[state.runs.length - 1].name;
   }
-  const runNames = state.runs.map((run) => run.name);
   state.compareRuns = state.compareRuns.filter((name) => runNames.includes(name));
   if (!state.compareRuns.length) {
     state.compareRuns = state.runs.slice(-2).map((run) => run.name);
@@ -399,11 +407,15 @@ async function loadRuns() {
   renderCompareControls();
   if (state.selectedRun) {
     await loadRun(state.selectedRun);
+  } else {
+    state.detail = null;
+    renderAll();
   }
 }
 
 function renderRuns() {
   const list = $("run-list");
+  renderRunArchiveAction();
   if (!state.runs.length) {
     list.innerHTML = '<div class="empty">NO RUN ARTIFACTS FOUND.</div>';
     return;
@@ -417,10 +429,46 @@ function renderRuns() {
   list.querySelectorAll("[data-run]").forEach((button) => {
     button.addEventListener("click", async () => {
       state.selectedRun = button.dataset.run;
+      state.pendingArchiveRun = null;
       renderRuns();
       await loadRun(state.selectedRun);
     });
   });
+}
+
+function renderRunArchiveAction() {
+  const button = $("archive-selected-button");
+  const armed = Boolean(state.selectedRun && state.pendingArchiveRun === state.selectedRun);
+  button.disabled = !state.selectedRun;
+  button.textContent = armed ? "CONFIRM ARCHIVE" : "ARCHIVE SELECTED";
+  button.classList.toggle("armed", armed);
+}
+
+async function archiveSelectedRun() {
+  const runName = state.selectedRun;
+  if (!runName) throw new Error("select a run first");
+  if (state.pendingArchiveRun !== runName) {
+    state.pendingArchiveRun = runName;
+    renderRunArchiveAction();
+    flashStatus(`ARCHIVE ARMED FOR ${runName}. | CLICK AGAIN TO MOVE IT OUT OF RUN BANK.`);
+    return;
+  }
+  const button = $("archive-selected-button");
+  button.disabled = true;
+  button.textContent = "ARCHIVING";
+  try {
+    const payload = await postJson("/api/run/archive", { run_name: runName });
+    state.selectedRun = null;
+    state.pendingArchiveRun = null;
+    state.detail = null;
+    state.runJobs = (state.runJobs || []).filter((job) => job.run_name !== runName);
+    if (state.runJob?.run_name === runName) state.runJob = null;
+    flashStatus(`ARCHIVED ${runName}. | ${payload.archive_path}`);
+    await loadRuns();
+  } finally {
+    button.textContent = "ARCHIVE SELECTED";
+    button.disabled = !state.selectedRun;
+  }
 }
 
 async function loadRun(name) {
@@ -998,12 +1046,12 @@ function pipelineStages() {
         "--port", 8765,
       ]),
       ledger: [
-        artifactItem("INPUT", "Summary JSON", `${outDir}/summary.json`),
-        artifactItem("INPUT", "Honesty report", artifacts.honesty_report || `${outDir}/honesty/report.md`),
-        artifactItem("INPUT", "Base report", artifacts.base_report || `${outDir}/base/report.md`),
-        artifactItem("INPUT", "SFT report", artifacts.sft_report || `${outDir}/sft/report.md`),
-        artifactItem("INPUT", "Eval report", artifacts.eval_report || `${outDir}/eval/report.md`),
-        artifactItem("OUTPUT", "Summary report", `${outDir}/summary.md`),
+        artifactItem("INPUT", "Summary JSON", detail?.artifact_inventory?.items?.find((item) => item.key === "summary_json")?.path || `${outDir}/summary.json`),
+        artifactItem("INPUT", "Honesty report", detail?.reports?.honesty?.path || artifacts.honesty_report || `${outDir}/honesty/report.md`),
+        artifactItem("INPUT", "Base report", detail?.reports?.base?.path || artifacts.base_report || `${outDir}/base/report.md`),
+        artifactItem("INPUT", "SFT report", detail?.reports?.sft?.path || artifacts.sft_report || `${outDir}/sft/report.md`),
+        artifactItem("INPUT", "Eval report", detail?.reports?.eval?.path || artifacts.eval_report || `${outDir}/eval/report.md`),
+        artifactItem("OUTPUT", "Summary report", detail?.reports?.summary?.path || `${outDir}/summary.md`),
         artifactItem("OUTPUT", "Workbench", "http://127.0.0.1:8765/"),
       ],
     },
@@ -1789,15 +1837,16 @@ function renderHfImport(report) {
 
 function renderHfImportError(error) {
   $("hf-import-button").disabled = false;
-  $("hf-import-status").textContent = "HF IMPORT FAULT";
   const availableSplits = error.payload?.available_splits || splitListFromMessage(error.message);
+  const isSplitIssue = availableSplits.length > 0;
+  $("hf-import-status").textContent = isSplitIssue ? "HF IMPORT NEEDS SPLIT" : "HF IMPORT FAULT";
   const requestedSplit = error.payload?.requested_split || $("hf-split").value.trim() || "train";
   const splitHint = availableSplits.length
     ? hfSplitHint(availableSplits, requestedSplit)
     : "";
   const dependencyHint = hfDependencyHint(error);
   $("hf-import-result").innerHTML = `
-    <div class="notice">FAULT: ${escapeHtml(error.message)}</div>
+    <div class="notice">${isSplitIssue ? "SPLIT ISSUE" : "FAULT"}: ${escapeHtml(error.message)}</div>
     ${splitHint}
     ${dependencyHint}
   `;
@@ -3203,7 +3252,10 @@ function applyFlightPlanToLauncher(quiet = false) {
   }
   if (report.dataset_pack) {
     $("launch-pack-path").value = report.dataset_pack;
-    $("launch-run-name").value = uniqueRunName(suggestedRunName(report.dataset_pack));
+    const currentRunName = $("launch-run-name").value.trim();
+    if (!currentRunName || runNameExists(currentRunName)) {
+      $("launch-run-name").value = uniqueRunName(suggestedRunName(report.dataset_pack));
+    }
   }
   const budget = report.budget || {};
   const preset = budget.preset === "small-preview" ? "small-local" : budget.preset === "overfit-check" ? "tiny" : budget.preset;

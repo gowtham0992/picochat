@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.resources
 import json
@@ -10,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -166,10 +168,10 @@ def load_run_detail(runs_dir: str | Path, run_name: str) -> dict:
 
     summary = _read_json(summary_path)
     artifacts = summary.get("artifacts", {})
-    corpus_path = Path(artifacts.get("corpus", run_dir / "corpus.txt"))
-    corpus_manifest_path = Path(artifacts.get("corpus_manifest", run_dir / "corpus_manifest.json"))
-    corpus_report_path = Path(artifacts.get("corpus_report", run_dir / "corpus_report.md"))
-    tokenizer_path = Path(artifacts.get("tokenizer", run_dir / "tokenizer.json"))
+    corpus_path = _local_run_artifact_path(run_dir, summary, artifacts.get("corpus", run_dir / "corpus.txt"))
+    corpus_manifest_path = _local_run_artifact_path(run_dir, summary, artifacts.get("corpus_manifest", run_dir / "corpus_manifest.json"))
+    corpus_report_path = _local_run_artifact_path(run_dir, summary, artifacts.get("corpus_report", run_dir / "corpus_report.md"))
+    tokenizer_path = _local_run_artifact_path(run_dir, summary, artifacts.get("tokenizer", run_dir / "tokenizer.json"))
     detail = {
         "summary": summary,
         "corpus_preview": _read_text_preview(corpus_path),
@@ -896,6 +898,37 @@ def cancel_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     return run_status_plan(job_id, runs_dir)
 
 
+def archive_run_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Move a completed run out of the active run bank without deleting it."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    run_name = _optional_string(payload.get("run_name"))
+    if not run_name:
+        raise ValueError("run_name is required")
+    if Path(run_name).name != run_name:
+        raise ValueError("run_name must be an active top-level run")
+
+    root = Path(runs_dir)
+    run_dir = _safe_child(root, run_name)
+    if not run_dir.exists() or not (run_dir / "summary.json").exists():
+        raise FileNotFoundError(f"missing run summary: {run_dir / 'summary.json'}")
+    active_job = _active_job_for_run(run_dir)
+    if active_job:
+        raise ValueError(f"cannot archive running run: {run_name}. Cancel or wait for it first.")
+
+    archive_root = root / f"archive-{date.today().isoformat()}"
+    archive_root.mkdir(parents=True, exist_ok=True)
+    destination = _unique_archive_path(archive_root / run_dir.name)
+    shutil.move(str(run_dir), str(destination))
+    return {
+        "archived": True,
+        "run_name": run_name,
+        "source": str(run_dir),
+        "archive_path": str(destination),
+        "runs": discover_runs(root),
+    }
+
+
 def run_presets_plan() -> dict:
     return {"presets": RUN_PRESETS}
 
@@ -987,6 +1020,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(start_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/run/cancel":
                     self._send_json(cancel_run_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/run/archive":
+                    self._send_json(archive_run_plan(config.runs_dir, self._read_json_body()))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -1034,6 +1069,31 @@ def _safe_child(root: Path, name: str) -> Path:
     if path != root and root not in path.parents:
         raise ValueError("run path escapes runs directory")
     return path
+
+
+def _active_job_for_run(run_dir: Path) -> dict | None:
+    target = run_dir.resolve()
+    with _RUN_JOBS_LOCK:
+        jobs = list(_RUN_JOBS.values())
+    for job in jobs:
+        try:
+            out_dir = Path(job["out_dir"]).resolve()
+            process = job["process"]
+        except (KeyError, OSError):
+            continue
+        if out_dir == target and process.poll() is None:
+            return job
+    return None
+
+
+def _unique_archive_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    for index in range(2, 10000):
+        candidate = path.with_name(f"{path.name}-{index}")
+        if not candidate.exists():
+            return candidate
+    raise FileExistsError(f"could not choose unique archive path for {path}")
 
 
 def _read_json(path: Path) -> dict:
@@ -1545,10 +1605,10 @@ def _load_report_status(run_dir: Path, summary: dict) -> dict:
     artifacts = summary.get("artifacts", {})
     report_paths = {
         "summary": run_dir / "summary.md",
-        "honesty": Path(artifacts.get("honesty_report", run_dir / "honesty" / "report.md")),
-        "base": Path(artifacts.get("base_report", run_dir / "base" / "report.md")),
-        "sft": Path(artifacts.get("sft_report", run_dir / "sft" / "report.md")),
-        "eval": Path(artifacts.get("eval_report", run_dir / "eval" / "report.md")),
+        "honesty": _local_run_artifact_path(run_dir, summary, artifacts.get("honesty_report", run_dir / "honesty" / "report.md")),
+        "base": _local_run_artifact_path(run_dir, summary, artifacts.get("base_report", run_dir / "base" / "report.md")),
+        "sft": _local_run_artifact_path(run_dir, summary, artifacts.get("sft_report", run_dir / "sft" / "report.md")),
+        "eval": _local_run_artifact_path(run_dir, summary, artifacts.get("eval_report", run_dir / "eval" / "report.md")),
     }
     return {
         name: {
@@ -1563,38 +1623,42 @@ def _load_artifact_inventory(run_dir: Path, summary: dict) -> dict:
     artifacts = summary.get("artifacts", {})
     config = summary.get("config", {})
     out_dir = Path(config.get("out_dir") or run_dir)
-    base_checkpoint = Path(summary.get("base", {}).get("checkpoint", out_dir / "base" / "checkpoint"))
-    base_best_checkpoint = Path(summary.get("base", {}).get("best_checkpoint", {}).get("path", out_dir / "base" / "best_checkpoint"))
-    sft_checkpoint = Path(summary.get("sft", {}).get("checkpoint", out_dir / "sft" / "checkpoint"))
+    base_checkpoint = summary.get("base", {}).get("checkpoint", out_dir / "base" / "checkpoint")
+    base_best_checkpoint = summary.get("base", {}).get("best_checkpoint", {}).get("path", out_dir / "base" / "best_checkpoint")
+    sft_checkpoint = summary.get("sft", {}).get("checkpoint", out_dir / "sft" / "checkpoint")
 
     known_paths = {
-        "dataset_pack": config.get("dataset_pack"),
-        "corpus_source": config.get("corpus_recipe") or config.get("corpus_input"),
-        "chat_input": config.get("chat_input"),
-        "eval_input": config.get("eval_input"),
-        "corpus": artifacts.get("corpus", run_dir / "corpus.txt"),
-        "corpus_manifest": artifacts.get("corpus_manifest", run_dir / "corpus_manifest.json"),
-        "corpus_report": artifacts.get("corpus_report", run_dir / "corpus_report.md"),
-        "honesty_json": artifacts.get("honesty_json", run_dir / "honesty" / "honesty_report.json"),
-        "honesty_report": artifacts.get("honesty_report", run_dir / "honesty" / "report.md"),
-        "tokenizer": artifacts.get("tokenizer", run_dir / "tokenizer.json"),
-        "summary_json": run_dir / "summary.json",
-        "summary_report": run_dir / "summary.md",
-        "base_checkpoint": base_checkpoint,
-        "base_best_checkpoint": base_best_checkpoint,
-        "base_trace": out_dir / "base" / "train_report.json",
-        "base_report": artifacts.get("base_report", out_dir / "base" / "report.md"),
-        "base_sample": out_dir / "base" / "sample.txt",
-        "sft_checkpoint": sft_checkpoint,
-        "sft_trace": out_dir / "sft" / "sft_report.json",
-        "sft_report": artifacts.get("sft_report", out_dir / "sft" / "report.md"),
-        "sft_sample": out_dir / "sft" / "sample.txt",
-        "eval_json": out_dir / "eval" / "eval_report.json",
-        "eval_report": artifacts.get("eval_report", out_dir / "eval" / "report.md"),
+        "dataset_pack": (config.get("dataset_pack"), False),
+        "corpus_source": (config.get("corpus_recipe") or config.get("corpus_input"), False),
+        "chat_input": (config.get("chat_input"), False),
+        "eval_input": (config.get("eval_input"), False),
+        "corpus": (artifacts.get("corpus", run_dir / "corpus.txt"), True),
+        "corpus_manifest": (artifacts.get("corpus_manifest", run_dir / "corpus_manifest.json"), True),
+        "corpus_report": (artifacts.get("corpus_report", run_dir / "corpus_report.md"), True),
+        "honesty_json": (artifacts.get("honesty_json", run_dir / "honesty" / "honesty_report.json"), True),
+        "honesty_report": (artifacts.get("honesty_report", run_dir / "honesty" / "report.md"), True),
+        "tokenizer": (artifacts.get("tokenizer", run_dir / "tokenizer.json"), True),
+        "summary_json": (run_dir / "summary.json", False),
+        "summary_report": (run_dir / "summary.md", False),
+        "base_checkpoint": (base_checkpoint, True),
+        "base_best_checkpoint": (base_best_checkpoint, True),
+        "base_trace": (out_dir / "base" / "train_report.json", True),
+        "base_report": (artifacts.get("base_report", out_dir / "base" / "report.md"), True),
+        "base_sample": (out_dir / "base" / "sample.txt", True),
+        "sft_checkpoint": (sft_checkpoint, True),
+        "sft_trace": (out_dir / "sft" / "sft_report.json", True),
+        "sft_report": (artifacts.get("sft_report", out_dir / "sft" / "report.md"), True),
+        "sft_sample": (out_dir / "sft" / "sample.txt", True),
+        "eval_json": (out_dir / "eval" / "eval_report.json", True),
+        "eval_report": (artifacts.get("eval_report", out_dir / "eval" / "report.md"), True),
     }
     items = [
-        _artifact_record(key, Path(path))
-        for key, path in known_paths.items()
+        _artifact_record(
+            key,
+            _local_run_artifact_path(run_dir, summary, path) if localize else Path(path),
+            aliases=[path] if localize else [],
+        )
+        for key, (path, localize) in known_paths.items()
         if path
     ]
     return {
@@ -1603,7 +1667,31 @@ def _load_artifact_inventory(run_dir: Path, summary: dict) -> dict:
     }
 
 
-def _artifact_record(key: str, path: Path) -> dict:
+def _local_run_artifact_path(run_dir: Path, summary: dict, path: str | Path) -> Path:
+    """Resolve run-output artifact paths against the currently selected run folder."""
+    source = Path(path)
+    out_dir_value = summary.get("config", {}).get("out_dir")
+    if not out_dir_value:
+        return source
+
+    out_dir = Path(out_dir_value)
+    source_variants = [source]
+    out_dir_variants = [out_dir]
+    if not source.is_absolute():
+        source_variants.append(Path.cwd() / source)
+    if not out_dir.is_absolute():
+        out_dir_variants.append(Path.cwd() / out_dir)
+
+    for source_variant in source_variants:
+        for out_dir_variant in out_dir_variants:
+            try:
+                return run_dir / source_variant.relative_to(out_dir_variant)
+            except ValueError:
+                continue
+    return source
+
+
+def _artifact_record(key: str, path: Path, aliases: list[str | Path] | None = None) -> dict:
     exists = path.exists()
     kind = "missing"
     size_bytes = 0
@@ -1616,6 +1704,7 @@ def _artifact_record(key: str, path: Path) -> dict:
     return {
         "key": key,
         "path": str(path),
+        "aliases": [str(alias) for alias in aliases or []],
         "exists": exists,
         "kind": kind,
         "size_bytes": size_bytes,
@@ -1625,8 +1714,9 @@ def _artifact_record(key: str, path: Path) -> dict:
 def _artifact_records_by_path(items: list[dict]) -> dict:
     by_path = {}
     for item in items:
-        for path in _path_aliases(Path(item["path"])):
-            by_path[path] = item
+        for raw_path in [item["path"], *item.get("aliases", [])]:
+            for path in _path_aliases(Path(raw_path)):
+                by_path[path] = item
     return by_path
 
 

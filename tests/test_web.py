@@ -1,8 +1,11 @@
 import json
+import shutil
+from pathlib import Path
 
 import pytest
 
 from picochat.web import (
+    archive_run_plan,
     cancel_run_plan,
     discover_runs,
     eval_starter_plan,
@@ -20,6 +23,8 @@ from picochat.web import (
     save_pack_editor_plan,
     sft_starter_plan,
     start_run_plan,
+    _RUN_JOBS,
+    _RUN_JOBS_LOCK,
     _error_payload,
 )
 from picochat.hf_import import HFSplitError
@@ -210,6 +215,25 @@ def test_load_run_report_returns_markdown(tmp_path):
     assert report["run"] == "tiny-a"
     assert report["report"] == "base"
     assert report["markdown"] == "# Base"
+
+
+def test_load_run_detail_localizes_copied_run_artifacts(tmp_path):
+    original = write_run(tmp_path / "runs", "original")
+    copied_root = tmp_path / "copied"
+    copied = copied_root / "renamed"
+    shutil.copytree(original, copied)
+    (original / "base" / "report.md").write_text("# Original Base", encoding="utf-8")
+    (copied / "base" / "report.md").write_text("# Copied Base", encoding="utf-8")
+    (copied / "corpus.txt").write_text("copied corpus", encoding="utf-8")
+
+    detail = load_run_detail(copied_root, "renamed")
+    report = load_run_report(copied_root, "renamed", "base")
+
+    assert detail["corpus_preview"] == "copied corpus"
+    assert detail["reports"]["base"]["path"] == str(copied / "base" / "report.md")
+    assert report["markdown"] == "# Copied Base"
+    by_path = detail["artifact_inventory"]["by_path"]
+    assert by_path[str(original / "base" / "report.md")]["path"] == str(copied / "base" / "report.md")
 
 
 def test_generate_run_text_uses_selected_checkpoint(tmp_path, monkeypatch):
@@ -841,6 +865,50 @@ def test_run_status_discovers_completed_web_runs_from_disk(tmp_path):
     assert status["job"]["summary_exists"] is True
     assert status["job"]["dataset_pack"] == "pack/dataset_pack.json"
     assert status["job"]["command"] == "python -m picochat.cli run tiny"
+
+
+def test_archive_run_plan_moves_run_out_of_active_bank(tmp_path):
+    run_dir = write_run(tmp_path / "runs", "tiny-a")
+
+    report = archive_run_plan(tmp_path / "runs", {"run_name": "tiny-a"})
+
+    archive_path = Path(report["archive_path"])
+    assert report["archived"] is True
+    assert report["run_name"] == "tiny-a"
+    assert not run_dir.exists()
+    assert (archive_path / "summary.json").exists()
+    assert archive_path.parent.name.startswith("archive-")
+    assert report["runs"] == []
+    assert discover_runs(tmp_path / "runs") == []
+
+
+def test_archive_run_plan_refuses_running_job(tmp_path):
+    run_dir = write_run(tmp_path / "runs", "tiny-a")
+
+    class FakeProcess:
+        def poll(self):
+            return None
+
+    with _RUN_JOBS_LOCK:
+        _RUN_JOBS["archive-test"] = {
+            "out_dir": str(run_dir),
+            "process": FakeProcess(),
+        }
+    try:
+        with pytest.raises(ValueError, match="cannot archive running run"):
+            archive_run_plan(tmp_path / "runs", {"run_name": "tiny-a"})
+    finally:
+        with _RUN_JOBS_LOCK:
+            _RUN_JOBS.pop("archive-test", None)
+
+    assert run_dir.exists()
+
+
+def test_archive_run_plan_refuses_nested_run_name(tmp_path):
+    write_run(tmp_path / "runs" / "archive-2026-05-11", "tiny-a")
+
+    with pytest.raises(ValueError, match="top-level run"):
+        archive_run_plan(tmp_path / "runs", {"run_name": "archive-2026-05-11/tiny-a"})
 
 
 def test_start_run_plan_blocks_unready_dataset_pack(tmp_path):
