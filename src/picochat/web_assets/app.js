@@ -540,7 +540,9 @@ function focusGuideTarget(targetId) {
     target.classList.add("guide-target-focus");
     const focusable = target.classList.contains("panel-screen")
       ? null
-      : target.querySelector("input:not([type='hidden']), textarea, select, button");
+      : target.matches("input:not([type='hidden']), textarea, select, button")
+        ? target
+        : target.querySelector("input:not([type='hidden']), textarea, select, button");
     if (focusable && !focusable.disabled) {
       focusable.focus({ preventScroll: true });
     }
@@ -562,15 +564,15 @@ function startHereSteps() {
     {
       label: "Choose dataset",
       panel: "dataset",
-      target: "hf-import-card",
+      target: "dataset-source-card",
       status: hasPack ? "done" : "todo",
-      signal: hasPack ? "Pack selected" : "Paste HF URL or local corpus",
-      note: "A dataset pack is the contract Picochat uses for corpus, SFT, and eval files.",
+      signal: hasPack ? "Pack selected" : "HF, local docs, or sample",
+      note: "A dataset is the raw text Picochat learns from. Hugging Face import is one way to get it.",
     },
     {
       label: "Check readiness",
       panel: "dataset",
-      target: "flight-plan-card",
+      target: "flight-check-button",
       status: checkedDataset ? "done" : "todo",
       signal: checkedDataset ? "Corpus checked" : "Run dataset check",
       note: "This catches missing files, tiny corpora, duplicate text, and tuning-data blockers early.",
@@ -578,7 +580,7 @@ function startHereSteps() {
     {
       label: "Create SFT",
       panel: "dataset",
-      target: "flight-plan-card",
+      target: "flight-sft-button",
       status: sftReady ? "done" : "todo",
       signal: sftReady ? "Chat rows selected" : "Generate starter chat rows",
       note: "SFT teaches chat behavior. It is not a substitute for base training knowledge.",
@@ -586,7 +588,7 @@ function startHereSteps() {
     {
       label: "Create eval",
       panel: "dataset",
-      target: "flight-plan-card",
+      target: "flight-eval-button",
       status: evalReady ? "done" : "todo",
       signal: evalReady ? "Eval rows selected" : "Generate starter eval rows",
       note: "Eval is the scoreboard. Keep answerable, refusal, and memorization probes.",

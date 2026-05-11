@@ -91,11 +91,36 @@
                 <div id="corpus-files" class="source-list"></div>
               </div>
             </div>
+            <div id="dataset-source-card" class="terminal-card dataset-preview-card learn-only">
+              <label>DATASET SOURCE</label>
+              <div class="learning-copy">
+                <strong>A dataset is the text Picochat learns from.</strong>
+                <span>It can be a Hugging Face dataset, a folder of local docs, a single text file, or the included sample pack while you are learning.</span>
+              </div>
+              <div class="dataset-source-grid">
+                <div>
+                  <strong>Hugging Face</strong>
+                  <p>Paste a dataset URL or repo id in the Hugging Face Import box below. Picochat downloads rows and creates a dataset pack.</p>
+                </div>
+                <div>
+                  <strong>Local docs</strong>
+                  <p>Put a folder or text file path into <b>OR CORPUS PATH</b>, then check readiness before training.</p>
+                </div>
+                <div>
+                  <strong>Existing pack</strong>
+                  <p>Put a <b>dataset_pack.json</b> path into <b>DATASET PACK</b>. Packs connect corpus, SFT, and eval files.</p>
+                </div>
+                <div>
+                  <strong>No dataset yet</strong>
+                  <p>Use the included TinyStories examples first, or make a small text file with paragraphs and Q&A from a topic you understand.</p>
+                </div>
+              </div>
+            </div>
             <div id="flight-plan-card" class="terminal-card dataset-preview-card learn-only">
               <label>CUSTOM SLM FLIGHT PLAN</label>
               <div class="learning-copy">
-                <strong>Start here when you bring your own dataset.</strong>
-                <span>Check the corpus first. Then create starter SFT and eval files, edit them, run a smoke train, and compare before scaling.</span>
+                <strong>After choosing the source, run this checklist.</strong>
+                <span>Check readiness first. Then create starter SFT and eval files, edit them, run a smoke train, and compare before scaling.</span>
               </div>
               <div class="flight-controls">
                 <div>

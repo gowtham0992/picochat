@@ -335,6 +335,13 @@ h2 {
   outline-offset: -3px;
 }
 
+button.guide-target-focus,
+input.guide-target-focus,
+select.guide-target-focus,
+textarea.guide-target-focus {
+  outline-offset: 2px;
+}
+
 .start-step {
   align-content: start;
   background: var(--field);
@@ -1190,6 +1197,36 @@ h2 {
   margin-bottom: 10px;
 }
 
+.dataset-source-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.dataset-source-grid > div {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 5px;
+  min-height: 104px;
+  padding: 8px;
+}
+
+.dataset-source-grid strong {
+  color: var(--accent);
+}
+
+.dataset-source-grid p {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.dataset-source-grid b {
+  color: var(--ink);
+}
+
 .hf-import-controls {
   align-items: end;
   display: grid;
@@ -2032,6 +2069,7 @@ th {
   .readiness-row,
   .budget-grid,
   .flight-controls,
+  .dataset-source-grid,
   .hf-import-controls,
   .flight-grid,
   .flight-steps,
