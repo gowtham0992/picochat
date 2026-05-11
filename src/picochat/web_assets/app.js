@@ -3540,8 +3540,132 @@ function compareSummary(comparison) {
         <span>${sftBpbDelta == null ? "--" : signedLoss(sftBpbDelta)}</span>
       </div>
     </div>
+    ${compareDecisionBoard(best, baseline, bestBaseBpb, bestSftBpb)}
     <p class="notice">${baseline ? `Compared against ${escapeHtml(baseline.run)}. Higher pass rate is good; use BPB, not raw loss, when comparing tokenizers. Best SFT BPB: ${bestSftBpb ? escapeHtml(bestSftBpb.run) : "--"}.` : "Only one run selected."}</p>
   `;
+}
+
+function compareDecisionBoard(best, baseline, bestBaseBpb, bestSftBpb) {
+  const issues = compareRegressionIssues(best, baseline);
+  const passDelta = baseline ? Number(best.pass_rate || 0) - Number(baseline.pass_rate || 0) : null;
+  const championStatus = !baseline
+    ? "warn"
+    : issues.some((issue) => issue.severity === "fail")
+      ? "fail"
+      : issues.length
+        ? "warn"
+        : "pass";
+  const championTitle = !baseline
+    ? "Need a baseline"
+    : championStatus === "pass"
+      ? "Promote as reference"
+      : championStatus === "warn"
+        ? "Promising, inspect regressions"
+        : "Do not promote yet";
+  const championMessage = !baseline
+    ? "Select at least two runs so the winner has something to beat."
+    : `${best.run} is ${signedPercent(passDelta)} eval pass versus ${baseline.run}.`;
+  const regressionTitle = !baseline
+    ? "No regression check"
+    : issues.length
+      ? `${issues.length} watch item${issues.length === 1 ? "" : "s"}`
+      : "No obvious regression";
+  const regressionMessage = !baseline
+    ? "Regression checks need a candidate and baseline."
+    : issues.length
+      ? issues.map((issue) => issue.message).join(" ")
+      : "Eval pass, support, echo, SFT BPB, truncation, and memorization look acceptable.";
+  const next = compareNextExperiment(best, baseline, issues, bestBaseBpb, bestSftBpb);
+  return `
+    <div class="compare-decision-grid">
+      <div class="compare-decision-card ${championStatus}">
+        <label>CHAMPION GATE</label>
+        <strong>${escapeHtml(championTitle)}</strong>
+        <p>${escapeHtml(championMessage)}</p>
+      </div>
+      <div class="compare-decision-card ${issues.some((issue) => issue.severity === "fail") ? "fail" : issues.length ? "warn" : "pass"}">
+        <label>REGRESSION WATCH</label>
+        <strong>${escapeHtml(regressionTitle)}</strong>
+        <p>${escapeHtml(regressionMessage)}</p>
+      </div>
+      <div class="compare-decision-card ${escapeHtml(next.status)}">
+        <label>NEXT EXPERIMENT</label>
+        <strong>${escapeHtml(next.title)}</strong>
+        <p>${escapeHtml(next.message)}</p>
+      </div>
+    </div>
+  `;
+}
+
+function compareRegressionIssues(best, baseline) {
+  if (!baseline) return [];
+  const issues = [];
+  const passDelta = Number(best.pass_rate || 0) - Number(baseline.pass_rate || 0);
+  const supportDelta = optionalNumberDelta(best.support_match_rate, baseline.support_match_rate);
+  const echoDelta = optionalNumberDelta(best.prompt_echo_rate, baseline.prompt_echo_rate);
+  const sftBpbDelta = optionalNumberDelta(best.sft_val_bpb, baseline.sft_val_bpb);
+  if (passDelta < 0.02) {
+    issues.push({ severity: "warn", message: "Eval gain is under +2 points." });
+  }
+  if (supportDelta != null && supportDelta < -0.05) {
+    issues.push({ severity: "fail", message: `Support match dropped ${signedPercent(supportDelta)}.` });
+  }
+  if (echoDelta != null && echoDelta > 0.02) {
+    issues.push({ severity: "fail", message: `Prompt echo worsened ${signedPercent(echoDelta)}.` });
+  }
+  if (sftBpbDelta != null && sftBpbDelta > 0.10) {
+    issues.push({ severity: "warn", message: `SFT BPB rose ${signedLoss(sftBpbDelta)}.` });
+  }
+  if (Number(best.truncated_examples || 0) > Number(baseline.truncated_examples || 0)) {
+    issues.push({ severity: "warn", message: "More SFT rows were truncated." });
+  }
+  if (String(best.memorization_status || "").toLowerCase() !== "low") {
+    issues.push({ severity: "fail", message: `Memorization status is ${best.memorization_status || "unknown"}.` });
+  }
+  return issues;
+}
+
+function compareNextExperiment(best, baseline, issues, bestBaseBpb, bestSftBpb) {
+  if (!baseline) {
+    return {
+      status: "warn",
+      title: "Add a comparison run",
+      message: "Compare against a previous run before changing model size or training time.",
+    };
+  }
+  if (issues.some((issue) => issue.severity === "fail")) {
+    return {
+      status: "fail",
+      title: "Repair before scaling",
+      message: "Use Eval Repair Board on the candidate run; fix trust regressions before longer runs.",
+    };
+  }
+  if (best.run !== bestBaseBpb?.run && bestBaseBpb) {
+    return {
+      status: "warn",
+      title: "Separate compression from behavior",
+      message: `${bestBaseBpb.run} has better base BPB; compare tokenizer/model settings before scaling ${best.run}.`,
+    };
+  }
+  if (best.run !== bestSftBpb?.run && bestSftBpb) {
+    return {
+      status: "warn",
+      title: "SFT quality mismatch",
+      message: `${bestSftBpb.run} has better SFT BPB; inspect SFT curriculum before choosing a champion.`,
+    };
+  }
+  if (Number(best.pass_rate || 0) >= 0.7) {
+    return {
+      status: "pass",
+      title: "Attack harder eval",
+      message: "Keep this as reference, add harder eval rows, then run a stronger preset.",
+    };
+  }
+  return {
+    status: "warn",
+    title: "Improve data next",
+    message: "Use failed eval categories to add targeted SFT rows before changing architecture.",
+  };
 }
 
 function experimentNotebook(comparison) {
@@ -3724,6 +3848,13 @@ function signedPercent(value) {
 function signedLoss(value) {
   const sign = value > 0 ? "+" : "";
   return `${sign}${fmtLoss(value)}`;
+}
+
+function optionalNumberDelta(after, before) {
+  const afterNumber = Number(after);
+  const beforeNumber = Number(before);
+  if (!Number.isFinite(afterNumber) || !Number.isFinite(beforeNumber)) return null;
+  return afterNumber - beforeNumber;
 }
 
 function renderCompareError(error) {

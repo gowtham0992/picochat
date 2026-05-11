@@ -2015,6 +2015,49 @@ th {
   margin-bottom: 10px;
 }
 
+.compare-decision-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 10px;
+}
+
+.compare-decision-card {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 5px;
+  min-height: 92px;
+  padding: 8px;
+}
+
+.compare-decision-card label {
+  margin: 0;
+}
+
+.compare-decision-card strong {
+  color: var(--ink);
+  line-height: 1.35;
+}
+
+.compare-decision-card p {
+  color: var(--muted);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.compare-decision-card.pass strong {
+  color: var(--green);
+}
+
+.compare-decision-card.warn strong {
+  color: var(--accent);
+}
+
+.compare-decision-card.fail strong {
+  color: var(--red);
+}
+
 .notebook-grid {
   display: grid;
   gap: 8px;
@@ -2319,6 +2362,7 @@ th {
   .tuning-preflight,
   .compare-layout,
   .compare-cards,
+  .compare-decision-grid,
   .notebook-grid,
   .eval-summary-cards,
   .teaching-note,
