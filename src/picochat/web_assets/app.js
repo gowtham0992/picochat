@@ -9,6 +9,7 @@ const state = {
   activeReport: "summary",
   compareRuns: [],
   compareDetails: {},
+  comparison: null,
   corpusSourcePreview: null,
   datasetFlightPlan: null,
   hfImport: null,
@@ -252,6 +253,7 @@ function bindControls() {
       }
       renderCompareControls();
       resetCompareLearningPanels();
+      renderStartHere();
     }
   });
   $("compare-button").addEventListener("click", () => {
@@ -601,6 +603,8 @@ function startHereSteps() {
   const evalSummary = state.detail?.eval_reports?.at(-1)?.report?.summary || state.detail?.summary?.eval;
   const hasEval = Boolean(evalSummary?.num_examples);
   const canCompare = state.runs.length >= 2;
+  const comparedRuns = state.comparison?.rows?.length || 0;
+  const hasComparison = comparedRuns >= 2;
   const steps = [
     {
       label: "Choose dataset",
@@ -671,8 +675,8 @@ function startHereSteps() {
       label: "Compare",
       panel: "compare",
       target: "panel-compare",
-      status: "todo",
-      signal: canCompare ? `${state.runs.length} runs available` : "Need two runs",
+      status: hasComparison ? "done" : "todo",
+      signal: hasComparison ? `Compared ${comparedRuns} runs` : canCompare ? `${state.runs.length} runs available` : "Need two runs",
       note: "A better SLM is a measured improvement, not a single good sample.",
       action: "Compare runs side by side. Better means lower loss, stronger evals, and no trust regressions.",
     },
@@ -3428,6 +3432,7 @@ function renderCompareControls() {
 }
 
 function resetCompareLearningPanels() {
+  state.comparison = null;
   if ($("experiment-notebook")) {
     $("experiment-notebook").textContent = "RUN SET CHANGED. PRESS COMPARE SELECTED TO REBUILD THE EXPERIMENT NOTEBOOK.";
   }
@@ -3453,7 +3458,9 @@ async function loadComparison() {
     })),
   ]);
   state.compareDetails = Object.fromEntries(detailEntries);
+  state.comparison = comparison;
   renderComparison(comparison);
+  renderStartHere();
 }
 
 function renderComparison(comparison) {
