@@ -85,12 +85,14 @@ def compare_runs(run_dirs: list[str | Path]) -> dict:
     best = max(rows, key=lambda row: (row.pass_rate, -row.sft_val_loss))
     best_base_bpb = _best_optional_bpb(rows, "base_val_bpb")
     best_sft_bpb = _best_optional_bpb(rows, "sft_val_bpb")
+    decision = _comparison_decision(rows, best, best_base_bpb, best_sft_bpb)
     return {
         "rows": [row.to_dict() for row in rows],
         "best_run": best.run,
         "best_eval_run": best.run,
         "best_base_bpb_run": best_base_bpb.run if best_base_bpb else None,
         "best_sft_bpb_run": best_sft_bpb.run if best_sft_bpb else None,
+        "decision": decision,
     }
 
 
@@ -151,6 +153,12 @@ def comparison_table(comparison: dict) -> str:
         lines.append(f"Best base BPB run: {comparison['best_base_bpb_run']}")
     if comparison.get("best_sft_bpb_run"):
         lines.append(f"Best SFT BPB run: {comparison['best_sft_bpb_run']}")
+    decision = comparison.get("decision") or {}
+    if decision:
+        lines.append("")
+        lines.append(f"Champion gate: {decision.get('champion_title', 'n/a')}")
+        lines.append(f"Regression watch: {decision.get('regression_title', 'n/a')}")
+        lines.append(f"Next experiment: {decision.get('next_title', 'n/a')}")
     return "\n".join(lines)
 
 
@@ -165,9 +173,39 @@ def comparison_markdown(comparison: dict) -> str:
         "",
         f"Best SFT BPB run: `{comparison.get('best_sft_bpb_run') or 'n/a'}`",
         "",
+    ]
+    decision = comparison.get("decision") or {}
+    if decision:
+        lines.extend([
+            "## Decision Gate",
+            "",
+            "| Gate | Status | Message |",
+            "| --- | --- | --- |",
+            (
+                f"| Champion | `{decision.get('champion_status', 'unknown')}` | "
+                f"{_markdown_text(decision.get('champion_title'))}: {_markdown_text(decision.get('champion_message'))} |"
+            ),
+            (
+                f"| Regression | `{decision.get('regression_status', 'unknown')}` | "
+                f"{_markdown_text(decision.get('regression_title'))}: {_markdown_text(decision.get('regression_message'))} |"
+            ),
+            (
+                f"| Next | `{decision.get('next_status', 'unknown')}` | "
+                f"{_markdown_text(decision.get('next_title'))}: {_markdown_text(decision.get('next_message'))} |"
+            ),
+            "",
+        ])
+        issues = decision.get("issues") or []
+        if issues:
+            lines.append("Watch items:")
+            lines.append("")
+            for issue in issues:
+                lines.append(f"- `{issue.get('severity', 'warn')}` {_markdown_text(issue.get('message'))}")
+            lines.append("")
+    lines.extend([
         "| Run | Tokenizer | Eval | Pass Rate | Support Match | Prompt Echo | Base Val BPB | SFT Val BPB | Base Val Loss | SFT Val Loss | Best Steps | Stop Reasons | Base Loss Status | SFT Loss Status | Memorization | Params | Context | Truncated Examples |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | ---: | ---: | ---: |",
-    ]
+    ])
     for row in comparison["rows"]:
         lines.append(
             f"| `{row['run']}` | `{row['tokenizer_type']}` | {row['eval_score']} | "
@@ -202,6 +240,136 @@ def write_comparison_report(comparison: dict, output_path: str | Path) -> None:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(comparison_markdown(comparison), encoding="utf-8")
+
+
+def _comparison_decision(
+    rows: list[CompareRow],
+    best: CompareRow,
+    best_base_bpb: CompareRow | None,
+    best_sft_bpb: CompareRow | None,
+) -> dict:
+    ranked = sorted(rows, key=lambda row: (row.pass_rate, -row.sft_val_loss), reverse=True)
+    baseline = next((row for row in ranked if row.run != best.run), None)
+    issues = _regression_issues(best, baseline)
+    pass_delta = best.pass_rate - baseline.pass_rate if baseline else None
+    champion_status = (
+        "warn" if baseline is None
+        else "fail" if any(issue["severity"] == "fail" for issue in issues)
+        else "warn" if issues
+        else "pass"
+    )
+    champion_title = (
+        "Need a baseline" if baseline is None
+        else "Promote as reference" if champion_status == "pass"
+        else "Promising, inspect regressions" if champion_status == "warn"
+        else "Do not promote yet"
+    )
+    champion_message = (
+        "Compare at least two runs so the winner has something to beat."
+        if baseline is None
+        else f"{best.run} is {_signed_percent(pass_delta or 0.0)} eval pass versus {baseline.run}."
+    )
+    regression_status = (
+        "warn" if baseline is None
+        else "fail" if any(issue["severity"] == "fail" for issue in issues)
+        else "warn" if issues
+        else "pass"
+    )
+    regression_title = (
+        "No regression check" if baseline is None
+        else f"{len(issues)} watch item{'s' if len(issues) != 1 else ''}" if issues
+        else "No obvious regression"
+    )
+    regression_message = (
+        "Regression checks need both a candidate and a baseline."
+        if baseline is None
+        else " ".join(issue["message"] for issue in issues) if issues
+        else "Eval pass, support, echo, SFT BPB, truncation, and memorization look acceptable."
+    )
+    next_step = _next_experiment(best, baseline, issues, best_base_bpb, best_sft_bpb)
+    return {
+        "baseline_run": baseline.run if baseline else None,
+        "champion_status": champion_status,
+        "champion_title": champion_title,
+        "champion_message": champion_message,
+        "regression_status": regression_status,
+        "regression_title": regression_title,
+        "regression_message": regression_message,
+        "next_status": next_step["status"],
+        "next_title": next_step["title"],
+        "next_message": next_step["message"],
+        "issues": issues,
+    }
+
+
+def _regression_issues(best: CompareRow, baseline: CompareRow | None) -> list[dict]:
+    if baseline is None:
+        return []
+    issues: list[dict] = []
+    pass_delta = best.pass_rate - baseline.pass_rate
+    support_delta = _optional_delta(best.support_match_rate, baseline.support_match_rate)
+    echo_delta = _optional_delta(best.prompt_echo_rate, baseline.prompt_echo_rate)
+    sft_bpb_delta = _optional_delta(best.sft_val_bpb, baseline.sft_val_bpb)
+    if pass_delta < 0.02:
+        issues.append({"severity": "warn", "message": "Eval gain is under +2 points."})
+    if support_delta is not None and support_delta < -0.05:
+        issues.append({"severity": "fail", "message": f"Support match dropped {_signed_percent(support_delta)}."})
+    if echo_delta is not None and echo_delta > 0.02:
+        issues.append({"severity": "fail", "message": f"Prompt echo worsened {_signed_percent(echo_delta)}."})
+    if sft_bpb_delta is not None and sft_bpb_delta > 0.10:
+        issues.append({"severity": "warn", "message": f"SFT BPB rose {_signed_float(sft_bpb_delta)}."})
+    if best.truncated_examples > baseline.truncated_examples:
+        issues.append({"severity": "warn", "message": "More SFT rows were truncated."})
+    if best.memorization_status.lower() != "low":
+        issues.append({"severity": "fail", "message": f"Memorization status is {best.memorization_status}."})
+    return issues
+
+
+def _next_experiment(
+    best: CompareRow,
+    baseline: CompareRow | None,
+    issues: list[dict],
+    best_base_bpb: CompareRow | None,
+    best_sft_bpb: CompareRow | None,
+) -> dict:
+    if baseline is None:
+        return {
+            "status": "warn",
+            "title": "Add a comparison run",
+            "message": "Compare against a previous run before changing model size or training time.",
+        }
+    if any(issue["severity"] == "fail" for issue in issues):
+        return {
+            "status": "fail",
+            "title": "Repair before scaling",
+            "message": "Fix trust regressions before longer runs or larger models.",
+        }
+    if best_base_bpb and best.run != best_base_bpb.run:
+        return {
+            "status": "warn",
+            "title": "Separate compression from behavior",
+            "message": (
+                f"{best_base_bpb.run} has better base BPB; compare tokenizer/model "
+                f"settings before scaling {best.run}."
+            ),
+        }
+    if best_sft_bpb and best.run != best_sft_bpb.run:
+        return {
+            "status": "warn",
+            "title": "SFT quality mismatch",
+            "message": f"{best_sft_bpb.run} has better SFT BPB; inspect SFT curriculum before choosing a champion.",
+        }
+    if best.pass_rate >= 0.70:
+        return {
+            "status": "pass",
+            "title": "Attack harder eval",
+            "message": "Keep this as reference, add harder eval rows, then run a stronger preset.",
+        }
+    return {
+        "status": "warn",
+        "title": "Improve data next",
+        "message": "Use failed eval categories to add targeted SFT rows before changing architecture.",
+    }
 
 
 def _short_int(value: int) -> str:
@@ -251,6 +419,26 @@ def _format_optional_percent(value: float | None) -> str:
     if value is None:
         return "--"
     return f"{value * 100:.2f}%"
+
+
+def _optional_delta(after: float | None, before: float | None) -> float | None:
+    if after is None or before is None:
+        return None
+    return after - before
+
+
+def _signed_percent(value: float) -> str:
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value * 100:.2f}%"
+
+
+def _signed_float(value: float) -> str:
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.4f}"
+
+
+def _markdown_text(value: object) -> str:
+    return str(value or "").replace("|", "\\|").replace("\n", " ")
 
 
 def _format_best_steps(row: dict) -> str:

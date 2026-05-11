@@ -82,6 +82,9 @@ def test_compare_runs_selects_best_eval_run(tmp_path):
     assert comparison["best_eval_run"] == "tiny-b"
     assert comparison["best_base_bpb_run"] == "tiny-a"
     assert comparison["best_sft_bpb_run"] == "tiny-b"
+    assert comparison["decision"]["baseline_run"] == "tiny-a"
+    assert comparison["decision"]["champion_title"] == "Promote as reference"
+    assert comparison["decision"]["next_title"] == "Separate compression from behavior"
     assert len(comparison["rows"]) == 2
 
 
@@ -105,7 +108,9 @@ def test_comparison_table_and_markdown_include_metrics(tmp_path):
     assert "max/early" in table
     assert "low" in table
     assert "114.6k" in table
+    assert "Champion gate" in table
     assert "# Picochat Run Comparison" in markdown
+    assert "## Decision Gate" in markdown
     assert "Base Val BPB" in markdown
     assert "Support Match" in markdown
     assert "Prompt Echo" in markdown

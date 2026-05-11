@@ -618,4 +618,5 @@ def test_cli_compare(tmp_path, capsys):
     assert "tiny-a" in output
     assert "tiny-b" in output
     assert "Best eval run: tiny-b" in output
+    assert "Champion gate:" in output
     assert out_path.exists()
