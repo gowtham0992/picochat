@@ -191,6 +191,34 @@ def init_dataset_pack(
     )
 
 
+def update_dataset_pack_tuning_paths(
+    path: str | Path,
+    chat_input: str | Path | None = None,
+    eval_input: str | Path | None = None,
+) -> DatasetPack:
+    """Point a dataset pack at new chat/eval JSONL files without rewriting them."""
+    pack_path = Path(path)
+    try:
+        payload = json.loads(pack_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Invalid dataset pack JSON: {error}") from error
+
+    if not isinstance(payload, dict):
+        raise ValueError("Dataset pack must be a JSON object.")
+    if chat_input is None and eval_input is None:
+        raise ValueError("chat_input or eval_input is required")
+
+    if chat_input is not None:
+        chat_path = _existing_file(chat_input, "chat_input")
+        payload["chat"] = _relative_path(chat_path, pack_path.parent)
+    if eval_input is not None:
+        eval_path = _existing_file(eval_input, "eval_input")
+        payload["eval"] = _relative_path(eval_path, pack_path.parent)
+
+    pack_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return load_dataset_pack(pack_path)
+
+
 def _parse_corpus(value: Any, pack_path: Path) -> tuple[str | None, str | None]:
     if isinstance(value, str):
         return _resolve_path(value, pack_path), None
@@ -246,6 +274,15 @@ def _relative_path(path: str | Path, base_dir: Path) -> str:
     except ValueError:
         return str(target.resolve(strict=False))
     return Path(relative).as_posix()
+
+
+def _existing_file(path: str | Path, field: str) -> Path:
+    candidate = Path(path)
+    if not candidate.exists():
+        raise FileNotFoundError(f"Dataset pack {field} does not exist: {candidate}")
+    if not candidate.is_file():
+        raise ValueError(f"Dataset pack {field} must be a file: {candidate}")
+    return candidate
 
 
 def _jsonl(rows: list[dict]) -> str:

@@ -113,6 +113,7 @@
                 <div>
                   <strong>No dataset yet</strong>
                   <p>Use the included TinyStories examples first, or make a small text file with paragraphs and Q&A from a topic you understand.</p>
+                  <button id="sample-dataset-button" class="source-action" type="button">USE SAMPLE DATASET</button>
                 </div>
               </div>
             </div>
@@ -157,6 +158,10 @@
                 <button id="flight-apply-button" type="button">APPLY PLAN</button>
               </div>
               <div id="flight-status" class="notice">NO DATASET CHECKED.</div>
+              <div id="flight-smoke-status" class="readiness-summary blocked">
+                <strong>SMOKE TRAIN WAITING</strong>
+                <span>Choose a dataset source, then run the readiness check.</span>
+              </div>
               <div id="flight-plan" class="flight-plan"></div>
               <div id="flight-command" class="command-tape source-command"></div>
               <div id="flight-sft-result" class="flight-starter-result"></div>

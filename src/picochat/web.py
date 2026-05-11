@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 from picochat.compare import compare_runs
 from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus_sources
-from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
+from picochat.dataset_pack import init_dataset_pack, load_dataset_pack, update_dataset_pack_tuning_paths
 from picochat.eval_starter import generate_eval_starter
 from picochat.generate import GenerateConfig, generate_text_with_trace
 from picochat.hf_import import HFImportConfig, import_hf_dataset
@@ -505,6 +505,9 @@ def sft_starter_plan(payload: dict) -> dict:
     force = payload.get("force", False)
     if not isinstance(force, bool):
         raise ValueError("force must be true or false")
+    promote_to_pack = payload.get("promote_to_pack", False)
+    if not isinstance(promote_to_pack, bool):
+        raise ValueError("promote_to_pack must be true or false")
 
     report = generate_sft_starter(
         input_path=input_path,
@@ -514,6 +517,7 @@ def sft_starter_plan(payload: dict) -> dict:
         seed=seed,
         force=force,
     )
+    promoted_pack = update_dataset_pack_tuning_paths(dataset_pack, chat_input=out_path) if dataset_pack and promote_to_pack else None
     command_parts = [
         "PYTHONPATH=src",
         "python",
@@ -533,6 +537,9 @@ def sft_starter_plan(payload: dict) -> dict:
         **report.to_dict(),
         "dataset_pack": dataset_pack,
         "force": force,
+        "promoted_to_pack": promoted_pack is not None,
+        "pack_chat_input": promoted_pack.chat_input if promoted_pack else None,
+        "pack_eval_input": promoted_pack.eval_input if promoted_pack else None,
         "command": _shell_command(*command_parts),
         "report_path": str(Path(out_path).with_suffix(".md")),
         "next_actions": [
@@ -561,6 +568,9 @@ def eval_starter_plan(payload: dict) -> dict:
     force = payload.get("force", False)
     if not isinstance(force, bool):
         raise ValueError("force must be true or false")
+    promote_to_pack = payload.get("promote_to_pack", False)
+    if not isinstance(promote_to_pack, bool):
+        raise ValueError("promote_to_pack must be true or false")
 
     report = generate_eval_starter(
         input_path=input_path,
@@ -570,6 +580,7 @@ def eval_starter_plan(payload: dict) -> dict:
         seed=seed,
         force=force,
     )
+    promoted_pack = update_dataset_pack_tuning_paths(dataset_pack, eval_input=out_path) if dataset_pack and promote_to_pack else None
     command_parts = [
         "PYTHONPATH=src",
         "python",
@@ -589,6 +600,9 @@ def eval_starter_plan(payload: dict) -> dict:
         **report.to_dict(),
         "dataset_pack": dataset_pack,
         "force": force,
+        "promoted_to_pack": promoted_pack is not None,
+        "pack_chat_input": promoted_pack.chat_input if promoted_pack else None,
+        "pack_eval_input": promoted_pack.eval_input if promoted_pack else None,
         "command": _shell_command(*command_parts),
         "report_path": str(Path(out_path).with_suffix(".md")),
         "next_actions": [

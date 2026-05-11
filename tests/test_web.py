@@ -622,6 +622,44 @@ def test_sft_starter_plan_accepts_dataset_pack(tmp_path):
     assert report["force"] is True
 
 
+def test_starter_plans_can_promote_generated_files_to_dataset_pack(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    pack_path = tmp_path / "dataset_pack.json"
+    chat_path = tmp_path / "chat_generated.jsonl"
+    eval_path = tmp_path / "eval_generated.jsonl"
+    source_path.write_text(
+        "Coffee shop training data describes espresso, filters, and pastry pairings. "
+        "The menu changes slowly and should not be treated as live news.",
+        encoding="utf-8",
+    )
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    sft_report = sft_starter_plan({
+        "dataset_pack": str(pack_path),
+        "out_path": str(chat_path),
+        "force": True,
+        "promote_to_pack": True,
+    })
+    eval_report = eval_starter_plan({
+        "dataset_pack": str(pack_path),
+        "out_path": str(eval_path),
+        "force": True,
+        "promote_to_pack": True,
+    })
+
+    payload = json.loads(pack_path.read_text(encoding="utf-8"))
+    assert payload["chat"] == "chat_generated.jsonl"
+    assert payload["eval"] == "eval_generated.jsonl"
+    assert sft_report["promoted_to_pack"] is True
+    assert eval_report["promoted_to_pack"] is True
+    assert sft_report["pack_chat_input"] == str(chat_path)
+    assert eval_report["pack_eval_input"] == str(eval_path)
+
+
 def test_pack_editor_loads_and_saves_pack_jsonl(tmp_path):
     corpus_path = tmp_path / "lesson.txt"
     pack_dir = tmp_path / "pack"

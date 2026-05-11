@@ -27,6 +27,10 @@ const state = {
   statusTimer: null,
 };
 
+const SAMPLE_DATASET_PACK = "examples/tiny_dataset_pack.json";
+const SAMPLE_CHAT_INPUT = "examples/tiny_chat.jsonl";
+const SAMPLE_EVAL_INPUT = "examples/tiny_eval.jsonl";
+
 const $ = (id) => document.getElementById(id);
 
 const PANEL_GUIDES = {
@@ -254,6 +258,9 @@ function bindControls() {
   });
   $("preview-corpus-button").addEventListener("click", () => {
     previewCorpusSources().catch((error) => renderCorpusSourcePreviewError(error));
+  });
+  $("sample-dataset-button").addEventListener("click", () => {
+    useSampleDataset().catch((error) => renderDatasetFlightPlanError(error));
   });
   $("flight-check-button").addEventListener("click", () => {
     checkDatasetFlightPlan().catch((error) => renderDatasetFlightPlanError(error));
@@ -1429,6 +1436,58 @@ function seedHfOutDirFromDataset() {
   outInput.value = `runs/hf-${slugify(dataset)}-${$("hf-max-rows").value || 1000}`;
 }
 
+async function useSampleDataset() {
+  $("sample-dataset-button").disabled = true;
+  $("flight-status").innerHTML = 'CHECKING SAMPLE DATASET<span class="cursor"></span>';
+  state.hfImport = null;
+  state.datasetPackInit = null;
+  state.sftStarter = null;
+  state.evalStarter = null;
+  applyDatasetPackToWorkflow({
+    datasetPack: SAMPLE_DATASET_PACK,
+    chatInput: SAMPLE_CHAT_INPUT,
+    evalInput: SAMPLE_EVAL_INPUT,
+    runNameSeed: "sample-smoke",
+  });
+  renderHfImport(null);
+  renderSftStarter(null);
+  renderEvalStarter(null);
+  try {
+    await refreshDatasetFlightPlanAfterChange();
+    applyFlightPlanToLauncher(true);
+    flashStatus("SAMPLE DATASET READY. | Run smoke train when you are ready.");
+  } finally {
+    $("sample-dataset-button").disabled = false;
+  }
+}
+
+function applyDatasetPackToWorkflow({ datasetPack, chatInput = "", evalInput = "", runNameSeed = "" }) {
+  if (!datasetPack) return;
+  $("flight-pack-path").value = datasetPack;
+  $("flight-input-path").value = "";
+  $("flight-chat-path").value = chatInput || "";
+  $("flight-sft-out-path").value = suggestedSftStarterPath(chatInput || datasetPack);
+  $("flight-eval-path").value = evalInput || "";
+  $("flight-eval-out-path").value = suggestedEvalStarterPath(evalInput || datasetPack);
+
+  $("preview-pack-path").value = datasetPack;
+  $("preview-recipe-path").value = "";
+  $("preview-input-path").value = "";
+  $("preview-chat-path").value = chatInput || "";
+  $("preview-eval-path").value = evalInput || "";
+
+  $("tuning-pack-path").value = datasetPack;
+  $("tuning-chat-path").value = "";
+  $("tuning-eval-path").value = "";
+
+  $("editor-pack-path").value = datasetPack;
+  $("editor-chat-path").value = "";
+  $("editor-eval-path").value = "";
+
+  $("launch-pack-path").value = datasetPack;
+  $("launch-run-name").value = uniqueRunName(runNameSeed || suggestedRunName(datasetPack));
+}
+
 async function importHfDataset() {
   const dataset = $("hf-dataset-input").value.trim();
   const outDir = $("hf-out-dir").value.trim();
@@ -1459,25 +1518,12 @@ async function importHfDataset() {
     state.datasetFlightPlan = report.preview;
     state.corpusSourcePreview = report.preview;
     state.tuningInspection = tuningInspectionFromPreview(report.preview);
-    $("flight-pack-path").value = report.dataset_pack || "";
-    $("flight-input-path").value = "";
-    $("flight-chat-path").value = "";
-    $("flight-sft-out-path").value = report.chat_input ? suggestedSftStarterPath(report.chat_input) : "";
-    $("flight-eval-path").value = "";
-    $("flight-eval-out-path").value = report.eval_input ? suggestedEvalStarterPath(report.eval_input) : "";
-    $("preview-pack-path").value = report.dataset_pack || "";
-    $("preview-recipe-path").value = "";
-    $("preview-input-path").value = "";
-    $("preview-chat-path").value = "";
-    $("preview-eval-path").value = "";
-    $("tuning-pack-path").value = report.dataset_pack || "";
-    $("tuning-chat-path").value = "";
-    $("tuning-eval-path").value = "";
-    $("editor-pack-path").value = report.dataset_pack || "";
-    $("editor-chat-path").value = "";
-    $("editor-eval-path").value = "";
-    $("launch-pack-path").value = report.dataset_pack || "";
-    $("launch-run-name").value = suggestedRunName(report.dataset_pack || report.dataset);
+    applyDatasetPackToWorkflow({
+      datasetPack: report.dataset_pack || "",
+      chatInput: report.chat_input || "",
+      evalInput: report.eval_input || "",
+      runNameSeed: suggestedRunName(report.dataset_pack || report.dataset),
+    });
     renderHfImport(report);
     renderDatasetFlightPlan(report.preview);
     renderCorpusSourcePreview(report.preview);
@@ -1655,25 +1701,12 @@ async function initDatasetPack() {
       force,
     });
     state.datasetPackInit = report;
-    $("preview-pack-path").value = report.dataset_pack || "";
-    $("preview-recipe-path").value = "";
-    $("preview-input-path").value = "";
-    $("preview-chat-path").value = "";
-    $("preview-eval-path").value = "";
-    $("flight-pack-path").value = report.dataset_pack || "";
-    $("flight-input-path").value = "";
-    $("flight-chat-path").value = "";
-    $("flight-sft-out-path").value = report.chat_input ? suggestedSftStarterPath(report.chat_input) : "";
-    $("flight-eval-path").value = "";
-    $("flight-eval-out-path").value = report.eval_input ? suggestedEvalStarterPath(report.eval_input) : "";
-    $("tuning-pack-path").value = report.dataset_pack || "";
-    $("tuning-chat-path").value = "";
-    $("tuning-eval-path").value = "";
-    $("editor-pack-path").value = report.dataset_pack || "";
-    $("editor-chat-path").value = "";
-    $("editor-eval-path").value = "";
-    $("launch-pack-path").value = report.dataset_pack || "";
-    $("launch-run-name").value = suggestedRunName(report.dataset_pack || "picochat");
+    applyDatasetPackToWorkflow({
+      datasetPack: report.dataset_pack || "",
+      chatInput: report.chat_input || "",
+      evalInput: report.eval_input || "",
+      runNameSeed: suggestedRunName(report.dataset_pack || "picochat"),
+    });
     renderDatasetPackInit(report);
     inspectTuningData().catch((error) => renderTuningInspectionError(error));
     loadPackEditor().catch((error) => renderPackEditorError(error));
@@ -2220,6 +2253,12 @@ async function checkDatasetFlightPlan() {
   $("flight-status").innerHTML = 'CHECKING DATASET<span class="cursor"></span>';
   $("flight-plan").innerHTML = "";
   $("flight-command").innerHTML = "";
+  const report = await refreshDatasetFlightPlanAfterChange(payload);
+  $("flight-check-button").disabled = false;
+  return report;
+}
+
+async function refreshDatasetFlightPlanAfterChange(payload = datasetFlightPayload()) {
   const report = await postJson("/api/corpus/preview", {
     ...payload,
     preview_chars: 900,
@@ -2241,7 +2280,7 @@ async function checkDatasetFlightPlan() {
   renderCorpusSourcePreview(report);
   renderTuningInspection(state.tuningInspection);
   renderStartHere();
-  $("flight-check-button").disabled = false;
+  return report;
 }
 
 function datasetFlightPayload() {
@@ -2263,6 +2302,7 @@ function datasetFlightPayload() {
 function renderDatasetFlightPlan(report) {
   if (!report) {
     $("flight-status").textContent = "NO DATASET CHECKED.";
+    renderSmokeReadiness(null);
     $("flight-plan").innerHTML = "";
     $("flight-command").innerHTML = "";
     return;
@@ -2305,6 +2345,41 @@ function renderDatasetFlightPlan(report) {
     </div>
   `;
   $("flight-command").innerHTML = renderTrainingCommand(report.training_command);
+  renderSmokeReadiness(report);
+}
+
+function renderSmokeReadiness(report) {
+  const target = $("flight-smoke-status");
+  if (!target) return;
+  if (!report) {
+    target.className = "readiness-summary blocked";
+    target.innerHTML = `
+      <strong>SMOKE TRAIN WAITING</strong>
+      <span>Choose a dataset source, then run the readiness check.</span>
+    `;
+    return;
+  }
+  const plan = trainingPlan(report);
+  const launchPack = $("launch-pack-path").value.trim();
+  const datasetPack = report.dataset_pack || $("flight-pack-path").value.trim();
+  const canTrain = plan.status !== "blocked";
+  const launcherReady = Boolean(datasetPack && launchPack === datasetPack);
+  const className = !canTrain ? "blocked" : launcherReady ? "ready" : "caution";
+  const title = !canTrain
+    ? "SMOKE TRAIN BLOCKED"
+    : launcherReady
+      ? "READY TO SMOKE TRAIN"
+      : "APPLY PLAN NEXT";
+  const message = !canTrain
+    ? "Fix the failed corpus, SFT, or eval checks before launching."
+    : launcherReady
+      ? "Launcher has this dataset pack. Use the smoke preset first, then compare results."
+      : "Click APPLY PLAN to move these checked paths into the run launcher.";
+  target.className = `readiness-summary ${className}`;
+  target.innerHTML = `
+    <strong>${escapeHtml(title)}</strong>
+    <span>${escapeHtml(message)}</span>
+  `;
 }
 
 function trainingPlan(report) {
@@ -2397,17 +2472,31 @@ async function createSftStarter() {
     max_items: 32,
     seed: state.detail?.summary?.config?.seed ?? 42,
     force: false,
+    promote_to_pack: Boolean(packPath),
   });
   state.sftStarter = report;
-  $("flight-chat-path").value = report.output_path || outPath;
-  $("preview-chat-path").value = report.output_path || outPath;
-  $("tuning-pack-path").value = "";
-  $("tuning-chat-path").value = report.output_path || outPath;
-  if (!$("tuning-eval-path").value.trim()) $("tuning-eval-path").value = $("flight-eval-path").value.trim();
-  $("editor-pack-path").value = "";
-  $("editor-chat-path").value = report.output_path || outPath;
-  if (!$("editor-eval-path").value.trim()) $("editor-eval-path").value = $("flight-eval-path").value.trim();
+  const chatPath = report.pack_chat_input || report.output_path || outPath;
+  const evalPath = report.pack_eval_input || $("flight-eval-path").value.trim();
+  $("flight-chat-path").value = chatPath;
+  $("preview-chat-path").value = chatPath;
+  if (report.promoted_to_pack && packPath) {
+    $("tuning-pack-path").value = packPath;
+    $("tuning-chat-path").value = "";
+    $("tuning-eval-path").value = "";
+    $("editor-pack-path").value = packPath;
+    $("editor-chat-path").value = "";
+    $("editor-eval-path").value = "";
+    $("launch-pack-path").value = packPath;
+  } else {
+    $("tuning-pack-path").value = "";
+    $("tuning-chat-path").value = chatPath;
+    if (!$("tuning-eval-path").value.trim()) $("tuning-eval-path").value = evalPath;
+    $("editor-pack-path").value = "";
+    $("editor-chat-path").value = chatPath;
+    if (!$("editor-eval-path").value.trim()) $("editor-eval-path").value = evalPath;
+  }
   renderSftStarter(report);
+  await refreshDatasetFlightPlanAfterChange();
   renderStartHere();
   $("flight-sft-button").disabled = false;
 }
@@ -2426,6 +2515,7 @@ function renderSftStarter(report) {
       <div><strong>${escapeHtml(shortPath(report.report_path))}</strong><span>report</span></div>
     </div>
     <div class="mini-stat-row">
+      ${report.promoted_to_pack ? "<span>connected to dataset pack</span>" : ""}
       ${Object.entries(report.categories || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
     </div>
     <div class="command-tape source-command">
@@ -2458,17 +2548,31 @@ async function createEvalStarter() {
     max_items: 24,
     seed: state.detail?.summary?.config?.seed ?? 42,
     force: false,
+    promote_to_pack: Boolean(packPath),
   });
   state.evalStarter = report;
-  $("flight-eval-path").value = report.output_path || outPath;
-  $("preview-eval-path").value = report.output_path || outPath;
-  $("tuning-pack-path").value = "";
-  if (!$("tuning-chat-path").value.trim()) $("tuning-chat-path").value = $("flight-chat-path").value.trim();
-  $("tuning-eval-path").value = report.output_path || outPath;
-  $("editor-pack-path").value = "";
-  if (!$("editor-chat-path").value.trim()) $("editor-chat-path").value = $("flight-chat-path").value.trim();
-  $("editor-eval-path").value = report.output_path || outPath;
+  const chatPath = report.pack_chat_input || $("flight-chat-path").value.trim();
+  const evalPath = report.pack_eval_input || report.output_path || outPath;
+  $("flight-eval-path").value = evalPath;
+  $("preview-eval-path").value = evalPath;
+  if (report.promoted_to_pack && packPath) {
+    $("tuning-pack-path").value = packPath;
+    $("tuning-chat-path").value = "";
+    $("tuning-eval-path").value = "";
+    $("editor-pack-path").value = packPath;
+    $("editor-chat-path").value = "";
+    $("editor-eval-path").value = "";
+    $("launch-pack-path").value = packPath;
+  } else {
+    $("tuning-pack-path").value = "";
+    if (!$("tuning-chat-path").value.trim()) $("tuning-chat-path").value = chatPath;
+    $("tuning-eval-path").value = evalPath;
+    $("editor-pack-path").value = "";
+    if (!$("editor-chat-path").value.trim()) $("editor-chat-path").value = chatPath;
+    $("editor-eval-path").value = evalPath;
+  }
   renderEvalStarter(report);
+  await refreshDatasetFlightPlanAfterChange();
   renderStartHere();
   $("flight-eval-button").disabled = false;
 }
@@ -2487,6 +2591,7 @@ function renderEvalStarter(report) {
       <div><strong>${escapeHtml(shortPath(report.report_path))}</strong><span>report</span></div>
     </div>
     <div class="mini-stat-row">
+      ${report.promoted_to_pack ? "<span>connected to dataset pack</span>" : ""}
       ${Object.entries(report.categories || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
     </div>
     <div class="command-tape source-command">
@@ -2500,7 +2605,7 @@ function renderEvalStarter(report) {
   `;
 }
 
-function applyFlightPlanToLauncher() {
+function applyFlightPlanToLauncher(quiet = false) {
   const report = state.datasetFlightPlan;
   if (!report) {
     flashStatus("APPLY FAULT. | Check a dataset first.");
@@ -2520,13 +2625,15 @@ function applyFlightPlanToLauncher() {
   $("launch-base-steps").value = budget.suggested_base_steps || $("launch-base-steps").value;
   $("launch-sft-steps").value = Math.max(60, Number(budget.suggested_base_steps || 30));
   $("launch-min-score").value = report.min_quality_score ?? ($("flight-min-score").value || 0);
-  flashStatus("APPLIED PLAN. | Review launcher values before starting the run.");
+  if (!quiet) flashStatus("APPLIED PLAN. | Review launcher values before starting the run.");
+  renderSmokeReadiness(report);
   renderStartHere();
 }
 
 function renderDatasetFlightPlanError(error) {
   $("flight-check-button").disabled = false;
   $("flight-status").textContent = "DATASET CHECK FAULT";
+  renderSmokeReadiness(null);
   $("flight-plan").innerHTML = "";
   $("flight-command").innerHTML = "";
   $("flight-sft-result").innerHTML = "";

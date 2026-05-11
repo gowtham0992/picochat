@@ -1241,6 +1241,13 @@ textarea.guide-target-focus {
   color: var(--ink);
 }
 
+.source-action {
+  align-self: end;
+  font-size: 11px;
+  margin-top: 4px;
+  min-height: 30px;
+}
+
 .hf-import-controls {
   align-items: end;
   display: grid;
@@ -1263,6 +1270,10 @@ textarea.guide-target-focus {
   display: grid;
   gap: 10px;
   margin-top: 10px;
+}
+
+#flight-smoke-status {
+  margin-top: 8px;
 }
 
 .flight-grid,
