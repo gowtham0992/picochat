@@ -283,18 +283,32 @@ h2 {
 }
 
 .run-bank-actions button {
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: 700;
+  min-height: 34px;
   width: 100%;
 }
 
+.run-bank-actions button:not(:disabled):hover {
+  background: var(--raised);
+  color: var(--ink);
+}
+
 .run-bank-actions button.armed {
-  background: var(--ink);
+  background: var(--accent);
+  color: var(--paper);
+}
+
+.run-bank-actions button.armed:not(:disabled):hover {
+  background: var(--accent);
   color: var(--paper);
 }
 
 .run-row {
   border: 1px solid var(--line);
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-columns: 82px minmax(0, 1fr);
 }
 
 .run-row.active {
@@ -302,7 +316,9 @@ h2 {
 }
 
 .run-row.marked {
-  background: var(--raised);
+  background: var(--panel);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .run-archive-toggle {
@@ -322,12 +338,13 @@ h2 {
 
 .run-archive-toggle span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
 }
 
 .run-row.marked .run-archive-toggle span {
   color: var(--accent);
+  font-weight: 700;
 }
 
 .run-button {

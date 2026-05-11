@@ -457,7 +457,7 @@ function renderRuns() {
     <div class="run-row ${run.name === state.selectedRun ? "active" : ""} ${state.archiveSelection.has(run.name) ? "marked" : ""}">
       <label class="run-archive-toggle">
         <input type="checkbox" data-archive-run="${escapeHtml(run.name)}" ${state.archiveSelection.has(run.name) ? "checked" : ""}>
-        <span>ARCHIVE</span>
+        <span>${state.archiveSelection.has(run.name) ? "SELECTED" : "SELECT"}</span>
       </label>
       <button class="run-button ${run.name === state.selectedRun ? "active" : ""}" type="button" data-run="${escapeHtml(run.name)}">
         <span>${escapeHtml(run.name)}</span>
@@ -493,9 +493,9 @@ function renderRunArchiveAction() {
   const armed = Boolean(runNames.length && state.pendingArchiveRun === key);
   button.disabled = runNames.length === 0;
   button.textContent = armed
-    ? `CONFIRM ARCHIVE ${runNames.length}`
+    ? `CONFIRM ARCHIVE ${runNames.length} RUN${runNames.length === 1 ? "" : "S"}`
     : runNames.length
-      ? `ARCHIVE ${runNames.length} SELECTED`
+      ? `ARCHIVE ${runNames.length} RUN${runNames.length === 1 ? "" : "S"}`
       : "ARCHIVE SELECTED";
   button.classList.toggle("armed", armed);
 }
