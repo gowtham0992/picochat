@@ -2064,6 +2064,7 @@ function startRunPolling() {
 function renderRunJob(job) {
   if (!job) {
     $("run-launch-status").textContent = "NO RUN LAUNCHED.";
+    $("run-launch-progress").innerHTML = "";
     $("run-launch-command").innerHTML = "";
     $("run-launch-log").textContent = "READY.";
     $("cancel-run-job-button").disabled = true;
@@ -2072,6 +2073,7 @@ function renderRunJob(job) {
   $("run-launch-status").textContent =
     `RUN ${String(job.state || "--").toUpperCase()} | ${escapeHtml(job.run_name)} | ${job.elapsed_seconds == null ? "--" : fmtLoss(job.elapsed_seconds)}S | PID ${escapeHtml(job.pid || "--")}`;
   $("cancel-run-job-button").disabled = !job.can_cancel;
+  $("run-launch-progress").innerHTML = renderRunProgress(job.progress, job.state);
   $("run-launch-command").innerHTML = `
     <div class="command-head">
       <label>RUN COMMAND</label>
@@ -2097,6 +2099,71 @@ function renderRunJob(job) {
       loadRuns().catch(() => {});
     }
   }
+}
+
+function renderRunProgress(progress, state) {
+  if (!progress) {
+    return `
+      <div class="run-progress-head">
+        <strong>WAITING FOR PROGRESS</strong>
+        <span>Launch a run to see stage, loss, and eval movement here.</span>
+      </div>
+    `;
+  }
+  const stage = progress.stage || {};
+  return `
+    <div class="run-progress-head ${escapeHtml(stage.id || "waiting")}">
+      <div>
+        <label>RUN PROGRESS</label>
+        <strong>${escapeHtml(stage.label || String(state || "waiting").toUpperCase())}</strong>
+      </div>
+      <span>${escapeHtml(stage.message || "Reading the run log.")}</span>
+      <em>${escapeHtml(stage.index && stage.total ? `STAGE ${stage.index}/${stage.total}` : String(state || "--").toUpperCase())}</em>
+    </div>
+    <div class="run-progress-grid">
+      ${renderRunProgressCard("base", "BASE TRAIN", progress.base, stage.id)}
+      ${renderRunProgressCard("sft", "CHAT SFT", progress.sft, stage.id)}
+      ${renderEvalProgressCard(progress.eval, stage.id)}
+    </div>
+  `;
+}
+
+function renderRunProgressCard(id, label, phase, activeStage) {
+  const active = activeStage === id;
+  const percent = progressWidth(phase?.percent);
+  const stepText = phase ? `${fmtInt(phase.current)} / ${fmtInt(phase.total)} steps` : "waiting";
+  const lossText = phase
+    ? `train ${fmtLoss(phase.train_loss)} | val ${fmtLoss(phase.val_loss)} | bpb ${fmtLoss(phase.val_bpb)}`
+    : "loss will appear after the first checkpoint row";
+  return `
+    <div class="run-progress-card ${active ? "active" : ""}">
+      <label>${escapeHtml(label)}</label>
+      <strong>${escapeHtml(stepText)}</strong>
+      <div class="run-progress-meter"><span style="width:${percent}%"></span></div>
+      <p>${escapeHtml(lossText)}</p>
+    </div>
+  `;
+}
+
+function renderEvalProgressCard(evalResult, activeStage) {
+  const active = activeStage === "eval" || activeStage === "complete";
+  const percent = progressWidth(evalResult?.pass_rate);
+  const scoreText = evalResult ? `${fmtInt(evalResult.passed)} / ${fmtInt(evalResult.total)} passed` : "waiting";
+  const helper = evalResult ? `${fmtLoss(evalResult.pass_rate)}% pass rate` : "eval score appears after generation checks finish";
+  return `
+    <div class="run-progress-card ${active ? "active" : ""}">
+      <label>EVAL</label>
+      <strong>${escapeHtml(scoreText)}</strong>
+      <div class="run-progress-meter"><span style="width:${percent}%"></span></div>
+      <p>${escapeHtml(helper)}</p>
+    </div>
+  `;
+}
+
+function progressWidth(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.min(100, number));
 }
 
 function renderRunJobList() {

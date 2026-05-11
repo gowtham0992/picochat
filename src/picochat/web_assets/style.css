@@ -1430,6 +1430,94 @@ textarea.guide-target-focus {
   color: var(--inverse-muted);
 }
 
+.run-progress-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.run-progress-head {
+  align-items: center;
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(0, 1fr) auto;
+  padding: 8px;
+}
+
+.run-progress-head label {
+  margin: 0 0 3px;
+}
+
+.run-progress-head strong {
+  color: var(--accent);
+}
+
+.run-progress-head.complete strong {
+  color: var(--green);
+}
+
+.run-progress-head.failed strong {
+  color: var(--red);
+}
+
+.run-progress-head span {
+  color: var(--muted);
+}
+
+.run-progress-head em {
+  border: 1px solid var(--dim-line);
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 700;
+  padding: 2px 5px;
+  white-space: nowrap;
+}
+
+.run-progress-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.run-progress-card {
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 6px;
+  min-height: 92px;
+  padding: 8px;
+}
+
+.run-progress-card.active {
+  border-color: var(--line);
+  background: var(--raised);
+}
+
+.run-progress-card label {
+  margin: 0;
+}
+
+.run-progress-card strong {
+  color: var(--ink);
+}
+
+.run-progress-card p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.run-progress-meter {
+  border: 1px solid var(--dim-line);
+  height: 12px;
+}
+
+.run-progress-meter span {
+  background: var(--accent);
+  display: block;
+  height: 100%;
+}
+
 .pack-builder-controls {
   align-items: end;
   display: grid;
@@ -2106,6 +2194,8 @@ th {
   .run-launch-controls,
   .editor-grid,
   .run-job-list,
+  .run-progress-head,
+  .run-progress-grid,
   .pack-builder-controls,
   .pack-file-list,
   .tuning-preflight,

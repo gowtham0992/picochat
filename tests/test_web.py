@@ -14,6 +14,7 @@ from picochat.web import (
     load_run_detail,
     load_run_report,
     preview_corpus_plan,
+    _parse_run_progress,
     run_presets_plan,
     run_status_plan,
     save_pack_editor_plan,
@@ -777,6 +778,29 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert captured["kwargs"]["cwd"].name == "picochat"
     assert (tmp_path / "runs" / "ui-run" / "web_run.log").exists()
     assert run_status_plan(job["id"], tmp_path / "runs")["job"]["pid"] == 4321
+
+
+def test_run_progress_parser_extracts_training_and_eval_steps():
+    progress = _parse_run_progress(
+        "\n".join([
+            "[4/6] train base model",
+            "step 0030/0100 | train 3.0000 | val 3.5000 | val_bpb 1.9000 | 2.5s",
+            "[5/6] train chat SFT",
+            "sft step 0040/0200 | train 2.0000 | val 2.5000 | val_bpb 1.4000 | 4.0s",
+            "[6/6] run chat eval",
+            "done: 7/10 passed (70.00%)",
+        ]),
+        state="succeeded",
+        summary_exists=True,
+    )
+
+    assert progress["stage"]["id"] == "complete"
+    assert progress["base"]["current"] == 30
+    assert progress["base"]["percent"] == 30.0
+    assert progress["sft"]["current"] == 40
+    assert progress["sft"]["val_bpb"] == 1.4
+    assert progress["eval"]["passed"] == 7
+    assert progress["eval"]["pass_rate"] == 70.0
 
 
 def test_run_status_discovers_completed_web_runs_from_disk(tmp_path):

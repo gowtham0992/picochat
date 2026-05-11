@@ -8,6 +8,7 @@ import importlib.resources
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -1224,6 +1225,7 @@ def _run_job_status(job: dict) -> dict:
     returncode = process.poll()
     state = "running" if returncode is None else "succeeded" if returncode == 0 else "failed"
     summary_path = Path(job["out_dir"]) / "summary.json"
+    log_tail = _read_log_tail(Path(job["log_path"]))
     if returncode is not None:
         _write_returncode(Path(job["out_dir"]) / "web_returncode.txt", returncode)
     return {
@@ -1238,7 +1240,8 @@ def _run_job_status(job: dict) -> dict:
         "returncode": returncode,
         "elapsed_seconds": max(0, round(time.time() - job["started_at"], 1)),
         "summary_exists": summary_path.exists(),
-        "log_tail": _read_log_tail(Path(job["log_path"])),
+        "log_tail": log_tail,
+        "progress": _parse_run_progress(log_tail, state=state, summary_exists=summary_path.exists()),
         "can_cancel": state == "running",
         "source": "active",
         "updated_at": time.time(),
@@ -1270,6 +1273,7 @@ def _discover_run_jobs(runs_dir: str | Path, limit: int = 20) -> list[dict]:
         summary_path = run_dir / "summary.json"
         returncode_path = run_dir / "web_returncode.txt"
         returncode = _read_returncode(returncode_path)
+        log_tail = _read_log_tail(log_path)
         state = (
             "succeeded" if summary_path.exists()
             else "failed" if returncode not in (None, 0)
@@ -1288,7 +1292,8 @@ def _discover_run_jobs(runs_dir: str | Path, limit: int = 20) -> list[dict]:
             "returncode": returncode,
             "elapsed_seconds": None,
             "summary_exists": summary_path.exists(),
-            "log_tail": _read_log_tail(log_path),
+            "log_tail": log_tail,
+            "progress": _parse_run_progress(log_tail, state=state, summary_exists=summary_path.exists()),
             "can_cancel": False,
             "source": "disk",
             "updated_at": updated_at,
@@ -1352,6 +1357,107 @@ def _read_log_tail(path: Path, limit: int = 12000) -> str:
         return ""
     text = path.read_text(encoding="utf-8", errors="replace")
     return text[-limit:]
+
+
+def _parse_run_progress(log_text: str, state: str = "running", summary_exists: bool = False) -> dict:
+    stage = {
+        "id": "waiting",
+        "label": "Waiting for log",
+        "index": 0,
+        "total": 0,
+        "message": "The run process has started, but Picochat has not printed a pipeline stage yet.",
+    }
+    base = None
+    sft = None
+    eval_result = None
+    for line in str(log_text or "").splitlines():
+        stage_match = re.match(r"^\[(\d+)/(\d+)\]\s+(.+?)(?:\s+->.*)?$", line.strip())
+        if stage_match:
+            stage = _progress_stage(int(stage_match.group(1)), int(stage_match.group(2)), stage_match.group(3))
+            continue
+        base_match = re.match(
+            r"^step\s+(\d+)/(\d+)\s+\|\s+train\s+([0-9.]+)\s+\|\s+val\s+([0-9.]+)\s+\|\s+val_bpb\s+([0-9.]+)\s+\|\s+([0-9.]+)s",
+            line.strip(),
+        )
+        if base_match:
+            base = _progress_loss(base_match)
+            stage = {**stage, "id": "base", "label": "Base training", "message": "Learning next-token prediction on the corpus."}
+            continue
+        sft_match = re.match(
+            r"^sft step\s+(\d+)/(\d+)\s+\|\s+train\s+([0-9.]+)\s+\|\s+val\s+([0-9.]+)\s+\|\s+val_bpb\s+([0-9.]+)\s+\|\s+([0-9.]+)s",
+            line.strip(),
+        )
+        if sft_match:
+            sft = _progress_loss(sft_match)
+            stage = {**stage, "id": "sft", "label": "Chat SFT", "message": "Teaching the model chat format and preferred behavior."}
+            continue
+        done_match = re.match(r"^done:\s+(\d+)/(\d+)\s+passed\s+\(([0-9.]+)%\)", line.strip())
+        if done_match:
+            eval_result = {
+                "passed": int(done_match.group(1)),
+                "total": int(done_match.group(2)),
+                "pass_rate": float(done_match.group(3)),
+            }
+            stage = {**stage, "id": "eval", "label": "Eval complete", "message": "Scoring behavior against the eval set."}
+
+    if state == "failed":
+        stage = {**stage, "id": "failed", "label": "Run failed", "message": "Inspect the raw log for the first stack trace or error."}
+    elif summary_exists or state == "succeeded":
+        stage = {**stage, "id": "complete", "label": "Run complete", "message": "Summary artifacts are ready for eval, report, compare, and chat."}
+
+    return {
+        "stage": stage,
+        "base": base,
+        "sft": sft,
+        "eval": eval_result,
+        "summary_exists": summary_exists,
+    }
+
+
+def _progress_stage(index: int, total: int, label: str) -> dict:
+    normalized = label.lower()
+    if normalized.startswith("build corpus"):
+        stage_id = "dataset"
+        message = "Building the corpus artifacts from the selected dataset pack."
+    elif normalized.startswith("check data honesty"):
+        stage_id = "honesty"
+        message = "Checking for leakage, duplication, and suspicious overlap."
+    elif "tokenizer" in normalized:
+        stage_id = "tokenizer"
+        message = "Training the tokenizer that turns text into token IDs."
+    elif normalized.startswith("train base"):
+        stage_id = "base"
+        message = "Learning next-token prediction on the corpus."
+    elif normalized.startswith("train chat"):
+        stage_id = "sft"
+        message = "Teaching the model chat format and preferred behavior."
+    elif normalized.startswith("run chat eval"):
+        stage_id = "eval"
+        message = "Scoring behavior against the eval set."
+    else:
+        stage_id = _slug(label)
+        message = "Running the next pipeline stage."
+    return {
+        "id": stage_id,
+        "label": label.strip(),
+        "index": index,
+        "total": total,
+        "message": message,
+    }
+
+
+def _progress_loss(match: re.Match) -> dict:
+    current = int(match.group(1))
+    total = int(match.group(2))
+    return {
+        "current": current,
+        "total": total,
+        "percent": round((current / total) * 100, 2) if total else 0.0,
+        "train_loss": float(match.group(3)),
+        "val_loss": float(match.group(4)),
+        "val_bpb": float(match.group(5)),
+        "seconds": float(match.group(6)),
+    }
 
 
 def _read_json_if_exists(path: Path) -> dict | None:
