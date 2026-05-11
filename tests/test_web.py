@@ -822,6 +822,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert status["job"]["launch_config"]["base_early_stop_patience"] == 4
     assert status["job"]["launch_config"]["sft_early_stop_patience"] == 4
     assert captured["kwargs"]["cwd"].name == "picochat"
+    assert captured["kwargs"]["env"]["PYTHONUNBUFFERED"] == "1"
     assert (tmp_path / "runs" / "ui-run" / "web_run.log").exists()
     assert run_status_plan(job["id"], tmp_path / "runs")["job"]["pid"] == 4321
 

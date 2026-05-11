@@ -1338,6 +1338,7 @@ def _child_env() -> dict[str, str]:
     src_path = str(Path.cwd() / "src")
     current = env.get("PYTHONPATH")
     env["PYTHONPATH"] = f"{src_path}{os.pathsep}{current}" if current else src_path
+    env["PYTHONUNBUFFERED"] = "1"
     return env
 
 
