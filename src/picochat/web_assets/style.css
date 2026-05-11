@@ -291,7 +291,47 @@ h2 {
   color: var(--paper);
 }
 
+.run-row {
+  border: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+
+.run-row.active {
+  border-color: var(--ink);
+}
+
+.run-row.marked {
+  background: var(--raised);
+}
+
+.run-archive-toggle {
+  align-items: center;
+  border-right: 1px solid var(--line);
+  cursor: pointer;
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  min-height: 58px;
+  padding: 8px 4px;
+}
+
+.run-archive-toggle input {
+  margin: 0;
+}
+
+.run-archive-toggle span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.run-row.marked .run-archive-toggle span {
+  color: var(--accent);
+}
+
 .run-button {
+  border: 0;
   display: grid;
   gap: 6px;
   height: auto;

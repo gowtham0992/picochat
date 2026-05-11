@@ -882,6 +882,22 @@ def test_archive_run_plan_moves_run_out_of_active_bank(tmp_path):
     assert discover_runs(tmp_path / "runs") == []
 
 
+def test_archive_run_plan_moves_multiple_runs(tmp_path):
+    run_a = write_run(tmp_path / "runs", "tiny-a")
+    run_b = write_run(tmp_path / "runs", "tiny-b")
+
+    report = archive_run_plan(tmp_path / "runs", {"run_names": ["tiny-a", "tiny-b", "tiny-a"]})
+
+    archived_names = [item["run_name"] for item in report["archived_runs"]]
+    assert archived_names == ["tiny-a", "tiny-b"]
+    assert not run_a.exists()
+    assert not run_b.exists()
+    assert Path(report["archive_root"]).name.startswith("archive-")
+    for item in report["archived_runs"]:
+        assert (Path(item["archive_path"]) / "summary.json").exists()
+    assert discover_runs(tmp_path / "runs") == []
+
+
 def test_archive_run_plan_refuses_running_job(tmp_path):
     run_dir = write_run(tmp_path / "runs", "tiny-a")
 

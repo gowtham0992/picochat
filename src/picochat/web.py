@@ -902,29 +902,37 @@ def archive_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     """Move a completed run out of the active run bank without deleting it."""
     if not isinstance(payload, dict):
         raise ValueError("request body must be a JSON object")
-    run_name = _optional_string(payload.get("run_name"))
-    if not run_name:
-        raise ValueError("run_name is required")
-    if Path(run_name).name != run_name:
-        raise ValueError("run_name must be an active top-level run")
+    run_names = _archive_run_names(payload)
 
     root = Path(runs_dir)
-    run_dir = _safe_child(root, run_name)
-    if not run_dir.exists() or not (run_dir / "summary.json").exists():
-        raise FileNotFoundError(f"missing run summary: {run_dir / 'summary.json'}")
-    active_job = _active_job_for_run(run_dir)
-    if active_job:
-        raise ValueError(f"cannot archive running run: {run_name}. Cancel or wait for it first.")
+    run_dirs = []
+    for run_name in run_names:
+        run_dir = _safe_child(root, run_name)
+        if not run_dir.exists() or not (run_dir / "summary.json").exists():
+            raise FileNotFoundError(f"missing run summary: {run_dir / 'summary.json'}")
+        active_job = _active_job_for_run(run_dir)
+        if active_job:
+            raise ValueError(f"cannot archive running run: {run_name}. Cancel or wait for it first.")
+        run_dirs.append((run_name, run_dir))
 
     archive_root = root / f"archive-{date.today().isoformat()}"
     archive_root.mkdir(parents=True, exist_ok=True)
-    destination = _unique_archive_path(archive_root / run_dir.name)
-    shutil.move(str(run_dir), str(destination))
+    archived_runs = []
+    for run_name, run_dir in run_dirs:
+        destination = _unique_archive_path(archive_root / run_dir.name)
+        shutil.move(str(run_dir), str(destination))
+        archived_runs.append({
+            "run_name": run_name,
+            "source": str(run_dir),
+            "archive_path": str(destination),
+        })
     return {
         "archived": True,
-        "run_name": run_name,
-        "source": str(run_dir),
-        "archive_path": str(destination),
+        "run_name": archived_runs[0]["run_name"],
+        "source": archived_runs[0]["source"],
+        "archive_path": archived_runs[0]["archive_path"],
+        "archive_root": str(archive_root),
+        "archived_runs": archived_runs,
         "runs": discover_runs(root),
     }
 
@@ -1094,6 +1102,31 @@ def _unique_archive_path(path: Path) -> Path:
         if not candidate.exists():
             return candidate
     raise FileExistsError(f"could not choose unique archive path for {path}")
+
+
+def _archive_run_names(payload: dict) -> list[str]:
+    raw_run_names = payload.get("run_names")
+    if raw_run_names is None:
+        run_name = _optional_string(payload.get("run_name"))
+        raw_run_names = [run_name] if run_name else []
+    if not isinstance(raw_run_names, list):
+        raise ValueError("run_names must be a list")
+
+    run_names = []
+    seen = set()
+    for item in raw_run_names:
+        run_name = _optional_string(item)
+        if not run_name:
+            continue
+        if Path(run_name).name != run_name:
+            raise ValueError("run_name must be an active top-level run")
+        if run_name not in seen:
+            run_names.append(run_name)
+            seen.add(run_name)
+
+    if not run_names:
+        raise ValueError("run_name is required")
+    return run_names
 
 
 def _read_json(path: Path) -> dict:

@@ -2,6 +2,7 @@ const state = {
   runs: [],
   selectedRun: null,
   pendingArchiveRun: null,
+  archiveSelection: new Set(),
   detail: null,
   activePanel: "dataset",
   activeStage: "dataset",
@@ -205,22 +206,51 @@ function padSeed(value) {
   return String(value ?? 42).padStart(4, "0").slice(-4);
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url);
-  const payload = await response.json();
+async function requestJson(url, options = {}) {
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (error) {
+    throw new Error(apiTransportMessage(error));
+  }
+  const text = await response.text();
+  let payload = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      throw new Error(apiNonJsonMessage(response, text));
+    }
+  }
   if (!response.ok) throw apiError(payload, response.statusText);
   return payload;
 }
 
+async function fetchJson(url) {
+  return requestJson(url);
+}
+
 async function postJson(url, body) {
-  const response = await fetch(url, {
+  return requestJson(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const payload = await response.json();
-  if (!response.ok) throw apiError(payload, response.statusText);
-  return payload;
+}
+
+function apiTransportMessage(error) {
+  const hint = location.protocol === "file:"
+    ? " Open Picochat through the web server, not file://. Run: PYTHONPATH=src python -m picochat.cli web"
+    : "";
+  return `API request failed: ${error.message}.${hint}`;
+}
+
+function apiNonJsonMessage(response, text) {
+  const preview = String(text || "").replace(/\s+/g, " ").trim().slice(0, 160);
+  const hint = location.protocol === "file:"
+    ? " You are on file://, so /api routes are not available. Start Picochat with: PYTHONPATH=src python -m picochat.cli web"
+    : " Make sure the Picochat web server is running the latest code.";
+  return `API returned non-JSON (${response.status} ${response.statusText}). ${hint}${preview ? ` Response starts: ${preview}` : ""}`;
 }
 
 function apiError(payload, fallback) {
@@ -243,7 +273,9 @@ function bindControls() {
   $("inspect-mode-button").addEventListener("click", () => setViewMode("inspect"));
   $("classic-theme-button").addEventListener("click", () => setTheme("classic"));
   $("paper-theme-button").addEventListener("click", () => setTheme("paper"));
-  $("refresh-button").addEventListener("click", loadRuns);
+  $("refresh-button").addEventListener("click", () => {
+    refreshDashboard().catch((error) => flashStatus(`REFRESH FAULT. | ${error.message}`));
+  });
   $("archive-selected-button").addEventListener("click", () => {
     archiveSelectedRun().catch((error) => flashStatus(`ARCHIVE FAULT. | ${error.message}`));
   });
@@ -392,6 +424,7 @@ async function loadRuns() {
   state.runs = payload.runs;
   $("run-count").textContent = `${state.runs.length} RUNS`;
   const runNames = state.runs.map((run) => run.name);
+  state.archiveSelection = new Set([...state.archiveSelection].filter((name) => runNames.includes(name)));
   if (state.selectedRun && !runNames.includes(state.selectedRun)) {
     state.selectedRun = null;
     state.pendingArchiveRun = null;
@@ -421,11 +454,28 @@ function renderRuns() {
     return;
   }
   list.innerHTML = state.runs.map((run) => `
-    <button class="run-button ${run.name === state.selectedRun ? "active" : ""}" type="button" data-run="${escapeHtml(run.name)}">
-      <span>${escapeHtml(run.name)}</span>
-      <small>${escapeHtml(run.eval_score)} | ${fmtPercent(run.pass_rate)} | CTX ${escapeHtml(run.context_size)}</small>
-    </button>
+    <div class="run-row ${run.name === state.selectedRun ? "active" : ""} ${state.archiveSelection.has(run.name) ? "marked" : ""}">
+      <label class="run-archive-toggle">
+        <input type="checkbox" data-archive-run="${escapeHtml(run.name)}" ${state.archiveSelection.has(run.name) ? "checked" : ""}>
+        <span>ARCHIVE</span>
+      </label>
+      <button class="run-button ${run.name === state.selectedRun ? "active" : ""}" type="button" data-run="${escapeHtml(run.name)}">
+        <span>${escapeHtml(run.name)}</span>
+        <small>${escapeHtml(run.eval_score)} | ${fmtPercent(run.pass_rate)} | CTX ${escapeHtml(run.context_size)}</small>
+      </button>
+    </div>
   `).join("");
+  list.querySelectorAll("[data-archive-run]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) {
+        state.archiveSelection.add(checkbox.dataset.archiveRun);
+      } else {
+        state.archiveSelection.delete(checkbox.dataset.archiveRun);
+      }
+      state.pendingArchiveRun = null;
+      renderRuns();
+    });
+  });
   list.querySelectorAll("[data-run]").forEach((button) => {
     button.addEventListener("click", async () => {
       state.selectedRun = button.dataset.run;
@@ -438,36 +488,74 @@ function renderRuns() {
 
 function renderRunArchiveAction() {
   const button = $("archive-selected-button");
-  const armed = Boolean(state.selectedRun && state.pendingArchiveRun === state.selectedRun);
-  button.disabled = !state.selectedRun;
-  button.textContent = armed ? "CONFIRM ARCHIVE" : "ARCHIVE SELECTED";
+  const runNames = selectedArchiveRuns();
+  const key = archiveSelectionKey(runNames);
+  const armed = Boolean(runNames.length && state.pendingArchiveRun === key);
+  button.disabled = runNames.length === 0;
+  button.textContent = armed
+    ? `CONFIRM ARCHIVE ${runNames.length}`
+    : runNames.length
+      ? `ARCHIVE ${runNames.length} SELECTED`
+      : "ARCHIVE SELECTED";
   button.classList.toggle("armed", armed);
 }
 
 async function archiveSelectedRun() {
-  const runName = state.selectedRun;
-  if (!runName) throw new Error("select a run first");
-  if (state.pendingArchiveRun !== runName) {
-    state.pendingArchiveRun = runName;
+  const runNames = selectedArchiveRuns();
+  if (!runNames.length) throw new Error("mark one or more runs first");
+  const key = archiveSelectionKey(runNames);
+  if (state.pendingArchiveRun !== key) {
+    state.pendingArchiveRun = key;
     renderRunArchiveAction();
-    flashStatus(`ARCHIVE ARMED FOR ${runName}. | CLICK AGAIN TO MOVE IT OUT OF RUN BANK.`);
+    flashStatus(`ARCHIVE ARMED FOR ${runNames.length} RUN${runNames.length === 1 ? "" : "S"}. | CLICK AGAIN TO MOVE OUT OF RUN BANK.`);
     return;
   }
   const button = $("archive-selected-button");
   button.disabled = true;
   button.textContent = "ARCHIVING";
   try {
-    const payload = await postJson("/api/run/archive", { run_name: runName });
-    state.selectedRun = null;
+    const payload = await postJson("/api/run/archive", { run_names: runNames });
+    const archivedNames = new Set((payload.archived_runs || []).map((run) => run.run_name));
+    if (archivedNames.has(state.selectedRun)) state.selectedRun = null;
     state.pendingArchiveRun = null;
+    state.archiveSelection.clear();
     state.detail = null;
-    state.runJobs = (state.runJobs || []).filter((job) => job.run_name !== runName);
-    if (state.runJob?.run_name === runName) state.runJob = null;
-    flashStatus(`ARCHIVED ${runName}. | ${payload.archive_path}`);
+    state.runJobs = (state.runJobs || []).filter((job) => !archivedNames.has(job.run_name));
+    if (state.runJob && archivedNames.has(state.runJob.run_name)) state.runJob = null;
+    flashStatus(`ARCHIVED ${archivedNames.size} RUN${archivedNames.size === 1 ? "" : "S"}. | ${payload.archive_root || "ARCHIVE READY"}`);
     await loadRuns();
   } finally {
     button.textContent = "ARCHIVE SELECTED";
-    button.disabled = !state.selectedRun;
+    renderRunArchiveAction();
+  }
+}
+
+function selectedArchiveRuns() {
+  return state.runs
+    .filter((run) => state.archiveSelection.has(run.name))
+    .map((run) => run.name);
+}
+
+function archiveSelectionKey(runNames = selectedArchiveRuns()) {
+  return runNames.join("\n");
+}
+
+async function refreshDashboard() {
+  const button = $("refresh-button");
+  button.disabled = true;
+  button.textContent = "REFRESHING";
+  try {
+    await loadRuns();
+    await loadRunJobs();
+    flashStatus("REFRESHED. | RUN BANK, SELECTED RUN, AND JOB STATUS UPDATED.");
+  } finally {
+    button.disabled = false;
+    button.textContent = "REFRESHED";
+    window.setTimeout(() => {
+      if (!button.disabled && button.textContent === "REFRESHED") {
+        button.textContent = "REFRESH";
+      }
+    }, 2200);
   }
 }
 
