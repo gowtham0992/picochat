@@ -427,6 +427,12 @@ h2 {
   line-height: 1.35;
 }
 
+.walkthrough-strip em {
+  color: var(--ink);
+  font-style: normal;
+  font-weight: 700;
+}
+
 .start-here-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1416,6 +1422,45 @@ textarea.guide-target-focus {
   margin-top: 8px;
 }
 
+.flight-coach {
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+.flight-coach > div {
+  background: var(--field);
+  border-right: 1px solid var(--dim-line);
+  display: grid;
+  gap: 5px;
+  min-height: 92px;
+  padding: 8px;
+}
+
+.flight-coach > div:last-child {
+  border-right: 0;
+}
+
+.flight-coach strong {
+  color: var(--accent);
+}
+
+.flight-coach p {
+  color: var(--muted);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.flight-coach.ready strong {
+  color: var(--green);
+}
+
+.flight-coach.blocked strong {
+  color: var(--red);
+}
+
 .flight-grid,
 .flight-steps,
 .flight-eval-grid,
@@ -1823,8 +1868,14 @@ textarea.guide-target-focus {
 }
 
 .readiness-summary span,
-.readiness-row p {
+.readiness-row p,
+.readiness-summary em {
   color: var(--muted);
+}
+
+.readiness-summary em {
+  font-style: normal;
+  grid-column: 1 / -1;
 }
 
 .readiness-summary.ready strong,
@@ -2464,6 +2515,7 @@ th {
   .flight-grid,
   .flight-steps,
   .flight-eval-grid,
+  .flight-coach,
   .hf-import-grid,
   .preview-controls,
   .tuning-inspector-controls,

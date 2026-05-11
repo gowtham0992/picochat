@@ -4,6 +4,7 @@ const state = {
   pendingArchiveRun: null,
   archiveSelection: new Set(),
   detail: null,
+  workflowRunName: null,
   activePanel: "dataset",
   activeStage: "dataset",
   viewMode: readInitialViewMode(),
@@ -564,7 +565,55 @@ async function refreshDashboard() {
 
 async function loadRun(name) {
   state.detail = await fetchJson(`/api/run?name=${encodeURIComponent(name)}`);
+  if (state.workflowRunName !== name) {
+    state.workflowRunName = name;
+    resetWorkflowFromRunConfig(state.detail?.summary?.config || {});
+  }
   renderAll();
+}
+
+function resetWorkflowFromRunConfig(config = {}) {
+  state.datasetFlightPlan = null;
+  state.corpusSourcePreview = null;
+  state.hfImport = null;
+  state.sftStarter = null;
+  state.evalStarter = null;
+  state.datasetPackInit = null;
+  state.tuningInspection = null;
+  state.packEditor = null;
+
+  const datasetPack = config.dataset_pack || "";
+  const corpusInput = datasetPack ? "" : config.corpus_input || "";
+  const chatInput = config.chat_input || "";
+  const evalInput = config.eval_input || "";
+  const minScore = config.min_quality_score || 0;
+
+  $("flight-pack-path").value = datasetPack;
+  $("flight-input-path").value = corpusInput;
+  $("flight-chat-path").value = chatInput;
+  $("flight-sft-out-path").value = suggestedSftStarterPath(chatInput || datasetPack || corpusInput || "my_pack/chat.jsonl");
+  $("flight-eval-path").value = evalInput;
+  $("flight-eval-out-path").value = suggestedEvalStarterPath(evalInput || datasetPack || corpusInput || "my_pack/eval.jsonl");
+  $("flight-min-score").value = minScore;
+
+  $("preview-pack-path").value = datasetPack;
+  $("preview-recipe-path").value = config.corpus_recipe || "";
+  $("preview-input-path").value = corpusInput;
+  $("preview-chat-path").value = chatInput;
+  $("preview-eval-path").value = evalInput;
+  $("preview-min-score").value = minScore;
+
+  $("tuning-pack-path").value = datasetPack;
+  $("tuning-chat-path").value = datasetPack ? "" : chatInput;
+  $("tuning-eval-path").value = datasetPack ? "" : evalInput;
+
+  $("editor-pack-path").value = datasetPack;
+  $("editor-chat-path").value = datasetPack ? "" : chatInput;
+  $("editor-eval-path").value = datasetPack ? "" : evalInput;
+
+  $("launch-pack-path").value = datasetPack;
+  $("launch-run-name").value = uniqueRunName(suggestedRunName(datasetPack || state.selectedRun || "picochat"));
+  $("launch-min-score").value = minScore;
 }
 
 function readInitialViewMode() {
@@ -719,7 +768,7 @@ function renderStartHere() {
     <div class="start-here-head">
       <div>
         <p class="kicker">START HERE</p>
-        <h2>BUILD A CUSTOM SLM WITHOUT GUESSING</h2>
+        <h2>GUIDED PATH: BEGINNER FIRST, RESEARCH ONLY TO LAUNCH</h2>
       </div>
       <span>${escapeHtml(nextStep ? `NEXT: ${nextStep.label}` : "READY")}</span>
     </div>
@@ -728,6 +777,7 @@ function renderStartHere() {
         <label>BEGINNER WALKTHROUGH</label>
         <strong>${escapeHtml(nextStep?.label || "Ready")}</strong>
         <p>${escapeHtml(nextStep?.action || "Pick a step below to inspect the exact place in the factory.")}</p>
+        ${nextStep?.mode === "inspect" ? '<em>SHOW ME switches to Research mode because this step edits files or launches training.</em>' : ""}
       </div>
       <button type="button" data-guide-panel="${escapeHtml(nextStep?.panel || "dataset")}" data-guide-mode="${escapeHtml(nextStep?.mode || "learn")}" data-guide-target="${escapeHtml(nextStep?.target || "panel-dataset")}">SHOW ME</button>
     </div>
@@ -829,7 +879,7 @@ function startHereSteps() {
       status: tuningReady ? "done" : "todo",
       signal: tuningReady ? "Tuning ready" : "Open JSONL editor",
       note: "Rewrite starter rows into real domain questions before trusting a run.",
-      action: "Open the JSONL editor and replace starter rows with examples from the dataset domain.",
+      action: "Switch to Research only to inspect or edit JSONL. Replace starter rows with real examples from the dataset domain.",
     },
     {
       label: "Train smoke",
@@ -839,7 +889,7 @@ function startHereSteps() {
       status: hasRun ? "done" : "todo",
       signal: hasRun ? "Run loaded" : "Launch a small run",
       note: "Smoke runs prove the wiring before you spend time on larger experiments.",
-      action: "Launch a smoke run first. Scale only after the data, SFT, and eval wiring are proven.",
+      action: "Switch to Research only for the run launcher. Launch a smoke run first; scale only after the wiring is proven.",
     },
     {
       label: "Evaluate/chat",
@@ -1868,6 +1918,26 @@ async function importHfDataset() {
   $("hf-import-button").disabled = true;
   $("hf-import-status").innerHTML = 'IMPORTING HF DATASET<span class="cursor"></span>';
   $("hf-import-result").innerHTML = "";
+  if ($("flight-coach")) {
+    $("flight-coach").className = "flight-coach caution";
+    $("flight-coach").innerHTML = `
+      <div>
+        <label>WHAT JUST HAPPENED</label>
+        <strong>Hugging Face import is running.</strong>
+        <p>Picochat is copying dataset rows into local documents and making a dataset pack.</p>
+      </div>
+      <div>
+        <label>NEXT CLICK</label>
+        <strong>Wait for import, then read the check.</strong>
+        <p>The imported pack is automatically sent through the same readiness report.</p>
+      </div>
+      <div>
+        <label>WHY IT MATTERS</label>
+        <strong>HF data becomes local corpus files.</strong>
+        <p>Training reads local text artifacts, not the website directly.</p>
+      </div>
+    `;
+  }
   try {
     const report = await postJson("/api/hf/import", {
       dataset_url: dataset,
@@ -2486,6 +2556,7 @@ function renderLaunchReadiness() {
   target.innerHTML = `
     <strong>${escapeHtml(readiness.title)}</strong>
     <span>${readiness.notes.map((note) => escapeHtml(note)).join(" | ")}</span>
+    <em>Research mode launches runs. Beginner mode explains the result and the next safe step.</em>
   `;
   renderLaunchCommandPreview();
 }
@@ -2938,6 +3009,24 @@ async function checkDatasetFlightPlan() {
   }
   $("flight-check-button").disabled = true;
   $("flight-status").innerHTML = 'CHECKING DATASET<span class="cursor"></span>';
+  $("flight-coach").className = "flight-coach caution";
+  $("flight-coach").innerHTML = `
+    <div>
+      <label>WHAT JUST HAPPENED</label>
+      <strong>Dataset check is running.</strong>
+      <p>Picochat is reading files, measuring size, and checking SFT/eval readiness.</p>
+    </div>
+    <div>
+      <label>NEXT CLICK</label>
+      <strong>Wait for the report.</strong>
+      <p>The next safe action appears here when the check finishes.</p>
+    </div>
+    <div>
+      <label>WHY IT MATTERS</label>
+      <strong>Cheap checks come before training.</strong>
+      <p>This prevents wasting a run on broken paths or unusable tuning files.</p>
+    </div>
+  `;
   $("flight-plan").innerHTML = "";
   $("flight-command").innerHTML = "";
   try {
@@ -2992,6 +3081,7 @@ function datasetFlightPayload() {
 function renderDatasetFlightPlan(report) {
   if (!report) {
     $("flight-status").textContent = "NO DATASET CHECKED.";
+    renderFlightCoach(null);
     renderSmokeReadiness(null);
     $("flight-plan").innerHTML = "";
     $("flight-command").innerHTML = "";
@@ -3035,7 +3125,109 @@ function renderDatasetFlightPlan(report) {
     </div>
   `;
   $("flight-command").innerHTML = renderTrainingCommand(report.training_command);
+  renderFlightCoach(report);
   renderSmokeReadiness(report);
+}
+
+function renderFlightCoach(report) {
+  const target = $("flight-coach");
+  if (!target) return;
+  const coach = flightCoach(report);
+  target.className = `flight-coach ${coach.status}`;
+  target.innerHTML = `
+    <div>
+      <label>WHAT JUST HAPPENED</label>
+      <strong>${escapeHtml(coach.happened)}</strong>
+      <p>${escapeHtml(coach.evidence)}</p>
+    </div>
+    <div>
+      <label>NEXT CLICK</label>
+      <strong>${escapeHtml(coach.next)}</strong>
+      <p>${escapeHtml(coach.detail)}</p>
+    </div>
+    <div>
+      <label>WHY IT MATTERS</label>
+      <strong>${escapeHtml(coach.why)}</strong>
+      <p>${escapeHtml(coach.warning)}</p>
+    </div>
+  `;
+}
+
+function flightCoach(report) {
+  if (!report) {
+    return {
+      status: "blocked",
+      happened: "No dataset has been checked yet.",
+      evidence: "Choose Hugging Face, local docs, an existing pack, or the sample dataset.",
+      next: "Choose a source, then CHECK DATASET.",
+      detail: "If you do not have data yet, use the sample dataset to learn the flow first.",
+      why: "Training starts with corpus quality.",
+      warning: "Skipping this check can waste time on missing files, repeated text, or tiny data.",
+    };
+  }
+  const plan = trainingPlan(report);
+  const stats = report.stats || {};
+  const readiness = readinessBadge(report.readiness);
+  const datasetPack = report.dataset_pack || $("flight-pack-path")?.value.trim();
+  const launchPack = $("launch-pack-path")?.value.trim();
+  const launcherReady = Boolean(datasetPack && launchPack === datasetPack);
+  const chatRows = dataRowCount(report.chat_data);
+  const evalRows = dataRowCount(report.eval_data);
+  const starterWarning = starterSizeWarning(chatRows, evalRows);
+  const source = state.hfImport?.preview === report
+    ? `HF import ${state.hfImport.dataset}`
+    : datasetPack
+      ? shortPath(datasetPack)
+      : shortPath($("flight-input-path")?.value.trim() || "current source");
+  if (plan.status === "blocked") {
+    return {
+      status: "blocked",
+      happened: `${source} was checked and is blocked.`,
+      evidence: `${readiness} | ${fmtInt(stats.num_documents)} docs | ${fmtInt(stats.num_characters)} chars`,
+      next: "Fix the blocked check shown below.",
+      detail: plan.reason,
+      why: "A blocked dataset cannot produce a trustworthy run.",
+      warning: "Do not launch until corpus, SFT, and eval checks are usable.",
+    };
+  }
+  if (!launcherReady) {
+    return {
+      status: "caution",
+      happened: `${source} was checked and can be used for a first run.`,
+      evidence: `${readiness} | ${fmtInt(stats.num_documents)} docs | ${fmtInt(stats.num_characters)} chars${starterWarning ? ` | ${starterWarning}` : ""}`,
+      next: "Click APPLY PLAN.",
+      detail: "That copies the checked dataset pack and budget into the Research-mode run launcher.",
+      why: "The launcher should use exactly the dataset you just inspected.",
+      warning: starterWarning || "A smoke run proves wiring. It is not the final model.",
+    };
+  }
+  return {
+    status: plan.status === "ready" && !starterWarning ? "ready" : "caution",
+    happened: `${source} is connected to the run launcher.`,
+    evidence: `${readiness} | ${fmtInt(stats.num_documents)} docs | ${fmtInt(stats.num_characters)} chars${starterWarning ? ` | ${starterWarning}` : ""}`,
+    next: "Switch to Research and launch a smoke run.",
+    detail: "Use the run launcher only to start or tune runs. Come back to Beginner to read the pipeline results.",
+    why: "Small smoke runs catch bad SFT/eval wiring before larger training.",
+    warning: starterWarning || "After it finishes, evaluate, compare, and only then scale.",
+  };
+}
+
+function dataRowCount(data) {
+  if (!data) return 0;
+  const candidates = [data.num_examples, data.num_rows, data.rows, data.count];
+  for (const value of candidates) {
+    const number = Number(value);
+    if (Number.isFinite(number) && number > 0) return number;
+  }
+  return 0;
+}
+
+function starterSizeWarning(chatRows, evalRows) {
+  const warnings = [];
+  if (chatRows > 0 && chatRows < 24) warnings.push(`${fmtInt(chatRows)} SFT rows`);
+  if (evalRows > 0 && evalRows < 8) warnings.push(`${fmtInt(evalRows)} eval rows`);
+  if (!warnings.length) return "";
+  return `starter-sized ${warnings.join(" / ")}`;
 }
 
 function renderSmokeReadiness(report) {
@@ -3359,6 +3551,7 @@ function applyFlightPlanToLauncher(quiet = false) {
   $("launch-sft-steps").value = Math.max(60, Number(budget.suggested_base_steps || 30));
   $("launch-min-score").value = report.min_quality_score ?? ($("flight-min-score").value || 0);
   if (!quiet) flashStatus("APPLIED PLAN. | Review launcher values before starting the run.");
+  renderFlightCoach(report);
   renderSmokeReadiness(report);
   renderLaunchReadiness();
   renderStartHere();
@@ -3367,6 +3560,7 @@ function applyFlightPlanToLauncher(quiet = false) {
 function renderDatasetFlightPlanError(error) {
   $("flight-check-button").disabled = false;
   $("flight-status").textContent = "DATASET CHECK FAULT";
+  renderFlightCoach(null);
   renderSmokeReadiness(null);
   $("flight-plan").innerHTML = "";
   $("flight-command").innerHTML = "";
