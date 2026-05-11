@@ -32,6 +32,36 @@ const SAMPLE_DATASET_PACK = "examples/tiny_dataset_pack.json";
 const SAMPLE_CHAT_INPUT = "examples/tiny_chat.jsonl";
 const SAMPLE_EVAL_INPUT = "examples/tiny_eval.jsonl";
 
+const LAUNCH_CONTROL_IDS = [
+  "launch-pack-path",
+  "launch-run-name",
+  "launch-preset",
+  "launch-tokenizer-type",
+  "launch-tokenizer-vocab-size",
+  "launch-context-size",
+  "launch-base-steps",
+  "launch-sft-steps",
+  "launch-n-embd",
+  "launch-n-head",
+  "launch-n-layer",
+  "launch-base-batch-size",
+  "launch-sft-batch-size",
+  "launch-base-learning-rate",
+  "launch-sft-learning-rate",
+  "launch-base-lr-decay",
+  "launch-sft-lr-decay",
+  "launch-base-lr-warmup-steps",
+  "launch-sft-lr-warmup-steps",
+  "launch-base-grad-clip",
+  "launch-sft-grad-clip",
+  "launch-base-early-stop-patience",
+  "launch-sft-early-stop-patience",
+  "launch-sft-sampling",
+  "launch-eval-max-new-tokens",
+  "launch-seed",
+  "launch-min-score",
+];
+
 const $ = (id) => document.getElementById(id);
 
 const PANEL_GUIDES = {
@@ -302,6 +332,10 @@ function bindControls() {
   $("add-chat-row-button").addEventListener("click", addChatEditorRow);
   $("add-eval-row-button").addEventListener("click", addEvalEditorRow);
   $("launch-preset").addEventListener("change", applyLaunchPreset);
+  LAUNCH_CONTROL_IDS.forEach((id) => {
+    $(id)?.addEventListener("input", renderLaunchReadiness);
+    $(id)?.addEventListener("change", renderLaunchReadiness);
+  });
   $("launch-run-button").addEventListener("click", () => {
     launchRun().catch((error) => renderRunJobError(error));
   });
@@ -1629,6 +1663,7 @@ function applyDatasetPackToWorkflow({ datasetPack, chatInput = "", evalInput = "
 
   $("launch-pack-path").value = datasetPack;
   $("launch-run-name").value = uniqueRunName(runNameSeed || suggestedRunName(datasetPack));
+  renderLaunchReadiness();
 }
 
 function syncFlightStarterDefaults() {
@@ -1649,6 +1684,7 @@ function syncFlightStarterDefaults() {
     if (!$("editor-pack-path").value.trim()) $("editor-pack-path").value = packPath;
     if (!$("launch-pack-path").value.trim()) $("launch-pack-path").value = packPath;
     if (!$("launch-run-name").value.trim()) $("launch-run-name").value = suggestedRunName(packPath);
+    renderLaunchReadiness();
   } else if (inputPath && !$("preview-input-path").value.trim()) {
     $("preview-input-path").value = inputPath;
   }
@@ -1839,6 +1875,7 @@ function seedRunLauncherInputs(config) {
   if (config.min_quality_score && (!minScoreInput.value || minScoreInput.value === "0")) {
     minScoreInput.value = config.min_quality_score;
   }
+  renderLaunchReadiness();
 }
 
 function seedSourcePreviewInputs(config) {
@@ -2155,6 +2192,7 @@ function applyLaunchPreset(quiet = false) {
   if (!quiet) {
     flashStatus(`APPLIED ${String(values.label || preset).toUpperCase()} PRESET. | ${values.description || ""}`);
   }
+  renderLaunchReadiness();
 }
 
 function applyPreviewBudgetToLauncher() {
@@ -2167,47 +2205,129 @@ function applyPreviewBudgetToLauncher() {
   $("launch-base-steps").value = budget.suggested_base_steps || $("launch-base-steps").value;
   $("launch-sft-steps").value = Math.max(60, Number(budget.suggested_base_steps || 30) * 2);
   $("launch-min-score").value = state.corpusSourcePreview?.min_quality_score ?? $("launch-min-score").value;
+  renderLaunchReadiness();
   flashStatus(`APPLIED PREVIEW BUDGET. | CTX ${$("launch-context-size").value} | BASE ${$("launch-base-steps").value} | SFT ${$("launch-sft-steps").value}`);
 }
 
+function launchNumber(id) {
+  const value = Number($(id).value);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function launchConfig() {
+  const tokenizerVocab = $("launch-tokenizer-vocab-size").value.trim();
+  return {
+    dataset_pack: $("launch-pack-path").value.trim(),
+    run_name: $("launch-run-name").value.trim(),
+    preset: $("launch-preset").value,
+    context_size: launchNumber("launch-context-size"),
+    n_embd: launchNumber("launch-n-embd"),
+    n_head: launchNumber("launch-n-head"),
+    n_layer: launchNumber("launch-n-layer"),
+    base_steps: launchNumber("launch-base-steps"),
+    sft_steps: launchNumber("launch-sft-steps"),
+    base_batch_size: launchNumber("launch-base-batch-size"),
+    sft_batch_size: launchNumber("launch-sft-batch-size"),
+    base_learning_rate: launchNumber("launch-base-learning-rate"),
+    sft_learning_rate: launchNumber("launch-sft-learning-rate"),
+    base_lr_decay: $("launch-base-lr-decay").value,
+    sft_lr_decay: $("launch-sft-lr-decay").value,
+    base_lr_warmup_steps: launchNumber("launch-base-lr-warmup-steps"),
+    sft_lr_warmup_steps: launchNumber("launch-sft-lr-warmup-steps"),
+    base_grad_clip: launchNumber("launch-base-grad-clip"),
+    sft_grad_clip: launchNumber("launch-sft-grad-clip"),
+    base_early_stop_patience: launchNumber("launch-base-early-stop-patience"),
+    sft_early_stop_patience: launchNumber("launch-sft-early-stop-patience"),
+    sft_sampling: $("launch-sft-sampling").value,
+    eval_max_new_tokens: launchNumber("launch-eval-max-new-tokens"),
+    seed: launchNumber("launch-seed"),
+    tokenizer_type: $("launch-tokenizer-type").value,
+    tokenizer_vocab_size: tokenizerVocab ? Number(tokenizerVocab) : null,
+    min_quality_score: launchNumber("launch-min-score"),
+  };
+}
+
+function launchReadiness(config = launchConfig()) {
+  const blockers = [];
+  const cautions = [];
+  const notes = [];
+  if (!config.dataset_pack) blockers.push("Choose or import a dataset pack first.");
+  if (!config.run_name) blockers.push("Name the run so artifacts land in a unique folder.");
+  if (config.context_size < 8) blockers.push("Context size must be at least 8.");
+  if (config.n_embd < 1 || config.n_head < 1 || config.n_layer < 1) blockers.push("Model shape needs positive embed, heads, and layers.");
+  if (config.n_head > 0 && config.n_embd % config.n_head !== 0) {
+    blockers.push(`N EMBED ${config.n_embd} must divide evenly by HEADS ${config.n_head}.`);
+  }
+  if (config.base_steps < 1 || config.sft_steps < 1) blockers.push("Base and SFT steps must be at least 1.");
+  if (config.base_batch_size < 1 || config.sft_batch_size < 1) blockers.push("Batch sizes must be at least 1.");
+  if (config.base_learning_rate <= 0 || config.sft_learning_rate <= 0) blockers.push("Learning rates must be above zero.");
+  if (config.eval_max_new_tokens < 1) blockers.push("Eval tokens must be at least 1.");
+  if (config.tokenizer_type === "bpe" && !config.tokenizer_vocab_size) {
+    cautions.push("BPE vocab is empty, so the backend default will decide tokenizer size.");
+  }
+  if (config.tokenizer_type !== "bpe" && config.tokenizer_vocab_size) {
+    cautions.push("Vocab size only changes BPE; char and byte tokenizers ignore it.");
+  }
+  if (config.base_lr_warmup_steps > config.base_steps) cautions.push("Base warmup is longer than base training.");
+  if (config.sft_lr_warmup_steps > config.sft_steps) cautions.push("SFT warmup is longer than SFT training.");
+  if (config.sft_steps > config.base_steps * 2) cautions.push("SFT is much longer than base; watch eval leakage and overfitting.");
+  notes.push(`${config.n_layer}L x ${config.n_embd} embd / ${config.n_head} heads`);
+  notes.push(`${String(config.tokenizer_type).toUpperCase()} tokenizer${config.tokenizer_vocab_size ? ` vocab ${config.tokenizer_vocab_size}` : ""}`);
+  notes.push(`base ${config.base_steps} / sft ${config.sft_steps}`);
+  notes.push(`LR ${config.base_learning_rate} -> ${config.sft_learning_rate}`);
+  notes.push(`SFT ${config.sft_sampling.replace("_", " ")}`);
+  const status = blockers.length ? "blocked" : cautions.length ? "caution" : "ready";
+  const title = status === "ready" ? "LAUNCH CHECK READY" : status === "caution" ? "LAUNCH CHECK CAUTION" : "LAUNCH CHECK BLOCKED";
+  return { status, title, notes: [...blockers, ...cautions, ...notes] };
+}
+
+function renderLaunchReadiness() {
+  const target = $("launch-readiness");
+  if (!target) return;
+  const readiness = launchReadiness();
+  target.className = `readiness-summary ${readiness.status}`;
+  target.innerHTML = `
+    <strong>${escapeHtml(readiness.title)}</strong>
+    <span>${readiness.notes.map((note) => escapeHtml(note)).join(" | ")}</span>
+  `;
+}
+
 async function launchRun() {
-  const datasetPack = $("launch-pack-path").value.trim();
-  const runName = $("launch-run-name").value.trim();
-  if (!datasetPack) throw new Error("enter a dataset pack");
-  if (!runName) throw new Error("enter a run name");
+  const config = launchConfig();
+  const readiness = launchReadiness(config);
+  renderLaunchReadiness();
+  if (readiness.status === "blocked") throw new Error(readiness.notes[0] || "fix launch settings");
   $("launch-run-button").disabled = true;
   $("run-launch-status").innerHTML = 'LAUNCHING RUN<span class="cursor"></span>';
   try {
     const payload = await postJson("/api/run/start", {
-      dataset_pack: datasetPack,
-      run_name: runName,
-      preset: $("launch-preset").value,
-      context_size: Number($("launch-context-size").value),
-      n_embd: Number($("launch-n-embd").value),
-      n_head: Number($("launch-n-head").value),
-      n_layer: Number($("launch-n-layer").value),
-      base_steps: Number($("launch-base-steps").value),
-      sft_steps: Number($("launch-sft-steps").value),
-      base_batch_size: Number($("launch-base-batch-size").value),
-      sft_batch_size: Number($("launch-sft-batch-size").value),
-      base_learning_rate: Number($("launch-base-learning-rate").value),
-      sft_learning_rate: Number($("launch-sft-learning-rate").value),
-      base_lr_decay: $("launch-base-lr-decay").value,
-      sft_lr_decay: $("launch-sft-lr-decay").value,
-      base_lr_warmup_steps: Number($("launch-base-lr-warmup-steps").value),
-      sft_lr_warmup_steps: Number($("launch-sft-lr-warmup-steps").value),
-      base_grad_clip: Number($("launch-base-grad-clip").value),
-      sft_grad_clip: Number($("launch-sft-grad-clip").value),
-      base_early_stop_patience: Number($("launch-base-early-stop-patience").value),
-      sft_early_stop_patience: Number($("launch-sft-early-stop-patience").value),
-      sft_sampling: $("launch-sft-sampling").value,
-      eval_max_new_tokens: Number($("launch-eval-max-new-tokens").value),
-      seed: Number($("launch-seed").value),
-      tokenizer_type: $("launch-tokenizer-type").value,
-      tokenizer_vocab_size: $("launch-tokenizer-vocab-size").value
-        ? Number($("launch-tokenizer-vocab-size").value)
-        : null,
-      min_quality_score: Number($("launch-min-score").value || 0),
+      dataset_pack: config.dataset_pack,
+      run_name: config.run_name,
+      preset: config.preset,
+      context_size: config.context_size,
+      n_embd: config.n_embd,
+      n_head: config.n_head,
+      n_layer: config.n_layer,
+      base_steps: config.base_steps,
+      sft_steps: config.sft_steps,
+      base_batch_size: config.base_batch_size,
+      sft_batch_size: config.sft_batch_size,
+      base_learning_rate: config.base_learning_rate,
+      sft_learning_rate: config.sft_learning_rate,
+      base_lr_decay: config.base_lr_decay,
+      sft_lr_decay: config.sft_lr_decay,
+      base_lr_warmup_steps: config.base_lr_warmup_steps,
+      sft_lr_warmup_steps: config.sft_lr_warmup_steps,
+      base_grad_clip: config.base_grad_clip,
+      sft_grad_clip: config.sft_grad_clip,
+      base_early_stop_patience: config.base_early_stop_patience,
+      sft_early_stop_patience: config.sft_early_stop_patience,
+      sft_sampling: config.sft_sampling,
+      eval_max_new_tokens: config.eval_max_new_tokens,
+      seed: config.seed,
+      tokenizer_type: config.tokenizer_type,
+      tokenizer_vocab_size: config.tokenizer_vocab_size,
+      min_quality_score: config.min_quality_score,
     });
     state.runJob = payload.job;
     state.runJobs = payload.jobs || [payload.job];
@@ -2906,6 +3026,7 @@ function applyFlightPlanToLauncher(quiet = false) {
   $("launch-min-score").value = report.min_quality_score ?? ($("flight-min-score").value || 0);
   if (!quiet) flashStatus("APPLIED PLAN. | Review launcher values before starting the run.");
   renderSmokeReadiness(report);
+  renderLaunchReadiness();
   renderStartHere();
 }
 
