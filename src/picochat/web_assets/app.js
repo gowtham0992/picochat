@@ -216,22 +216,22 @@ function bindControls() {
     window.setTimeout(() => focusGuideTarget(button.dataset.guideTarget), 80);
   });
   document.querySelectorAll("[data-panel]").forEach((button) => {
-    button.addEventListener("click", () => setPanel(button.dataset.panel));
+    button.addEventListener("click", () => setPanel(button.dataset.panel, { focus: true }));
   });
   $("pipeline-strip").addEventListener("click", (event) => {
     const button = event.target.closest("[data-stage]");
     if (!button) return;
-    setStage(button.dataset.stage);
+    setStage(button.dataset.stage, { focus: true });
   });
   $("run-storyline").addEventListener("click", (event) => {
     const button = event.target.closest("[data-stage]");
     if (!button) return;
-    setStage(button.dataset.stage);
+    setStage(button.dataset.stage, { focus: true });
   });
   $("run-doctor").addEventListener("click", (event) => {
     const button = event.target.closest("[data-stage]");
     if (!button) return;
-    setStage(button.dataset.stage);
+    setStage(button.dataset.stage, { focus: true });
   });
   $("report-select").addEventListener("change", () => {
     state.activeReport = $("report-select").value;
@@ -446,7 +446,7 @@ function renderAll() {
   renderStatus();
 }
 
-function setStage(name) {
+function setStage(name, options = {}) {
   state.activeStage = name;
   const panel = {
     dataset: "dataset",
@@ -457,11 +457,11 @@ function setStage(name) {
     chat: "generation",
     report: "report",
   }[name];
-  if (panel) setPanel(panel);
+  if (panel) setPanel(panel, { focus: options.focus, focusTarget: stageFocusTarget(name) });
   renderPipeline();
 }
 
-function setPanel(name) {
+function setPanel(name, options = {}) {
   state.activePanel = name;
   const stage = {
     dataset: "dataset",
@@ -487,6 +487,21 @@ function setPanel(name) {
   }
   renderStartHere();
   renderStatus();
+  if (options.focus) {
+    window.setTimeout(() => focusGuideTarget(options.focusTarget || `panel-${name}`), 80);
+  }
+}
+
+function stageFocusTarget(stage) {
+  return {
+    dataset: "panel-dataset",
+    tokenizer: "panel-tokenizer",
+    base: "panel-training",
+    sft: "panel-training",
+    eval: "panel-eval",
+    chat: "panel-generation",
+    report: "panel-report",
+  }[stage] || "panel-dataset";
 }
 
 function renderStartHere() {
@@ -523,7 +538,9 @@ function focusGuideTarget(targetId) {
   target.classList.remove("guide-target-focus");
   window.requestAnimationFrame(() => {
     target.classList.add("guide-target-focus");
-    const focusable = target.querySelector("input:not([type='hidden']), textarea, select, button");
+    const focusable = target.classList.contains("panel-screen")
+      ? null
+      : target.querySelector("input:not([type='hidden']), textarea, select, button");
     if (focusable && !focusable.disabled) {
       focusable.focus({ preventScroll: true });
     }

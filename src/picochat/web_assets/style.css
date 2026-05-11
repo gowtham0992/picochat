@@ -331,6 +331,10 @@ h2 {
   outline-offset: 3px;
 }
 
+.panel-screen.guide-target-focus {
+  outline-offset: -3px;
+}
+
 .start-step {
   align-content: start;
   background: var(--field);
