@@ -381,9 +381,11 @@ function readInitialViewMode() {
 
 function readInitialTheme() {
   try {
-    return localStorage.getItem("picochat:theme") === "paper" ? "paper" : "classic";
+    const savedTheme = localStorage.getItem("picochat:theme");
+    if (savedTheme === "classic" || savedTheme === "paper") return savedTheme;
+    return "paper";
   } catch {
-    return "classic";
+    return "paper";
   }
 }
 
