@@ -16,6 +16,7 @@ from picochat.web import (
     run_presets_plan,
     run_status_plan,
     save_pack_editor_plan,
+    sft_starter_plan,
     start_run_plan,
 )
 
@@ -493,6 +494,57 @@ def test_eval_starter_plan_accepts_dataset_pack(tmp_path):
     pack_path.write_text(json.dumps({"corpus": "lesson.txt", "chat": "chat.jsonl", "eval": "eval.jsonl"}), encoding="utf-8")
 
     report = eval_starter_plan({
+        "dataset_pack": str(pack_path),
+        "out_path": str(out_path),
+        "force": True,
+    })
+
+    assert report["dataset_pack"] == str(pack_path)
+    assert report["input_path"] == str(source_path)
+    assert "--dataset-pack" in report["command"]
+    assert report["force"] is True
+
+
+def test_sft_starter_plan_generates_ready_chat_rows(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    out_path = tmp_path / "domain_chat.jsonl"
+    source_path.write_text(
+        "Picochat turns local text into tiny training runs. The workbench checks data quality before training.\n"
+        "A careful assistant says when the provided domain material does not contain the answer.\n"
+        "Domain training should include answerable examples, refusal examples, and memorization refusals.",
+        encoding="utf-8",
+    )
+
+    report = sft_starter_plan({
+        "input_path": str(source_path),
+        "out_path": str(out_path),
+        "max_items": 10,
+        "seed": 7,
+    })
+
+    assert report["output_path"] == str(out_path)
+    assert report["num_rows"] >= 8
+    assert report["categories"]["refusal_memorization"] == 1
+    assert "--input" in report["command"]
+    assert "--max-items 10" in report["command"]
+    assert out_path.exists()
+    assert out_path.with_suffix(".md").exists()
+    rows = [json.loads(line) for line in out_path.read_text(encoding="utf-8").splitlines()]
+    assert all("user" in row and "assistant" in row for row in rows)
+
+
+def test_sft_starter_plan_accepts_dataset_pack(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    pack_path = tmp_path / "dataset_pack.json"
+    out_path = tmp_path / "chat.jsonl"
+    source_path.write_text(
+        "Coffee shop training data describes espresso, filters, and pastry pairings. "
+        "The menu changes slowly and should not be treated as live news.",
+        encoding="utf-8",
+    )
+    pack_path.write_text(json.dumps({"corpus": "lesson.txt", "chat": "chat.jsonl", "eval": "eval.jsonl"}), encoding="utf-8")
+
+    report = sft_starter_plan({
         "dataset_pack": str(pack_path),
         "out_path": str(out_path),
         "force": True,

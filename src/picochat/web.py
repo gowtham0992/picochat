@@ -23,6 +23,7 @@ from picochat.eval_starter import generate_eval_starter
 from picochat.generate import GenerateConfig, generate_text_with_trace
 from picochat.optim import LR_DECAYS
 from picochat.scales import RUN_SCALES
+from picochat.sft_starter import generate_sft_starter
 from picochat.sft import SFT_SAMPLING_MODES
 from picochat.tokenizer import TOKENIZER_TYPES
 from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
@@ -373,6 +374,62 @@ def inspect_tuning_plan(payload: dict) -> dict:
             )
             if dataset_pack else None
         ),
+    }
+
+
+def sft_starter_plan(payload: dict) -> dict:
+    """Generate a starter chat SFT JSONL file from a web request."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+
+    dataset_pack = _optional_string(payload.get("dataset_pack"))
+    input_path = _optional_string(payload.get("input_path"))
+    out_path = _optional_string(payload.get("out_path"))
+    if not out_path:
+        raise ValueError("out_path is required")
+    if not dataset_pack and not input_path:
+        raise ValueError("dataset_pack or input_path is required")
+
+    max_items = _bounded_int(payload.get("max_items", 32), 8, 300)
+    seed = _bounded_int(payload.get("seed", 42), 0, 9999)
+    force = payload.get("force", False)
+    if not isinstance(force, bool):
+        raise ValueError("force must be true or false")
+
+    report = generate_sft_starter(
+        input_path=input_path,
+        dataset_pack=dataset_pack,
+        out_path=out_path,
+        max_items=max_items,
+        seed=seed,
+        force=force,
+    )
+    command_parts = [
+        "PYTHONPATH=src",
+        "python",
+        "-m",
+        "picochat.cli",
+        "data",
+        "sft-starter",
+    ]
+    if dataset_pack:
+        command_parts.extend(["--dataset-pack", dataset_pack])
+    else:
+        command_parts.extend(["--input", input_path or ""])
+    command_parts.extend(["--out", out_path, "--max-items", str(max_items), "--seed", str(seed)])
+    if force:
+        command_parts.append("--force")
+    return {
+        **report.to_dict(),
+        "dataset_pack": dataset_pack,
+        "force": force,
+        "command": _shell_command(*command_parts),
+        "report_path": str(Path(out_path).with_suffix(".md")),
+        "next_actions": [
+            "Open the generated chat JSONL and rewrite prompts into real user questions for this domain.",
+            "Keep refusal and memorization-refusal rows before trusting a custom SLM.",
+            "Run tuning inspection after editing so Picochat can grade the SFT file before training.",
+        ],
     }
 
 
@@ -777,6 +834,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(init_dataset_pack_plan(self._read_json_body()))
                 elif parsed.path == "/api/tuning/inspect":
                     self._send_json(inspect_tuning_plan(self._read_json_body()))
+                elif parsed.path == "/api/sft/starter":
+                    self._send_json(sft_starter_plan(self._read_json_body()))
                 elif parsed.path == "/api/eval/starter":
                     self._send_json(eval_starter_plan(self._read_json_body()))
                 elif parsed.path == "/api/pack/editor/load":

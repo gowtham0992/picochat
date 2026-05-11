@@ -102,6 +102,10 @@
                   <input id="flight-chat-path" type="text" spellcheck="false" placeholder="my_pack/chat.jsonl">
                 </div>
                 <div>
+                  <label for="flight-sft-out-path">SFT STARTER OUT</label>
+                  <input id="flight-sft-out-path" type="text" spellcheck="false" placeholder="my_pack/chat_starter.jsonl">
+                </div>
+                <div>
                   <label for="flight-eval-path">EVAL JSONL</label>
                   <input id="flight-eval-path" type="text" spellcheck="false" placeholder="my_pack/eval.jsonl">
                 </div>
@@ -114,12 +118,14 @@
                   <input id="flight-min-score" type="number" min="0" max="100" value="0">
                 </div>
                 <button id="flight-check-button" type="button">CHECK DATASET</button>
+                <button id="flight-sft-button" type="button">CREATE SFT STARTER</button>
                 <button id="flight-eval-button" type="button">CREATE EVAL STARTER</button>
                 <button id="flight-apply-button" type="button">APPLY PLAN</button>
               </div>
               <div id="flight-status" class="notice">NO DATASET CHECKED.</div>
               <div id="flight-plan" class="flight-plan"></div>
               <div id="flight-command" class="command-tape source-command"></div>
+              <div id="flight-sft-result" class="flight-starter-result"></div>
               <div id="flight-eval-result" class="flight-eval-result"></div>
             </div>
             <div class="terminal-card dataset-preview-card inspect-only">

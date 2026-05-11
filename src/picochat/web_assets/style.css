@@ -1000,7 +1000,7 @@ h2 {
   align-items: end;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(180px, 1.3fr) minmax(160px, 1.1fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr) 88px auto auto auto;
+  grid-template-columns: minmax(180px, 1.3fr) minmax(160px, 1.1fr) repeat(4, minmax(140px, 1fr)) 88px auto auto auto auto;
   margin-bottom: 10px;
 }
 
@@ -1077,6 +1077,7 @@ h2 {
   color: var(--red);
 }
 
+.flight-starter-result,
 .flight-eval-result {
   display: grid;
   gap: 8px;

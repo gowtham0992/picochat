@@ -19,6 +19,7 @@ from picochat.generate import GenerateConfig, generate_text
 from picochat.chat import ChatConfig, chat_loop
 from picochat.eval import ChatEvalConfig, run_chat_eval
 from picochat.eval_starter import generate_eval_starter
+from picochat.sft_starter import generate_sft_starter
 from picochat.run import TinyRunConfig, run_tiny
 from picochat.compare import compare_runs, comparison_table, write_comparison_report
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
@@ -194,6 +195,14 @@ def build_parser() -> argparse.ArgumentParser:
     data_eval_starter.add_argument("--max-items", type=int, default=24, help="Maximum eval rows to write.")
     data_eval_starter.add_argument("--seed", type=int, default=42)
     data_eval_starter.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
+
+    data_sft_starter = data_subparsers.add_parser("sft-starter", help="Generate a starter chat SFT JSONL from a corpus.")
+    data_sft_starter.add_argument("--input", default=None, help="Corpus file or folder to sample.")
+    data_sft_starter.add_argument("--dataset-pack", "--pack", dest="dataset_pack", default=None, help="Dataset pack whose corpus should be sampled.")
+    data_sft_starter.add_argument("--out", required=True, help="Output chat SFT JSONL path.")
+    data_sft_starter.add_argument("--max-items", type=int, default=32, help="Maximum chat SFT rows to write.")
+    data_sft_starter.add_argument("--seed", type=int, default=42)
+    data_sft_starter.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
 
     data_hf_import = data_subparsers.add_parser(
         "hf-import",
@@ -693,6 +702,29 @@ def eval_starter_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def sft_starter_data(args: argparse.Namespace) -> int:
+    if not args.input and not args.dataset_pack:
+        raise SystemExit("data sft-starter requires --input or --dataset-pack")
+    report = generate_sft_starter(
+        args.input,
+        args.out,
+        dataset_pack=args.dataset_pack,
+        max_items=args.max_items,
+        seed=args.seed,
+        force=args.force,
+    )
+    print(f"sft starter: {report.output_path}")
+    print(f"input: {report.input_path}")
+    print(f"documents: {report.num_documents}")
+    print(f"candidate_sentences: {report.num_sentences}")
+    print(f"rows: {report.num_rows}")
+    print("categories:")
+    for name, count in report.categories.items():
+        print(f"- {name}: {count}")
+    print(f"report: {report.output_path.rsplit('.', 1)[0]}.md")
+    return 0
+
+
 def hf_import_data(args: argparse.Namespace) -> int:
     report = import_hf_dataset(HFImportConfig(
         dataset=args.dataset,
@@ -1060,6 +1092,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "eval-starter":
         return eval_starter_data(args)
+
+    if args.command == "data" and args.data_command == "sft-starter":
+        return sft_starter_data(args)
 
     if args.command == "data" and args.data_command == "hf-import":
         return hf_import_data(args)

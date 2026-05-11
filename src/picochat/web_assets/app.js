@@ -10,6 +10,7 @@ const state = {
   compareDetails: {},
   corpusSourcePreview: null,
   datasetFlightPlan: null,
+  sftStarter: null,
   evalStarter: null,
   datasetPackInit: null,
   tuningInspection: null,
@@ -243,6 +244,9 @@ function bindControls() {
   });
   $("flight-check-button").addEventListener("click", () => {
     checkDatasetFlightPlan().catch((error) => renderDatasetFlightPlanError(error));
+  });
+  $("flight-sft-button").addEventListener("click", () => {
+    createSftStarter().catch((error) => renderSftStarterError(error));
   });
   $("flight-eval-button").addEventListener("click", () => {
     createEvalStarter().catch((error) => renderEvalStarterError(error));
@@ -1209,6 +1213,7 @@ function renderDataset() {
   ]);
   $("corpus-files").innerHTML = renderCorpusFiles(manifest?.files || []);
   renderDatasetFlightPlan(state.datasetFlightPlan);
+  renderSftStarter(state.sftStarter);
   renderEvalStarter(state.evalStarter);
   renderCorpusSourcePreview(state.corpusSourcePreview);
   renderDatasetPackInit(state.datasetPackInit);
@@ -1235,13 +1240,15 @@ function seedDatasetFlightInputs(config) {
   const packInput = $("flight-pack-path");
   const sourceInput = $("flight-input-path");
   const chatInput = $("flight-chat-path");
+  const sftOutInput = $("flight-sft-out-path");
   const evalInput = $("flight-eval-path");
   const evalOutInput = $("flight-eval-out-path");
   const minScoreInput = $("flight-min-score");
-  if (packInput.value || sourceInput.value || chatInput.value || evalInput.value || evalOutInput.value) return;
+  if (packInput.value || sourceInput.value || chatInput.value || sftOutInput.value || evalInput.value || evalOutInput.value) return;
   packInput.value = config.dataset_pack || "";
   sourceInput.value = config.dataset_pack ? "" : config.corpus_input || "";
   chatInput.value = config.chat_input || "";
+  sftOutInput.value = suggestedSftStarterPath(config.chat_input || config.dataset_pack || "my_pack/chat.jsonl");
   evalInput.value = config.eval_input || "";
   evalOutInput.value = suggestedEvalStarterPath(config.eval_input || config.dataset_pack || "my_pack/eval.jsonl");
   minScoreInput.value = config.min_quality_score || 0;
@@ -1341,6 +1348,7 @@ async function initDatasetPack() {
     $("flight-pack-path").value = report.dataset_pack || "";
     $("flight-input-path").value = "";
     $("flight-chat-path").value = "";
+    $("flight-sft-out-path").value = report.chat_input ? suggestedSftStarterPath(report.chat_input) : "";
     $("flight-eval-path").value = "";
     $("flight-eval-out-path").value = report.eval_input ? suggestedEvalStarterPath(report.eval_input) : "";
     $("tuning-pack-path").value = report.dataset_pack || "";
@@ -1900,6 +1908,9 @@ async function checkDatasetFlightPlan() {
   state.datasetFlightPlan = report;
   state.corpusSourcePreview = report;
   state.tuningInspection = tuningInspectionFromPreview(report);
+  if (report.training_command?.chat_input && !$("flight-sft-out-path").value.trim()) {
+    $("flight-sft-out-path").value = suggestedSftStarterPath(report.training_command.chat_input);
+  }
   if (report.training_command?.eval_input && !$("flight-eval-out-path").value.trim()) {
     $("flight-eval-out-path").value = suggestedEvalStarterPath(report.training_command.eval_input);
   }
@@ -2047,6 +2058,66 @@ function tuningActionText(chatData, evalData) {
   return "Tuning data is ready for a first run.";
 }
 
+async function createSftStarter() {
+  const packPath = $("flight-pack-path").value.trim();
+  const inputPath = $("flight-input-path").value.trim();
+  const outPath = $("flight-sft-out-path").value.trim();
+  if (!packPath && !inputPath) {
+    throw new Error("enter a dataset pack or corpus path first");
+  }
+  if (!outPath) {
+    throw new Error("enter an SFT starter output path");
+  }
+  $("flight-sft-button").disabled = true;
+  $("flight-sft-result").innerHTML = 'CREATING SFT STARTER<span class="cursor"></span>';
+  const report = await postJson("/api/sft/starter", {
+    dataset_pack: packPath || null,
+    input_path: packPath ? null : inputPath,
+    out_path: outPath,
+    max_items: 32,
+    seed: state.detail?.summary?.config?.seed ?? 42,
+    force: false,
+  });
+  state.sftStarter = report;
+  $("flight-chat-path").value = report.output_path || outPath;
+  $("preview-chat-path").value = report.output_path || outPath;
+  $("tuning-pack-path").value = "";
+  $("tuning-chat-path").value = report.output_path || outPath;
+  if (!$("tuning-eval-path").value.trim()) $("tuning-eval-path").value = $("flight-eval-path").value.trim();
+  $("editor-pack-path").value = "";
+  $("editor-chat-path").value = report.output_path || outPath;
+  if (!$("editor-eval-path").value.trim()) $("editor-eval-path").value = $("flight-eval-path").value.trim();
+  renderSftStarter(report);
+  $("flight-sft-button").disabled = false;
+}
+
+function renderSftStarter(report) {
+  if (!report) {
+    $("flight-sft-result").innerHTML = "";
+    return;
+  }
+  $("flight-sft-result").innerHTML = `
+    <label>SFT STARTER RESULT</label>
+    <div class="flight-eval-grid">
+      <div><strong>${fmtInt(report.num_rows)}</strong><span>chat rows</span></div>
+      <div><strong>${fmtInt(report.num_sentences)}</strong><span>candidate sentences</span></div>
+      <div><strong>${escapeHtml(shortPath(report.output_path))}</strong><span>jsonl</span></div>
+      <div><strong>${escapeHtml(shortPath(report.report_path))}</strong><span>report</span></div>
+    </div>
+    <div class="mini-stat-row">
+      ${Object.entries(report.categories || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
+    </div>
+    <div class="command-tape source-command">
+      <div class="command-head">
+        <label>SFT STARTER COMMAND</label>
+        ${copyCommandButton(report.command)}
+      </div>
+      <code>${escapeHtml(report.command || "")}</code>
+      ${(report.next_actions || []).map((action) => `<p>${escapeHtml(action)}</p>`).join("")}
+    </div>
+  `;
+}
+
 async function createEvalStarter() {
   const packPath = $("flight-pack-path").value.trim();
   const inputPath = $("flight-input-path").value.trim();
@@ -2070,8 +2141,12 @@ async function createEvalStarter() {
   state.evalStarter = report;
   $("flight-eval-path").value = report.output_path || outPath;
   $("preview-eval-path").value = report.output_path || outPath;
-  $("tuning-eval-path").value = packPath ? "" : report.output_path || outPath;
-  $("editor-eval-path").value = packPath ? "" : report.output_path || outPath;
+  $("tuning-pack-path").value = "";
+  if (!$("tuning-chat-path").value.trim()) $("tuning-chat-path").value = $("flight-chat-path").value.trim();
+  $("tuning-eval-path").value = report.output_path || outPath;
+  $("editor-pack-path").value = "";
+  if (!$("editor-chat-path").value.trim()) $("editor-chat-path").value = $("flight-chat-path").value.trim();
+  $("editor-eval-path").value = report.output_path || outPath;
   renderEvalStarter(report);
   $("flight-eval-button").disabled = false;
 }
@@ -2131,12 +2206,28 @@ function renderDatasetFlightPlanError(error) {
   $("flight-status").textContent = "DATASET CHECK FAULT";
   $("flight-plan").innerHTML = "";
   $("flight-command").innerHTML = "";
+  $("flight-sft-result").innerHTML = "";
   $("flight-eval-result").innerHTML = `<div class="notice">FAULT: ${escapeHtml(error.message)}</div>`;
+}
+
+function renderSftStarterError(error) {
+  $("flight-sft-button").disabled = false;
+  $("flight-sft-result").innerHTML = `<div class="notice">SFT STARTER FAULT: ${escapeHtml(error.message)}</div>`;
 }
 
 function renderEvalStarterError(error) {
   $("flight-eval-button").disabled = false;
   $("flight-eval-result").innerHTML = `<div class="notice">EVAL STARTER FAULT: ${escapeHtml(error.message)}</div>`;
+}
+
+function suggestedSftStarterPath(path) {
+  const text = String(path || "").trim();
+  if (!text) return "my_pack/chat_starter.jsonl";
+  const slash = text.lastIndexOf("/");
+  const dir = slash >= 0 ? text.slice(0, slash + 1) : "";
+  const file = slash >= 0 ? text.slice(slash + 1) : text;
+  const stem = file.replace(/\.jsonl$/i, "").replace(/\.json$/i, "") || "chat";
+  return `${dir}${stem}_starter.jsonl`;
 }
 
 function suggestedEvalStarterPath(path) {
