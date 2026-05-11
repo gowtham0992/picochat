@@ -3917,6 +3917,7 @@ function renderEval() {
   $("score-table").innerHTML = `
     ${renderEvalReadout(report, levelRows)}
     ${renderEvalLearningFocus(report, levelRows)}
+    ${renderEvalRepairBoard(report, categoryRows, levelRows)}
     <label>HONESTY SUMMARY</label>
     <div class="eval-summary-cards">
       <div class="pipeline-stat">
@@ -4015,6 +4016,114 @@ function renderEvalLearningFocus(report, levelRows) {
   `;
 }
 
+function renderEvalRepairBoard(report, categoryRows, levelRows) {
+  const category = weakestBreakdownRow(categoryRows, "category");
+  const level = weakestBreakdownRow(levelRows, "level");
+  const failureMix = topFailureMix(report).slice(0, 4);
+  const failures = evalFailureCoachRows(report).slice(0, 3);
+  const recommendations = evalRepairRecommendations(report, category, failureMix).slice(0, 3);
+  return `
+    <div class="repair-board learn-only">
+      <div class="repair-card">
+        <label>REPAIR TARGET</label>
+        <strong>${escapeHtml(category ? category.category : "--")}</strong>
+        <p>${category ? `${category.numPassed}/${category.numExamples} passed. Fix this category before training longer.` : "No category breakdown found."}</p>
+        <p>${level ? `Weakest ladder: ${level.level} at ${fmtPercent(level.passRate)}.` : "No eval ladder found."}</p>
+      </div>
+      <div class="repair-card">
+        <label>FAILURE MIX</label>
+        ${failureMix.length ? failureMix.map((item) => `
+          <p><b>${escapeHtml(item.count)}</b> ${escapeHtml(item.label)}</p>
+        `).join("") : "<p>No failed checks in this eval report.</p>"}
+      </div>
+      <div class="repair-card repair-queue">
+        <label>REPAIR QUEUE</label>
+        ${recommendations.length ? recommendations.map((item) => `
+          <p><b>${escapeHtml(String(item.priority || "fix").toUpperCase())}</b> ${escapeHtml(item.action || item.message || "Inspect failed examples.")}</p>
+        `).join("") : "<p>Add harder eval prompts before scaling this recipe.</p>"}
+      </div>
+    </div>
+    <div class="repair-examples learn-only">
+      <label>TURN FAILURES INTO TRAINING ROWS</label>
+      ${failures.length ? failures.map((item) => `
+        <div class="repair-example">
+          <strong>#${escapeHtml(item.index)} ${escapeHtml(item.category)} / ${escapeHtml(item.reason)}</strong>
+          <p>${escapeHtml(item.user)}</p>
+          <p><b>SFT fix</b> ${escapeHtml(item.fix)}</p>
+          <p><b>Must cover</b> ${escapeHtml(item.missing.length ? item.missing.join(" | ") : "the expected behavior without copying the eval answer")}</p>
+        </div>
+      `).join("") : "<p class=\"helper-copy\">No failed examples. Add harder held-out eval rows before scaling.</p>"}
+    </div>
+  `;
+}
+
+function weakestBreakdownRow(rows, key) {
+  return [...(rows || [])]
+    .filter((row) => row.numExamples > 0)
+    .sort((left, right) => (
+      (left.passRate - right.passRate) ||
+      ((right.missingSupport + right.unsupportedClaims + right.promptEchoes) - (left.missingSupport + left.unsupportedClaims + left.promptEchoes)) ||
+      String(left[key] || "").localeCompare(String(right[key] || ""))
+    ))[0];
+}
+
+function topFailureMix(report) {
+  const counts = report.analysis?.failure_counts || {};
+  const clusters = report.analysis?.cluster_counts || {};
+  const rows = Object.entries(counts).map(([name, count]) => ({
+    label: humanizeEvalKey(name),
+    count,
+  }));
+  if (!rows.length) {
+    const clusterRows = Object.entries(clusters).map(([name, count]) => ({
+      label: humanizeEvalKey(name),
+      count,
+    }));
+    if (clusterRows.length) return clusterRows.sort((left, right) => Number(right.count) - Number(left.count));
+    const fallback = new Map();
+    for (const item of evalFailureCoachRows(report)) {
+      fallback.set(item.reason, (fallback.get(item.reason) || 0) + 1);
+    }
+    return Array.from(fallback.entries())
+      .map(([label, count]) => ({ label: humanizeEvalKey(label), count }))
+      .sort((left, right) => Number(right.count) - Number(left.count));
+  }
+  return rows.sort((left, right) => Number(right.count) - Number(left.count));
+}
+
+function evalRepairRecommendations(report, weakestCategory, failureMix) {
+  const existing = report.analysis?.recommendations || [];
+  if (existing.length) return existing;
+  if (!(report.examples || []).some((item) => !item.passed)) {
+    return [{
+      priority: "medium",
+      action: "Add harder held-out eval prompts before scaling this recipe.",
+    }];
+  }
+  const primaryFailure = failureMix[0]?.label || "failed behavior";
+  const category = weakestCategory?.category || "weakest category";
+  return [
+    {
+      priority: "high",
+      action: `Add 5-10 SFT rows for ${category}, targeting ${primaryFailure.toLowerCase()}.`,
+    },
+    {
+      priority: "medium",
+      action: "Keep eval prompts held out; do not copy failed eval answers directly into SFT.",
+    },
+    {
+      priority: "medium",
+      action: "Rerun SFT and eval before increasing base steps or model size.",
+    },
+  ];
+}
+
+function humanizeEvalKey(value) {
+  return String(value || "failure")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function evalFailureCoachRows(report) {
   const analysisFailures = report.analysis?.failed_examples || [];
   const directFailures = (report.examples || [])
@@ -4027,10 +4136,24 @@ function evalFailureCoachRows(report) {
     const item = examplesByIndex.get(index) || failure;
     return {
       index: Number.isFinite(index) ? index : "?",
+      category: item.category || failure.category || "eval",
+      level: item.level || failure.level || "heldout",
+      user: item.user || failure.user || "Prompt unavailable.",
+      missing: evalMissingTerms(item),
       reason: evalFailureReason(item, failure),
       fix: evalFailureFix(item, failure),
     };
   });
+}
+
+function evalMissingTerms(item) {
+  return [
+    ...(item.missing || []),
+    ...((item.missing_any || []).flat()),
+    ...(item.missing_entities || []),
+    ...(item.found_forbidden || []).map((value) => `avoid: ${value}`),
+    ...(item.prompt_echo_reasons || []).map((value) => `echo: ${value}`),
+  ].filter(Boolean);
 }
 
 function evalFailureReason(item, failure = {}) {

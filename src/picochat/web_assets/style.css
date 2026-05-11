@@ -2132,6 +2132,59 @@ th {
   color: var(--ink);
 }
 
+.repair-board {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.repair-card,
+.repair-example {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+}
+
+.repair-card {
+  min-height: 120px;
+}
+
+.repair-card label,
+.repair-examples label {
+  margin: 0;
+}
+
+.repair-card strong,
+.repair-example strong {
+  color: var(--accent);
+}
+
+.repair-card p,
+.repair-example p {
+  color: var(--muted);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.repair-card b,
+.repair-example b {
+  color: var(--ink);
+}
+
+.repair-queue p + p {
+  border-top: 1px solid var(--dim-line);
+  padding-top: 6px;
+}
+
+.repair-examples {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
 .eval-category-table {
   margin-bottom: 14px;
 }
@@ -2269,7 +2322,8 @@ th {
   .notebook-grid,
   .eval-summary-cards,
   .teaching-note,
-  .learning-focus {
+  .learning-focus,
+  .repair-board {
     grid-template-columns: 1fr;
   }
 
