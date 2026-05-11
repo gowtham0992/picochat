@@ -1422,6 +1422,28 @@ textarea.guide-target-focus {
   margin-top: 10px;
 }
 
+.starter-handoff {
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px;
+}
+
+.starter-handoff span,
+.starter-handoff em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.starter-handoff.ready strong {
+  color: var(--green);
+}
+
+.starter-handoff.caution strong {
+  color: var(--accent);
+}
+
 .hf-import-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 8px 0;

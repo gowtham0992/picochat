@@ -2956,40 +2956,47 @@ async function createSftStarter() {
   }
   $("flight-sft-button").disabled = true;
   $("flight-sft-result").innerHTML = 'CREATING SFT STARTER<span class="cursor"></span>';
-  const report = await postJson("/api/sft/starter", {
-    dataset_pack: packPath || null,
-    input_path: packPath ? null : inputPath,
-    out_path: outPath,
-    max_items: 32,
-    seed: state.detail?.summary?.config?.seed ?? 42,
-    force: false,
-    promote_to_pack: Boolean(packPath),
-  });
-  state.sftStarter = report;
-  const chatPath = report.pack_chat_input || report.output_path || outPath;
-  const evalPath = report.pack_eval_input || $("flight-eval-path").value.trim();
-  $("flight-chat-path").value = chatPath;
-  $("preview-chat-path").value = chatPath;
-  if (report.promoted_to_pack && packPath) {
-    $("tuning-pack-path").value = packPath;
-    $("tuning-chat-path").value = "";
-    $("tuning-eval-path").value = "";
-    $("editor-pack-path").value = packPath;
-    $("editor-chat-path").value = "";
-    $("editor-eval-path").value = "";
-    $("launch-pack-path").value = packPath;
-  } else {
-    $("tuning-pack-path").value = "";
-    $("tuning-chat-path").value = chatPath;
-    if (!$("tuning-eval-path").value.trim()) $("tuning-eval-path").value = evalPath;
-    $("editor-pack-path").value = "";
-    $("editor-chat-path").value = chatPath;
-    if (!$("editor-eval-path").value.trim()) $("editor-eval-path").value = evalPath;
+  try {
+    const report = await postJson("/api/sft/starter", {
+      dataset_pack: packPath || null,
+      input_path: packPath ? null : inputPath,
+      out_path: outPath,
+      max_items: 32,
+      seed: state.detail?.summary?.config?.seed ?? 42,
+      force: false,
+      promote_to_pack: Boolean(packPath),
+    });
+    state.sftStarter = report;
+    const chatPath = report.pack_chat_input || report.output_path || outPath;
+    const evalPath = report.pack_eval_input || $("flight-eval-path").value.trim();
+    $("flight-chat-path").value = chatPath;
+    $("preview-chat-path").value = chatPath;
+    if (report.promoted_to_pack && packPath) {
+      $("tuning-pack-path").value = packPath;
+      $("tuning-chat-path").value = "";
+      $("tuning-eval-path").value = "";
+      $("editor-pack-path").value = packPath;
+      $("editor-chat-path").value = "";
+      $("editor-eval-path").value = "";
+      $("launch-pack-path").value = packPath;
+    } else {
+      $("tuning-pack-path").value = "";
+      $("tuning-chat-path").value = chatPath;
+      if (!$("tuning-eval-path").value.trim()) $("tuning-eval-path").value = evalPath;
+      $("editor-pack-path").value = "";
+      $("editor-chat-path").value = chatPath;
+      if (!$("editor-eval-path").value.trim()) $("editor-eval-path").value = evalPath;
+    }
+    renderSftStarter(report);
+    await refreshDatasetFlightPlanAfterChange();
+    if (report.promoted_to_pack && packPath) {
+      loadPackEditor().catch((error) => renderPackEditorError(error));
+    }
+    renderLaunchReadiness();
+    renderStartHere();
+  } finally {
+    $("flight-sft-button").disabled = false;
   }
-  renderSftStarter(report);
-  await refreshDatasetFlightPlanAfterChange();
-  renderStartHere();
-  $("flight-sft-button").disabled = false;
 }
 
 function renderSftStarter(report) {
@@ -3009,6 +3016,7 @@ function renderSftStarter(report) {
       ${report.promoted_to_pack ? "<span>connected to dataset pack</span>" : ""}
       ${Object.entries(report.categories || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
     </div>
+    ${starterHandoff(report, "sft")}
     <div class="command-tape source-command">
       <div class="command-head">
         <label>SFT STARTER COMMAND</label>
@@ -3033,40 +3041,47 @@ async function createEvalStarter() {
   }
   $("flight-eval-button").disabled = true;
   $("flight-eval-result").innerHTML = 'CREATING EVAL STARTER<span class="cursor"></span>';
-  const report = await postJson("/api/eval/starter", {
-    dataset_pack: packPath || null,
-    input_path: packPath ? null : inputPath,
-    out_path: outPath,
-    max_items: 24,
-    seed: state.detail?.summary?.config?.seed ?? 42,
-    force: false,
-    promote_to_pack: Boolean(packPath),
-  });
-  state.evalStarter = report;
-  const chatPath = report.pack_chat_input || $("flight-chat-path").value.trim();
-  const evalPath = report.pack_eval_input || report.output_path || outPath;
-  $("flight-eval-path").value = evalPath;
-  $("preview-eval-path").value = evalPath;
-  if (report.promoted_to_pack && packPath) {
-    $("tuning-pack-path").value = packPath;
-    $("tuning-chat-path").value = "";
-    $("tuning-eval-path").value = "";
-    $("editor-pack-path").value = packPath;
-    $("editor-chat-path").value = "";
-    $("editor-eval-path").value = "";
-    $("launch-pack-path").value = packPath;
-  } else {
-    $("tuning-pack-path").value = "";
-    if (!$("tuning-chat-path").value.trim()) $("tuning-chat-path").value = chatPath;
-    $("tuning-eval-path").value = evalPath;
-    $("editor-pack-path").value = "";
-    if (!$("editor-chat-path").value.trim()) $("editor-chat-path").value = chatPath;
-    $("editor-eval-path").value = evalPath;
+  try {
+    const report = await postJson("/api/eval/starter", {
+      dataset_pack: packPath || null,
+      input_path: packPath ? null : inputPath,
+      out_path: outPath,
+      max_items: 24,
+      seed: state.detail?.summary?.config?.seed ?? 42,
+      force: false,
+      promote_to_pack: Boolean(packPath),
+    });
+    state.evalStarter = report;
+    const chatPath = report.pack_chat_input || $("flight-chat-path").value.trim();
+    const evalPath = report.pack_eval_input || report.output_path || outPath;
+    $("flight-eval-path").value = evalPath;
+    $("preview-eval-path").value = evalPath;
+    if (report.promoted_to_pack && packPath) {
+      $("tuning-pack-path").value = packPath;
+      $("tuning-chat-path").value = "";
+      $("tuning-eval-path").value = "";
+      $("editor-pack-path").value = packPath;
+      $("editor-chat-path").value = "";
+      $("editor-eval-path").value = "";
+      $("launch-pack-path").value = packPath;
+    } else {
+      $("tuning-pack-path").value = "";
+      if (!$("tuning-chat-path").value.trim()) $("tuning-chat-path").value = chatPath;
+      $("tuning-eval-path").value = evalPath;
+      $("editor-pack-path").value = "";
+      if (!$("editor-chat-path").value.trim()) $("editor-chat-path").value = chatPath;
+      $("editor-eval-path").value = evalPath;
+    }
+    renderEvalStarter(report);
+    await refreshDatasetFlightPlanAfterChange();
+    if (report.promoted_to_pack && packPath) {
+      loadPackEditor().catch((error) => renderPackEditorError(error));
+    }
+    renderLaunchReadiness();
+    renderStartHere();
+  } finally {
+    $("flight-eval-button").disabled = false;
   }
-  renderEvalStarter(report);
-  await refreshDatasetFlightPlanAfterChange();
-  renderStartHere();
-  $("flight-eval-button").disabled = false;
 }
 
 function renderEvalStarter(report) {
@@ -3086,6 +3101,7 @@ function renderEvalStarter(report) {
       ${report.promoted_to_pack ? "<span>connected to dataset pack</span>" : ""}
       ${Object.entries(report.categories || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
     </div>
+    ${starterHandoff(report, "eval")}
     <div class="command-tape source-command">
       <div class="command-head">
         <label>EVAL STARTER COMMAND</label>
@@ -3093,6 +3109,28 @@ function renderEvalStarter(report) {
       </div>
       <code>${escapeHtml(report.command || "")}</code>
       ${(report.next_actions || []).map((action) => `<p>${escapeHtml(action)}</p>`).join("")}
+    </div>
+  `;
+}
+
+function starterHandoff(report, kind) {
+  const isEval = kind === "eval";
+  const connected = Boolean(report.promoted_to_pack);
+  const path = isEval
+    ? report.pack_eval_input || report.output_path
+    : report.pack_chat_input || report.output_path;
+  const title = connected ? "CONNECTED TO TRAINING PACK" : "SAVED BUT NOT CONNECTED";
+  const body = connected
+    ? `${isEval ? "Eval" : "SFT"} now points at ${shortPath(path)}. Open the JSONL editor next, edit the starter rows, then run tuning inspection before training.`
+    : `${isEval ? "Eval" : "SFT"} was written to ${shortPath(path)}. Because no dataset pack was selected, use this path explicitly or create a pack before training.`;
+  const caution = isEval
+    ? "Keep eval held out; do not copy these prompts into SFT."
+    : "Use non-eval examples here; do not train on held-out eval prompts.";
+  return `
+    <div class="starter-handoff ${connected ? "ready" : "caution"}">
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(body)}</span>
+      <em>${escapeHtml(caution)}</em>
     </div>
   `;
 }
