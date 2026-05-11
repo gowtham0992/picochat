@@ -289,6 +289,8 @@ h2 {
 
 .run-button small {
   color: var(--muted);
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .run-button.active small {
@@ -520,7 +522,7 @@ textarea.guide-target-focus {
 
 .pipeline-stage small {
   color: var(--muted);
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.3;
 }
 
@@ -604,7 +606,7 @@ textarea.guide-target-focus {
 
 .verdict-card p {
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.35;
 }
 
@@ -630,7 +632,7 @@ textarea.guide-target-focus {
 
 .decision-card p {
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.35;
 }
 
@@ -718,7 +720,7 @@ textarea.guide-target-focus {
 .trust-check p,
 .notebook-entry p {
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.35;
 }
 
@@ -1041,7 +1043,7 @@ textarea.guide-target-focus {
 
 .doctor-row small {
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.25;
 }
 
@@ -2085,7 +2087,7 @@ th {
 
 .compare-decision-card p {
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.35;
 }
 
