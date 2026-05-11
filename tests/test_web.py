@@ -20,7 +20,9 @@ from picochat.web import (
     save_pack_editor_plan,
     sft_starter_plan,
     start_run_plan,
+    _error_payload,
 )
+from picochat.hf_import import HFSplitError
 
 
 def write_run(root, name):
@@ -447,6 +449,18 @@ def test_hf_import_plan_refuses_existing_output_without_force(tmp_path):
             "dataset": "demo/stories",
             "out_dir": str(out_dir),
         }, runs_dir=tmp_path)
+
+
+def test_error_payload_includes_hf_split_options():
+    payload = _error_payload(HFSplitError(
+        dataset="SWE-bench/SWE-bench_Verified",
+        requested_split="train",
+        available_splits=["test"],
+    ))
+
+    assert payload["error_type"] == "HFSplitError"
+    assert payload["requested_split"] == "train"
+    assert payload["available_splits"] == ["test"]
 
 
 def test_inspect_tuning_plan_accepts_ready_dataset_pack(tmp_path):

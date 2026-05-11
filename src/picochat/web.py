@@ -22,7 +22,7 @@ from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack, update_dataset_pack_tuning_paths
 from picochat.eval_starter import generate_eval_starter
 from picochat.generate import GenerateConfig, generate_text_with_trace
-from picochat.hf_import import HFImportConfig, import_hf_dataset
+from picochat.hf_import import HFImportConfig, HFSplitError, import_hf_dataset
 from picochat.optim import LR_DECAYS
 from picochat.scales import RUN_SCALES
 from picochat.sft_starter import generate_sft_starter
@@ -960,7 +960,7 @@ def _make_handler(config: WebConfig):
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
-                self._send_json({"error": str(exc)}, status=400)
+                self._send_json(_error_payload(exc), status=400)
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
@@ -990,7 +990,7 @@ def _make_handler(config: WebConfig):
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
-                self._send_json({"error": str(exc)}, status=400)
+                self._send_json(_error_payload(exc), status=400)
 
         def log_message(self, format: str, *args) -> None:
             return
@@ -1089,6 +1089,20 @@ def _normalize_hf_dataset_id(value: str) -> str:
     if not dataset_parts:
         raise ValueError("dataset URL is missing a dataset id")
     return "/".join(dataset_parts)
+
+
+def _error_payload(error: Exception) -> dict:
+    payload = {
+        "error": str(error),
+        "error_type": error.__class__.__name__,
+    }
+    if isinstance(error, HFSplitError):
+        payload.update({
+            "dataset": error.dataset,
+            "requested_split": error.requested_split,
+            "available_splits": error.available_splits,
+        })
+    return payload
 
 
 def _combined_tuning_status(chat_status: str, eval_status: str) -> str:

@@ -207,7 +207,7 @@ function padSeed(value) {
 async function fetchJson(url) {
   const response = await fetch(url);
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || response.statusText);
+  if (!response.ok) throw apiError(payload, response.statusText);
   return payload;
 }
 
@@ -218,8 +218,14 @@ async function postJson(url, body) {
     body: JSON.stringify(body),
   });
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || response.statusText);
+  if (!response.ok) throw apiError(payload, response.statusText);
   return payload;
+}
+
+function apiError(payload, fallback) {
+  const error = new Error(payload?.error || fallback);
+  error.payload = payload || {};
+  return error;
 }
 
 async function boot() {
@@ -1784,9 +1790,51 @@ function renderHfImport(report) {
 function renderHfImportError(error) {
   $("hf-import-button").disabled = false;
   $("hf-import-status").textContent = "HF IMPORT FAULT";
+  const availableSplits = error.payload?.available_splits || splitListFromMessage(error.message);
+  const requestedSplit = error.payload?.requested_split || $("hf-split").value.trim() || "train";
+  const splitHint = availableSplits.length
+    ? hfSplitHint(availableSplits, requestedSplit)
+    : "";
+  const dependencyHint = hfDependencyHint(error);
   $("hf-import-result").innerHTML = `
     <div class="notice">FAULT: ${escapeHtml(error.message)}</div>
-    <p class="helper-copy">If this says the datasets package is missing, install Picochat inside the venv with <code>pip install -e ".[hf]"</code>.</p>
+    ${splitHint}
+    ${dependencyHint}
+  `;
+}
+
+function hfDependencyHint(error) {
+  const message = String(error.message || "");
+  if (error.payload?.error_type !== "HFDatasetsMissingError" && !message.includes(".[hf]")) {
+    return "";
+  }
+  return '<p class="helper-copy">Install Picochat inside the venv with <code>pip install -e ".[hf]"</code>.</p>';
+}
+
+function splitListFromMessage(message) {
+  const match = String(message || "").match(/Available splits:\s*(\[[^\]]*\])/);
+  if (!match) return [];
+  return Array.from(match[1].matchAll(/'([^']+)'|"([^"]+)"/g), (item) => item[1] || item[2]);
+}
+
+function hfSplitHint(availableSplits, requestedSplit) {
+  const splitText = availableSplits.join(", ");
+  if (availableSplits.length === 1) {
+    $("hf-split").value = availableSplits[0];
+    return `
+      <div class="starter-handoff caution">
+        <strong>SPLIT UPDATED TO ${escapeHtml(availableSplits[0].toUpperCase())}</strong>
+        <span>This dataset does not have ${escapeHtml(requestedSplit)}. Picochat filled the only available split; click import again if you mean to use it.</span>
+        <em>If the split is named test, treat it carefully. It may be benchmark/eval data, not normal pretraining data.</em>
+      </div>
+    `;
+  }
+  return `
+    <div class="starter-handoff caution">
+      <strong>CHOOSE A VALID SPLIT</strong>
+      <span>This dataset does not have ${escapeHtml(requestedSplit)}. Available splits: ${escapeHtml(splitText)}.</span>
+      <em>Set SPLIT to one of those values, then import again.</em>
+    </div>
   `;
 }
 

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from picochat.hf_import import HFImportConfig, HFDatasetsMissingError, import_hf_dataset
+from picochat.hf_import import HFImportConfig, HFDatasetsMissingError, HFSplitError, import_hf_dataset
 
 
 def test_import_hf_dataset_writes_local_corpus_and_reports(tmp_path):
@@ -114,3 +114,22 @@ def test_import_hf_dataset_reports_missing_optional_dependency(tmp_path, monkeyp
             dataset="demo/dataset",
             out_path=str(tmp_path / "corpus.txt"),
         ))
+
+
+def test_import_hf_dataset_reports_available_splits(tmp_path):
+    def fake_loader(*_args, **_kwargs):
+        raise ValueError("Bad split: train. Available splits: ['test']")
+
+    with pytest.raises(HFSplitError) as exc_info:
+        import_hf_dataset(
+            HFImportConfig(
+                dataset="demo/dataset",
+                split="train",
+                out_path=str(tmp_path / "corpus.txt"),
+            ),
+            loader=fake_loader,
+        )
+
+    assert exc_info.value.dataset == "demo/dataset"
+    assert exc_info.value.requested_split == "train"
+    assert exc_info.value.available_splits == ["test"]

@@ -2,14 +2,29 @@
 
 from __future__ import annotations
 
+import ast
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
+import re
 from typing import Any, Callable, Iterable
 
 
 class HFDatasetsMissingError(RuntimeError):
     """Raised when the optional Hugging Face datasets dependency is missing."""
+
+
+class HFSplitError(ValueError):
+    """Raised when the requested Hugging Face split is not available."""
+
+    def __init__(self, dataset: str, requested_split: str, available_splits: list[str], message: str | None = None):
+        self.dataset = dataset
+        self.requested_split = requested_split
+        self.available_splits = available_splits
+        detail = message or (
+            f"Bad split: {requested_split}. Available splits: {available_splits}"
+        )
+        super().__init__(detail)
 
 
 @dataclass(frozen=True)
@@ -192,7 +207,34 @@ def _load_dataset(config: HFImportConfig, loader: DatasetLoader | None) -> Itera
     args = [config.dataset]
     if config.config_name:
         args.append(config.config_name)
-    return loader(*args, split=config.split, streaming=config.streaming)
+    try:
+        return loader(*args, split=config.split, streaming=config.streaming)
+    except Exception as error:
+        split_error = _split_error_from_exception(config, error)
+        if split_error:
+            raise split_error from error
+        raise
+
+
+def _split_error_from_exception(config: HFImportConfig, error: Exception) -> HFSplitError | None:
+    message = str(error)
+    if "Available splits:" not in message:
+        return None
+    match = re.search(r"Available splits:\s*(\[[^\]]*\])", message)
+    if not match:
+        return None
+    try:
+        parsed = ast.literal_eval(match.group(1))
+    except (SyntaxError, ValueError):
+        return None
+    if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+        return None
+    return HFSplitError(
+        dataset=config.dataset,
+        requested_split=config.split,
+        available_splits=parsed,
+        message=message,
+    )
 
 
 def _extract_text(record: Any, text_column: str) -> tuple[str | None, str]:
