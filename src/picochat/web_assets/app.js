@@ -2290,6 +2290,99 @@ function renderLaunchReadiness() {
     <strong>${escapeHtml(readiness.title)}</strong>
     <span>${readiness.notes.map((note) => escapeHtml(note)).join(" | ")}</span>
   `;
+  renderLaunchCommandPreview();
+}
+
+function launchPreviewCommand(config = launchConfig()) {
+  const outDir = config.run_name ? `runs/${config.run_name}` : "runs/my-run";
+  const parts = [
+    "PYTHONPATH=src",
+    "python",
+    "-m",
+    "picochat.cli",
+    "run",
+    "tiny",
+    "--out-dir",
+    outDir,
+    "--dataset-pack",
+    config.dataset_pack || "<dataset-pack>",
+    "--context-size",
+    config.context_size,
+    "--n-embd",
+    config.n_embd,
+    "--n-head",
+    config.n_head,
+    "--n-layer",
+    config.n_layer,
+    "--base-steps",
+    config.base_steps,
+    "--sft-steps",
+    config.sft_steps,
+    "--base-batch-size",
+    config.base_batch_size,
+    "--sft-batch-size",
+    config.sft_batch_size,
+    "--base-learning-rate",
+    config.base_learning_rate,
+    "--sft-learning-rate",
+    config.sft_learning_rate,
+    "--seed",
+    config.seed,
+    "--eval-max-new-tokens",
+    config.eval_max_new_tokens,
+    "--tokenizer-type",
+    config.tokenizer_type,
+    "--base-lr-warmup-steps",
+    config.base_lr_warmup_steps,
+    "--sft-lr-warmup-steps",
+    config.sft_lr_warmup_steps,
+    "--base-lr-decay",
+    config.base_lr_decay,
+    "--sft-lr-decay",
+    config.sft_lr_decay,
+    "--base-grad-clip",
+    config.base_grad_clip,
+    "--sft-grad-clip",
+    config.sft_grad_clip,
+    "--base-early-stop-patience",
+    config.base_early_stop_patience,
+    "--sft-early-stop-patience",
+    config.sft_early_stop_patience,
+    "--sft-sampling",
+    config.sft_sampling,
+    "--split-mode",
+    "document",
+    "--min-score",
+    config.min_quality_score,
+    "--device",
+    "cpu",
+  ];
+  if (state.runPresets[config.preset]) parts.push("--scale", config.preset);
+  if (config.tokenizer_vocab_size) parts.push("--tokenizer-vocab-size", config.tokenizer_vocab_size);
+  return shellCommand(parts);
+}
+
+function renderLaunchCommandPreview() {
+  const target = $("launch-command-preview");
+  if (!target) return;
+  const config = launchConfig();
+  const readiness = launchReadiness(config);
+  const command = launchPreviewCommand(config);
+  target.innerHTML = `
+    <div class="command-head">
+      <label>LAUNCH COMMAND PREVIEW</label>
+      ${readiness.status === "blocked" ? "" : copyCommandButton(command)}
+    </div>
+    <div class="command-meta">
+      <span>${readiness.status === "blocked" ? "FIX BLOCKERS FIRST" : "READY TO COPY OR LAUNCH"}</span>
+      <span>OUT ${escapeHtml(config.run_name ? `runs/${config.run_name}` : "runs/my-run")}</span>
+      <span>SOURCE WEB LAUNCHER</span>
+    </div>
+    <code>${escapeHtml(command)}</code>
+    <p>${readiness.status === "blocked"
+      ? "This is the CLI shape for the current fields, but blocked checks must be fixed before launch."
+      : "This mirrors the current web launcher settings so you can learn or reproduce the run from terminal."}</p>
+  `;
 }
 
 async function launchRun() {
