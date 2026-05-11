@@ -915,6 +915,8 @@ def test_run_presets_are_exposed_for_web_launcher():
     presets = run_presets_plan()["presets"]
 
     assert presets["smoke"]["base_steps"] < presets["tiny"]["base_steps"]
+    assert presets["smoke"]["sft_learning_rate"] == 1e-3
+    assert presets["small-local"]["sft_learning_rate"] == 3e-4
     assert presets["small-local"]["n_layer"] >= presets["tiny"]["n_layer"]
 
 
