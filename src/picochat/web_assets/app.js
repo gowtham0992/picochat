@@ -2743,9 +2743,11 @@ async function checkDatasetFlightPlan() {
   $("flight-status").innerHTML = 'CHECKING DATASET<span class="cursor"></span>';
   $("flight-plan").innerHTML = "";
   $("flight-command").innerHTML = "";
-  const report = await refreshDatasetFlightPlanAfterChange(payload);
-  $("flight-check-button").disabled = false;
-  return report;
+  try {
+    return await refreshDatasetFlightPlanAfterChange(payload);
+  } finally {
+    $("flight-check-button").disabled = false;
+  }
 }
 
 async function refreshDatasetFlightPlanAfterChange(payload = datasetFlightPayload()) {
@@ -2766,6 +2768,7 @@ async function refreshDatasetFlightPlanAfterChange(payload = datasetFlightPayloa
     $("launch-pack-path").value = report.dataset_pack;
     $("preview-pack-path").value = report.dataset_pack;
   }
+  renderLaunchReadiness();
   renderDatasetFlightPlan(report);
   renderCorpusSourcePreview(report);
   renderTuningInspection(state.tuningInspection);
@@ -3221,28 +3224,32 @@ async function previewCorpusSources() {
   $("source-preview-stats").innerHTML = "";
   $("source-preview-files").innerHTML = "";
   $("source-preview-text").textContent = "";
-  const report = await postJson("/api/corpus/preview", {
-    dataset_pack: packPath || null,
-    recipe_path: packPath ? null : recipePath || null,
-    input_path: packPath ? null : inputPath || null,
-    chat_input: packPath ? null : chatInput || null,
-    eval_input: packPath ? null : evalInput || null,
-    preview_chars: 1400,
-    min_quality_score: minQualityScore,
-  });
-  state.corpusSourcePreview = report;
-  state.datasetFlightPlan = report;
-  state.tuningInspection = tuningInspectionFromPreview(report);
-  if (report.dataset_pack) {
-    $("launch-pack-path").value = report.dataset_pack;
-    $("launch-min-score").value = report.min_quality_score ?? minQualityScore;
-    if (!$("launch-run-name").value) $("launch-run-name").value = suggestedRunName(report.dataset_pack);
+  try {
+    const report = await postJson("/api/corpus/preview", {
+      dataset_pack: packPath || null,
+      recipe_path: packPath ? null : recipePath || null,
+      input_path: packPath ? null : inputPath || null,
+      chat_input: packPath ? null : chatInput || null,
+      eval_input: packPath ? null : evalInput || null,
+      preview_chars: 1400,
+      min_quality_score: minQualityScore,
+    });
+    state.corpusSourcePreview = report;
+    state.datasetFlightPlan = report;
+    state.tuningInspection = tuningInspectionFromPreview(report);
+    if (report.dataset_pack) {
+      $("launch-pack-path").value = report.dataset_pack;
+      $("launch-min-score").value = report.min_quality_score ?? minQualityScore;
+      if (!$("launch-run-name").value) $("launch-run-name").value = suggestedRunName(report.dataset_pack);
+    }
+    renderLaunchReadiness();
+    renderDatasetFlightPlan(report);
+    renderCorpusSourcePreview(report);
+    renderTuningInspection(state.tuningInspection);
+    renderStartHere();
+  } finally {
+    $("preview-corpus-button").disabled = false;
   }
-  renderDatasetFlightPlan(report);
-  renderCorpusSourcePreview(report);
-  renderTuningInspection(state.tuningInspection);
-  renderStartHere();
-  $("preview-corpus-button").disabled = false;
 }
 
 function renderCorpusSourcePreview(report) {
