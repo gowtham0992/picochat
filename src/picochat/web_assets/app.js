@@ -213,6 +213,7 @@ function bindControls() {
     const mode = button.dataset.guideMode;
     if (mode) setViewMode(mode);
     setPanel(button.dataset.guidePanel);
+    window.setTimeout(() => focusGuideTarget(button.dataset.guideTarget), 80);
   });
   document.querySelectorAll("[data-panel]").forEach((button) => {
     button.addEventListener("click", () => setPanel(button.dataset.panel));
@@ -503,7 +504,7 @@ function renderStartHere() {
     </div>
     <div class="start-here-grid">
       ${steps.map((step, index) => `
-        <button class="start-step ${escapeHtml(step.status)} ${step.status === "next" ? "active" : ""}" type="button" data-guide-panel="${escapeHtml(step.panel)}" data-guide-mode="${escapeHtml(step.mode || "learn")}">
+        <button class="start-step ${escapeHtml(step.status)} ${step.status === "next" ? "active" : ""}" type="button" data-guide-panel="${escapeHtml(step.panel)}" data-guide-mode="${escapeHtml(step.mode || "learn")}" data-guide-target="${escapeHtml(step.target || "")}">
           <span>${String(index + 1).padStart(2, "0")}</span>
           <strong>${escapeHtml(step.label)}</strong>
           <em>${escapeHtml(step.signal)}</em>
@@ -512,6 +513,22 @@ function renderStartHere() {
       `).join("")}
     </div>
   `;
+}
+
+function focusGuideTarget(targetId) {
+  if (!targetId) return;
+  const target = $(targetId);
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  target.classList.remove("guide-target-focus");
+  window.requestAnimationFrame(() => {
+    target.classList.add("guide-target-focus");
+    const focusable = target.querySelector("input:not([type='hidden']), textarea, select, button");
+    if (focusable && !focusable.disabled) {
+      focusable.focus({ preventScroll: true });
+    }
+    window.setTimeout(() => target.classList.remove("guide-target-focus"), 1800);
+  });
 }
 
 function startHereSteps() {
@@ -528,6 +545,7 @@ function startHereSteps() {
     {
       label: "Choose dataset",
       panel: "dataset",
+      target: "hf-import-card",
       status: hasPack ? "done" : "todo",
       signal: hasPack ? "Pack selected" : "Paste HF URL or local corpus",
       note: "A dataset pack is the contract Picochat uses for corpus, SFT, and eval files.",
@@ -535,6 +553,7 @@ function startHereSteps() {
     {
       label: "Check readiness",
       panel: "dataset",
+      target: "flight-plan-card",
       status: checkedDataset ? "done" : "todo",
       signal: checkedDataset ? "Corpus checked" : "Run dataset check",
       note: "This catches missing files, tiny corpora, duplicate text, and tuning-data blockers early.",
@@ -542,6 +561,7 @@ function startHereSteps() {
     {
       label: "Create SFT",
       panel: "dataset",
+      target: "flight-plan-card",
       status: sftReady ? "done" : "todo",
       signal: sftReady ? "Chat rows selected" : "Generate starter chat rows",
       note: "SFT teaches chat behavior. It is not a substitute for base training knowledge.",
@@ -549,6 +569,7 @@ function startHereSteps() {
     {
       label: "Create eval",
       panel: "dataset",
+      target: "flight-plan-card",
       status: evalReady ? "done" : "todo",
       signal: evalReady ? "Eval rows selected" : "Generate starter eval rows",
       note: "Eval is the scoreboard. Keep answerable, refusal, and memorization probes.",
@@ -557,6 +578,7 @@ function startHereSteps() {
       label: "Inspect/edit",
       panel: "dataset",
       mode: "inspect",
+      target: "pack-editor-card",
       status: tuningReady ? "done" : "todo",
       signal: tuningReady ? "Tuning ready" : "Open JSONL editor",
       note: "Rewrite starter rows into real domain questions before trusting a run.",
@@ -565,6 +587,7 @@ function startHereSteps() {
       label: "Train smoke",
       panel: "dataset",
       mode: "inspect",
+      target: "run-launcher-card",
       status: hasRun ? "done" : "todo",
       signal: hasRun ? "Run loaded" : "Launch a small run",
       note: "Smoke runs prove the wiring before you spend time on larger experiments.",
@@ -572,6 +595,7 @@ function startHereSteps() {
     {
       label: "Evaluate/chat",
       panel: hasEval ? "eval" : "generation",
+      target: hasEval ? "panel-eval" : "panel-generation",
       status: hasEval ? "done" : "todo",
       signal: hasEval ? `${evalSummary.num_passed}/${evalSummary.num_examples} pass` : "Inspect behavior",
       note: "Use eval for evidence and chat for qualitative failure discovery.",
@@ -579,6 +603,7 @@ function startHereSteps() {
     {
       label: "Compare",
       panel: "compare",
+      target: "panel-compare",
       status: "todo",
       signal: canCompare ? `${state.runs.length} runs available` : "Need two runs",
       note: "A better SLM is a measured improvement, not a single good sample.",
