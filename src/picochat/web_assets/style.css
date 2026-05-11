@@ -1451,6 +1451,27 @@ textarea.guide-target-focus {
   margin-bottom: 10px;
 }
 
+.advanced-launch-options {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  grid-column: 1 / -1;
+}
+
+.advanced-launch-options summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 700;
+  list-style-position: inside;
+  padding: 8px;
+}
+
+.advanced-launch-grid {
+  border-top: 1px solid var(--dim-line);
+  grid-template-columns: repeat(6, minmax(92px, 1fr));
+  margin-bottom: 0;
+  padding: 8px;
+}
+
 .editor-grid {
   display: grid;
   gap: 10px;
@@ -2353,6 +2374,7 @@ th {
   .tuning-inspector-controls,
   .pack-editor-controls,
   .run-launch-controls,
+  .advanced-launch-grid,
   .editor-grid,
   .run-job-list,
   .run-progress-head,
