@@ -1095,6 +1095,7 @@ function learningVerdict(stages) {
   const summary = state.detail?.summary || {};
   const evalReport = state.detail?.eval_reports?.at(-1)?.report;
   const evalSummary = evalReport?.summary || summary.eval || {};
+  const checks = trustChecks();
   const levelRows = evalReport ? evalLevelRows(evalReport) : [];
   const strongest = bestLevel(levelRows, "high");
   const weakest = bestLevel(levelRows, "low");
@@ -1141,7 +1142,103 @@ function learningVerdict(stages) {
         <p>${escapeHtml(nextAction)}</p>
       </div>
     </div>
+    <div class="decision-grid">
+      ${runDecisionCards(summary, evalSummary, checks).map((card) => `
+        <div class="decision-card ${escapeHtml(card.status)}">
+          <label>${escapeHtml(card.label)}</label>
+          <strong>${escapeHtml(card.title)}</strong>
+          <p>${escapeHtml(card.message)}</p>
+        </div>
+      `).join("")}
+    </div>
   `;
+}
+
+function runDecisionCards(summary, evalSummary, checks) {
+  const hasEval = Number(evalSummary.num_examples || 0) > 0;
+  const passRate = hasEval ? Number(evalSummary.pass_rate || 0) : null;
+  const trustFails = checks.filter((check) => check.status === "fail");
+  const trustWarns = checks.filter((check) => check.status === "warn");
+  const baseStatus = summary.base?.loss_diagnostics?.status || state.detail?.base_report?.loss_diagnostics?.status || "";
+  const sftStatus = summary.sft?.loss_diagnostics?.status || state.detail?.sft_report?.loss_diagnostics?.status || "";
+  const baseBpb = Number(summary.base?.val_bpb);
+  const sftBpb = Number(summary.sft?.val_bpb);
+  const learningImproved = Number.isFinite(baseBpb) && Number.isFinite(sftBpb) && sftBpb <= baseBpb;
+  const trustCard = trustFails.length
+    ? {
+        label: "TRUST GATE",
+        status: "fail",
+        title: "Do not trust yet",
+        message: `Fix ${trustFails[0].label.toLowerCase()} before treating this score as evidence.`,
+      }
+    : trustWarns.length
+      ? {
+          label: "TRUST GATE",
+          status: "warn",
+          title: "Usable with caution",
+          message: `Review ${trustWarns[0].label.toLowerCase()} before scaling the experiment.`,
+        }
+      : {
+          label: "TRUST GATE",
+          status: "pass",
+          title: "No obvious cheating signal",
+          message: "Leakage, memorization, support, and echo checks are clean enough for this run.",
+        };
+  const learningCard = !hasEval
+    ? {
+        label: "LEARNING GATE",
+        status: "warn",
+        title: "Eval missing",
+        message: "Loss can look healthy while behavior is wrong. Run eval before judging the model.",
+      }
+    : passRate >= 0.7
+      ? {
+          label: "LEARNING GATE",
+          status: "pass",
+          title: `${fmtPercent(passRate)} visible eval pass`,
+          message: learningImproved ? "Behavior and SFT loss both improved; inspect weakest categories next." : "Eval improved, but inspect loss diagnostics before scaling.",
+        }
+      : passRate >= 0.35
+        ? {
+            label: "LEARNING GATE",
+            status: "warn",
+            title: `${fmtPercent(passRate)} visible eval pass`,
+            message: "The model is learning something. Add targeted SFT rows for the weakest eval groups.",
+          }
+        : {
+            label: "LEARNING GATE",
+            status: "fail",
+            title: `${fmtPercent(passRate)} visible eval pass`,
+            message: "Treat this as a diagnostic run. Improve SFT/eval data before longer training.",
+          };
+  const scaleCard = !hasEval
+    ? {
+        label: "SCALE GATE",
+        status: "warn",
+        title: "Not ready to scale",
+        message: "Complete eval and compare against a baseline before spending more compute.",
+      }
+    : trustFails.length
+      ? {
+          label: "SCALE GATE",
+          status: "fail",
+          title: "Blocked by trust",
+          message: "Longer training can make a bad signal look stronger. Fix trust failures first.",
+        }
+      : passRate >= 0.7 && !trustWarns.length
+        ? {
+            label: "SCALE GATE",
+            status: "pass",
+            title: "Scale candidate",
+            message: "Run a harder eval or larger preset, then compare against this checkpoint.",
+          }
+        : {
+            label: "SCALE GATE",
+            status: "warn",
+            title: "Improve before scaling",
+            message: `${baseStatus || "base"} / ${sftStatus || "SFT"} diagnostics are not enough; use failures to edit data first.`,
+          };
+  return [trustCard, learningCard, scaleCard];
 }
 
 function runStoryTimeline(stages) {

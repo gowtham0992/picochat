@@ -608,6 +608,44 @@ textarea.guide-target-focus {
   line-height: 1.35;
 }
 
+.decision-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+.decision-card {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 5px;
+  min-height: 88px;
+  padding: 8px;
+}
+
+.decision-card label {
+  margin: 0;
+}
+
+.decision-card p {
+  color: var(--muted);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.decision-card.pass strong {
+  color: var(--green);
+}
+
+.decision-card.warn strong {
+  color: var(--accent);
+}
+
+.decision-card.fail strong {
+  color: var(--red);
+}
+
 .run-storyline,
 .trust-panel {
   border-top: 1px solid var(--line);
@@ -2196,6 +2234,7 @@ th {
   .start-here-grid,
   .pipeline-detail-grid,
   .verdict-card,
+  .decision-grid,
   .doctor-body,
   .doctor-list,
   .guide-strip,
