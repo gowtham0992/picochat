@@ -380,12 +380,91 @@
                   <input id="launch-context-size" type="number" min="8" max="512" value="64">
                 </div>
                 <div>
+                  <label for="launch-n-embd">N EMBED</label>
+                  <input id="launch-n-embd" type="number" min="16" max="512" value="32">
+                </div>
+                <div>
+                  <label for="launch-n-head">HEADS</label>
+                  <input id="launch-n-head" type="number" min="1" max="16" value="4">
+                </div>
+                <div>
+                  <label for="launch-n-layer">LAYERS</label>
+                  <input id="launch-n-layer" type="number" min="1" max="12" value="1">
+                </div>
+                <div>
                   <label for="launch-base-steps">BASE STEPS</label>
                   <input id="launch-base-steps" type="number" min="1" max="2000" value="40">
                 </div>
                 <div>
                   <label for="launch-sft-steps">SFT STEPS</label>
                   <input id="launch-sft-steps" type="number" min="1" max="4000" value="60">
+                </div>
+                <div>
+                  <label for="launch-base-batch-size">BASE BATCH</label>
+                  <input id="launch-base-batch-size" type="number" min="1" max="64" value="4">
+                </div>
+                <div>
+                  <label for="launch-sft-batch-size">SFT BATCH</label>
+                  <input id="launch-sft-batch-size" type="number" min="1" max="64" value="4">
+                </div>
+                <div>
+                  <label for="launch-base-learning-rate">BASE LR</label>
+                  <input id="launch-base-learning-rate" type="number" min="0" max="1" step="0.000001" value="0.0003">
+                </div>
+                <div>
+                  <label for="launch-sft-learning-rate">SFT LR</label>
+                  <input id="launch-sft-learning-rate" type="number" min="0" max="1" step="0.000001" value="0.001">
+                </div>
+                <div>
+                  <label for="launch-base-lr-decay">BASE DECAY</label>
+                  <select id="launch-base-lr-decay">
+                    <option value="none">NONE</option>
+                    <option value="linear">LINEAR</option>
+                    <option value="cosine">COSINE</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="launch-sft-lr-decay">SFT DECAY</label>
+                  <select id="launch-sft-lr-decay">
+                    <option value="none">NONE</option>
+                    <option value="linear">LINEAR</option>
+                    <option value="cosine">COSINE</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="launch-base-lr-warmup-steps">BASE WARMUP</label>
+                  <input id="launch-base-lr-warmup-steps" type="number" min="0" max="10000" value="0">
+                </div>
+                <div>
+                  <label for="launch-sft-lr-warmup-steps">SFT WARMUP</label>
+                  <input id="launch-sft-lr-warmup-steps" type="number" min="0" max="10000" value="0">
+                </div>
+                <div>
+                  <label for="launch-base-grad-clip">BASE CLIP</label>
+                  <input id="launch-base-grad-clip" type="number" min="0" max="100" step="0.1" value="0">
+                </div>
+                <div>
+                  <label for="launch-sft-grad-clip">SFT CLIP</label>
+                  <input id="launch-sft-grad-clip" type="number" min="0" max="100" step="0.1" value="0">
+                </div>
+                <div>
+                  <label for="launch-base-early-stop-patience">BASE PATIENCE</label>
+                  <input id="launch-base-early-stop-patience" type="number" min="0" max="100" value="4">
+                </div>
+                <div>
+                  <label for="launch-sft-early-stop-patience">SFT PATIENCE</label>
+                  <input id="launch-sft-early-stop-patience" type="number" min="0" max="100" value="4">
+                </div>
+                <div>
+                  <label for="launch-sft-sampling">SFT SAMPLING</label>
+                  <select id="launch-sft-sampling">
+                    <option value="uniform">UNIFORM</option>
+                    <option value="category_balanced">CATEGORY BALANCED</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="launch-eval-max-new-tokens">EVAL TOKENS</label>
+                  <input id="launch-eval-max-new-tokens" type="number" min="1" max="320" value="80">
                 </div>
                 <div>
                   <label for="launch-seed">SEED</label>

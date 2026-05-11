@@ -2131,8 +2131,25 @@ function applyLaunchPreset(quiet = false) {
   const values = state.runPresets[preset];
   if (!values) return;
   $("launch-context-size").value = values.context_size;
+  $("launch-n-embd").value = values.n_embd;
+  $("launch-n-head").value = values.n_head;
+  $("launch-n-layer").value = values.n_layer;
   $("launch-base-steps").value = values.base_steps;
   $("launch-sft-steps").value = values.sft_steps;
+  $("launch-base-batch-size").value = values.base_batch_size;
+  $("launch-sft-batch-size").value = values.sft_batch_size;
+  $("launch-base-learning-rate").value = values.base_learning_rate;
+  $("launch-sft-learning-rate").value = values.sft_learning_rate;
+  $("launch-base-lr-decay").value = values.base_lr_decay || "none";
+  $("launch-sft-lr-decay").value = values.sft_lr_decay || "none";
+  $("launch-base-lr-warmup-steps").value = values.base_lr_warmup_steps;
+  $("launch-sft-lr-warmup-steps").value = values.sft_lr_warmup_steps;
+  $("launch-base-grad-clip").value = values.base_grad_clip;
+  $("launch-sft-grad-clip").value = values.sft_grad_clip;
+  $("launch-base-early-stop-patience").value = values.base_early_stop_patience;
+  $("launch-sft-early-stop-patience").value = values.sft_early_stop_patience;
+  $("launch-sft-sampling").value = values.sft_sampling || "uniform";
+  $("launch-eval-max-new-tokens").value = values.eval_max_new_tokens;
   if (values.tokenizer_type) $("launch-tokenizer-type").value = values.tokenizer_type;
   $("launch-tokenizer-vocab-size").value = values.tokenizer_vocab_size || "";
   if (!quiet) {
@@ -2166,8 +2183,25 @@ async function launchRun() {
       run_name: runName,
       preset: $("launch-preset").value,
       context_size: Number($("launch-context-size").value),
+      n_embd: Number($("launch-n-embd").value),
+      n_head: Number($("launch-n-head").value),
+      n_layer: Number($("launch-n-layer").value),
       base_steps: Number($("launch-base-steps").value),
       sft_steps: Number($("launch-sft-steps").value),
+      base_batch_size: Number($("launch-base-batch-size").value),
+      sft_batch_size: Number($("launch-sft-batch-size").value),
+      base_learning_rate: Number($("launch-base-learning-rate").value),
+      sft_learning_rate: Number($("launch-sft-learning-rate").value),
+      base_lr_decay: $("launch-base-lr-decay").value,
+      sft_lr_decay: $("launch-sft-lr-decay").value,
+      base_lr_warmup_steps: Number($("launch-base-lr-warmup-steps").value),
+      sft_lr_warmup_steps: Number($("launch-sft-lr-warmup-steps").value),
+      base_grad_clip: Number($("launch-base-grad-clip").value),
+      sft_grad_clip: Number($("launch-sft-grad-clip").value),
+      base_early_stop_patience: Number($("launch-base-early-stop-patience").value),
+      sft_early_stop_patience: Number($("launch-sft-early-stop-patience").value),
+      sft_sampling: $("launch-sft-sampling").value,
+      eval_max_new_tokens: Number($("launch-eval-max-new-tokens").value),
       seed: Number($("launch-seed").value),
       tokenizer_type: $("launch-tokenizer-type").value,
       tokenizer_vocab_size: $("launch-tokenizer-vocab-size").value
