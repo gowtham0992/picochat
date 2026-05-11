@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 from picochat.compare import compare_runs
 from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus_sources
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
+from picochat.eval_starter import generate_eval_starter
 from picochat.generate import GenerateConfig, generate_text_with_trace
 from picochat.optim import LR_DECAYS
 from picochat.scales import RUN_SCALES
@@ -375,6 +376,62 @@ def inspect_tuning_plan(payload: dict) -> dict:
     }
 
 
+def eval_starter_plan(payload: dict) -> dict:
+    """Generate a starter eval JSONL file from a web request."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+
+    dataset_pack = _optional_string(payload.get("dataset_pack"))
+    input_path = _optional_string(payload.get("input_path"))
+    out_path = _optional_string(payload.get("out_path"))
+    if not out_path:
+        raise ValueError("out_path is required")
+    if not dataset_pack and not input_path:
+        raise ValueError("dataset_pack or input_path is required")
+
+    max_items = _bounded_int(payload.get("max_items", 24), 4, 200)
+    seed = _bounded_int(payload.get("seed", 42), 0, 9999)
+    force = payload.get("force", False)
+    if not isinstance(force, bool):
+        raise ValueError("force must be true or false")
+
+    report = generate_eval_starter(
+        input_path=input_path,
+        dataset_pack=dataset_pack,
+        out_path=out_path,
+        max_items=max_items,
+        seed=seed,
+        force=force,
+    )
+    command_parts = [
+        "PYTHONPATH=src",
+        "python",
+        "-m",
+        "picochat.cli",
+        "data",
+        "eval-starter",
+    ]
+    if dataset_pack:
+        command_parts.extend(["--dataset-pack", dataset_pack])
+    else:
+        command_parts.extend(["--input", input_path or ""])
+    command_parts.extend(["--out", out_path, "--max-items", str(max_items), "--seed", str(seed)])
+    if force:
+        command_parts.append("--force")
+    return {
+        **report.to_dict(),
+        "dataset_pack": dataset_pack,
+        "force": force,
+        "command": _shell_command(*command_parts),
+        "report_path": str(Path(out_path).with_suffix(".md")),
+        "next_actions": [
+            "Open the generated eval JSONL and replace generic wording with domain-specific prompts.",
+            "Keep refusal and memorization-probe rows before trusting a custom SLM score.",
+            "Run tuning inspection after editing so Picochat can grade the eval file before training.",
+        ],
+    }
+
+
 def load_pack_editor_plan(payload: dict) -> dict:
     """Load editable chat/eval JSONL text for a dataset pack or explicit paths."""
     if not isinstance(payload, dict):
@@ -720,6 +777,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(init_dataset_pack_plan(self._read_json_body()))
                 elif parsed.path == "/api/tuning/inspect":
                     self._send_json(inspect_tuning_plan(self._read_json_body()))
+                elif parsed.path == "/api/eval/starter":
+                    self._send_json(eval_starter_plan(self._read_json_body()))
                 elif parsed.path == "/api/pack/editor/load":
                     self._send_json(load_pack_editor_plan(self._read_json_body()))
                 elif parsed.path == "/api/pack/editor/save":

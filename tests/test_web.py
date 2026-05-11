@@ -5,6 +5,7 @@ import pytest
 from picochat.web import (
     cancel_run_plan,
     discover_runs,
+    eval_starter_plan,
     generate_run_text,
     init_dataset_pack_plan,
     inspect_tuning_plan,
@@ -453,6 +454,54 @@ def test_inspect_tuning_plan_rejects_pack_with_overrides(tmp_path):
             "dataset_pack": str(pack_path),
             "chat_input": "other_chat.jsonl",
         })
+
+
+def test_eval_starter_plan_generates_domain_eval_rows(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    out_path = tmp_path / "domain_eval.jsonl"
+    source_path.write_text(
+        "Picochat turns local text into tiny training runs. The workbench checks data quality before training.\n"
+        "A careful eval includes answerable questions, refusal checks, and memorization probes.",
+        encoding="utf-8",
+    )
+
+    report = eval_starter_plan({
+        "input_path": str(source_path),
+        "out_path": str(out_path),
+        "max_items": 8,
+        "seed": 7,
+    })
+
+    assert report["output_path"] == str(out_path)
+    assert report["num_rows"] >= 4
+    assert report["categories"]["memorization_probe"] == 1
+    assert "--input" in report["command"]
+    assert "--max-items 8" in report["command"]
+    assert out_path.exists()
+    assert out_path.with_suffix(".md").exists()
+
+
+def test_eval_starter_plan_accepts_dataset_pack(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    pack_path = tmp_path / "dataset_pack.json"
+    out_path = tmp_path / "eval.jsonl"
+    source_path.write_text(
+        "Coffee shop training data describes espresso, filters, and pastry pairings. "
+        "The menu changes slowly and should not be treated as live news.",
+        encoding="utf-8",
+    )
+    pack_path.write_text(json.dumps({"corpus": "lesson.txt", "chat": "chat.jsonl", "eval": "eval.jsonl"}), encoding="utf-8")
+
+    report = eval_starter_plan({
+        "dataset_pack": str(pack_path),
+        "out_path": str(out_path),
+        "force": True,
+    })
+
+    assert report["dataset_pack"] == str(pack_path)
+    assert report["input_path"] == str(source_path)
+    assert "--dataset-pack" in report["command"]
+    assert report["force"] is True
 
 
 def test_pack_editor_loads_and_saves_pack_jsonl(tmp_path):

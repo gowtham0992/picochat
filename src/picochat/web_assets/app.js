@@ -9,6 +9,8 @@ const state = {
   compareRuns: [],
   compareDetails: {},
   corpusSourcePreview: null,
+  datasetFlightPlan: null,
+  evalStarter: null,
   datasetPackInit: null,
   tuningInspection: null,
   packEditor: null,
@@ -238,6 +240,15 @@ function bindControls() {
   });
   $("preview-corpus-button").addEventListener("click", () => {
     previewCorpusSources().catch((error) => renderCorpusSourcePreviewError(error));
+  });
+  $("flight-check-button").addEventListener("click", () => {
+    checkDatasetFlightPlan().catch((error) => renderDatasetFlightPlanError(error));
+  });
+  $("flight-eval-button").addEventListener("click", () => {
+    createEvalStarter().catch((error) => renderEvalStarterError(error));
+  });
+  $("flight-apply-button").addEventListener("click", () => {
+    applyFlightPlanToLauncher();
   });
   $("init-pack-button").addEventListener("click", () => {
     initDatasetPack().catch((error) => renderDatasetPackInitError(error));
@@ -1167,6 +1178,7 @@ function renderDataset() {
   const baseDataset = state.detail?.base_report?.dataset || {};
   const manifest = state.detail?.corpus_manifest;
   seedPackBuilderInputs(config);
+  seedDatasetFlightInputs(config);
   seedTuningInspectorInputs(config);
   seedPackEditorInputs(config);
   seedRunLauncherInputs(config);
@@ -1196,6 +1208,8 @@ function renderDataset() {
     ["Val fraction", baseDataset.num_sequences ? fmtPercent((baseDataset.val_sequences || 0) / baseDataset.num_sequences) : "--"],
   ]);
   $("corpus-files").innerHTML = renderCorpusFiles(manifest?.files || []);
+  renderDatasetFlightPlan(state.datasetFlightPlan);
+  renderEvalStarter(state.evalStarter);
   renderCorpusSourcePreview(state.corpusSourcePreview);
   renderDatasetPackInit(state.datasetPackInit);
   renderTuningInspection(state.tuningInspection);
@@ -1215,6 +1229,22 @@ function seedPackBuilderInputs(config) {
   corpusInput.value = config.corpus_input || config.corpus_recipe || "my_docs/";
   outInput.value = "my_pack/";
   descriptionInput.value = "Starter Picochat dataset pack.";
+}
+
+function seedDatasetFlightInputs(config) {
+  const packInput = $("flight-pack-path");
+  const sourceInput = $("flight-input-path");
+  const chatInput = $("flight-chat-path");
+  const evalInput = $("flight-eval-path");
+  const evalOutInput = $("flight-eval-out-path");
+  const minScoreInput = $("flight-min-score");
+  if (packInput.value || sourceInput.value || chatInput.value || evalInput.value || evalOutInput.value) return;
+  packInput.value = config.dataset_pack || "";
+  sourceInput.value = config.dataset_pack ? "" : config.corpus_input || "";
+  chatInput.value = config.chat_input || "";
+  evalInput.value = config.eval_input || "";
+  evalOutInput.value = suggestedEvalStarterPath(config.eval_input || config.dataset_pack || "my_pack/eval.jsonl");
+  minScoreInput.value = config.min_quality_score || 0;
 }
 
 function seedTuningInspectorInputs(config) {
@@ -1308,6 +1338,11 @@ async function initDatasetPack() {
     $("preview-input-path").value = "";
     $("preview-chat-path").value = "";
     $("preview-eval-path").value = "";
+    $("flight-pack-path").value = report.dataset_pack || "";
+    $("flight-input-path").value = "";
+    $("flight-chat-path").value = "";
+    $("flight-eval-path").value = "";
+    $("flight-eval-out-path").value = report.eval_input ? suggestedEvalStarterPath(report.eval_input) : "";
     $("tuning-pack-path").value = report.dataset_pack || "";
     $("tuning-chat-path").value = "";
     $("tuning-eval-path").value = "";
@@ -1849,6 +1884,271 @@ function renderCorpusFiles(files) {
   `).join("");
 }
 
+async function checkDatasetFlightPlan() {
+  const payload = datasetFlightPayload();
+  if (!payload.dataset_pack && !payload.recipe_path && !payload.input_path) {
+    throw new Error("enter a dataset pack or corpus path");
+  }
+  $("flight-check-button").disabled = true;
+  $("flight-status").innerHTML = 'CHECKING DATASET<span class="cursor"></span>';
+  $("flight-plan").innerHTML = "";
+  $("flight-command").innerHTML = "";
+  const report = await postJson("/api/corpus/preview", {
+    ...payload,
+    preview_chars: 900,
+  });
+  state.datasetFlightPlan = report;
+  state.corpusSourcePreview = report;
+  state.tuningInspection = tuningInspectionFromPreview(report);
+  if (report.training_command?.eval_input && !$("flight-eval-out-path").value.trim()) {
+    $("flight-eval-out-path").value = suggestedEvalStarterPath(report.training_command.eval_input);
+  }
+  if (report.dataset_pack) {
+    $("launch-pack-path").value = report.dataset_pack;
+    $("preview-pack-path").value = report.dataset_pack;
+  }
+  renderDatasetFlightPlan(report);
+  renderCorpusSourcePreview(report);
+  renderTuningInspection(state.tuningInspection);
+  $("flight-check-button").disabled = false;
+}
+
+function datasetFlightPayload() {
+  const packPath = $("flight-pack-path").value.trim();
+  const inputPath = $("flight-input-path").value.trim();
+  const chatInput = $("flight-chat-path").value.trim();
+  const evalInput = $("flight-eval-path").value.trim();
+  const minQualityScore = Number($("flight-min-score").value || 0);
+  return {
+    dataset_pack: packPath || null,
+    recipe_path: null,
+    input_path: packPath ? null : inputPath || null,
+    chat_input: packPath ? null : chatInput || null,
+    eval_input: packPath ? null : evalInput || null,
+    min_quality_score: minQualityScore,
+  };
+}
+
+function renderDatasetFlightPlan(report) {
+  if (!report) {
+    $("flight-status").textContent = "NO DATASET CHECKED.";
+    $("flight-plan").innerHTML = "";
+    $("flight-command").innerHTML = "";
+    return;
+  }
+  const plan = trainingPlan(report);
+  const stats = report.stats || {};
+  $("flight-status").textContent =
+    `${escapeHtml(plan.status.toUpperCase())} | ${readinessBadge(report.readiness)} | ${fmtInt(stats.num_documents)} DOCS | ${fmtInt(stats.num_characters)} CHARS`;
+  $("flight-plan").innerHTML = `
+    <div class="flight-grid">
+      <div class="${escapeHtml(plan.status)}">
+        <label>GO / NO-GO</label>
+        <strong>${escapeHtml(plan.verdict)}</strong>
+        <p>${escapeHtml(plan.reason)}</p>
+      </div>
+      <div>
+        <label>FIRST RUN</label>
+        <strong>${escapeHtml(plan.firstRun)}</strong>
+        <p>${escapeHtml(plan.runtime)}</p>
+      </div>
+      <div>
+        <label>TUNING DATA</label>
+        <strong>${escapeHtml(plan.tuningStatus)}</strong>
+        <p>${escapeHtml(plan.tuningAction)}</p>
+      </div>
+      <div>
+        <label>EVAL STARTER</label>
+        <strong>${escapeHtml(plan.evalStatus)}</strong>
+        <p>${escapeHtml(plan.evalAction)}</p>
+      </div>
+    </div>
+    <div class="flight-steps">
+      ${plan.steps.map((step, index) => `
+        <div class="${escapeHtml(step.status)}">
+          <span>${String(index + 1).padStart(2, "0")}</span>
+          <strong>${escapeHtml(step.label)}</strong>
+          <p>${escapeHtml(step.message)}</p>
+        </div>
+      `).join("")}
+    </div>
+  `;
+  $("flight-command").innerHTML = renderTrainingCommand(report.training_command);
+}
+
+function trainingPlan(report) {
+  const readinessStatus = report.readiness?.status || "blocked";
+  const chatStatus = report.chat_data?.status || "blocked";
+  const evalStatus = report.eval_data?.status || "blocked";
+  const budget = report.budget || {};
+  const blocked = readinessStatus === "blocked" || chatStatus === "blocked" || evalStatus === "blocked";
+  const caution = readinessStatus === "caution" || chatStatus === "caution" || evalStatus === "caution";
+  const status = blocked ? "blocked" : caution ? "caution" : "ready";
+  const firstRun = budget.preset === "small-preview"
+    ? "small-local"
+    : budget.preset === "overfit-check"
+      ? "tiny"
+      : budget.preset || "smoke";
+  return {
+    status,
+    verdict: blocked ? "Blocked before training" : caution ? "Preview run first" : "Ready for a serious tiny run",
+    reason: blocked
+      ? "Fix failed corpus or tuning checks before launching."
+      : caution
+        ? "You can run, but do not trust the score until cautions are handled."
+        : "Corpus, SFT, and eval checks are clean enough for the next run.",
+    firstRun,
+    runtime: runtimeHint(budget),
+    tuningStatus: `${String(chatStatus).toUpperCase()} / ${String(evalStatus).toUpperCase()}`,
+    tuningAction: tuningActionText(report.chat_data, report.eval_data),
+    evalStatus: String(evalStatus).toUpperCase(),
+    evalAction: evalStatus === "ready"
+      ? "Keep it, then add harder transfer/adversarial items after the first run."
+      : "Create a starter eval, edit it, then inspect tuning again.",
+    steps: [
+      {
+        label: "Inspect data",
+        status: readinessStatus === "ready" ? "pass" : readinessStatus === "caution" ? "warn" : "fail",
+        message: report.readiness?.summary || "No readiness report.",
+      },
+      {
+        label: "Build eval",
+        status: evalStatus === "ready" ? "pass" : evalStatus === "caution" ? "warn" : "fail",
+        message: report.eval_data?.summary || "Eval JSONL missing or not inspected.",
+      },
+      {
+        label: "First train",
+        status: blocked ? "fail" : "pass",
+        message: blocked ? "Blocked until checks pass." : `Start with ${firstRun}; compare before scaling.`,
+      },
+      {
+        label: "Compare and chat",
+        status: "warn",
+        message: "Only trust improvements that show better eval behavior without worse trust checks.",
+      },
+    ],
+  };
+}
+
+function runtimeHint(budget) {
+  const preset = budget?.preset || "unknown";
+  if (preset === "blocked") return "No runtime estimate until usable text exists.";
+  if (preset === "smoke") return "Usually seconds to a minute on a local Mac.";
+  if (preset === "overfit-check" || preset === "tiny") return "Usually minutes; good for first proof.";
+  if (preset === "small-preview") return "Usually longer; start here before hour-scale runs.";
+  return "Runtime depends on context, steps, and model size.";
+}
+
+function tuningActionText(chatData, evalData) {
+  if (chatData?.status === "blocked") return `Fix chat SFT: ${chatData.summary}`;
+  if (evalData?.status === "blocked") return `Fix eval: ${evalData.summary}`;
+  if (chatData?.status === "caution") return `Improve chat SFT: ${chatData.summary}`;
+  if (evalData?.status === "caution") return `Improve eval: ${evalData.summary}`;
+  return "Tuning data is ready for a first run.";
+}
+
+async function createEvalStarter() {
+  const packPath = $("flight-pack-path").value.trim();
+  const inputPath = $("flight-input-path").value.trim();
+  const outPath = $("flight-eval-out-path").value.trim();
+  if (!packPath && !inputPath) {
+    throw new Error("enter a dataset pack or corpus path first");
+  }
+  if (!outPath) {
+    throw new Error("enter an eval starter output path");
+  }
+  $("flight-eval-button").disabled = true;
+  $("flight-eval-result").innerHTML = 'CREATING EVAL STARTER<span class="cursor"></span>';
+  const report = await postJson("/api/eval/starter", {
+    dataset_pack: packPath || null,
+    input_path: packPath ? null : inputPath,
+    out_path: outPath,
+    max_items: 24,
+    seed: state.detail?.summary?.config?.seed ?? 42,
+    force: false,
+  });
+  state.evalStarter = report;
+  $("flight-eval-path").value = report.output_path || outPath;
+  $("preview-eval-path").value = report.output_path || outPath;
+  $("tuning-eval-path").value = packPath ? "" : report.output_path || outPath;
+  $("editor-eval-path").value = packPath ? "" : report.output_path || outPath;
+  renderEvalStarter(report);
+  $("flight-eval-button").disabled = false;
+}
+
+function renderEvalStarter(report) {
+  if (!report) {
+    $("flight-eval-result").innerHTML = "";
+    return;
+  }
+  $("flight-eval-result").innerHTML = `
+    <label>EVAL STARTER RESULT</label>
+    <div class="flight-eval-grid">
+      <div><strong>${fmtInt(report.num_rows)}</strong><span>eval rows</span></div>
+      <div><strong>${fmtInt(report.num_sentences)}</strong><span>candidate sentences</span></div>
+      <div><strong>${escapeHtml(shortPath(report.output_path))}</strong><span>jsonl</span></div>
+      <div><strong>${escapeHtml(shortPath(report.report_path))}</strong><span>report</span></div>
+    </div>
+    <div class="mini-stat-row">
+      ${Object.entries(report.categories || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
+    </div>
+    <div class="command-tape source-command">
+      <div class="command-head">
+        <label>EVAL STARTER COMMAND</label>
+        ${copyCommandButton(report.command)}
+      </div>
+      <code>${escapeHtml(report.command || "")}</code>
+      ${(report.next_actions || []).map((action) => `<p>${escapeHtml(action)}</p>`).join("")}
+    </div>
+  `;
+}
+
+function applyFlightPlanToLauncher() {
+  const report = state.datasetFlightPlan;
+  if (!report) {
+    flashStatus("APPLY FAULT. | Check a dataset first.");
+    return;
+  }
+  if (report.dataset_pack) {
+    $("launch-pack-path").value = report.dataset_pack;
+    $("launch-run-name").value = uniqueRunName(suggestedRunName(report.dataset_pack));
+  }
+  const budget = report.budget || {};
+  const preset = budget.preset === "small-preview" ? "small-local" : budget.preset === "overfit-check" ? "tiny" : budget.preset;
+  if (state.runPresets[preset]) {
+    $("launch-preset").value = preset;
+    applyLaunchPreset(true);
+  }
+  $("launch-context-size").value = budget.suggested_context_size || $("launch-context-size").value;
+  $("launch-base-steps").value = budget.suggested_base_steps || $("launch-base-steps").value;
+  $("launch-sft-steps").value = Math.max(60, Number(budget.suggested_base_steps || 30));
+  $("launch-min-score").value = report.min_quality_score ?? ($("flight-min-score").value || 0);
+  flashStatus("APPLIED PLAN. | Review launcher values before starting the run.");
+}
+
+function renderDatasetFlightPlanError(error) {
+  $("flight-check-button").disabled = false;
+  $("flight-status").textContent = "DATASET CHECK FAULT";
+  $("flight-plan").innerHTML = "";
+  $("flight-command").innerHTML = "";
+  $("flight-eval-result").innerHTML = `<div class="notice">FAULT: ${escapeHtml(error.message)}</div>`;
+}
+
+function renderEvalStarterError(error) {
+  $("flight-eval-button").disabled = false;
+  $("flight-eval-result").innerHTML = `<div class="notice">EVAL STARTER FAULT: ${escapeHtml(error.message)}</div>`;
+}
+
+function suggestedEvalStarterPath(path) {
+  const text = String(path || "").trim();
+  if (!text) return "my_pack/eval_starter.jsonl";
+  const slash = text.lastIndexOf("/");
+  const dir = slash >= 0 ? text.slice(0, slash + 1) : "";
+  const file = slash >= 0 ? text.slice(slash + 1) : text;
+  const stem = file.replace(/\.jsonl$/i, "").replace(/\.json$/i, "") || "eval";
+  return `${dir}${stem}_starter.jsonl`;
+}
+
 async function previewCorpusSources() {
   const packPath = $("preview-pack-path").value.trim();
   const recipePath = $("preview-recipe-path").value.trim();
@@ -1879,12 +2179,14 @@ async function previewCorpusSources() {
     min_quality_score: minQualityScore,
   });
   state.corpusSourcePreview = report;
+  state.datasetFlightPlan = report;
   state.tuningInspection = tuningInspectionFromPreview(report);
   if (report.dataset_pack) {
     $("launch-pack-path").value = report.dataset_pack;
     $("launch-min-score").value = report.min_quality_score ?? minQualityScore;
     if (!$("launch-run-name").value) $("launch-run-name").value = suggestedRunName(report.dataset_pack);
   }
+  renderDatasetFlightPlan(report);
   renderCorpusSourcePreview(report);
   renderTuningInspection(state.tuningInspection);
   $("preview-corpus-button").disabled = false;

@@ -86,6 +86,42 @@
                 <div id="corpus-files" class="source-list"></div>
               </div>
             </div>
+            <div class="terminal-card dataset-preview-card learn-only">
+              <label>CUSTOM SLM FLIGHT PLAN</label>
+              <div class="flight-controls">
+                <div>
+                  <label for="flight-pack-path">DATASET PACK</label>
+                  <input id="flight-pack-path" type="text" spellcheck="false" placeholder="my_pack/dataset_pack.json">
+                </div>
+                <div>
+                  <label for="flight-input-path">OR CORPUS PATH</label>
+                  <input id="flight-input-path" type="text" spellcheck="false" placeholder="my_docs/">
+                </div>
+                <div>
+                  <label for="flight-chat-path">CHAT SFT JSONL</label>
+                  <input id="flight-chat-path" type="text" spellcheck="false" placeholder="my_pack/chat.jsonl">
+                </div>
+                <div>
+                  <label for="flight-eval-path">EVAL JSONL</label>
+                  <input id="flight-eval-path" type="text" spellcheck="false" placeholder="my_pack/eval.jsonl">
+                </div>
+                <div>
+                  <label for="flight-eval-out-path">EVAL STARTER OUT</label>
+                  <input id="flight-eval-out-path" type="text" spellcheck="false" placeholder="my_pack/eval_starter.jsonl">
+                </div>
+                <div>
+                  <label for="flight-min-score">MIN SCORE</label>
+                  <input id="flight-min-score" type="number" min="0" max="100" value="0">
+                </div>
+                <button id="flight-check-button" type="button">CHECK DATASET</button>
+                <button id="flight-eval-button" type="button">CREATE EVAL STARTER</button>
+                <button id="flight-apply-button" type="button">APPLY PLAN</button>
+              </div>
+              <div id="flight-status" class="notice">NO DATASET CHECKED.</div>
+              <div id="flight-plan" class="flight-plan"></div>
+              <div id="flight-command" class="command-tape source-command"></div>
+              <div id="flight-eval-result" class="flight-eval-result"></div>
+            </div>
             <div class="terminal-card dataset-preview-card inspect-only">
               <label>PACK BUILDER</label>
               <div class="pack-builder-controls">

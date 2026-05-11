@@ -996,6 +996,93 @@ h2 {
   margin-bottom: 10px;
 }
 
+.flight-controls {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1.3fr) minmax(160px, 1.1fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr) 88px auto auto auto;
+  margin-bottom: 10px;
+}
+
+.flight-plan {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.flight-grid,
+.flight-steps,
+.flight-eval-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.flight-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.flight-steps {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.flight-eval-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 8px 0;
+}
+
+.flight-grid > div,
+.flight-steps > div,
+.flight-eval-grid > div {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 5px;
+  min-height: 92px;
+  padding: 8px;
+}
+
+.flight-grid strong,
+.flight-eval-grid strong {
+  color: var(--accent);
+}
+
+.flight-grid p,
+.flight-steps p,
+.flight-eval-grid span {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.flight-steps span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.flight-grid .ready strong,
+.flight-grid .pass strong,
+.flight-steps .pass strong {
+  color: var(--green);
+}
+
+.flight-grid .caution strong,
+.flight-grid .warn strong,
+.flight-steps .warn strong {
+  color: var(--accent);
+}
+
+.flight-grid .blocked strong,
+.flight-grid .fail strong,
+.flight-steps .fail strong {
+  color: var(--red);
+}
+
+.flight-eval-result {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .tuning-inspector-controls {
   align-items: end;
   display: grid;
@@ -1726,6 +1813,10 @@ th {
   .readiness-summary,
   .readiness-row,
   .budget-grid,
+  .flight-controls,
+  .flight-grid,
+  .flight-steps,
+  .flight-eval-grid,
   .preview-controls,
   .tuning-inspector-controls,
   .pack-editor-controls,
