@@ -2289,6 +2289,7 @@ function renderEval() {
   const honesty = evalHonestySummary(report);
   const categoryRows = evalCategoryRows(report);
   const splitRows = evalSplitRows(report);
+  const levelRows = evalLevelRows(report);
   $("eval-status").textContent = `${latest.name.toUpperCase()} ${report.summary.num_passed}/${report.summary.num_examples}`;
   $("score-table").innerHTML = `
     <label>HONESTY SUMMARY</label>
@@ -2310,21 +2311,27 @@ function renderEval() {
         <span>${fmtPercent(honesty.promptEchoRate)}</span>
       </div>
       <div class="pipeline-stat">
+        <label>Corpus support</label>
+        <span>${report.summary.average_corpus_support_rate === null || report.summary.average_corpus_support_rate === undefined ? "--" : fmtPercent(report.summary.average_corpus_support_rate)}</span>
+      </div>
+      <div class="pipeline-stat">
         <label>Unanswerable</label>
         <span>${honesty.numUnanswerable}/${honesty.numExamples}</span>
       </div>
     </div>
     ${renderEvalCategoryTable(categoryRows)}
     ${renderEvalSplitTable(splitRows)}
+    ${renderEvalLevelTable(levelRows)}
     <label>ARCADE SCORE TABLE</label>
     <table>
-      <thead><tr><th>Rank</th><th>Prompt</th><th>Kind</th><th>Status</th><th>Support</th><th>Echo</th><th>Forbidden</th></tr></thead>
+      <thead><tr><th>Rank</th><th>Prompt</th><th>Kind</th><th>Level</th><th>Status</th><th>Support</th><th>Echo</th><th>Forbidden</th></tr></thead>
       <tbody>
         ${report.examples.map((item, index) => `
           <tr>
             <td>${String(index + 1).padStart(2, "0")}</td>
             <td>${escapeHtml(item.user)}</td>
             <td>${evalKindTag(item)}</td>
+            <td>${escapeHtml(item.level || "heldout")}</td>
             <td class="${item.passed ? "pass-text" : "fail-text"}">${item.passed ? "PASS" : "FAIL"}</td>
             <td class="${hasMissingSupport(item) ? "fail-text" : "pass-text"}">${hasMissingSupport(item) ? "MISSING" : "COVERED"}</td>
             <td class="${hasPromptEcho(item) ? "fail-text" : "pass-text"}">${hasPromptEcho(item) ? "ECHO" : "CLEAR"}</td>
@@ -2452,6 +2459,28 @@ function renderEvalSplitTable(rows) {
   return renderEvalBreakdownTable("SPLIT BREAKDOWN", "Split", rows, "split");
 }
 
+function evalLevelRows(report) {
+  const breakdown = report.summary?.level_breakdown || {};
+  const rows = Object.entries(breakdown).map(([level, row]) => ({
+    level,
+    numExamples: row.num_examples ?? 0,
+    numPassed: row.num_passed ?? 0,
+    passRate: row.pass_rate ?? 0,
+    missingSupport: row.missing_support ?? 0,
+    promptEchoes: row.prompt_echoes ?? 0,
+    unsupportedClaims: row.unsupported_claims ?? 0,
+  }));
+  if (rows.length) {
+    return rows.sort((left, right) => left.level.localeCompare(right.level));
+  }
+  return [];
+}
+
+function renderEvalLevelTable(rows) {
+  if (!rows.length) return "";
+  return renderEvalBreakdownTable("EVAL LADDER", "Level", rows, "level");
+}
+
 function renderEvalBreakdownTable(label, firstColumn, rows, key) {
   return `
     <label>${label}</label>
@@ -2483,14 +2512,19 @@ function evalCard(item, index) {
       </summary>
       <div class="phrase-grid">
         <p>CATEGORY: ${escapeHtml(item.category || "answerable")}</p>
+        <p>LEVEL: ${escapeHtml(item.level || "heldout")}</p>
         <p>SPLIT: ${escapeHtml(item.split || "default")}</p>
         <p>ANSWERABLE: ${escapeHtml(isAnswerable(item) ? "yes" : "no")}</p>
         <p>REQUIRED: ${escapeHtml((item.must_include || []).join(" | ") || "none")}</p>
+        <p>ENTITIES: ${escapeHtml((item.required_entities || []).join(" | ") || "none")}</p>
         <p>ANY: ${escapeHtml((item.must_include_any || []).map((group) => `[${group.join(" / ")}]`).join(" ") || "none")}</p>
         <p>FORBIDDEN: ${escapeHtml((item.must_not_include || []).join(" | ") || "none")}</p>
-        <p>MISSING: ${escapeHtml([...(item.missing || []), ...((item.missing_any || []).flat())].join(" | ") || "none")}</p>
+        <p>MISSING: ${escapeHtml([...(item.missing || []), ...((item.missing_any || []).flat()), ...(item.missing_entities || [])].join(" | ") || "none")}</p>
         <p>PROMPT ECHO: ${escapeHtml((item.prompt_echo_reasons || []).join(" | ") || "none")}</p>
         <p>FOUND FORBIDDEN: ${escapeHtml((item.found_forbidden || []).join(" | ") || "none")}</p>
+        <p>REF F1: ${item.reference_token_f1 === null || item.reference_token_f1 === undefined ? "--" : fmtPercent(item.reference_token_f1)}</p>
+        <p>CORPUS SUPPORT: ${item.corpus_support_rate === null || item.corpus_support_rate === undefined ? "--" : fmtPercent(item.corpus_support_rate)}</p>
+        <p>LENGTH: ${escapeHtml(`${item.word_count ?? "--"} words / ${item.char_count ?? "--"} chars`)}</p>
       </div>
       <pre>${escapeHtml(item.reply)}</pre>
     </details>

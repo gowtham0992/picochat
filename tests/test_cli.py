@@ -249,6 +249,33 @@ def test_cli_data_init_pack_creates_starter_pack(tmp_path, capsys):
     assert (out_dir / "eval.jsonl").exists()
 
 
+def test_cli_data_eval_starter(tmp_path, capsys):
+    corpus_path = tmp_path / "corpus.txt"
+    out_path = tmp_path / "eval.jsonl"
+    corpus_path.write_text(
+        "Pico Cafe roasts careful beans for morning guests. "
+        "Mira Chen founded Pico Cafe beside the train station.",
+        encoding="utf-8",
+    )
+
+    exit_code = main([
+        "data",
+        "eval-starter",
+        "--input",
+        str(corpus_path),
+        "--out",
+        str(out_path),
+        "--max-items",
+        "6",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "eval starter:" in output
+    assert out_path.exists()
+    assert (tmp_path / "eval.md").exists()
+
+
 def test_cli_data_hf_import_uses_importer(tmp_path, capsys, monkeypatch):
     from picochat.hf_import import HFImportReport
 

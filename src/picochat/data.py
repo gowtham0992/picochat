@@ -749,6 +749,7 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         f"{report.eval_data.must_not_include_rules} forbidden",
         f"- Eval categories: {_format_counts(report.eval_data.categories)}" if report.eval_data.categories else "- Eval categories: none",
         f"- Eval splits: {_format_counts(report.eval_data.splits)}" if report.eval_data.splits else "- Eval splits: none",
+        f"- Eval levels: {_format_counts(report.eval_data.levels)}" if getattr(report.eval_data, "levels", {}) else "- Eval levels: none",
         "",
         "## Warnings",
         "",

@@ -59,6 +59,16 @@ PYTHONPATH=src python -m picochat.cli data hf-import --dataset HuggingFaceFW/fin
 PYTHONPATH=src python -m picochat.cli data preview --input runs/fineweb-edu-sample/corpus.txt
 ```
 
+Once the corpus exists, generate an eval starter from the same text:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data eval-starter --input runs/fineweb-edu-sample/corpus.txt --out runs/fineweb-edu-sample/eval_starter.jsonl --max-items 40
+```
+
+Important idea: generated eval rows are scaffolding. They are useful because
+they force the first benchmark to reference the loaded corpus, but they still
+need human review before the score means anything.
+
 ## 2. Tokenizer
 
 Purpose: convert text into token IDs the model can read.
@@ -192,13 +202,16 @@ PYTHONPATH=src python -m picochat.cli train sft --input examples/tiny_chat.jsonl
 Purpose: score generated replies with transparent rules.
 
 Picochat evals are intentionally simple. Each item can define required phrases,
-any-of phrase groups, forbidden phrases, and whether the question is answerable.
+any-of phrase groups, forbidden phrases, required entities, length bounds, a
+reference answer, corpus-support requirements, and whether the question is
+answerable.
 
 Inputs:
 
 - eval JSONL
 - SFT checkpoint
 - tokenizer
+- optional support corpus for corpus-overlap diagnostics
 
 Output artifacts:
 
@@ -209,10 +222,18 @@ What to inspect:
 
 - pass rate
 - unsupported claim rate
+- eval ladder breakdown
 - prompt echo rate
 - missing support rate
+- missing entity rate
+- length violation rate
+- corpus support failure rate
+- token-F1 and ROUGE-L-style reference overlap
+- repetition diagnostics
 - failure analysis and recommendations
+- failure clusters and weak eval levels
 - matched and missing phrases
+- matched and missing entities
 - forbidden phrases found in replies
 
 Important idea: this is not semantic truth evaluation. It is an inspectable
@@ -223,6 +244,7 @@ Useful command:
 
 ```bash
 PYTHONPATH=src python -m picochat.cli eval chat --input examples/tiny_eval.jsonl --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/eval
+PYTHONPATH=src python -m picochat.cli eval chat --input examples/tiny_eval.jsonl --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/eval --support-corpus runs/manual/corpus.txt
 ```
 
 ## 6. Chat And Generation
@@ -285,8 +307,12 @@ it is not useful yet.
 4. Check base memorization diagnostics and copied-span rates.
 5. Read SFT loss diagnostics.
 6. Check eval pass/fail details.
-7. Compare generated samples with eval results.
-8. Only then increase data size, context length, steps, or model size.
+7. Check the eval ladder: smoke failures mean wiring is broken, held-out
+   failures mean weak recall/generalization, transfer failures mean brittle
+   behavior, adversarial failures mean weak refusal, and memorization-probe
+   failures mean the model may be copying.
+8. Compare generated samples with eval results.
+9. Only then increase data size, context length, steps, or model size.
 
 The point of Picochat is controlled learning. Make one change, rerun, compare
 artifacts, and keep the explanation honest.

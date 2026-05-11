@@ -39,6 +39,8 @@ def test_load_chat_eval_items_supports_expected_alias(tmp_path):
             answerable=False,
             category="refusal",
             split="safety",
+            level="adversarial",
+            reference_answer="hello",
         )
     ]
 
@@ -81,6 +83,53 @@ def test_score_reply_blocks_prompt_echo():
     assert detect_prompt_echo("Subject: turtle. Story: One day.", item.user) == []
 
 
+def test_score_reply_tracks_richer_diagnostics():
+    item = ChatEvalItem(
+        user="Who founded Pico Cafe?",
+        must_include=("Pico Cafe",),
+        reference_answer="Pico Cafe was founded by Mira Chen.",
+        required_entities=("Mira Chen",),
+        min_words=4,
+        max_words=12,
+        require_corpus_support=True,
+    )
+
+    score = score_reply(
+        "Pico Cafe was founded by Mira Chen.",
+        item,
+        support_corpus_text="Pico Cafe was founded by Mira Chen in a small downtown shop.",
+    )
+
+    assert score["passed"] is True
+    assert score["reference_token_f1"] == 1.0
+    assert score["reference_rouge_l"] == 1.0
+    assert score["entity_match_rate"] == 1.0
+    assert score["length_violations"] == []
+    assert score["corpus_support_failed"] is False
+    assert score["corpus_support_rate"] > 0
+
+
+def test_score_reply_can_fail_entity_length_and_corpus_support():
+    item = ChatEvalItem(
+        user="Who founded Pico Cafe?",
+        reference_answer="Pico Cafe was founded by Mira Chen.",
+        required_entities=("Mira Chen",),
+        max_words=3,
+        require_corpus_support=True,
+    )
+
+    score = score_reply(
+        "A totally unrelated answer with many extra words.",
+        item,
+        support_corpus_text="Pico Cafe was founded by Mira Chen.",
+    )
+
+    assert score["passed"] is False
+    assert score["missing_entities"] == ["Mira Chen"]
+    assert score["length_violations"] == ["max_words:3"]
+    assert score["corpus_support_failed"] is True
+
+
 def test_analyze_eval_failures_recommends_next_actions():
     rows = [{
         "index": 1,
@@ -104,6 +153,7 @@ def test_analyze_eval_failures_recommends_next_actions():
     assert analysis["failure_counts"]["missing_any_group"] == 1
     assert analysis["failure_counts"]["forbidden_phrase"] == 1
     assert analysis["failure_counts"]["prompt_echo"] == 1
+    assert analysis["cluster_counts"]["content_mismatch"] == 1
     assert analysis["weak_categories"][0]["category"] == "story_generation"
     assert any(item["area"] == "story_generation" for item in analysis["recommendations"])
 

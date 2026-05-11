@@ -57,6 +57,7 @@ class ChatEvalDataReport:
     must_not_include_rules: int
     categories: dict[str, int]
     splits: dict[str, int]
+    levels: dict[str, int]
     issues: tuple[TuningDataIssue, ...]
     preview: tuple[dict[str, Any], ...]
 
@@ -162,6 +163,7 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
             must_not_include_rules=0,
             categories={},
             splits={},
+            levels={},
             issues=(read_issue,),
             preview=(),
         )
@@ -170,6 +172,7 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
     items: list[dict[str, Any]] = []
     categories: dict[str, int] = {}
     splits: dict[str, int] = {}
+    levels: dict[str, int] = {}
     answerable_items = 0
     must_include_rules = 0
     must_include_any_groups = 0
@@ -184,6 +187,8 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
         categories[category] = categories.get(category, 0) + 1
         split = item["split"]
         splits[split] = splits.get(split, 0) + 1
+        level = item["level"]
+        levels[level] = levels.get(level, 0) + 1
         if item["answerable"]:
             answerable_items += 1
         must_include_rules += len(item["must_include"])
@@ -214,6 +219,7 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
         must_not_include_rules=must_not_include_rules,
         categories=dict(sorted(categories.items())),
         splits=dict(sorted(splits.items())),
+        levels=dict(sorted(levels.items())),
         issues=tuple(issues[:8]),
         preview=tuple(items[:max(0, preview_items)]),
     )
@@ -284,6 +290,23 @@ def _parse_eval_item(line_number: int, record: Any) -> tuple[dict[str, Any], lis
     if not isinstance(split, str) or not split.strip():
         issues.append(TuningDataIssue(line_number, "split field must be a non-empty string when present"))
         split = "default"
+    level = record.get("level", record.get("eval_level", _infer_eval_level(split, category, answerable)))
+    if not isinstance(level, str) or not level.strip():
+        issues.append(TuningDataIssue(line_number, "level field must be a non-empty string when present"))
+        level = "heldout"
+    required_entities = _string_list(
+        record.get("required_entities", record.get("entities", ())),
+        line_number,
+        "required_entities",
+        issues,
+    )
+    for field in ("min_words", "max_words", "min_chars", "max_chars"):
+        value = record.get(field)
+        if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+            issues.append(TuningDataIssue(line_number, f"{field} field must be a non-negative integer"))
+    require_corpus_support = record.get("require_corpus_support", False)
+    if not isinstance(require_corpus_support, bool):
+        issues.append(TuningDataIssue(line_number, "require_corpus_support field must be a boolean"))
 
     if issues:
         return {}, issues
@@ -292,9 +315,17 @@ def _parse_eval_item(line_number: int, record: Any) -> tuple[dict[str, Any], lis
         "answerable": answerable,
         "category": category,
         "split": split,
+        "level": level,
         "must_include": must_include_values,
         "must_include_any": must_include_any_values,
         "must_not_include": must_not_include_values,
+        "required_entities": required_entities,
+        "reference_answer": record.get("reference_answer", record.get("reference", record.get("expected"))),
+        "min_words": record.get("min_words"),
+        "max_words": record.get("max_words"),
+        "min_chars": record.get("min_chars"),
+        "max_chars": record.get("max_chars"),
+        "require_corpus_support": require_corpus_support,
     }, []
 
 
@@ -321,6 +352,21 @@ def _phrase_groups(value: Any, line_number: int, issues: list[TuningDataIssue]) 
             return []
         groups.append(group)
     return groups
+
+
+def _infer_eval_level(split: str, category: str, answerable: bool) -> str:
+    text = f"{split} {category}".lower()
+    if "smoke" in text:
+        return "smoke"
+    if "memor" in text or "canary" in text:
+        return "memorization"
+    if "adversarial" in text or "safety" in text or "refusal" in text or not answerable:
+        return "adversarial"
+    if "transfer" in text or "paraphrase" in text:
+        return "transfer"
+    if "domain" in text or "knowledge" in text:
+        return "domain"
+    return "heldout"
 
 
 def _duplicate_rate(values: list[str]) -> float:

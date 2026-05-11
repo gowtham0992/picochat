@@ -183,6 +183,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         max_new_tokens=config.eval_max_new_tokens,
         seed=config.seed,
         device=config.device,
+        support_corpus_path=str(corpus_path),
     ))
 
     effective_config = {

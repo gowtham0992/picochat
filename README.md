@@ -151,6 +151,12 @@ Longer runs add guardrails instead of blind optimism:
   turns or visible user-prompt copying cannot count as a clean pass
 - chat eval reports include failure analysis and next-action recommendations by
   failure cause, category, and eval split
+- chat eval reports now include an eval ladder (`smoke`, `heldout`,
+  `transfer`, `adversarial`, `memorization`) so a score can show where a
+  tiny model is weak instead of flattening every failure into one number
+- eval rows can add reference answers, required entities, length bounds, and
+  corpus-support gates; reports show token-F1, ROUGE-L-style overlap, entity
+  match rate, weak support, repetition, and failure clusters
 - `--early-stop-patience` and `--max-minutes` can stop wasted runs
 
 ## Bring Your Own Corpus
@@ -226,6 +232,18 @@ The honesty report does not prove semantic truth. It catches practical cheating
 risks: exact eval prompts in SFT, near-duplicate SFT/eval prompts, duplicated
 eval prompts, eval prompts that appear in the base corpus, and specific
 multi-word eval support phrases copied into SFT answers or corpus text.
+
+After a corpus is built, you can generate a starter eval ladder from its
+sentences:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data eval-starter --input runs/my-docs/corpus.txt --out my_data/eval_starter.jsonl --max-items 40
+```
+
+This is scaffolding, not a trusted benchmark. Review and edit the generated
+rows before using them as the scoreboard for a real domain run. The point is to
+start with answerable recall checks, transfer prompts, refusal boundaries, and
+memorization probes that are tied to the corpus you actually loaded.
 
 You can also import a small sample from a Hugging Face dataset into a local
 plain-text corpus. This is intentionally a separate intake step: first export
@@ -379,6 +397,9 @@ with the new `dataset_pack.json` path.
 Dataset Bay also has a Tuning Data Inspector. Point it at a dataset pack, or
 at separate chat/eval JSONL files, to check row schemas, usable example counts,
 eval scoring rules, preview rows, and next actions before running training.
+The inspector also reports eval ladder counts so you can see whether the suite
+is only smoke tests or has held-out, transfer, adversarial, and memorization
+coverage.
 The Pack JSONL Editor can load and save those chat/eval files directly, and
 the Run Launcher starts `run tiny` from a dataset pack while streaming a local
 `web_run.log` tail. Web-launched runs stay visible after page reload because
@@ -519,6 +540,7 @@ Inspect and build a corpus:
 PYTHONPATH=src python -m picochat.cli data inspect --input examples/tiny_corpus.txt
 PYTHONPATH=src python -m picochat.cli data build --input examples/tiny_corpus.txt --out runs/manual/corpus.txt
 PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tiny_dataset_pack.json
+PYTHONPATH=src python -m picochat.cli data eval-starter --input runs/manual/corpus.txt --out runs/manual/eval_starter.jsonl --max-items 24
 ```
 
 Train a tokenizer:
@@ -556,6 +578,7 @@ Evaluate and chat:
 
 ```bash
 PYTHONPATH=src python -m picochat.cli eval chat --input examples/tiny_eval.jsonl --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/eval
+PYTHONPATH=src python -m picochat.cli eval chat --input examples/tiny_eval.jsonl --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/eval --support-corpus runs/manual/corpus.txt --corpus-support-threshold 0.25
 PYTHONPATH=src python -m picochat.cli chat --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json
 ```
 
@@ -589,16 +612,32 @@ Each eval row can define:
 - `answerable`: whether the model should answer directly.
 - `category`: a human label such as `project`, `tokenizer`, `honesty`, or
   `refusal`.
+- `level`: the eval ladder level, for example `smoke`, `heldout`, `transfer`,
+  `adversarial`, or `memorization`.
+- `reference_answer`: a short target answer used for token-F1 and ROUGE-L-style
+  overlap diagnostics.
+- `required_entities`: names or key terms that should appear in the reply.
+- `min_words`, `max_words`, `min_chars`, `max_chars`: visible length-control
+  checks.
+- `require_corpus_support`: mark answers that should overlap the support
+  corpus when `--support-corpus` is provided.
 
 The report tracks:
 
 - pass rate
 - unsupported claim rate
 - missing support rate
+- eval ladder breakdown
+- missing entity rate
+- length violation rate
+- corpus support failure rate
+- reference overlap diagnostics
+- repetition diagnostics
 - answerable vs unanswerable examples
 - found forbidden phrases
 - prompt echo
-- failure causes and recommended next actions
+- failure causes, failure clusters, weak ladder levels, and recommended next
+  actions
 
 This does not prove semantic truth. It gives a small, inspectable signal for
 whether the tiny model is following the behavior we trained and asked it to

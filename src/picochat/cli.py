@@ -18,6 +18,7 @@ from picochat.sft import SFTConfig, SFT_SAMPLING_MODES, train_sft
 from picochat.generate import GenerateConfig, generate_text
 from picochat.chat import ChatConfig, chat_loop
 from picochat.eval import ChatEvalConfig, run_chat_eval
+from picochat.eval_starter import generate_eval_starter
 from picochat.run import TinyRunConfig, run_tiny
 from picochat.compare import compare_runs, comparison_table, write_comparison_report
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
@@ -185,6 +186,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Short description written into dataset_pack.json.",
     )
     data_init_pack.add_argument("--force", action="store_true", help="Overwrite existing starter files.")
+
+    data_eval_starter = data_subparsers.add_parser("eval-starter", help="Generate a starter eval JSONL from a corpus.")
+    data_eval_starter.add_argument("--input", default=None, help="Corpus file or folder to sample.")
+    data_eval_starter.add_argument("--dataset-pack", "--pack", dest="dataset_pack", default=None, help="Dataset pack whose corpus should be sampled.")
+    data_eval_starter.add_argument("--out", required=True, help="Output eval JSONL path.")
+    data_eval_starter.add_argument("--max-items", type=int, default=24, help="Maximum eval rows to write.")
+    data_eval_starter.add_argument("--seed", type=int, default=42)
+    data_eval_starter.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
 
     data_hf_import = data_subparsers.add_parser(
         "hf-import",
@@ -375,6 +384,8 @@ def build_parser() -> argparse.ArgumentParser:
     eval_chat_parser.add_argument("--seed", type=int, default=42)
     eval_chat_parser.add_argument("--device", default="cpu")
     eval_chat_parser.add_argument("--case-sensitive", action="store_true")
+    eval_chat_parser.add_argument("--support-corpus", default=None, help="Optional corpus text file for support-overlap diagnostics.")
+    eval_chat_parser.add_argument("--corpus-support-threshold", type=float, default=0.25)
 
     run_parser = subparsers.add_parser("run", help="End-to-end experiment runners.")
     run_subparsers = run_parser.add_subparsers(dest="run_command")
@@ -656,6 +667,32 @@ def init_pack_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def eval_starter_data(args: argparse.Namespace) -> int:
+    if not args.input and not args.dataset_pack:
+        raise SystemExit("data eval-starter requires --input or --dataset-pack")
+    report = generate_eval_starter(
+        args.input,
+        args.out,
+        dataset_pack=args.dataset_pack,
+        max_items=args.max_items,
+        seed=args.seed,
+        force=args.force,
+    )
+    print(f"eval starter: {report.output_path}")
+    print(f"input: {report.input_path}")
+    print(f"documents: {report.num_documents}")
+    print(f"candidate_sentences: {report.num_sentences}")
+    print(f"rows: {report.num_rows}")
+    print("categories:")
+    for name, count in report.categories.items():
+        print(f"- {name}: {count}")
+    print("levels:")
+    for name, count in report.levels.items():
+        print(f"- {name}: {count}")
+    print(f"report: {report.output_path.rsplit('.', 1)[0]}.md")
+    return 0
+
+
 def hf_import_data(args: argparse.Namespace) -> int:
     report = import_hf_dataset(HFImportConfig(
         dataset=args.dataset,
@@ -889,6 +926,8 @@ def run_eval_chat(args: argparse.Namespace) -> int:
         seed=args.seed,
         device=args.device,
         case_sensitive=args.case_sensitive,
+        support_corpus_path=args.support_corpus,
+        corpus_support_threshold=args.corpus_support_threshold,
     ))
     summary = report["summary"]
     print(
@@ -1018,6 +1057,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "init-pack":
         return init_pack_data(args)
+
+    if args.command == "data" and args.data_command == "eval-starter":
+        return eval_starter_data(args)
 
     if args.command == "data" and args.data_command == "hf-import":
         return hf_import_data(args)

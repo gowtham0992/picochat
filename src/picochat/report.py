@@ -406,6 +406,9 @@ def chat_eval_report_markdown(report: dict) -> str:
     lines.append(f"- Top-p: {config.get('top_p', 1.0)}")
     lines.append(f"- Repetition penalty: {config.get('repetition_penalty', 1.0)}")
     lines.append(f"- Max new tokens: {config['max_new_tokens']}")
+    if config.get("support_corpus_path"):
+        lines.append(f"- Support corpus: `{config['support_corpus_path']}`")
+        lines.append(f"- Corpus support threshold: {config.get('corpus_support_threshold', 0.25)}")
     lines.append(f"- Case sensitive: {config['case_sensitive']}")
     lines.append("")
 
@@ -421,12 +424,23 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append(f"- Unsupported claim rate: {format_float(summary['unsupported_claim_rate'] * 100)}%")
         lines.append(f"- Prompt echo rate: {format_float(summary.get('prompt_echo_rate', 0.0) * 100)}%")
         lines.append(f"- Missing support rate: {format_float(summary.get('missing_support_rate', 0.0) * 100)}%")
+        lines.append(f"- Missing entity rate: {format_float(summary.get('missing_entity_rate', 0.0) * 100)}%")
+        lines.append(f"- Length violation rate: {format_float(summary.get('length_violation_rate', 0.0) * 100)}%")
+        lines.append(f"- Corpus support failure rate: {format_float(summary.get('corpus_support_failure_rate', 0.0) * 100)}%")
         lines.append(f"- Support match rate: {format_float(summary.get('support_match_rate', 0.0) * 100)}%")
         if summary.get("answerable_support_match_rate") is not None:
             lines.append(
                 f"- Answerable support match rate: "
                 f"{format_float(summary.get('answerable_support_match_rate', 0.0) * 100)}%"
             )
+        if summary.get("average_reference_token_f1") is not None:
+            lines.append(f"- Avg reference token F1: {format_float(summary['average_reference_token_f1'] * 100)}%")
+        if summary.get("average_reference_rouge_l") is not None:
+            lines.append(f"- Avg reference ROUGE-L: {format_float(summary['average_reference_rouge_l'] * 100)}%")
+        if summary.get("average_entity_match_rate") is not None:
+            lines.append(f"- Avg entity match rate: {format_float(summary['average_entity_match_rate'] * 100)}%")
+        if summary.get("average_corpus_support_rate") is not None:
+            lines.append(f"- Avg corpus support rate: {format_float(summary['average_corpus_support_rate'] * 100)}%")
     lines.append("")
 
     if summary.get("category_breakdown"):
@@ -439,6 +453,12 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append("## Split Breakdown")
         lines.append("")
         lines.extend(_split_breakdown_table(summary["split_breakdown"]))
+        lines.append("")
+
+    if summary.get("level_breakdown"):
+        lines.append("## Eval Ladder")
+        lines.append("")
+        lines.extend(_level_breakdown_table(summary["level_breakdown"]))
         lines.append("")
 
     if report.get("analysis"):
@@ -474,6 +494,7 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append("")
         lines.append(f"Category: `{item.get('category', 'answerable')}`")
         lines.append(f"Split: `{item.get('split', 'default')}`")
+        lines.append(f"Level: `{item.get('level', 'heldout')}`")
         lines.append(f"Answerable: `{item.get('answerable', True)}`")
         lines.append("")
         lines.append("Required phrases:")
@@ -494,6 +515,12 @@ def chat_eval_report_markdown(report: dict) -> str:
         if item["found_forbidden"]:
             lines.append(f"Found forbidden: {_inline_list(item['found_forbidden'])}")
             lines.append("")
+        if item.get("missing_entities"):
+            lines.append(f"Missing entities: {_inline_list(item['missing_entities'])}")
+            lines.append("")
+        if item.get("length_violations"):
+            lines.append(f"Length violations: {_inline_list(item['length_violations'])}")
+            lines.append("")
         if item.get("prompt_echo"):
             lines.append(f"Prompt echo: {_inline_list(item.get('prompt_echo_reasons', []))}")
             lines.append("")
@@ -502,6 +529,11 @@ def chat_eval_report_markdown(report: dict) -> str:
                 f"Support matched: {item.get('support_matched', 0)} / "
                 f"{item.get('support_total', 0)}"
             )
+            lines.append("")
+        metric_lines = _eval_metric_lines(item)
+        if metric_lines:
+            lines.append("Diagnostics:")
+            lines.extend(metric_lines)
             lines.append("")
         lines.append("Reply:")
         lines.append("")
@@ -582,6 +614,12 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.append("## Eval Splits")
         lines.append("")
         lines.extend(_split_breakdown_table(eval_summary["split_breakdown"]))
+        lines.append("")
+
+    if eval_summary.get("level_breakdown"):
+        lines.append("## Eval Ladder")
+        lines.append("")
+        lines.extend(_level_breakdown_table(eval_summary["level_breakdown"]))
         lines.append("")
 
     if summary.get("eval_analysis"):
@@ -680,19 +718,28 @@ def _split_breakdown_table(split_breakdown: dict) -> list[str]:
     return _breakdown_table(split_breakdown, "Split")
 
 
+def _level_breakdown_table(level_breakdown: dict) -> list[str]:
+    return _breakdown_table(level_breakdown, "Level")
+
+
 def _breakdown_table(breakdown: dict, label: str) -> list[str]:
     lines = [
-        f"| {label} | Passed | Pass Rate | Support Match | Missing Support | Prompt Echo | Unsupported |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        f"| {label} | Passed | Pass Rate | Support Match | Ref F1 | Corpus Support | Missing Support | Prompt Echo | Unsupported |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for name, row in sorted(breakdown.items()):
         passed = f"{row.get('num_passed', 0)} / {row.get('num_examples', 0)}"
         pass_rate = format_float(row.get("pass_rate", 0.0) * 100)
         support = format_float(row.get("support_match_rate", 0.0) * 100)
+        ref_f1 = _format_percent_or_dash(row.get("average_reference_token_f1"))
+        corpus_support = _format_percent_or_dash(row.get("average_corpus_support_rate"))
         missing = f"{row.get('missing_support', 0)} / {row.get('num_examples', 0)}"
         prompt_echo = f"{row.get('prompt_echoes', 0)} / {row.get('num_examples', 0)}"
         unsupported = f"{row.get('unsupported_claims', 0)} / {row.get('num_examples', 0)}"
-        lines.append(f"| `{name}` | {passed} | {pass_rate}% | {support}% | {missing} | {prompt_echo} | {unsupported} |")
+        lines.append(
+            f"| `{name}` | {passed} | {pass_rate}% | {support}% | "
+            f"{ref_f1} | {corpus_support} | {missing} | {prompt_echo} | {unsupported} |"
+        )
     return lines
 
 
@@ -700,8 +747,10 @@ def _eval_analysis_markdown(analysis: dict, compact: bool = False) -> list[str]:
     lines: list[str] = []
     recommendations = analysis.get("recommendations") or []
     failure_counts = analysis.get("failure_counts") or {}
+    cluster_counts = analysis.get("cluster_counts") or {}
     weak_categories = analysis.get("weak_categories") or []
     weak_splits = analysis.get("weak_splits") or []
+    weak_levels = analysis.get("weak_levels") or []
     failed_examples = analysis.get("failed_examples") or []
 
     if recommendations:
@@ -723,6 +772,15 @@ def _eval_analysis_markdown(analysis: dict, compact: bool = False) -> list[str]:
             lines.append(f"| `{name}` | {count} |")
         lines.append("")
 
+    if cluster_counts:
+        lines.append("Failure clusters:")
+        lines.append("")
+        lines.append("| Cluster | Count |")
+        lines.append("| --- | ---: |")
+        for name, count in sorted(cluster_counts.items()):
+            lines.append(f"| `{name}` | {count} |")
+        lines.append("")
+
     if weak_categories:
         lines.append("Weak categories:")
         lines.append("")
@@ -735,11 +793,17 @@ def _eval_analysis_markdown(analysis: dict, compact: bool = False) -> list[str]:
         lines.extend(_weak_eval_table(weak_splits, "split"))
         lines.append("")
 
+    if weak_levels:
+        lines.append("Weak ladder levels:")
+        lines.append("")
+        lines.extend(_weak_eval_table(weak_levels, "level"))
+        lines.append("")
+
     if not compact and failed_examples:
         lines.append("Failed examples:")
         lines.append("")
-        lines.append("| # | Category | Split | Reasons | Missing | Forbidden | Reply Preview |")
-        lines.append("| ---: | --- | --- | --- | --- | --- | --- |")
+        lines.append("| # | Category | Level | Split | Clusters | Reasons | Missing | Forbidden | Reply Preview |")
+        lines.append("| ---: | --- | --- | --- | --- | --- | --- | --- | --- |")
         for item in failed_examples:
             missing_parts = list(item.get("missing", []))
             missing_parts.extend(
@@ -748,7 +812,9 @@ def _eval_analysis_markdown(analysis: dict, compact: bool = False) -> list[str]:
                 if isinstance(group, (list, tuple))
             )
             lines.append(
-                f"| {item.get('index')} | `{item.get('category')}` | `{item.get('split')}` | "
+                f"| {item.get('index')} | `{item.get('category')}` | "
+                f"`{item.get('level', 'heldout')}` | `{item.get('split')}` | "
+                f"{_inline_list(item.get('clusters', [])) or 'none'} | "
                 f"{_inline_list(item.get('reasons', [])) or 'none'} | "
                 f"{_inline_list(missing_parts) if missing_parts else 'none'} | "
                 f"{_inline_list(item.get('found_forbidden', [])) if item.get('found_forbidden') else 'none'} | "
@@ -763,18 +829,52 @@ def _eval_analysis_markdown(analysis: dict, compact: bool = False) -> list[str]:
 
 def _weak_eval_table(items: list[dict], field: str) -> list[str]:
     lines = [
-        f"| {field.title()} | Failed | Pass Rate | Support Match | Prompt Echo | Unsupported |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        f"| {field.title()} | Failed | Pass Rate | Support Match | Corpus Fail | Prompt Echo | Unsupported |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for item in items:
         lines.append(
             f"| `{item.get(field)}` | {item.get('num_failed', 0)} / {item.get('num_examples', 0)} | "
             f"{format_float(float(item.get('pass_rate', 0.0)) * 100)}% | "
             f"{format_float(float(item.get('support_match_rate', 0.0)) * 100)}% | "
+            f"{format_float(float(item.get('corpus_support_failure_rate', 0.0)) * 100)}% | "
             f"{format_float(float(item.get('prompt_echo_rate', 0.0)) * 100)}% | "
             f"{format_float(float(item.get('unsupported_claim_rate', 0.0)) * 100)}% |"
         )
     return lines
+
+
+def _eval_metric_lines(item: dict) -> list[str]:
+    lines: list[str] = []
+    if item.get("reference_token_f1") is not None:
+        lines.append(f"- Reference token F1: {_format_percent_or_dash(item.get('reference_token_f1'))}")
+    if item.get("reference_rouge_l") is not None:
+        lines.append(f"- Reference ROUGE-L: {_format_percent_or_dash(item.get('reference_rouge_l'))}")
+    if item.get("entity_total"):
+        lines.append(
+            f"- Entity match: {item.get('entity_matched', 0)} / {item.get('entity_total', 0)} "
+            f"({_format_percent_or_dash(item.get('entity_match_rate'))})"
+        )
+    if item.get("corpus_support_rate") is not None:
+        lines.append(
+            f"- Corpus support: {item.get('corpus_support_tokens', 0)} / "
+            f"{item.get('corpus_support_total', 0)} content tokens "
+            f"({_format_percent_or_dash(item.get('corpus_support_rate'))})"
+        )
+    if item.get("repetition_ngram_rate") is not None:
+        lines.append(f"- Repeated trigram rate: {_format_percent_or_dash(item.get('repetition_ngram_rate'))}")
+    if item.get("word_count") is not None:
+        lines.append(f"- Length: {item.get('word_count')} words / {item.get('char_count')} chars")
+    if item.get("answerable") is False:
+        lines.append(f"- Refusal phrase detected: `{bool(item.get('refusal_match'))}`")
+    return lines
+
+
+def _format_percent_or_dash(value: object) -> str:
+    number = _number(value)
+    if number is None:
+        return "--"
+    return f"{format_float(number * 100)}%"
 
 
 def _phrase_list(phrases: list[str]) -> str:
