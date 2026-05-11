@@ -7,6 +7,7 @@ const state = {
   workflowRunName: null,
   activeView: readInitialAppView(),
   guideStep: 0,
+  guideRunName: null,
   activePanel: "dataset",
   activeStage: "dataset",
   viewMode: readInitialViewMode(),
@@ -915,12 +916,13 @@ function renderGuide() {
 function guideStepStatuses() {
   const hasSource = hasGuideDatasetSource();
   const checked = Boolean(state.datasetFlightPlan || state.corpusSourcePreview);
-  const sftReady = Boolean(state.sftStarter || $("flight-chat-path")?.value.trim());
-  const evalReady = Boolean(state.evalStarter || $("flight-eval-path")?.value.trim());
+  const sftReady = Boolean(state.sftStarter || currentChatRowCount() >= 8);
+  const evalReady = Boolean(state.evalStarter || currentEvalRowCount() >= 4);
   const tuningChecked = Boolean(state.tuningInspection);
   const launcherReady = launchReadiness().status !== "blocked";
-  const hasRun = Boolean(state.runJob || state.detail?.summary);
-  const hasEval = Boolean(state.detail?.summary?.eval?.num_examples || state.runJob?.summary?.eval?.num_examples);
+  const guideRunMatches = Boolean(state.guideRunName && state.runJob?.run_name === state.guideRunName);
+  const hasRun = guideRunMatches;
+  const hasEval = Boolean(guideRunMatches && state.runJob?.summary?.eval?.num_examples);
   return [
     hasSource ? "done" : "next",
     checked ? "done" : hasSource ? "next" : "todo",
@@ -938,6 +940,24 @@ function hasGuideDatasetSource() {
     || $("flight-input-path")?.value.trim()
     || state.datasetFlightPlan?.dataset_pack
     || state.hfImport?.dataset_pack
+  );
+}
+
+function currentChatRowCount() {
+  return Math.max(
+    Number(state.datasetFlightPlan?.chat_data?.num_examples) || 0,
+    Number(state.tuningInspection?.chat_data?.num_examples) || 0,
+    Number(state.packEditor?.chat_lines) || 0,
+    Number(state.sftStarter?.num_rows) || 0,
+  );
+}
+
+function currentEvalRowCount() {
+  return Math.max(
+    Number(state.datasetFlightPlan?.eval_data?.num_items) || 0,
+    Number(state.tuningInspection?.eval_data?.num_items) || 0,
+    Number(state.packEditor?.eval_lines) || 0,
+    Number(state.evalStarter?.num_rows) || 0,
   );
 }
 
@@ -1041,7 +1061,7 @@ function guideCheckCorpusContent() {
 }
 
 function guideCreateSftContent() {
-  const chatRows = state.datasetFlightPlan?.chat_data?.num_examples || 0;
+  const chatRows = currentChatRowCount();
   return `
     <div class="guide-page">
       <div class="guide-page-head">
@@ -1061,7 +1081,7 @@ function guideCreateSftContent() {
 }
 
 function guideCreateEvalContent() {
-  const evalRows = state.datasetFlightPlan?.eval_data?.num_items || 0;
+  const evalRows = currentEvalRowCount();
   return `
     <div class="guide-page">
       <div class="guide-page-head">
@@ -1298,6 +1318,7 @@ async function handleGuideAction(action) {
       applyLaunchPreset(true);
     }
     await launchRun();
+    state.guideRunName = state.runJob?.run_name || $("launch-run-name").value.trim() || null;
     setGuideStep(6);
     return;
   }
@@ -1365,8 +1386,8 @@ function startHereSteps() {
   const flightInput = $("flight-input-path")?.value.trim();
   const hasDatasetSource = Boolean(flightPack || flightInput || state.datasetFlightPlan?.dataset_pack || state.hfImport?.dataset_pack);
   const checkedDataset = Boolean(state.datasetFlightPlan || state.corpusSourcePreview);
-  const sftReady = Boolean(state.sftStarter || $("flight-chat-path")?.value.trim());
-  const evalReady = Boolean(state.evalStarter || $("flight-eval-path")?.value.trim());
+  const sftReady = Boolean(state.sftStarter || currentChatRowCount() >= 8);
+  const evalReady = Boolean(state.evalStarter || currentEvalRowCount() >= 4);
   const tuningReady = state.tuningInspection?.status === "ready";
   const hasRun = Boolean(state.detail?.summary);
   const evalSummary = state.detail?.eval_reports?.at(-1)?.report?.summary || state.detail?.summary?.eval;
@@ -1398,7 +1419,7 @@ function startHereSteps() {
       panel: "dataset",
       target: "flight-sft-button",
       status: sftReady ? "done" : "todo",
-      signal: sftReady ? "Chat rows selected" : "Generate starter chat rows",
+      signal: sftReady ? `${fmtInt(currentChatRowCount())} chat rows` : "Generate starter chat rows",
       note: "SFT teaches chat behavior. It is not a substitute for base training knowledge.",
       action: "Generate starter chat rows, then edit them into real domain conversations before trusting a run.",
     },
@@ -1407,7 +1428,7 @@ function startHereSteps() {
       panel: "dataset",
       target: "flight-eval-button",
       status: evalReady ? "done" : "todo",
-      signal: evalReady ? "Eval rows selected" : "Generate starter eval rows",
+      signal: evalReady ? `${fmtInt(currentEvalRowCount())} eval rows` : "Generate starter eval rows",
       note: "Eval is the scoreboard. Keep answerable, refusal, and memorization probes.",
       action: "Generate starter eval rows. These become the evidence that the model improved without cheating.",
     },
@@ -3786,16 +3807,19 @@ function renderSmokeReadiness(report) {
   const datasetPack = report.dataset_pack || $("flight-pack-path").value.trim();
   const canTrain = plan.status !== "blocked";
   const launcherReady = Boolean(datasetPack && launchPack === datasetPack);
+  const starterWarning = starterSizeWarning(dataRowCount(report.chat_data), dataRowCount(report.eval_data));
   const className = !canTrain ? "blocked" : launcherReady ? "ready" : "caution";
   const title = !canTrain
     ? "SMOKE TRAIN BLOCKED"
     : launcherReady
-      ? "READY TO SMOKE TRAIN"
+      ? starterWarning ? "SMOKE ONLY: STARTERS NEED WORK" : "READY TO SMOKE TRAIN"
       : "APPLY PLAN NEXT";
   const message = !canTrain
     ? "Fix the failed corpus, SFT, or eval checks before launching."
     : launcherReady
-      ? "Launcher has this dataset pack. Use the smoke preset first, then compare results."
+      ? starterWarning
+        ? `${starterWarning}. Launch only to test wiring; edit and validate SFT/eval before trusting scores.`
+        : "Launcher has this dataset pack. Use the smoke preset first, then compare results."
       : "Click APPLY PLAN to move these checked paths into the run launcher.";
   target.className = `readiness-summary ${className}`;
   target.innerHTML = `
