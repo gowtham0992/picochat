@@ -8,16 +8,37 @@
   --ink: #171717;
   --inverse: #111111;
   --inverse-ink: #f2f2ec;
-  --green: #1f6043;
-  --red: #7e2d27;
-  --muted: #3f3f39;
-  --accent: #245c68;
+  --green: #0f5a37;
+  --red: #7b211d;
+  --muted: #2f2f2a;
+  --accent: #155866;
   --line: #171717;
-  --dim-line: #696963;
-  --inverse-muted: #d8d8cf;
+  --dim-line: #54544e;
+  --inverse-muted: #f1f1e8;
   --inverse-green: #9bd9b9;
   --inverse-red: #ffb0a6;
   --inverse-accent: #a9d1dc;
+}
+
+body.paper-theme {
+  --bg: #eeeae0;
+  --desktop: #f6f3ea;
+  --panel: #fffdf6;
+  --raised: #e6e1d4;
+  --field: #fffef9;
+  --ink: #111111;
+  --inverse: #111111;
+  --inverse-ink: #fffdf6;
+  --green: #005f3c;
+  --red: #8a1f1c;
+  --muted: #252520;
+  --accent: #005c6c;
+  --line: #111111;
+  --dim-line: #3e3e39;
+  --inverse-muted: #f4f1e8;
+  --inverse-green: #a8e3c3;
+  --inverse-red: #ffc0ba;
+  --inverse-accent: #bfeaf2;
 }
 
 * {
@@ -35,7 +56,10 @@ body {
   font-family: "JetBrains Mono", "Courier New", ui-monospace, Menlo, Consolas, monospace;
   font-size: 14px;
   letter-spacing: 0;
+  line-height: 1.4;
   margin: 0;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: none;
 }
 
 .desktop-grain {
@@ -46,6 +70,10 @@ body {
   pointer-events: none;
   position: fixed;
   z-index: 10;
+}
+
+body.paper-theme .desktop-grain {
+  opacity: 0.06;
 }
 
 button,
@@ -66,6 +94,7 @@ select {
 
 button {
   cursor: pointer;
+  font-weight: 700;
   padding: 0 10px;
 }
 
@@ -120,6 +149,7 @@ label {
   color: var(--muted);
   display: block;
   font-size: 12px;
+  font-weight: 700;
   margin: 0 0 8px;
 }
 
@@ -132,15 +162,18 @@ p {
 
 h1 {
   font-size: 24px;
+  font-weight: 800;
 }
 
 h2 {
   font-size: 18px;
+  font-weight: 800;
 }
 
 .kicker {
   color: var(--accent);
   font-size: 12px;
+  font-weight: 700;
   margin-bottom: 4px;
 }
 
@@ -160,24 +193,28 @@ h2 {
 }
 
 .header-actions,
-.mode-toggle {
+.mode-toggle,
+.theme-toggle {
   align-items: center;
   display: flex;
   gap: 8px;
 }
 
-.mode-toggle {
+.mode-toggle,
+.theme-toggle {
   border: 1px solid var(--line);
   gap: 0;
 }
 
-.mode-toggle button {
+.mode-toggle button,
+.theme-toggle button {
   border: 0;
   border-right: 1px solid var(--line);
   min-height: 32px;
 }
 
-.mode-toggle button:last-child {
+.mode-toggle button:last-child,
+.theme-toggle button:last-child {
   border-right: 0;
 }
 
@@ -196,6 +233,15 @@ h2 {
   gap: 12px;
   grid-template-columns: 280px minmax(0, 1fr);
   padding: 12px;
+}
+
+.terminal-grid > *,
+.workbench,
+.assembly-line,
+.start-here,
+.tab-strip,
+.panel-screen {
+  min-width: 0;
 }
 
 .run-rail,
@@ -249,7 +295,116 @@ h2 {
   border: 0;
   display: grid;
   gap: 12px;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto auto 1fr;
+}
+
+.start-here {
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.start-here-head {
+  align-items: center;
+  background: var(--raised);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.start-here-head span {
+  border: 1px solid var(--line);
+  color: var(--accent);
+  font-weight: 800;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+
+.start-here-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.start-step {
+  align-content: start;
+  background: var(--field);
+  border: 0;
+  border-right: 1px solid var(--dim-line);
+  display: grid;
+  gap: 5px;
+  height: auto;
+  min-width: 0;
+  min-height: 132px;
+  overflow-wrap: anywhere;
+  padding: 8px;
+  text-align: left;
+}
+
+.start-step:last-child {
+  border-right: 0;
+}
+
+.start-step span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.start-step strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.start-step em {
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.start-step p {
+  color: var(--muted);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.start-step.done span,
+.start-step.done em {
+  color: var(--green);
+}
+
+.start-step.next {
+  background: var(--raised);
+}
+
+.start-step.next span,
+.start-step.next em {
+  color: var(--red);
+}
+
+.start-step.active,
+.start-step:hover,
+.start-step:focus-visible {
+  background: var(--inverse);
+}
+
+.start-step.active span,
+.start-step:hover span,
+.start-step:focus-visible span,
+.start-step.active em,
+.start-step:hover em,
+.start-step:focus-visible em,
+.start-step.active p,
+.start-step:hover p,
+.start-step:focus-visible p {
+  color: var(--inverse-muted);
+}
+
+.start-step.active strong,
+.start-step:hover strong,
+.start-step:focus-visible strong {
+  color: var(--inverse-ink);
 }
 
 .assembly-line {
@@ -279,6 +434,8 @@ h2 {
   gap: 6px;
   height: 104px;
   justify-items: start;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 10px;
   position: relative;
   text-align: left;
@@ -318,7 +475,7 @@ h2 {
 
 .pipeline-stage small {
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.3;
 }
 
@@ -403,6 +560,7 @@ h2 {
 
 .verdict-card p {
   color: var(--muted);
+  font-weight: 600;
   line-height: 1.35;
 }
 
@@ -480,6 +638,7 @@ h2 {
 .trust-check p,
 .notebook-entry p {
   color: var(--muted);
+  font-weight: 600;
   line-height: 1.35;
 }
 
@@ -918,6 +1077,7 @@ h2 {
 
 .metric-pill span {
   color: var(--muted);
+  font-weight: 600;
   line-height: 1.35;
 }
 
@@ -931,6 +1091,7 @@ h2 {
 
 .guide-strip p {
   color: var(--muted);
+  font-weight: 600;
   line-height: 1.3;
 }
 
@@ -988,6 +1149,30 @@ h2 {
   margin: 0 12px 12px;
 }
 
+.learning-copy {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+  padding: 8px;
+}
+
+.learning-copy strong {
+  color: var(--accent);
+}
+
+.learning-copy span,
+.helper-copy {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.helper-copy code {
+  color: var(--ink);
+  font-weight: 800;
+}
+
 .preview-controls {
   align-items: end;
   display: grid;
@@ -1000,7 +1185,15 @@ h2 {
   align-items: end;
   display: grid;
   gap: 10px;
-  grid-template-columns: minmax(180px, 1.3fr) minmax(160px, 1.1fr) repeat(4, minmax(140px, 1fr)) 88px auto auto auto auto;
+  grid-template-columns: minmax(180px, 1.3fr) minmax(160px, 1.1fr) repeat(4, minmax(140px, 1fr)) 88px repeat(4, auto);
+  margin-bottom: 10px;
+}
+
+.hf-import-controls {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(170px, 1fr) minmax(110px, 0.7fr) minmax(110px, 0.7fr) minmax(110px, 0.7fr) 92px 92px auto auto;
   margin-bottom: 10px;
 }
 
@@ -1012,7 +1205,8 @@ h2 {
 
 .flight-grid,
 .flight-steps,
-.flight-eval-grid {
+.flight-eval-grid,
+.hf-import-grid {
   display: grid;
   gap: 8px;
 }
@@ -1032,7 +1226,8 @@ h2 {
 
 .flight-grid > div,
 .flight-steps > div,
-.flight-eval-grid > div {
+.flight-eval-grid > div,
+.hf-import-grid > div {
   background: var(--field);
   border: 1px solid var(--dim-line);
   display: grid;
@@ -1042,14 +1237,17 @@ h2 {
 }
 
 .flight-grid strong,
-.flight-eval-grid strong {
+.flight-eval-grid strong,
+.hf-import-grid strong {
   color: var(--accent);
 }
 
 .flight-grid p,
 .flight-steps p,
-.flight-eval-grid span {
+.flight-eval-grid span,
+.hf-import-grid span {
   color: var(--muted);
+  font-weight: 600;
   line-height: 1.35;
 }
 
@@ -1078,10 +1276,16 @@ h2 {
 }
 
 .flight-starter-result,
-.flight-eval-result {
+.flight-eval-result,
+.hf-import-result {
   display: grid;
   gap: 8px;
   margin-top: 10px;
+}
+
+.hf-import-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 8px 0;
 }
 
 .tuning-inspector-controls {
@@ -1440,6 +1644,7 @@ th {
 .notice,
 .empty {
   color: var(--muted);
+  font-weight: 700;
 }
 
 .logprob-bars {
@@ -1801,6 +2006,7 @@ th {
   .two-col,
   .tab-strip,
   .pipeline-strip,
+  .start-here-grid,
   .pipeline-detail-grid,
   .verdict-card,
   .doctor-body,
@@ -1815,9 +2021,11 @@ th {
   .readiness-row,
   .budget-grid,
   .flight-controls,
+  .hf-import-controls,
   .flight-grid,
   .flight-steps,
   .flight-eval-grid,
+  .hf-import-grid,
   .preview-controls,
   .tuning-inspector-controls,
   .pack-editor-controls,
@@ -1849,6 +2057,11 @@ th {
     border-right: 0;
     border-bottom: 1px solid var(--line);
     height: auto;
+  }
+
+  .start-step {
+    border-right: 0;
+    border-bottom: 1px solid var(--dim-line);
   }
 
   .pipeline-stage::after {

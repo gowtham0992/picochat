@@ -7,6 +7,7 @@ from picochat.web import (
     discover_runs,
     eval_starter_plan,
     generate_run_text,
+    hf_import_plan,
     init_dataset_pack_plan,
     inspect_tuning_plan,
     load_pack_editor_plan,
@@ -380,6 +381,71 @@ def test_init_dataset_pack_plan_refuses_overwrite_without_force(tmp_path):
     report = init_dataset_pack_plan({**payload, "force": True})
 
     assert str(pack_dir / "dataset_pack.json") in report["overwritten"]
+
+
+def test_hf_import_plan_accepts_dataset_url_and_creates_pack(tmp_path, monkeypatch):
+    from picochat.hf_import import HFImportReport
+
+    captured = {}
+
+    def fake_import(config):
+        captured["config"] = config
+        out_path = tmp_path / "hf-out" / "corpus.txt"
+        docs_dir = tmp_path / "hf-out" / "documents"
+        docs_dir.mkdir(parents=True)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("first story\n\nsecond story\n", encoding="utf-8")
+        (docs_dir / "row-000000.txt").write_text("first story\n", encoding="utf-8")
+        (docs_dir / "row-000001.txt").write_text("second story\n", encoding="utf-8")
+        return HFImportReport(
+            dataset=config.dataset,
+            config_name=config.config_name,
+            split=config.split,
+            text_column=config.text_column,
+            streaming=config.streaming,
+            max_rows=config.max_rows,
+            min_chars=config.min_chars,
+            out_path=str(out_path),
+            report_path=str(tmp_path / "hf-out" / "hf_import_report.json"),
+            documents_dir=str(docs_dir),
+            rows_seen=2,
+            rows_written=2,
+            rows_skipped=0,
+            characters_written=25,
+            rows=(),
+        )
+
+    monkeypatch.setattr("picochat.web.import_hf_dataset", fake_import)
+
+    report = hf_import_plan({
+        "dataset_url": "https://huggingface.co/datasets/demo/stories/tree/main",
+        "split": "train[:1%]",
+        "text_column": "body",
+        "out_dir": str(tmp_path / "hf-out"),
+        "max_rows": 2,
+        "min_chars": 5,
+    }, runs_dir=tmp_path)
+
+    assert captured["config"].dataset == "demo/stories"
+    assert captured["config"].split == "train[:1%]"
+    assert captured["config"].text_column == "body"
+    assert report["dataset"] == "demo/stories"
+    assert report["rows_written"] == 2
+    assert report["dataset_pack"] == str(tmp_path / "hf-out" / "dataset_pack.json")
+    assert report["preview"]["dataset_pack"] == report["dataset_pack"]
+    assert "--dataset demo/stories" in report["command"]
+
+
+def test_hf_import_plan_refuses_existing_output_without_force(tmp_path):
+    out_dir = tmp_path / "hf-out"
+    out_dir.mkdir()
+    (out_dir / "existing.txt").write_text("keep me", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="output folder already exists"):
+        hf_import_plan({
+            "dataset": "demo/stories",
+            "out_dir": str(out_dir),
+        }, runs_dir=tmp_path)
 
 
 def test_inspect_tuning_plan_accepts_ready_dataset_pack(tmp_path):

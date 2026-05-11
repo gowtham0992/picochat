@@ -16,8 +16,12 @@
         </div>
         <div class="header-actions">
           <div class="mode-toggle" aria-label="Workbench mode">
-            <button id="learn-mode-button" class="active" type="button">LEARN</button>
-            <button id="inspect-mode-button" type="button">INSPECT</button>
+            <button id="learn-mode-button" class="active" type="button">BEGINNER</button>
+            <button id="inspect-mode-button" type="button">RESEARCH</button>
+          </div>
+          <div class="theme-toggle" aria-label="Workbench theme">
+            <button id="classic-theme-button" class="active" type="button">CLASSIC</button>
+            <button id="paper-theme-button" type="button">PAPER</button>
           </div>
           <button id="refresh-button" type="button">REFRESH</button>
         </div>
@@ -33,6 +37,7 @@
         </aside>
 
         <section class="workbench">
+          <section id="start-here" class="start-here learn-only" aria-label="Start here guide"></section>
           <section class="assembly-line" aria-label="Picochat factory flow">
             <div class="assembly-title">
               <span>FACTORY FLOW</span>
@@ -88,6 +93,10 @@
             </div>
             <div class="terminal-card dataset-preview-card learn-only">
               <label>CUSTOM SLM FLIGHT PLAN</label>
+              <div class="learning-copy">
+                <strong>Start here when you bring your own dataset.</strong>
+                <span>Check the corpus first. Then create starter SFT and eval files, edit them, run a smoke train, and compare before scaling.</span>
+              </div>
               <div class="flight-controls">
                 <div>
                   <label for="flight-pack-path">DATASET PACK</label>
@@ -127,6 +136,50 @@
               <div id="flight-command" class="command-tape source-command"></div>
               <div id="flight-sft-result" class="flight-starter-result"></div>
               <div id="flight-eval-result" class="flight-eval-result"></div>
+            </div>
+            <div class="terminal-card dataset-preview-card learn-only">
+              <label>HUGGING FACE IMPORT</label>
+              <div class="learning-copy">
+                <strong>Paste a dataset URL or repo id.</strong>
+                <span>Picochat will import rows into local documents, create a dataset pack, and run the same readiness check used before training.</span>
+              </div>
+              <div class="hf-import-controls">
+                <div>
+                  <label for="hf-dataset-input">HF DATASET URL / ID</label>
+                  <input id="hf-dataset-input" type="text" spellcheck="false" placeholder="https://huggingface.co/datasets/roneneldan/TinyStories">
+                </div>
+                <div>
+                  <label for="hf-out-dir">LOCAL OUT FOLDER</label>
+                  <input id="hf-out-dir" type="text" spellcheck="false" placeholder="runs/hf-tinystories-10000">
+                </div>
+                <div>
+                  <label for="hf-config-name">CONFIG</label>
+                  <input id="hf-config-name" type="text" spellcheck="false" placeholder="optional">
+                </div>
+                <div>
+                  <label for="hf-split">SPLIT</label>
+                  <input id="hf-split" type="text" spellcheck="false" value="train">
+                </div>
+                <div>
+                  <label for="hf-text-column">TEXT FIELD</label>
+                  <input id="hf-text-column" type="text" spellcheck="false" value="text">
+                </div>
+                <div>
+                  <label for="hf-max-rows">MAX ROWS</label>
+                  <input id="hf-max-rows" type="number" min="1" max="100000" value="1000">
+                </div>
+                <div>
+                  <label for="hf-min-chars">MIN CHARS</label>
+                  <input id="hf-min-chars" type="number" min="1" max="10000" value="20">
+                </div>
+                <label class="checkbox-line" for="hf-force">
+                  <input id="hf-force" type="checkbox">
+                  FORCE
+                </label>
+                <button id="hf-import-button" type="button">IMPORT HF DATASET</button>
+              </div>
+              <div id="hf-import-status" class="notice">NO HUGGING FACE DATASET IMPORTED.</div>
+              <div id="hf-import-result" class="hf-import-result"></div>
             </div>
             <div class="terminal-card dataset-preview-card inspect-only">
               <label>PACK BUILDER</label>

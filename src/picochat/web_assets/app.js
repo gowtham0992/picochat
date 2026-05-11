@@ -5,11 +5,13 @@ const state = {
   activePanel: "dataset",
   activeStage: "dataset",
   viewMode: readInitialViewMode(),
+  theme: readInitialTheme(),
   activeReport: "summary",
   compareRuns: [],
   compareDetails: {},
   corpusSourcePreview: null,
   datasetFlightPlan: null,
+  hfImport: null,
   sftStarter: null,
   evalStarter: null,
   datasetPackInit: null,
@@ -188,6 +190,7 @@ async function postJson(url, body) {
 async function boot() {
   bindControls();
   setViewMode(state.viewMode, { persist: false, render: false });
+  setTheme(state.theme, { persist: false });
   await loadRunPresets();
   await loadRuns();
   await loadRunJobs();
@@ -196,11 +199,20 @@ async function boot() {
 function bindControls() {
   $("learn-mode-button").addEventListener("click", () => setViewMode("learn"));
   $("inspect-mode-button").addEventListener("click", () => setViewMode("inspect"));
+  $("classic-theme-button").addEventListener("click", () => setTheme("classic"));
+  $("paper-theme-button").addEventListener("click", () => setTheme("paper"));
   $("refresh-button").addEventListener("click", loadRuns);
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-copy-command]");
     if (!button) return;
     copyCommand(button.dataset.copyCommand || "", button);
+  });
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-guide-panel]");
+    if (!button) return;
+    const mode = button.dataset.guideMode;
+    if (mode) setViewMode(mode);
+    setPanel(button.dataset.guidePanel);
   });
   document.querySelectorAll("[data-panel]").forEach((button) => {
     button.addEventListener("click", () => setPanel(button.dataset.panel));
@@ -253,6 +265,10 @@ function bindControls() {
   });
   $("flight-apply-button").addEventListener("click", () => {
     applyFlightPlanToLauncher();
+  });
+  $("hf-dataset-input").addEventListener("input", seedHfOutDirFromDataset);
+  $("hf-import-button").addEventListener("click", () => {
+    importHfDataset().catch((error) => renderHfImportError(error));
   });
   $("init-pack-button").addEventListener("click", () => {
     initDatasetPack().catch((error) => renderDatasetPackInitError(error));
@@ -363,6 +379,14 @@ function readInitialViewMode() {
   }
 }
 
+function readInitialTheme() {
+  try {
+    return localStorage.getItem("picochat:theme") === "paper" ? "paper" : "classic";
+  } catch {
+    return "classic";
+  }
+}
+
 function setViewMode(mode, options = {}) {
   const nextMode = mode === "inspect" ? "inspect" : "learn";
   state.viewMode = nextMode;
@@ -378,8 +402,25 @@ function setViewMode(mode, options = {}) {
     }
   }
   if (options.render !== false) {
+    renderStartHere();
     renderPanelGuide();
     renderStatus();
+  }
+}
+
+function setTheme(theme, options = {}) {
+  const nextTheme = theme === "paper" ? "paper" : "classic";
+  state.theme = nextTheme;
+  document.body.classList.toggle("paper-theme", nextTheme === "paper");
+  document.body.classList.toggle("classic-theme", nextTheme === "classic");
+  $("classic-theme-button").classList.toggle("active", nextTheme === "classic");
+  $("paper-theme-button").classList.toggle("active", nextTheme === "paper");
+  if (options.persist !== false) {
+    try {
+      localStorage.setItem("picochat:theme", nextTheme);
+    } catch {
+      // localStorage can be unavailable in restricted browser contexts.
+    }
   }
 }
 
@@ -387,6 +428,7 @@ function renderAll() {
   renderPanelGuide();
   renderPipeline();
   renderDataset();
+  renderStartHere();
   renderTokenizer();
   renderTraining();
   renderGenerationDeck();
@@ -440,7 +482,115 @@ function setPanel(name) {
   } else if (name === "compare") {
     loadComparison().catch((error) => renderCompareError(error));
   }
+  renderStartHere();
   renderStatus();
+}
+
+function renderStartHere() {
+  const container = $("start-here");
+  if (!container) return;
+  const steps = startHereSteps();
+  const nextStep = steps.find((step) => step.status !== "done") || steps.at(-1);
+  container.innerHTML = `
+    <div class="start-here-head">
+      <div>
+        <p class="kicker">START HERE</p>
+        <h2>BUILD A CUSTOM SLM WITHOUT GUESSING</h2>
+      </div>
+      <span>${escapeHtml(nextStep ? `NEXT: ${nextStep.label}` : "READY")}</span>
+    </div>
+    <div class="start-here-grid">
+      ${steps.map((step, index) => `
+        <button class="start-step ${escapeHtml(step.status)} ${step.status === "next" ? "active" : ""}" type="button" data-guide-panel="${escapeHtml(step.panel)}" data-guide-mode="${escapeHtml(step.mode || "learn")}">
+          <span>${String(index + 1).padStart(2, "0")}</span>
+          <strong>${escapeHtml(step.label)}</strong>
+          <em>${escapeHtml(step.signal)}</em>
+          <p>${escapeHtml(step.note)}</p>
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function startHereSteps() {
+  const hasPack = Boolean($("flight-pack-path")?.value.trim() || state.datasetFlightPlan?.dataset_pack);
+  const checkedDataset = Boolean(state.datasetFlightPlan || state.corpusSourcePreview);
+  const sftReady = Boolean(state.sftStarter || $("flight-chat-path")?.value.trim());
+  const evalReady = Boolean(state.evalStarter || $("flight-eval-path")?.value.trim());
+  const tuningReady = state.tuningInspection?.status === "ready";
+  const hasRun = Boolean(state.detail?.summary);
+  const evalSummary = state.detail?.eval_reports?.at(-1)?.report?.summary || state.detail?.summary?.eval;
+  const hasEval = Boolean(evalSummary?.num_examples);
+  const canCompare = state.runs.length >= 2;
+  const steps = [
+    {
+      label: "Choose dataset",
+      panel: "dataset",
+      status: hasPack ? "done" : "todo",
+      signal: hasPack ? "Pack selected" : "Paste HF URL or local corpus",
+      note: "A dataset pack is the contract Picochat uses for corpus, SFT, and eval files.",
+    },
+    {
+      label: "Check readiness",
+      panel: "dataset",
+      status: checkedDataset ? "done" : "todo",
+      signal: checkedDataset ? "Corpus checked" : "Run dataset check",
+      note: "This catches missing files, tiny corpora, duplicate text, and tuning-data blockers early.",
+    },
+    {
+      label: "Create SFT",
+      panel: "dataset",
+      status: sftReady ? "done" : "todo",
+      signal: sftReady ? "Chat rows selected" : "Generate starter chat rows",
+      note: "SFT teaches chat behavior. It is not a substitute for base training knowledge.",
+    },
+    {
+      label: "Create eval",
+      panel: "dataset",
+      status: evalReady ? "done" : "todo",
+      signal: evalReady ? "Eval rows selected" : "Generate starter eval rows",
+      note: "Eval is the scoreboard. Keep answerable, refusal, and memorization probes.",
+    },
+    {
+      label: "Inspect/edit",
+      panel: "dataset",
+      mode: "inspect",
+      status: tuningReady ? "done" : "todo",
+      signal: tuningReady ? "Tuning ready" : "Open JSONL editor",
+      note: "Rewrite starter rows into real domain questions before trusting a run.",
+    },
+    {
+      label: "Train smoke",
+      panel: "dataset",
+      mode: "inspect",
+      status: hasRun ? "done" : "todo",
+      signal: hasRun ? "Run loaded" : "Launch a small run",
+      note: "Smoke runs prove the wiring before you spend time on larger experiments.",
+    },
+    {
+      label: "Evaluate/chat",
+      panel: hasEval ? "eval" : "generation",
+      status: hasEval ? "done" : "todo",
+      signal: hasEval ? `${evalSummary.num_passed}/${evalSummary.num_examples} pass` : "Inspect behavior",
+      note: "Use eval for evidence and chat for qualitative failure discovery.",
+    },
+    {
+      label: "Compare",
+      panel: "compare",
+      status: "todo",
+      signal: canCompare ? `${state.runs.length} runs available` : "Need two runs",
+      note: "A better SLM is a measured improvement, not a single good sample.",
+    },
+  ];
+  let markedNext = false;
+  return steps.map((step) => {
+    if (step.status === "done") return step;
+    if (!markedNext) {
+      markedNext = true;
+      return { ...step, status: "next" };
+    }
+    return { ...step, status: "todo" };
+  });
 }
 
 function renderPanelGuide() {
@@ -1213,6 +1363,7 @@ function renderDataset() {
   ]);
   $("corpus-files").innerHTML = renderCorpusFiles(manifest?.files || []);
   renderDatasetFlightPlan(state.datasetFlightPlan);
+  renderHfImport(state.hfImport);
   renderSftStarter(state.sftStarter);
   renderEvalStarter(state.evalStarter);
   renderCorpusSourcePreview(state.corpusSourcePreview);
@@ -1222,6 +1373,124 @@ function renderDataset() {
   renderRunJob(state.runJob);
   renderRunJobList();
   $("corpus-preview").textContent = state.detail?.corpus_preview || "NO CORPUS PREVIEW ARTIFACT FOUND.";
+}
+
+function seedHfOutDirFromDataset() {
+  const outInput = $("hf-out-dir");
+  if (outInput.value.trim()) return;
+  const dataset = normalizeHfInput($("hf-dataset-input").value);
+  if (!dataset) return;
+  outInput.value = `runs/hf-${slugify(dataset)}-${$("hf-max-rows").value || 1000}`;
+}
+
+async function importHfDataset() {
+  const dataset = $("hf-dataset-input").value.trim();
+  const outDir = $("hf-out-dir").value.trim();
+  const configName = $("hf-config-name").value.trim();
+  const split = $("hf-split").value.trim() || "train";
+  const textColumn = $("hf-text-column").value.trim() || "text";
+  const maxRows = Number($("hf-max-rows").value || 1000);
+  const minChars = Number($("hf-min-chars").value || 20);
+  const force = $("hf-force").checked;
+  if (!dataset) throw new Error("enter a Hugging Face dataset URL or id");
+
+  $("hf-import-button").disabled = true;
+  $("hf-import-status").innerHTML = 'IMPORTING HF DATASET<span class="cursor"></span>';
+  $("hf-import-result").innerHTML = "";
+  try {
+    const report = await postJson("/api/hf/import", {
+      dataset_url: dataset,
+      out_dir: outDir || null,
+      config_name: configName || null,
+      split,
+      text_column: textColumn,
+      max_rows: maxRows,
+      min_chars: minChars,
+      streaming: true,
+      force,
+    });
+    state.hfImport = report;
+    state.datasetFlightPlan = report.preview;
+    state.corpusSourcePreview = report.preview;
+    state.tuningInspection = tuningInspectionFromPreview(report.preview);
+    $("flight-pack-path").value = report.dataset_pack || "";
+    $("flight-input-path").value = "";
+    $("flight-chat-path").value = "";
+    $("flight-sft-out-path").value = report.chat_input ? suggestedSftStarterPath(report.chat_input) : "";
+    $("flight-eval-path").value = "";
+    $("flight-eval-out-path").value = report.eval_input ? suggestedEvalStarterPath(report.eval_input) : "";
+    $("preview-pack-path").value = report.dataset_pack || "";
+    $("preview-recipe-path").value = "";
+    $("preview-input-path").value = "";
+    $("preview-chat-path").value = "";
+    $("preview-eval-path").value = "";
+    $("tuning-pack-path").value = report.dataset_pack || "";
+    $("tuning-chat-path").value = "";
+    $("tuning-eval-path").value = "";
+    $("editor-pack-path").value = report.dataset_pack || "";
+    $("editor-chat-path").value = "";
+    $("editor-eval-path").value = "";
+    $("launch-pack-path").value = report.dataset_pack || "";
+    $("launch-run-name").value = suggestedRunName(report.dataset_pack || report.dataset);
+    renderHfImport(report);
+    renderDatasetFlightPlan(report.preview);
+    renderCorpusSourcePreview(report.preview);
+    renderTuningInspection(state.tuningInspection);
+    renderStartHere();
+  } finally {
+    $("hf-import-button").disabled = false;
+  }
+}
+
+function renderHfImport(report) {
+  if (!report) {
+    $("hf-import-status").textContent = "NO HUGGING FACE DATASET IMPORTED.";
+    $("hf-import-result").innerHTML = "";
+    return;
+  }
+  $("hf-import-status").textContent =
+    `HF IMPORT READY | ${escapeHtml(report.dataset)} | ${fmtInt(report.rows_written)} ROWS | ${fmtInt(report.characters_written)} CHARS`;
+  $("hf-import-result").innerHTML = `
+    <div class="hf-import-grid">
+      <div><strong>${escapeHtml(report.dataset)}</strong><span>dataset</span></div>
+      <div><strong>${fmtInt(report.rows_written)}</strong><span>rows written</span></div>
+      <div><strong>${escapeHtml(shortPath(report.documents_dir))}</strong><span>documents</span></div>
+      <div><strong>${escapeHtml(shortPath(report.dataset_pack))}</strong><span>dataset pack</span></div>
+    </div>
+    <div class="command-tape source-command">
+      <div class="command-head">
+        <label>HF IMPORT COMMAND</label>
+        ${copyCommandButton(report.command)}
+      </div>
+      <code>${escapeHtml(report.command || "")}</code>
+      ${(report.next_actions || []).map((action) => `<p>${escapeHtml(action)}</p>`).join("")}
+    </div>
+  `;
+}
+
+function renderHfImportError(error) {
+  $("hf-import-button").disabled = false;
+  $("hf-import-status").textContent = "HF IMPORT FAULT";
+  $("hf-import-result").innerHTML = `
+    <div class="notice">FAULT: ${escapeHtml(error.message)}</div>
+    <p class="helper-copy">If this says the datasets package is missing, install Picochat inside the venv with <code>pip install -e ".[hf]"</code>.</p>
+  `;
+}
+
+function normalizeHfInput(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  try {
+    if (text.includes("://")) {
+      const url = new URL(text);
+      const parts = url.pathname.split("/").filter(Boolean);
+      const start = parts[0] === "datasets" ? 1 : 0;
+      return parts.slice(start, start + 2).join("/");
+    }
+  } catch {
+    return text;
+  }
+  return text.replace(/^datasets\//, "").replace(/^\/+|\/+$/g, "");
 }
 
 function seedPackBuilderInputs(config) {
@@ -1429,6 +1698,7 @@ async function inspectTuningData() {
     });
     state.tuningInspection = report;
     renderTuningInspection(report);
+    renderStartHere();
   } finally {
     $("inspect-tuning-button").disabled = false;
   }
@@ -1507,6 +1777,7 @@ async function loadPackEditor() {
     $("editor-chat-jsonl").value = report.chat_text || "";
     $("editor-eval-jsonl").value = report.eval_text || "";
     renderPackEditor(report);
+    renderStartHere();
   } finally {
     $("load-editor-button").disabled = false;
   }
@@ -1538,6 +1809,7 @@ async function savePackEditor() {
     }
     renderPackEditor(report);
     renderTuningInspection(state.tuningInspection);
+    renderStartHere();
   } finally {
     $("save-editor-button").disabled = false;
   }
@@ -1653,6 +1925,7 @@ async function launchRun() {
     state.runJobLoaded = false;
     renderRunJob(state.runJob);
     renderRunJobList();
+    renderStartHere();
     startRunPolling();
   } finally {
     $("launch-run-button").disabled = false;
@@ -1921,6 +2194,7 @@ async function checkDatasetFlightPlan() {
   renderDatasetFlightPlan(report);
   renderCorpusSourcePreview(report);
   renderTuningInspection(state.tuningInspection);
+  renderStartHere();
   $("flight-check-button").disabled = false;
 }
 
@@ -2088,6 +2362,7 @@ async function createSftStarter() {
   $("editor-chat-path").value = report.output_path || outPath;
   if (!$("editor-eval-path").value.trim()) $("editor-eval-path").value = $("flight-eval-path").value.trim();
   renderSftStarter(report);
+  renderStartHere();
   $("flight-sft-button").disabled = false;
 }
 
@@ -2148,6 +2423,7 @@ async function createEvalStarter() {
   if (!$("editor-chat-path").value.trim()) $("editor-chat-path").value = $("flight-chat-path").value.trim();
   $("editor-eval-path").value = report.output_path || outPath;
   renderEvalStarter(report);
+  renderStartHere();
   $("flight-eval-button").disabled = false;
 }
 
@@ -2199,6 +2475,7 @@ function applyFlightPlanToLauncher() {
   $("launch-sft-steps").value = Math.max(60, Number(budget.suggested_base_steps || 30));
   $("launch-min-score").value = report.min_quality_score ?? ($("flight-min-score").value || 0);
   flashStatus("APPLIED PLAN. | Review launcher values before starting the run.");
+  renderStartHere();
 }
 
 function renderDatasetFlightPlanError(error) {
@@ -2280,6 +2557,7 @@ async function previewCorpusSources() {
   renderDatasetFlightPlan(report);
   renderCorpusSourcePreview(report);
   renderTuningInspection(state.tuningInspection);
+  renderStartHere();
   $("preview-corpus-button").disabled = false;
 }
 

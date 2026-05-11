@@ -21,6 +21,7 @@ from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.eval_starter import generate_eval_starter
 from picochat.generate import GenerateConfig, generate_text_with_trace
+from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.optim import LR_DECAYS
 from picochat.scales import RUN_SCALES
 from picochat.sft_starter import generate_sft_starter
@@ -326,6 +327,115 @@ def init_dataset_pack_plan(payload: dict) -> dict:
             "--dataset-pack",
             report.dataset_pack,
         ),
+    }
+
+
+def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
+    """Import a Hugging Face dataset into a local Picochat dataset pack."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+
+    dataset_input = _optional_string(payload.get("dataset")) or _optional_string(payload.get("dataset_url"))
+    if not dataset_input:
+        raise ValueError("dataset or dataset_url is required")
+
+    dataset = _normalize_hf_dataset_id(dataset_input)
+    config_name = _optional_string(payload.get("config_name"))
+    split = _optional_string(payload.get("split")) or "train"
+    text_column = _optional_string(payload.get("text_column")) or "text"
+    max_rows = _bounded_int(payload.get("max_rows", 1000), 1, 100000)
+    min_chars = _bounded_int(payload.get("min_chars", 20), 1, 10000)
+    streaming = payload.get("streaming", True)
+    force = payload.get("force", False)
+    if not isinstance(streaming, bool):
+        raise ValueError("streaming must be true or false")
+    if not isinstance(force, bool):
+        raise ValueError("force must be true or false")
+
+    out_dir_text = _optional_string(payload.get("out_dir"))
+    out_dir = Path(out_dir_text) if out_dir_text else Path(runs_dir) / f"hf-{_slug(dataset)}-{max_rows}"
+    if out_dir.exists() and any(out_dir.iterdir()) and not force:
+        raise FileExistsError(f"output folder already exists: {out_dir}. Enable force to overwrite import artifacts.")
+
+    corpus_path = out_dir / "corpus.txt"
+    documents_dir = out_dir / "documents"
+    report_path = out_dir / "hf_import_report.json"
+    import_report = import_hf_dataset(HFImportConfig(
+        dataset=dataset,
+        config_name=config_name,
+        split=split,
+        text_column=text_column,
+        out_path=str(corpus_path),
+        report_path=str(report_path),
+        documents_dir=str(documents_dir),
+        max_rows=max_rows,
+        min_chars=min_chars,
+        streaming=streaming,
+    ))
+    pack_report = init_dataset_pack(
+        out_dir=out_dir,
+        corpus_path=documents_dir,
+        name=dataset,
+        description=f"Hugging Face dataset import: {dataset}.",
+        force=force,
+    )
+    preview = preview_corpus_sources(
+        dataset_pack=pack_report.dataset_pack,
+        preview_chars=700,
+    )
+    command_parts = [
+        "PYTHONPATH=src",
+        "python",
+        "-m",
+        "picochat.cli",
+        "data",
+        "hf-import",
+        "--dataset",
+        dataset,
+        "--split",
+        split,
+        "--text-column",
+        text_column,
+        "--out",
+        str(corpus_path),
+        "--documents-dir",
+        str(documents_dir),
+        "--max-rows",
+        str(max_rows),
+        "--min-chars",
+        str(min_chars),
+    ]
+    if config_name:
+        command_parts.extend(["--config", config_name])
+    if not streaming:
+        command_parts.append("--no-streaming")
+    return {
+        "dataset_input": dataset_input,
+        "dataset": dataset,
+        "config_name": config_name,
+        "split": split,
+        "text_column": text_column,
+        "streaming": streaming,
+        "force": force,
+        "out_dir": str(out_dir),
+        "corpus": import_report.out_path,
+        "documents_dir": import_report.documents_dir,
+        "report_path": import_report.report_path,
+        "rows_seen": import_report.rows_seen,
+        "rows_written": import_report.rows_written,
+        "rows_skipped": import_report.rows_skipped,
+        "characters_written": import_report.characters_written,
+        "dataset_pack": pack_report.dataset_pack,
+        "corpus_recipe": pack_report.corpus_recipe,
+        "chat_input": pack_report.chat_input,
+        "eval_input": pack_report.eval_input,
+        "preview": preview.to_dict(),
+        "command": _shell_command(*command_parts),
+        "next_actions": [
+            "Inspect the imported documents before trusting the dataset.",
+            "Create SFT and eval starters from this pack, then edit them for real domain behavior.",
+            "Launch a smoke run before spending time on a longer training run.",
+        ],
     }
 
 
@@ -832,6 +942,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(preview_corpus_plan(self._read_json_body()))
                 elif parsed.path == "/api/dataset-pack/init":
                     self._send_json(init_dataset_pack_plan(self._read_json_body()))
+                elif parsed.path == "/api/hf/import":
+                    self._send_json(hf_import_plan(self._read_json_body(), config.runs_dir))
                 elif parsed.path == "/api/tuning/inspect":
                     self._send_json(inspect_tuning_plan(self._read_json_body()))
                 elif parsed.path == "/api/sft/starter":
@@ -922,6 +1034,32 @@ def _optional_string(value: object) -> str | None:
 
 def _shell_command(*parts: str) -> str:
     return " ".join(shlex.quote(part) for part in parts)
+
+
+def _normalize_hf_dataset_id(value: str) -> str:
+    text = value.strip()
+    if not text:
+        raise ValueError("dataset id is required")
+    if "://" not in text:
+        return text.removeprefix("datasets/").strip("/")
+
+    parsed = urlparse(text)
+    parts = [part for part in parsed.path.split("/") if part]
+    if parsed.netloc not in {"huggingface.co", "www.huggingface.co"}:
+        raise ValueError("only huggingface.co dataset URLs are supported")
+    if not parts:
+        raise ValueError("dataset URL is missing a dataset id")
+    if parts[0] == "datasets":
+        parts = parts[1:]
+    stop_words = {"tree", "blob", "resolve", "viewer", "discussions", "commit"}
+    dataset_parts = []
+    for part in parts:
+        if part in stop_words:
+            break
+        dataset_parts.append(part)
+    if not dataset_parts:
+        raise ValueError("dataset URL is missing a dataset id")
+    return "/".join(dataset_parts)
 
 
 def _combined_tuning_status(chat_status: str, eval_status: str) -> str:
