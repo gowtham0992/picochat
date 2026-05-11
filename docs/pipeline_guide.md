@@ -33,6 +33,7 @@ Output artifacts:
 What to inspect:
 
 - how many files were included or skipped
+- duplicate-document rate
 - duplicate-line rate
 - empty-line rate
 - source quality scores
@@ -124,6 +125,7 @@ What to inspect:
 - stop reason: max steps, time budget, or early stop
 - final train/validation gap
 - best validation step
+- recommended checkpoint step
 - split mode: random token windows or held-out complete documents
 - memorization diagnostics: train copy rate, held-out overlap, copied spans, canary hits
 - generated base sample
@@ -144,7 +146,7 @@ PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt
 For longer runs, add guardrails:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --corpus-manifest runs/manual/corpus_manifest.json --split-mode document --out-dir runs/manual/base --context-size 128 --max-steps 10000 --max-minutes 45 --early-stop-patience 6 --canary-count 3
+PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --corpus-manifest runs/manual/corpus_manifest.json --split-mode document --out-dir runs/manual/base --context-size 128 --max-steps 10000 --max-minutes 45 --early-stop-patience 3 --canary-count 3
 ```
 
 ## 4. Chat SFT
@@ -209,6 +211,7 @@ What to inspect:
 - unsupported claim rate
 - prompt echo rate
 - missing support rate
+- failure analysis and recommendations
 - matched and missing phrases
 - forbidden phrases found in replies
 
@@ -237,6 +240,8 @@ What to inspect:
 - exact prompt formatting
 - temperature
 - top-k
+- top-p
+- repetition penalty
 - seed
 - repeated or collapsed output
 

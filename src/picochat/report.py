@@ -23,15 +23,21 @@ def loss_diagnostics(losses: list[dict]) -> dict:
             "best_val_loss": None,
             "final_train_loss": None,
             "final_val_loss": None,
+            "best_val_bpb": None,
+            "final_val_bpb": None,
             "final_gap": None,
             "val_regression": None,
             "train_improvement": None,
+            "evals_after_best": 0,
+            "recommended_checkpoint_step": None,
+            "recommendations": ["No training curve was recorded; rerun this stage before interpreting results."],
         }
 
     first = losses[0]
     final = losses[-1]
     valid_val = [item for item in losses if _number(item.get("val_loss")) is not None]
     best = min(valid_val, key=lambda item: _number(item.get("val_loss"))) if valid_val else final
+    best_index = losses.index(best)
     first_train = _number(first.get("train_loss"))
     final_train = _number(final.get("train_loss"))
     final_val = _number(final.get("val_loss"))
@@ -40,6 +46,7 @@ def loss_diagnostics(losses: list[dict]) -> dict:
     val_regression = _diff(final_val, best_val)
     train_improvement = _diff(first_train, final_train)
     status, summary = _loss_status(final_gap, val_regression)
+    evals_after_best = max(0, len(losses) - 1 - best_index)
     return {
         "status": status,
         "summary": summary,
@@ -47,11 +54,22 @@ def loss_diagnostics(losses: list[dict]) -> dict:
         "final_step": final.get("step"),
         "best_val_step": best.get("step"),
         "best_val_loss": best_val,
+        "best_val_bpb": _number(best.get("val_bpb")),
+        "final_val_bpb": _number(final.get("val_bpb")),
         "final_train_loss": final_train,
         "final_val_loss": final_val,
         "final_gap": final_gap,
         "val_regression": val_regression,
         "train_improvement": train_improvement,
+        "evals_after_best": evals_after_best,
+        "recommended_checkpoint_step": best.get("step"),
+        "recommendations": _loss_recommendations(
+            final_gap=final_gap,
+            val_regression=val_regression,
+            evals_after_best=evals_after_best,
+            best_step=best.get("step"),
+            final_step=final.get("step"),
+        ),
     }
 
 
@@ -146,9 +164,15 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Summary: {diagnostics['summary']}")
     lines.append(f"- Best validation step: {diagnostics['best_val_step']}")
     lines.append(f"- Best validation loss: {format_optional_float(diagnostics['best_val_loss'])}")
+    if diagnostics.get("best_val_bpb") is not None:
+        lines.append(f"- Best validation BPB: {format_optional_float(diagnostics.get('best_val_bpb'))}")
     lines.append(f"- Final train/val gap: {format_optional_float(diagnostics['final_gap'])}")
     lines.append(f"- Validation regression from best step: {format_optional_float(diagnostics['val_regression'])}")
     lines.append(f"- Train loss improvement: {format_optional_float(diagnostics['train_improvement'])}")
+    lines.append(f"- Recommended checkpoint step: {diagnostics.get('recommended_checkpoint_step')}")
+    if diagnostics.get("recommendations"):
+        lines.append("- Recommendations:")
+        lines.extend(f"  - {item}" for item in diagnostics["recommendations"])
     lines.append("")
 
     if report.get("memorization"):
@@ -312,9 +336,15 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Summary: {diagnostics['summary']}")
     lines.append(f"- Best validation step: {diagnostics['best_val_step']}")
     lines.append(f"- Best validation loss: {format_optional_float(diagnostics['best_val_loss'])}")
+    if diagnostics.get("best_val_bpb") is not None:
+        lines.append(f"- Best validation BPB: {format_optional_float(diagnostics.get('best_val_bpb'))}")
     lines.append(f"- Final train/val gap: {format_optional_float(diagnostics['final_gap'])}")
     lines.append(f"- Validation regression from best step: {format_optional_float(diagnostics['val_regression'])}")
     lines.append(f"- Train loss improvement: {format_optional_float(diagnostics['train_improvement'])}")
+    lines.append(f"- Recommended checkpoint step: {diagnostics.get('recommended_checkpoint_step')}")
+    if diagnostics.get("recommendations"):
+        lines.append("- Recommendations:")
+        lines.extend(f"  - {item}" for item in diagnostics["recommendations"])
     lines.append("")
 
     lines.append("## Sample")
@@ -372,6 +402,9 @@ def chat_eval_report_markdown(report: dict) -> str:
     lines.append(f"- Checkpoint: `{checkpoint['path']}`")
     lines.append(f"- Checkpoint step: {checkpoint['step']}")
     lines.append(f"- Temperature: {config['temperature']}")
+    lines.append(f"- Top-k: {config.get('top_k')}")
+    lines.append(f"- Top-p: {config.get('top_p', 1.0)}")
+    lines.append(f"- Repetition penalty: {config.get('repetition_penalty', 1.0)}")
     lines.append(f"- Max new tokens: {config['max_new_tokens']}")
     lines.append(f"- Case sensitive: {config['case_sensitive']}")
     lines.append("")
@@ -406,6 +439,12 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append("## Split Breakdown")
         lines.append("")
         lines.extend(_split_breakdown_table(summary["split_breakdown"]))
+        lines.append("")
+
+    if report.get("analysis"):
+        lines.append("## Failure Analysis")
+        lines.append("")
+        lines.extend(_eval_analysis_markdown(report["analysis"]))
         lines.append("")
 
     if "unsupported_claim_rate" in summary:
@@ -545,6 +584,12 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.extend(_split_breakdown_table(eval_summary["split_breakdown"]))
         lines.append("")
 
+    if summary.get("eval_analysis"):
+        lines.append("## Eval Recommendations")
+        lines.append("")
+        lines.extend(_eval_analysis_markdown(summary["eval_analysis"], compact=True))
+        lines.append("")
+
     lines.append("## Settings")
     lines.append("")
     lines.append(f"- Scale: `{config.get('scale', 'custom')}`")
@@ -651,6 +696,87 @@ def _breakdown_table(breakdown: dict, label: str) -> list[str]:
     return lines
 
 
+def _eval_analysis_markdown(analysis: dict, compact: bool = False) -> list[str]:
+    lines: list[str] = []
+    recommendations = analysis.get("recommendations") or []
+    failure_counts = analysis.get("failure_counts") or {}
+    weak_categories = analysis.get("weak_categories") or []
+    weak_splits = analysis.get("weak_splits") or []
+    failed_examples = analysis.get("failed_examples") or []
+
+    if recommendations:
+        lines.append("Recommendations:")
+        for item in recommendations:
+            priority = item.get("priority", "medium")
+            area = item.get("area", "eval")
+            action = item.get("action", "")
+            message = item.get("message", "")
+            lines.append(f"- `{priority}` `{area}`: {message} {action}".strip())
+        lines.append("")
+
+    if failure_counts:
+        lines.append("Failure causes:")
+        lines.append("")
+        lines.append("| Cause | Count |")
+        lines.append("| --- | ---: |")
+        for name, count in sorted(failure_counts.items()):
+            lines.append(f"| `{name}` | {count} |")
+        lines.append("")
+
+    if weak_categories:
+        lines.append("Weak categories:")
+        lines.append("")
+        lines.extend(_weak_eval_table(weak_categories, "category"))
+        lines.append("")
+
+    if weak_splits:
+        lines.append("Weak splits:")
+        lines.append("")
+        lines.extend(_weak_eval_table(weak_splits, "split"))
+        lines.append("")
+
+    if not compact and failed_examples:
+        lines.append("Failed examples:")
+        lines.append("")
+        lines.append("| # | Category | Split | Reasons | Missing | Forbidden | Reply Preview |")
+        lines.append("| ---: | --- | --- | --- | --- | --- | --- |")
+        for item in failed_examples:
+            missing_parts = list(item.get("missing", []))
+            missing_parts.extend(
+                " / ".join(group)
+                for group in item.get("missing_any", [])
+                if isinstance(group, (list, tuple))
+            )
+            lines.append(
+                f"| {item.get('index')} | `{item.get('category')}` | `{item.get('split')}` | "
+                f"{_inline_list(item.get('reasons', [])) or 'none'} | "
+                f"{_inline_list(missing_parts) if missing_parts else 'none'} | "
+                f"{_inline_list(item.get('found_forbidden', [])) if item.get('found_forbidden') else 'none'} | "
+                f"{_escape_table_text(item.get('reply_preview', ''))} |"
+            )
+        lines.append("")
+
+    if not lines:
+        lines.append("- No failure analysis was recorded.")
+    return lines
+
+
+def _weak_eval_table(items: list[dict], field: str) -> list[str]:
+    lines = [
+        f"| {field.title()} | Failed | Pass Rate | Support Match | Prompt Echo | Unsupported |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for item in items:
+        lines.append(
+            f"| `{item.get(field)}` | {item.get('num_failed', 0)} / {item.get('num_examples', 0)} | "
+            f"{format_float(float(item.get('pass_rate', 0.0)) * 100)}% | "
+            f"{format_float(float(item.get('support_match_rate', 0.0)) * 100)}% | "
+            f"{format_float(float(item.get('prompt_echo_rate', 0.0)) * 100)}% | "
+            f"{format_float(float(item.get('unsupported_claim_rate', 0.0)) * 100)}% |"
+        )
+    return lines
+
+
 def _phrase_list(phrases: list[str]) -> str:
     if not phrases:
         return "- none"
@@ -669,6 +795,10 @@ def _phrase_group_inline(groups: list[list[str]]) -> str:
 
 def _inline_list(items: list[str]) -> str:
     return ", ".join(f"`{item}`" for item in items)
+
+
+def _escape_table_text(value: object) -> str:
+    return str(value).replace("|", "\\|")
 
 
 def _format_counts(counts: dict) -> str:
@@ -703,3 +833,32 @@ def _loss_status(final_gap: float | None, val_regression: float | None) -> tuple
     if final_gap >= 1.0:
         return "watch-gap", "Final validation loss is much higher than final train loss."
     return "stable", "Train and validation losses are moving together for this tiny run."
+
+
+def _loss_recommendations(
+    final_gap: float | None,
+    val_regression: float | None,
+    evals_after_best: int,
+    best_step: object,
+    final_step: object,
+) -> list[str]:
+    recommendations: list[str] = []
+    if best_step is not None and final_step is not None and best_step != final_step:
+        recommendations.append(
+            f"Use the best-validation checkpoint at step {best_step} for downstream stages, not the final step {final_step}."
+        )
+    if val_regression is not None and val_regression >= 0.10:
+        recommendations.append(
+            "Shorten this stage or lower early-stop patience; validation moved noticeably away from the best checkpoint."
+        )
+    if final_gap is not None and final_gap >= 0.75:
+        recommendations.append(
+            "Add regularization, more data, or fewer training passes before scaling this recipe longer."
+        )
+    if evals_after_best >= 2:
+        recommendations.append(
+            f"Validation failed to beat the best checkpoint for {evals_after_best} later eval point(s)."
+        )
+    if not recommendations:
+        recommendations.append("Training curve looks usable; compare eval behavior before changing scale.")
+    return recommendations

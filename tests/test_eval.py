@@ -1,7 +1,15 @@
 import json
 
 from picochat.checkpoint import save_checkpoint
-from picochat.eval import ChatEvalConfig, ChatEvalItem, detect_prompt_echo, load_chat_eval_items, run_chat_eval, score_reply
+from picochat.eval import (
+    ChatEvalConfig,
+    ChatEvalItem,
+    analyze_eval_failures,
+    detect_prompt_echo,
+    load_chat_eval_items,
+    run_chat_eval,
+    score_reply,
+)
 from picochat.model import GPTConfig, TinyGPT
 from picochat.tokenizer import CharTokenizer
 
@@ -73,6 +81,33 @@ def test_score_reply_blocks_prompt_echo():
     assert detect_prompt_echo("Subject: turtle. Story: One day.", item.user) == []
 
 
+def test_analyze_eval_failures_recommends_next_actions():
+    rows = [{
+        "index": 1,
+        "category": "story_generation",
+        "split": "heldout",
+        "answerable": True,
+        "reply": "User: write a story",
+        "missing": ["kind fox"],
+        "missing_any": [["sharing", "helping"]],
+        "found_forbidden": ["User:"],
+        "prompt_echo": True,
+        "prompt_echo_reasons": ["chat_role_label"],
+        "passed": False,
+        "support_total": 2,
+        "support_matched": 0,
+    }]
+
+    analysis = analyze_eval_failures(rows)
+
+    assert analysis["failure_counts"]["missing_required"] == 1
+    assert analysis["failure_counts"]["missing_any_group"] == 1
+    assert analysis["failure_counts"]["forbidden_phrase"] == 1
+    assert analysis["failure_counts"]["prompt_echo"] == 1
+    assert analysis["weak_categories"][0]["category"] == "story_generation"
+    assert any(item["area"] == "story_generation" for item in analysis["recommendations"])
+
+
 def test_run_chat_eval_writes_artifacts(tmp_path):
     input_path = tmp_path / "eval.jsonl"
     tokenizer_path = tmp_path / "tokenizer.json"
@@ -111,3 +146,5 @@ def test_run_chat_eval_writes_artifacts(tmp_path):
     assert report["examples"][0]["answerable"] is True
     assert report["examples"][0]["category"] == "answerable"
     assert report["examples"][0]["split"] == "default"
+    assert "analysis" in report
+    assert report["analysis"]["recommendations"]

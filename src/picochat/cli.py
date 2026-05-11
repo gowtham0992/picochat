@@ -344,6 +344,8 @@ def build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument("--max-new-tokens", type=int, default=100)
     generate_parser.add_argument("--temperature", type=float, default=0.8)
     generate_parser.add_argument("--top-k", type=int, default=20)
+    generate_parser.add_argument("--top-p", type=float, default=1.0)
+    generate_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     generate_parser.add_argument("--seed", type=int, default=42)
     generate_parser.add_argument("--device", default="cpu")
 
@@ -353,6 +355,8 @@ def build_parser() -> argparse.ArgumentParser:
     chat_parser.add_argument("--max-new-tokens", type=int, default=120)
     chat_parser.add_argument("--temperature", type=float, default=0.8)
     chat_parser.add_argument("--top-k", type=int, default=20)
+    chat_parser.add_argument("--top-p", type=float, default=1.0)
+    chat_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     chat_parser.add_argument("--seed", type=int, default=42)
     chat_parser.add_argument("--device", default="cpu")
 
@@ -366,6 +370,8 @@ def build_parser() -> argparse.ArgumentParser:
     eval_chat_parser.add_argument("--max-new-tokens", type=int, default=80)
     eval_chat_parser.add_argument("--temperature", type=float, default=0.0)
     eval_chat_parser.add_argument("--top-k", type=int, default=0)
+    eval_chat_parser.add_argument("--top-p", type=float, default=1.0)
+    eval_chat_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     eval_chat_parser.add_argument("--seed", type=int, default=42)
     eval_chat_parser.add_argument("--device", default="cpu")
     eval_chat_parser.add_argument("--case-sensitive", action="store_true")
@@ -389,6 +395,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--n-embd", type=int, default=None)
     run_tiny_parser.add_argument("--n-head", type=int, default=None)
     run_tiny_parser.add_argument("--n-layer", type=int, default=None)
+    run_tiny_parser.add_argument("--dropout", type=float, default=None)
     run_tiny_parser.add_argument("--base-steps", type=int, default=None)
     run_tiny_parser.add_argument("--sft-steps", type=int, default=None)
     run_tiny_parser.add_argument("--base-batch-size", type=int, default=None)
@@ -797,7 +804,6 @@ def run_train_base(args: argparse.Namespace) -> int:
         lr_decay=args.lr_decay,
         min_lr_ratio=args.min_lr_ratio,
         grad_clip=args.grad_clip,
-        sampling=args.sampling,
     )
     report = train_base(config)
     print(f"saved checkpoint: {report['checkpoint']}")
@@ -844,6 +850,8 @@ def run_generate(args: argparse.Namespace) -> int:
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_k=top_k,
+        top_p=args.top_p,
+        repetition_penalty=args.repetition_penalty,
         seed=args.seed,
         device=args.device,
     ))
@@ -859,6 +867,8 @@ def run_chat(args: argparse.Namespace) -> int:
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_k=top_k,
+        top_p=args.top_p,
+        repetition_penalty=args.repetition_penalty,
         seed=args.seed,
         device=args.device,
     ))
@@ -874,6 +884,8 @@ def run_eval_chat(args: argparse.Namespace) -> int:
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_k=top_k,
+        top_p=args.top_p,
+        repetition_penalty=args.repetition_penalty,
         seed=args.seed,
         device=args.device,
         case_sensitive=args.case_sensitive,
@@ -912,6 +924,7 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         n_embd=_resolve_tiny_value(args, defaults, "n_embd"),
         n_head=_resolve_tiny_value(args, defaults, "n_head"),
         n_layer=_resolve_tiny_value(args, defaults, "n_layer"),
+        dropout=_resolve_tiny_value(args, defaults, "dropout"),
         base_steps=_resolve_tiny_value(args, defaults, "base_steps"),
         sft_steps=_resolve_tiny_value(args, defaults, "sft_steps"),
         base_batch_size=_resolve_tiny_value(args, defaults, "base_batch_size"),

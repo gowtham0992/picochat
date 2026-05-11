@@ -78,7 +78,9 @@ not show fake training data.
   JSONL editor, tuning-data inspection, run launcher, and preview.
 - **Tokenizer Lab:** text-to-token-ID inspection from the trained tokenizer.
 - **Training Dash:** base and SFT loss traces, including memorization warnings.
-- **Generation Deck:** live generation from the selected base or SFT checkpoint.
+- **Generation Deck:** live generation from the selected base or SFT checkpoint,
+  with temperature, top-k, top-p, repetition penalty, token probabilities, and
+  seed controls.
 - **Eval Scoreboard:** pass/fail results plus honesty metrics.
 - **Report Vault:** generated Markdown reports rendered inside the workbench.
 - **Compare Runs:** side-by-side eval, loss, parameter, and context comparisons.
@@ -118,9 +120,10 @@ workbench.
 
 Base and SFT reports include loss diagnostics in both JSON and Markdown:
 best validation step, final train/validation gap, validation regression from
-the best step, and a compact status such as `stable`, `watch-gap`, or
-`memorization-risk`. These labels are not magic scores; they are readable
-signals for deciding whether a tiny run is learning or mostly memorizing.
+the best step, recommended checkpoint step, validation BPB, and a compact
+status such as `stable`, `watch-gap`, or `memorization-risk`. These labels are
+not magic scores; they are readable signals for deciding whether a tiny run is
+learning or mostly memorizing.
 
 Corpus manifests also record document spans. When a run has at least two
 usable documents, base training can hold out complete documents for validation
@@ -146,6 +149,8 @@ Longer runs add guardrails instead of blind optimism:
   the model matched some prompt constraints or ignored them entirely
 - chat eval reports also track prompt echo, so generated `User:`/`Assistant:`
   turns or visible user-prompt copying cannot count as a clean pass
+- chat eval reports include failure analysis and next-action recommendations by
+  failure cause, category, and eval split
 - `--early-stop-patience` and `--max-minutes` can stop wasted runs
 
 ## Bring Your Own Corpus
@@ -204,6 +209,11 @@ The same preview also preflights both JSONL files: chat SFT rows need string
 `user` and `assistant` fields, while eval rows need a string `user` plus visible
 pass/fail rules such as `must_include`, `must_include_any`, `must_not_include`,
 or `expected`.
+
+The corpus checklist also looks for duplicate full documents, not only
+duplicate lines. Full-document duplicates are dangerous because they can make
+validation, generation samples, and eval-adjacent behavior look stronger than
+the model really is.
 
 Before a serious run, check that the eval is not accidentally copied from the
 SFT file or base corpus:
@@ -357,7 +367,10 @@ PYTHONPATH=src python -m picochat.cli data init-pack --name my-domain-pack --cor
 
 This creates `dataset_pack.json`, `corpus_recipe.json`, `chat.jsonl`, and
 `eval.jsonl`. The chat/eval files are starter templates; edit them with real
-domain examples before treating a run as meaningful.
+domain examples before treating a run as meaningful. The starter chat file
+includes one answerable example, one refusal/boundary example, and one style
+example so a new domain pack starts with the shape of a real SFT set instead
+of a single placeholder row.
 
 The same starter pack flow is available in the web workbench under Dataset
 Bay. The Pack Builder writes the four files locally and fills Source Preview
@@ -376,7 +389,7 @@ Preview's budget estimate can be applied directly to the launcher controls.
 
 Source Preview and `data build` score every corpus source from 0-100 using
 local, explainable heuristics such as short documents, duplicate lines,
-non-ASCII rate, and extraction noise. Use `--min-score` when you want to
+duplicate documents, non-ASCII rate, and extraction noise. Use `--min-score` when you want to
 filter low-quality sources out of the actual training corpus while keeping
 the skipped files visible in the manifest:
 
@@ -477,7 +490,8 @@ Scales are starting recipes, not quality promises:
 
 - `smoke`: fast wiring check
 - `pico`: first serious local BPE run with a stronger tiny model, LR decay, and
-  gradient clipping, plus category-balanced SFT sampling
+  gradient clipping, plus category-balanced SFT sampling and stricter early
+  stopping after validation stalls
 - `small`: slower local SLM experiment after a pico run is healthy
 - `medium`: overnight-class Mac experiment after data/tokenizer diagnostics look
   good
@@ -496,7 +510,7 @@ PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-bpe --
 Run with longer-training guardrails:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded --dataset-pack examples/tinystories_dataset_pack_v5.json --tokenizer-type bpe --tokenizer-vocab-size 512 --context-size 256 --base-steps 10000 --sft-steps 1000 --base-batch-size 4 --sft-batch-size 4 --base-lr-decay cosine --sft-lr-decay cosine --base-lr-warmup-steps 200 --sft-lr-warmup-steps 50 --base-grad-clip 1.0 --sft-grad-clip 1.0 --base-max-minutes 45 --sft-max-minutes 10 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-guarded --dataset-pack examples/tinystories_dataset_pack_v7.json --tokenizer-type bpe --tokenizer-vocab-size 512 --context-size 256 --base-steps 10000 --sft-steps 1000 --base-batch-size 4 --sft-batch-size 4 --base-lr-decay cosine --sft-lr-decay cosine --base-lr-warmup-steps 200 --sft-lr-warmup-steps 50 --base-grad-clip 1.0 --sft-grad-clip 1.0 --base-max-minutes 45 --sft-max-minutes 10 --base-early-stop-patience 3 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
 ```
 
 Inspect and build a corpus:
@@ -545,6 +559,15 @@ PYTHONPATH=src python -m picochat.cli eval chat --input examples/tiny_eval.jsonl
 PYTHONPATH=src python -m picochat.cli chat --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json
 ```
 
+Generation controls are deliberately explicit. `--temperature 0` gives greedy
+deterministic decoding for eval-style checks. `--top-k`, `--top-p`, and
+`--repetition-penalty` shape sampling quality, but they do not add knowledge to
+the model:
+
+```bash
+PYTHONPATH=src python -m picochat.cli generate --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json --prompt "User: write a tiny story about a kite\nAssistant:" --temperature 0.7 --top-k 40 --top-p 0.9 --repetition-penalty 1.1
+```
+
 Compare runs:
 
 ```bash
@@ -574,6 +597,8 @@ The report tracks:
 - missing support rate
 - answerable vs unanswerable examples
 - found forbidden phrases
+- prompt echo
+- failure causes and recommended next actions
 
 This does not prove semantic truth. It gives a small, inspectable signal for
 whether the tiny model is following the behavior we trained and asked it to

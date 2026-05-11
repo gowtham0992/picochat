@@ -14,6 +14,8 @@ class ChatConfig:
     max_new_tokens: int = 120
     temperature: float = 0.8
     top_k: int | None = 20
+    top_p: float = 1.0
+    repetition_penalty: float = 1.0
     seed: int = 42
     device: str = "cpu"
 
@@ -55,6 +57,8 @@ def generate_reply(
         max_new_tokens=config.max_new_tokens,
         temperature=config.temperature,
         top_k=config.top_k,
+        top_p=config.top_p,
+        repetition_penalty=config.repetition_penalty,
         seed=config.seed,
         device=config.device,
     ))
@@ -84,4 +88,3 @@ def chat_loop(config: ChatConfig) -> int:
         reply = generate_reply(config, history, user_message)
         print(f"Assistant: {reply}")
         history.append((user_message, reply))
-

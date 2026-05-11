@@ -229,6 +229,8 @@ def test_generate_run_text_uses_selected_checkpoint(tmp_path, monkeypatch):
         "max_new_tokens": 12,
         "temperature": 0.7,
         "top_k": 0,
+        "top_p": 0.9,
+        "repetition_penalty": 1.2,
         "seed": 7,
     })
 
@@ -238,6 +240,8 @@ def test_generate_run_text_uses_selected_checkpoint(tmp_path, monkeypatch):
     assert captured["config"].checkpoint_path == str(tmp_path / "tiny-a" / "sft" / "checkpoint")
     assert captured["config"].tokenizer_path == str(tmp_path / "tiny-a" / "tokenizer.json")
     assert captured["config"].top_k is None
+    assert captured["config"].top_p == 0.9
+    assert captured["config"].repetition_penalty == 1.2
     assert captured["config"].seed == 7
 
 
@@ -465,7 +469,8 @@ def test_pack_editor_loads_and_saves_pack_jsonl(tmp_path):
 
     assert loaded["dataset_pack"] == init_report["dataset_pack"]
     assert "Replace this with a real user question" in loaded["chat_text"]
-    assert loaded["chat_lines"] == 1
+    assert '"category": "refusal"' in loaded["chat_text"]
+    assert loaded["chat_lines"] == 3
 
     chat_rows = [
         {"user": f"question {index}", "assistant": f"answer {index}"}
@@ -557,8 +562,13 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert "--dataset-pack" in captured["command"]
     assert "--min-score" in captured["command"]
     assert "--tokenizer-type" in captured["command"]
+    assert "--base-early-stop-patience" in captured["command"]
+    assert "--sft-early-stop-patience" in captured["command"]
+    assert "--sft-sampling" in captured["command"]
     assert "bpe" in captured["command"]
     assert str(pack_path) in captured["command"]
+    assert status["job"]["launch_config"]["base_early_stop_patience"] == 4
+    assert status["job"]["launch_config"]["sft_early_stop_patience"] == 4
     assert captured["kwargs"]["cwd"].name == "picochat"
     assert (tmp_path / "runs" / "ui-run" / "web_run.log").exists()
     assert run_status_plan(job["id"], tmp_path / "runs")["job"]["pid"] == 4321

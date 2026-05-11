@@ -131,7 +131,7 @@ guarded. Use document split, best-validation checkpoints, BPB, train-only
 canaries, and early stopping:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-v7-guarded-v1 --dataset-pack examples/tinystories_dataset_pack_v7_10k.json --scale pico --base-steps 12000 --sft-steps 1200 --base-max-minutes 60 --sft-max-minutes 15 --base-early-stop-patience 6 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
+PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-v7-guarded-v1 --dataset-pack examples/tinystories_dataset_pack_v7_10k.json --scale pico --base-steps 12000 --sft-steps 1200 --base-max-minutes 60 --sft-max-minutes 15 --base-early-stop-patience 3 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
 ```
 
 Interpretation rules:

@@ -22,6 +22,7 @@ from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.generate import GenerateConfig, generate_text_with_trace
 from picochat.optim import LR_DECAYS
 from picochat.scales import RUN_SCALES
+from picochat.sft import SFT_SAMPLING_MODES
 from picochat.tokenizer import TOKENIZER_TYPES
 from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
@@ -50,6 +51,9 @@ RUN_PRESETS = {
         "sft_min_lr_ratio": 1.0,
         "base_grad_clip": 0.0,
         "sft_grad_clip": 0.0,
+        "sft_sampling": "uniform",
+        "base_early_stop_patience": 4,
+        "sft_early_stop_patience": 4,
         "eval_max_new_tokens": 80,
     },
     "tiny": {
@@ -74,6 +78,9 @@ RUN_PRESETS = {
         "sft_min_lr_ratio": 1.0,
         "base_grad_clip": 0.0,
         "sft_grad_clip": 0.0,
+        "sft_sampling": "uniform",
+        "base_early_stop_patience": 3,
+        "sft_early_stop_patience": 4,
         "eval_max_new_tokens": 120,
     },
     "small-local": {
@@ -98,6 +105,9 @@ RUN_PRESETS = {
         "sft_min_lr_ratio": 0.1,
         "base_grad_clip": 1.0,
         "sft_grad_clip": 1.0,
+        "sft_sampling": "category_balanced",
+        "base_early_stop_patience": 3,
+        "sft_early_stop_patience": 4,
         "eval_max_new_tokens": 120,
     },
     "small": RUN_SCALES["small"].to_dict(),
@@ -218,6 +228,8 @@ def generate_run_text(runs_dir: str | Path, payload: dict) -> dict:
     max_new_tokens = _bounded_int(payload.get("max_new_tokens", 80), 1, 240)
     temperature = _bounded_float(payload.get("temperature", 0.8), 0.0, 2.0)
     top_k = _bounded_int(payload.get("top_k", 20), 0, 500)
+    top_p = _bounded_float(payload.get("top_p", 1.0), 0.01, 1.0)
+    repetition_penalty = _bounded_float(payload.get("repetition_penalty", 1.0), 0.1, 3.0)
     seed = _bounded_int(payload.get("seed", 42), 0, 9999)
     prompt = str(payload.get("prompt", ""))[:4000]
 
@@ -228,6 +240,8 @@ def generate_run_text(runs_dir: str | Path, payload: dict) -> dict:
         max_new_tokens=max_new_tokens,
         temperature=temperature,
         top_k=None if top_k <= 0 else top_k,
+        top_p=top_p,
+        repetition_penalty=repetition_penalty,
         seed=seed,
         device="cpu",
     ))
@@ -238,6 +252,8 @@ def generate_run_text(runs_dir: str | Path, payload: dict) -> dict:
         "max_new_tokens": max_new_tokens,
         "temperature": temperature,
         "top_k": top_k,
+        "top_p": top_p,
+        "repetition_penalty": repetition_penalty,
         "seed": seed,
         **result,
     }
@@ -444,6 +460,19 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     sft_min_lr_ratio = _bounded_float(payload.get("sft_min_lr_ratio", preset.get("sft_min_lr_ratio", 1.0)), 0.0, 1.0)
     base_grad_clip = _bounded_float(payload.get("base_grad_clip", preset.get("base_grad_clip", 0.0)), 0.0, 100.0)
     sft_grad_clip = _bounded_float(payload.get("sft_grad_clip", preset.get("sft_grad_clip", 0.0)), 0.0, 100.0)
+    base_early_stop_patience = _bounded_int(
+        payload.get("base_early_stop_patience", preset.get("base_early_stop_patience", 3)),
+        0,
+        100,
+    )
+    sft_early_stop_patience = _bounded_int(
+        payload.get("sft_early_stop_patience", preset.get("sft_early_stop_patience", 4)),
+        0,
+        100,
+    )
+    sft_sampling = str(payload.get("sft_sampling", preset.get("sft_sampling", "uniform")))
+    if sft_sampling not in SFT_SAMPLING_MODES:
+        raise ValueError(f"sft_sampling must be one of {', '.join(SFT_SAMPLING_MODES)}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "web_run.log"
@@ -497,6 +526,12 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(base_grad_clip),
         "--sft-grad-clip",
         str(sft_grad_clip),
+        "--base-early-stop-patience",
+        str(base_early_stop_patience),
+        "--sft-early-stop-patience",
+        str(sft_early_stop_patience),
+        "--sft-sampling",
+        sft_sampling,
         "--split-mode",
         "document",
         "--min-score",
@@ -544,6 +579,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "sft_lr_decay": sft_lr_decay,
             "base_grad_clip": base_grad_clip,
             "sft_grad_clip": sft_grad_clip,
+            "base_early_stop_patience": base_early_stop_patience,
+            "sft_early_stop_patience": sft_early_stop_patience,
+            "sft_sampling": sft_sampling,
         },
         "launch_readiness": launch_preview.readiness.to_dict(),
         "launch_tuning": {
@@ -936,6 +974,7 @@ def _run_job_status(job: dict) -> dict:
         "updated_at": time.time(),
         "preset": job.get("preset"),
         "min_quality_score": job.get("min_quality_score", 0),
+        "launch_config": job.get("launch_config"),
         "launch_readiness": job.get("launch_readiness"),
         "launch_tuning": job.get("launch_tuning"),
     }

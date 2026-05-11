@@ -34,6 +34,18 @@ def test_read_documents_and_inspect(tmp_path):
     assert stats.num_documents == 2
     assert stats.num_characters > 0
     assert stats.duplicate_line_rate > 0
+    assert stats.duplicate_document_rate == 0
+
+
+def test_inspect_path_tracks_duplicate_documents(tmp_path):
+    (tmp_path / "a.txt").write_text("same document", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("Same   document\n", encoding="utf-8")
+    (tmp_path / "c.txt").write_text("different document", encoding="utf-8")
+
+    stats = inspect_path(tmp_path)
+
+    assert stats.num_documents == 3
+    assert round(stats.duplicate_document_rate, 2) == 0.33
 
 
 def test_build_corpus_combines_documents(tmp_path):

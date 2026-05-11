@@ -37,6 +37,18 @@ def test_generate_adds_tokens():
     assert out[:, :3].tolist() == prompt.tolist()
 
 
+def test_generate_validates_sampling_controls():
+    config = GPTConfig(vocab_size=20, context_size=8, n_embd=16, n_head=4, n_layer=1)
+    model = TinyGPT(config)
+    prompt = torch.tensor([[1, 2, 3]], dtype=torch.long)
+
+    with pytest.raises(ValueError, match="top_p"):
+        model.generate(prompt, max_new_tokens=1, top_p=0)
+
+    with pytest.raises(ValueError, match="repetition_penalty"):
+        model.generate(prompt, max_new_tokens=1, repetition_penalty=0)
+
+
 def test_generate_stops_when_eos_is_generated():
     config = GPTConfig(vocab_size=20, context_size=8, n_embd=16, n_head=4, n_layer=1)
     model = TinyGPT(config)

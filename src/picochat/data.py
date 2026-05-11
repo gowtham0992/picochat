@@ -50,6 +50,7 @@ class CorpusStats:
     num_characters: int
     num_lines: int
     average_document_chars: float
+    duplicate_document_rate: float
     duplicate_line_rate: float
     non_ascii_rate: float
     empty_line_rate: float
@@ -294,6 +295,7 @@ def inspect_documents(documents: list[str], num_files: int | None = None) -> Cor
             num_characters=0,
             num_lines=0,
             average_document_chars=0.0,
+            duplicate_document_rate=0.0,
             duplicate_line_rate=0.0,
             non_ascii_rate=0.0,
             empty_line_rate=0.0,
@@ -303,6 +305,8 @@ def inspect_documents(documents: list[str], num_files: int | None = None) -> Cor
     lines = all_text.splitlines()
     non_empty_lines = [line.strip() for line in lines if line.strip()]
     duplicate_lines = len(non_empty_lines) - len(set(non_empty_lines))
+    normalized_documents = [_normalize_document_for_duplicate_check(document) for document in documents]
+    duplicate_documents = len(normalized_documents) - len(set(normalized_documents))
     non_ascii_chars = sum(1 for char in all_text if ord(char) > 127)
     empty_lines = sum(1 for line in lines if not line.strip())
 
@@ -312,6 +316,7 @@ def inspect_documents(documents: list[str], num_files: int | None = None) -> Cor
         num_characters=len(all_text),
         num_lines=len(lines),
         average_document_chars=len(all_text) / len(documents),
+        duplicate_document_rate=duplicate_documents / max(1, len(normalized_documents)),
         duplicate_line_rate=duplicate_lines / max(1, len(non_empty_lines)),
         non_ascii_rate=non_ascii_chars / max(1, len(all_text)),
         empty_line_rate=empty_lines / max(1, len(lines)),
@@ -322,6 +327,10 @@ def inspect_path(path: str | Path) -> CorpusStats:
     files = find_corpus_files(path)
     documents = read_documents(path)
     return inspect_documents(documents, num_files=len(files))
+
+
+def _normalize_document_for_duplicate_check(text: str) -> str:
+    return " ".join(text.lower().split())
 
 
 def assess_corpus_readiness(
@@ -351,6 +360,13 @@ def assess_corpus_readiness(
             str(stats.num_documents),
             ">= 2 for broader training",
             "One document is fine for a focused overfit test; more documents give better variation.",
+        ),
+        _readiness_check(
+            "duplicate_documents",
+            "warn" if stats.duplicate_document_rate > 0.05 else "pass",
+            f"{stats.duplicate_document_rate * 100:.2f}%",
+            "<= 5%",
+            "Repeated full documents make eval and samples look better than the model really is.",
         ),
         _readiness_check(
             "duplicate_lines",
@@ -495,6 +511,14 @@ def suggest_training_command(
         budget.suggested_batch_size,
         "--base-steps",
         budget.suggested_base_steps,
+        "--base-early-stop-patience",
+        3,
+        "--sft-early-stop-patience",
+        4,
+        "--canary-count",
+        3,
+        "--sft-sampling",
+        "category_balanced",
         "--split-mode",
         "document",
         *(["--min-score", min_quality_score] if min_quality_score else []),
@@ -670,6 +694,7 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         f"- Documents: {stats.num_documents}",
         f"- Characters: {stats.num_characters:,}",
         f"- Lines: {stats.num_lines:,}",
+        f"- Duplicate document rate: {stats.duplicate_document_rate * 100:.2f}%",
         f"- Duplicate line rate: {stats.duplicate_line_rate * 100:.2f}%",
         f"- Empty line rate: {stats.empty_line_rate * 100:.2f}%",
         f"- Non-ASCII rate: {stats.non_ascii_rate * 100:.2f}%",
@@ -1187,6 +1212,8 @@ def _corpus_warnings(stats: CorpusStats, records: list[CorpusFileRecord]) -> lis
         warnings.append("Only one usable document was included; add more sources for broader variation.")
     if stats.duplicate_line_rate > 0.15:
         warnings.append("Duplicate line rate is high; repeated text can encourage memorization.")
+    if stats.duplicate_document_rate > 0.05:
+        warnings.append("Duplicate document rate is high; deduplicate sources before a serious run.")
     if stats.empty_line_rate > 0.35:
         warnings.append("Empty line rate is high; context windows may be wasted.")
     if stats.non_ascii_rate > 0.05:

@@ -28,6 +28,7 @@ class TinyRunConfig:
     n_embd: int = 64
     n_head: int = 4
     n_layer: int = 2
+    dropout: float = 0.0
     base_steps: int = 300
     sft_steps: int = 600
     base_batch_size: int = 8
@@ -125,6 +126,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         n_embd=config.n_embd,
         n_head=config.n_head,
         n_layer=config.n_layer,
+        dropout=config.dropout,
         seed=config.seed,
         device=config.device,
         log_every=max(1, config.base_steps // 6),
@@ -238,6 +240,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "stop_reason": sft_report.get("stop_reason"),
         },
         "eval": eval_report["summary"],
+        "eval_analysis": eval_report.get("analysis", {}),
     }
 
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")

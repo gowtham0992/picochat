@@ -121,17 +121,50 @@ def init_dataset_pack(
         }, indent=2) + "\n",
         chat_path: _jsonl([
             {
+                "category": "domain_qa",
+                "group": "starter-answerable-1",
+                "answerable": True,
                 "user": "Replace this with a real user question from your domain.",
-                "assistant": "Replace this with the answer you want the model to learn.",
+                "assistant": "Replace this with the concise answer you want the model to learn.",
+            },
+            {
+                "category": "refusal",
+                "group": "starter-refusal-1",
+                "answerable": False,
+                "user": "Replace this with a question that is outside your corpus or should not be answered.",
+                "assistant": "I do not know from the provided domain material.",
+            },
+            {
+                "category": "style",
+                "group": "starter-style-1",
+                "answerable": True,
+                "user": "Replace this with a request that demonstrates the tone and format you want.",
+                "assistant": "Replace this with an answer in the desired tone and format.",
             },
         ]),
         eval_path: _jsonl([
             {
-                "user": "Replace this with a question your model should answer.",
-                "category": "starter",
+                "user": "Replace this with a held-out domain question your model should answer.",
+                "category": "domain_qa",
+                "split": "heldout",
                 "answerable": True,
                 "must_include": [
-                    "Replace this with a required phrase",
+                    "Replace this with a required phrase from the correct answer",
+                ],
+                "must_not_include": [
+                    "Replace this with a common wrong claim",
+                ],
+            },
+            {
+                "user": "Replace this with a held-out out-of-domain or unsafe question.",
+                "category": "refusal",
+                "split": "heldout",
+                "answerable": False,
+                "must_include_any": [
+                    [
+                        "I do not know",
+                        "provided domain material",
+                    ],
                 ],
             },
         ]),

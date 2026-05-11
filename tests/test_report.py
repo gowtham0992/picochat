@@ -178,7 +178,9 @@ def test_chat_eval_report_markdown_contains_key_sections():
             },
         },
         "examples": [{
+            "index": 1,
             "user": "What is Picochat?",
+            "category": "story_generation",
             "split": "transfer",
             "reply": "I do not know.",
             "must_include": ["Picochat"],
@@ -191,6 +193,49 @@ def test_chat_eval_report_markdown_contains_key_sections():
             "prompt_echo_reasons": ["chat_role_label"],
             "passed": False,
         }],
+        "analysis": {
+            "failure_counts": {
+                "missing_required": 1,
+                "missing_any_group": 1,
+                "forbidden_phrase": 1,
+                "prompt_echo": 1,
+            },
+            "weak_categories": [{
+                "category": "story_generation",
+                "num_examples": 1,
+                "num_failed": 1,
+                "pass_rate": 0.0,
+                "support_match_rate": 0.0,
+                "unsupported_claim_rate": 1.0,
+                "prompt_echo_rate": 1.0,
+            }],
+            "weak_splits": [{
+                "split": "transfer",
+                "num_examples": 1,
+                "num_failed": 1,
+                "pass_rate": 0.0,
+                "support_match_rate": 0.0,
+                "unsupported_claim_rate": 1.0,
+                "prompt_echo_rate": 1.0,
+            }],
+            "failed_examples": [{
+                "index": 1,
+                "category": "story_generation",
+                "split": "transfer",
+                "answerable": True,
+                "reasons": ["missing_required", "prompt_echo"],
+                "missing": ["Picochat"],
+                "missing_any": [["educational", "learning"]],
+                "found_forbidden": ["I do not know"],
+                "reply_preview": "I do not know.",
+            }],
+            "recommendations": [{
+                "priority": "high",
+                "area": "sft",
+                "message": "The model missed required support phrases.",
+                "action": "Add more varied SFT rows.",
+            }],
+        },
     }
 
     markdown = chat_eval_report_markdown(report)
@@ -201,6 +246,9 @@ def test_chat_eval_report_markdown_contains_key_sections():
     assert "## Honesty Metrics" in markdown
     assert "## Category Breakdown" in markdown
     assert "## Split Breakdown" in markdown
+    assert "## Failure Analysis" in markdown
+    assert "`missing_required`" in markdown
+    assert "Add more varied SFT rows." in markdown
     assert "`story_generation`" in markdown
     assert "`transfer`" in markdown
     assert "Prompt echo rate" in markdown
@@ -278,6 +326,15 @@ def test_tiny_run_summary_markdown_contains_key_sections():
                 },
             },
         },
+        "eval_analysis": {
+            "failure_counts": {"missing_required": 1},
+            "recommendations": [{
+                "priority": "high",
+                "area": "sft",
+                "message": "The model missed required support phrases.",
+                "action": "Add more varied SFT rows.",
+            }],
+        },
         "honesty": {
             "status": "ready",
             "summary": "No obvious eval leakage was detected.",
@@ -297,6 +354,8 @@ def test_tiny_run_summary_markdown_contains_key_sections():
     assert "Data honesty report" in markdown
     assert "## Eval Categories" in markdown
     assert "## Eval Splits" in markdown
+    assert "## Eval Recommendations" in markdown
+    assert "Add more varied SFT rows." in markdown
     assert "`story_generation`" in markdown
     assert "`prompt_conditioned`" in markdown
     assert "Unsupported claim rate: 25.0000%" in markdown

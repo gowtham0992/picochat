@@ -180,6 +180,12 @@ function bindControls() {
   $("topk-slider").addEventListener("input", () => {
     $("topk-value").textContent = $("topk-slider").value;
   });
+  $("topp-slider").addEventListener("input", () => {
+    $("topp-value").textContent = Number($("topp-slider").value).toFixed(2);
+  });
+  $("repeat-slider").addEventListener("input", () => {
+    $("repeat-value").textContent = Number($("repeat-slider").value).toFixed(2);
+  });
   $("max-tokens-slider").addEventListener("input", () => {
     $("max-tokens-value").textContent = $("max-tokens-slider").value;
   });
@@ -336,6 +342,7 @@ function pipelineStages() {
         ["Input", config.corpus_input || "unknown"],
         ["Documents", fmtInt(corpus.num_documents)],
         ["Characters", fmtInt(corpus.num_characters)],
+        ["Duplicate docs", fmtPercent(corpus.duplicate_document_rate || 0)],
         ["Duplicate lines", fmtPercent(corpus.duplicate_line_rate || 0)],
         ["Honesty", honesty.status || "--"],
       ],
@@ -396,7 +403,7 @@ function pipelineStages() {
         "--max-steps", config.base_steps ?? 300,
         "--batch-size", config.base_batch_size ?? 8,
         "--learning-rate", config.base_learning_rate ?? "3e-4",
-        "--early-stop-patience", config.base_early_stop_patience ?? 6,
+        "--early-stop-patience", config.base_early_stop_patience ?? 3,
         "--canary-count", config.canary_count ?? 1,
         "--seed", config.seed ?? 42,
         "--device", config.device || "cpu",
@@ -434,7 +441,7 @@ function pipelineStages() {
         "--max-steps", config.sft_steps ?? 600,
         "--batch-size", config.sft_batch_size ?? 7,
         "--learning-rate", config.sft_learning_rate ?? "1e-3",
-        "--early-stop-patience", config.sft_early_stop_patience ?? 6,
+        "--early-stop-patience", config.sft_early_stop_patience ?? 4,
         "--sampling", config.sft_sampling || detail?.sft_report?.dataset?.sampling || "uniform",
         "--seed", config.seed ?? 42,
         "--device", config.device || "cpu",
@@ -1415,6 +1422,7 @@ function statCards(rows) {
 function qualityChecks(corpus) {
   const manifestWarnings = state.detail?.corpus_manifest?.warnings || [];
   const checks = [
+    qualityCheck("Duplicate docs", corpus.duplicate_document_rate || 0, 0.05, "Repeated full documents can inflate learning and memorization signals."),
     qualityCheck("Duplicate lines", corpus.duplicate_line_rate || 0, 0.15, "Repeated lines can make a tiny model memorize phrasing."),
     qualityCheck("Empty lines", corpus.empty_line_rate || 0, 0.35, "Too many empty lines waste context windows."),
     qualityCheck("Non-ASCII chars", corpus.non_ascii_rate || 0, 0.05, "High non-ASCII rate is fine only if intentional."),
@@ -2217,6 +2225,8 @@ async function animateGeneration() {
     prompt: $("prompt-input").value,
     temperature: Number($("temperature-slider").value),
     top_k: Number($("topk-slider").value),
+    top_p: Number($("topp-slider").value),
+    repetition_penalty: Number($("repeat-slider").value),
     max_new_tokens: Number($("max-tokens-slider").value),
     seed: state.detail?.summary?.config?.seed ?? 42,
   });

@@ -130,6 +130,8 @@ class TinyGPT(nn.Module):
         max_new_tokens: int,
         temperature: float = 1.0,
         top_k: int | None = None,
+        top_p: float = 1.0,
+        repetition_penalty: float = 1.0,
         seed: int = 42,
         eos_id: int | None = None,
     ) -> torch.Tensor:
@@ -137,6 +139,10 @@ class TinyGPT(nn.Module):
             raise ValueError("max_new_tokens must be non-negative")
         if temperature < 0:
             raise ValueError("temperature must be non-negative")
+        if not 0 < top_p <= 1:
+            raise ValueError("top_p must be in (0, 1]")
+        if repetition_penalty <= 0:
+            raise ValueError("repetition_penalty must be positive")
 
         generator = torch.Generator(device=input_ids.device)
         generator.manual_seed(seed)
@@ -146,6 +152,7 @@ class TinyGPT(nn.Module):
             context = ids[:, -self.config.context_size:]
             logits, _ = self(context)
             logits = logits[:, -1, :]
+            logits = _apply_repetition_penalty(logits, ids, repetition_penalty)
 
             if temperature == 0:
                 next_id = torch.argmax(logits, dim=-1, keepdim=True)
@@ -154,6 +161,7 @@ class TinyGPT(nn.Module):
                 if top_k is not None and top_k > 0:
                     values, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                     logits = logits.masked_fill(logits < values[:, [-1]], float("-inf"))
+                logits = _apply_top_p(logits, top_p)
                 probs = F.softmax(logits, dim=-1)
                 next_id = torch.multinomial(probs, num_samples=1, generator=generator)
 
@@ -165,3 +173,35 @@ class TinyGPT(nn.Module):
 
     def num_parameters(self) -> int:
         return sum(parameter.numel() for parameter in self.parameters())
+
+
+def _apply_repetition_penalty(
+    logits: torch.Tensor,
+    ids: torch.Tensor,
+    penalty: float,
+) -> torch.Tensor:
+    if penalty == 1.0:
+        return logits
+    adjusted = logits.clone()
+    for batch_index in range(ids.size(0)):
+        token_ids = torch.unique(ids[batch_index])
+        token_logits = adjusted[batch_index, token_ids]
+        adjusted[batch_index, token_ids] = torch.where(
+            token_logits < 0,
+            token_logits * penalty,
+            token_logits / penalty,
+        )
+    return adjusted
+
+
+def _apply_top_p(logits: torch.Tensor, top_p: float) -> torch.Tensor:
+    if top_p >= 1.0:
+        return logits
+    sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+    sorted_probs = F.softmax(sorted_logits, dim=-1)
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+    remove_sorted = cumulative_probs > top_p
+    remove_sorted[..., 1:] = remove_sorted[..., :-1].clone()
+    remove_sorted[..., 0] = False
+    remove = torch.zeros_like(remove_sorted).scatter(1, sorted_indices, remove_sorted)
+    return logits.masked_fill(remove, float("-inf"))
