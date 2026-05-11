@@ -4193,13 +4193,14 @@ function renderEvalRepairBoard(report, categoryRows, levelRows) {
       </div>
     </div>
     <div class="repair-examples learn-only">
-      <label>TURN FAILURES INTO TRAINING ROWS</label>
+      <label>TURN FAILURE PATTERNS INTO NEW TRAINING ROWS</label>
+      <p class="helper-copy">Do not copy these held-out eval prompts into SFT. Use the category, missing behavior, and wording pattern to write separate non-eval examples.</p>
       ${failures.length ? failures.map((item) => `
         <div class="repair-example">
           <strong>#${escapeHtml(item.index)} ${escapeHtml(item.category)} / ${escapeHtml(item.reason)}</strong>
           <p>${escapeHtml(item.user)}</p>
-          <p><b>SFT fix</b> ${escapeHtml(item.fix)}</p>
-          <p><b>Must cover</b> ${escapeHtml(item.missing.length ? item.missing.join(" | ") : "the expected behavior without copying the eval answer")}</p>
+          <p><b>Curriculum fix</b> ${escapeHtml(item.fix)}</p>
+          <p><b>New rows should practice</b> ${escapeHtml(item.missing.length ? item.missing.join(" | ") : "the expected behavior without copying the eval prompt or answer")}</p>
         </div>
       `).join("") : "<p class=\"helper-copy\">No failed examples. Add harder held-out eval rows before scaling.</p>"}
     </div>
@@ -4322,9 +4323,9 @@ function evalFailureFix(item, failure = {}) {
   if (category.includes("refusal") || !isAnswerable(item)) return "add refusal rows with short safe answers";
   if (level.includes("transfer")) return "add paraphrased versions, not duplicate target answers";
   if (level.includes("adversarial")) return "add harder negatives and format traps";
-  if (hasMissingSupport(item)) return "add SFT rows that include the missing phrases/entities";
+  if (hasMissingSupport(item)) return "add non-eval SFT rows that practice the same missing phrases/entities";
   if (hasPromptEcho(item)) return "add examples that answer without repeating the prompt";
-  return "add 5-10 targeted SFT rows, then rerun eval";
+  return "add 5-10 targeted non-eval SFT rows, then rerun eval";
 }
 
 function evalHonestySummary(report) {
