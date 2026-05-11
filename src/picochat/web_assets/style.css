@@ -726,7 +726,7 @@ textarea.guide-target-focus {
   align-items: start;
   display: grid;
   gap: 8px;
-  grid-template-columns: 72px 150px minmax(0, 1fr) 112px;
+  grid-template-columns: 72px 150px minmax(0, 1fr) 128px;
   padding: 6px 8px;
 }
 
@@ -736,7 +736,7 @@ textarea.guide-target-focus {
 
 .artifact-row span {
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .artifact-row.input strong {
@@ -754,10 +754,12 @@ textarea.guide-target-focus {
 .artifact-row em {
   border: 1px solid var(--dim-line);
   color: var(--muted);
+  font-size: 11px;
   font-style: normal;
   font-weight: 700;
   padding: 1px 4px;
   text-align: center;
+  white-space: nowrap;
 }
 
 .artifact-row.ready em {
@@ -1020,9 +1022,18 @@ textarea.guide-target-focus {
 }
 
 .tab-button {
+  align-items: center;
   border: 0;
   border-right: 1px solid var(--line);
   color: var(--muted);
+  display: flex;
+  font-size: 11px;
+  justify-content: center;
+  line-height: 1.15;
+  min-height: 36px;
+  padding: 0 6px;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .tab-button:last-child {
@@ -1085,7 +1096,7 @@ textarea.guide-target-focus {
 .metric-pill span {
   color: var(--muted);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.35;
 }
 
@@ -1100,7 +1111,7 @@ textarea.guide-target-focus {
 .guide-strip p {
   color: var(--muted);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.3;
 }
 
@@ -2103,6 +2114,8 @@ th {
   .tab-button {
     border-right: 0;
     border-bottom: 1px solid var(--line);
+    justify-content: flex-start;
+    white-space: normal;
   }
 
   .pipeline-stage {
