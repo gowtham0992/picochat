@@ -15,6 +15,11 @@
           <h1>PICOCHAT WORKBENCH</h1>
         </div>
         <div class="header-actions">
+          <div class="view-toggle" aria-label="Picochat view">
+            <button id="home-view-button" class="active" type="button" data-app-view="home">HOME</button>
+            <button id="guide-view-button" type="button" data-app-view="guide">GUIDE ME</button>
+            <button id="workbench-view-button" type="button" data-app-view="workbench">WORKBENCH</button>
+          </div>
           <div class="mode-toggle" aria-label="Workbench mode">
             <button id="learn-mode-button" class="active" type="button">BEGINNER</button>
             <button id="inspect-mode-button" type="button">RESEARCH</button>
@@ -27,7 +32,61 @@
         </div>
       </header>
 
-      <main class="terminal-grid">
+      <section id="home-view" class="app-view home-view active" aria-label="Picochat home">
+        <div class="home-hero">
+          <p class="kicker">PICOCHAT ONBOARDING</p>
+          <h2>Train a tiny domain model without touching the CLI.</h2>
+          <p>Start guided if you want Picochat to explain each step. Open the workbench when you want every run, artifact, metric, and knob in one place.</p>
+        </div>
+        <div class="home-choice-grid">
+          <button class="home-choice primary" type="button" data-app-view="guide">
+            <span>01</span>
+            <strong>Guide me</strong>
+            <p>Use a step-by-step builder: choose data, check it, create SFT/eval starters, inspect, train, evaluate, and compare.</p>
+          </button>
+          <button class="home-choice" type="button" data-app-view="workbench" data-workbench-mode="inspect">
+            <span>02</span>
+            <strong>I know what I'm doing</strong>
+            <p>Open the full research workbench with run bank, raw commands, launch settings, reports, and comparison tools.</p>
+          </button>
+        </div>
+        <div class="home-signal-grid">
+          <div>
+            <strong>Dataset first</strong>
+            <p>Picochat turns Hugging Face rows, local docs, or dataset packs into local corpus artifacts.</p>
+          </div>
+          <div>
+            <strong>No fake scores</strong>
+            <p>Starter SFT/eval rows are labeled as scaffolds until you edit and validate them.</p>
+          </div>
+          <div>
+            <strong>Research stays available</strong>
+            <p>The guided path does not hide the lab; it delays the dense view until it is useful.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="guide-view" class="app-view guided-builder" aria-label="Guided Picochat builder">
+        <div class="guide-shell">
+          <aside class="guide-rail">
+            <div>
+              <p class="kicker">GUIDED BUILDER</p>
+              <h2>Build a custom SLM one decision at a time.</h2>
+            </div>
+            <div id="guide-step-list" class="guide-step-list"></div>
+          </aside>
+          <section class="guide-main">
+            <div id="guide-content" class="guide-content"></div>
+            <div class="guide-actions">
+              <button id="guide-back-button" type="button">BACK</button>
+              <button id="guide-next-button" type="button">NEXT</button>
+              <button id="guide-workbench-button" type="button">OPEN WORKBENCH</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <main id="workbench-view" class="app-view terminal-grid">
         <aside class="run-rail" aria-label="Run selector">
           <div class="rail-title">
             <span>RUN BANK</span>

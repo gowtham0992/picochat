@@ -5,6 +5,8 @@ const state = {
   archiveSelection: new Set(),
   detail: null,
   workflowRunName: null,
+  activeView: readInitialAppView(),
+  guideStep: 0,
   activePanel: "dataset",
   activeStage: "dataset",
   viewMode: readInitialViewMode(),
@@ -160,6 +162,37 @@ const STAGE_LESSONS = {
   report: "This keeps receipts so the experiment can be reviewed later.",
 };
 
+const GUIDE_STEPS = [
+  {
+    label: "Choose dataset",
+    note: "Pick Hugging Face, local docs, an existing pack, or the sample.",
+  },
+  {
+    label: "Check corpus",
+    note: "Make sure the source can actually become training text.",
+  },
+  {
+    label: "Create SFT starter",
+    note: "Draft chat examples from the corpus.",
+  },
+  {
+    label: "Create eval starter",
+    note: "Draft held-out checks before trusting a score.",
+  },
+  {
+    label: "Edit and validate",
+    note: "Replace scaffolds with real domain examples.",
+  },
+  {
+    label: "Smoke train",
+    note: "Launch a tiny run only after the files are wired.",
+  },
+  {
+    label: "Read result",
+    note: "Evaluate, compare, and decide whether to scale.",
+  },
+];
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -267,12 +300,38 @@ async function boot() {
   bindControls();
   setViewMode(state.viewMode, { persist: false, render: false });
   setTheme(state.theme, { persist: false });
+  setAppView(state.activeView, { persist: false, render: false });
   await loadRunPresets();
   await loadRuns();
   await loadRunJobs();
+  renderGuide();
 }
 
 function bindControls() {
+  document.querySelectorAll("[data-app-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.workbenchMode) setViewMode(button.dataset.workbenchMode);
+      setAppView(button.dataset.appView);
+    });
+  });
+  $("guide-back-button").addEventListener("click", () => setGuideStep(state.guideStep - 1));
+  $("guide-next-button").addEventListener("click", () => setGuideStep(state.guideStep + 1));
+  $("guide-workbench-button").addEventListener("click", () => {
+    setAppView("workbench");
+    setViewMode("inspect");
+    setPanel("dataset", { focus: true, focusTarget: "panel-dataset" });
+  });
+  $("guide-step-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-guide-step]");
+    if (!button) return;
+    setGuideStep(Number(button.dataset.guideStep));
+  });
+  $("guide-content").addEventListener("input", syncGuideInputs);
+  $("guide-content").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-guide-action]");
+    if (!button) return;
+    handleGuideAction(button.dataset.guideAction).catch((error) => renderGuideError(error));
+  });
   $("learn-mode-button").addEventListener("click", () => setViewMode("learn"));
   $("inspect-mode-button").addEventListener("click", () => setViewMode("inspect"));
   $("classic-theme-button").addEventListener("click", () => setTheme("classic"));
@@ -624,6 +683,15 @@ function readInitialViewMode() {
   }
 }
 
+function readInitialAppView() {
+  try {
+    const value = localStorage.getItem("picochat:app-view");
+    return ["home", "guide", "workbench"].includes(value) ? value : "home";
+  } catch {
+    return "home";
+  }
+}
+
 function readInitialTheme() {
   try {
     const savedTheme = localStorage.getItem("picochat:theme");
@@ -631,6 +699,31 @@ function readInitialTheme() {
     return "paper";
   } catch {
     return "paper";
+  }
+}
+
+function setAppView(view, options = {}) {
+  const nextView = ["home", "guide", "workbench"].includes(view) ? view : "home";
+  state.activeView = nextView;
+  document.body.classList.toggle("home-active", nextView === "home");
+  document.body.classList.toggle("guide-active", nextView === "guide");
+  document.body.classList.toggle("workbench-active", nextView === "workbench");
+  document.querySelectorAll(".app-view").forEach((node) => {
+    node.classList.toggle("active", node.id === `${nextView}-view`);
+  });
+  document.querySelectorAll("[data-app-view]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.appView === nextView);
+  });
+  if (options.persist !== false) {
+    try {
+      localStorage.setItem("picochat:app-view", nextView);
+    } catch {
+      // localStorage can be unavailable in restricted browser contexts.
+    }
+  }
+  if (options.render !== false) {
+    renderGuide();
+    renderStatus();
   }
 }
 
@@ -676,6 +769,7 @@ function renderAll() {
   renderPipeline();
   renderDataset();
   renderStartHere();
+  renderGuide();
   renderTokenizer();
   renderTraining();
   renderGenerationDeck();
@@ -792,6 +886,452 @@ function renderStartHere() {
       `).join("")}
     </div>
   `;
+}
+
+function setGuideStep(index) {
+  const bounded = Math.max(0, Math.min(GUIDE_STEPS.length - 1, Number(index) || 0));
+  state.guideStep = bounded;
+  renderGuide();
+}
+
+function renderGuide() {
+  const list = $("guide-step-list");
+  const content = $("guide-content");
+  if (!list || !content) return;
+  const statuses = guideStepStatuses();
+  list.innerHTML = GUIDE_STEPS.map((step, index) => `
+    <button class="guide-step ${index === state.guideStep ? "active" : ""} ${escapeHtml(statuses[index])}" type="button" data-guide-step="${index}">
+      <span>${String(index + 1).padStart(2, "0")}</span>
+      <strong>${escapeHtml(step.label)}</strong>
+      <em>${escapeHtml(statuses[index])}</em>
+      <p>${escapeHtml(step.note)}</p>
+    </button>
+  `).join("");
+  content.innerHTML = guideStepContent(state.guideStep);
+  $("guide-back-button").disabled = state.guideStep <= 0;
+  $("guide-next-button").disabled = state.guideStep >= GUIDE_STEPS.length - 1;
+}
+
+function guideStepStatuses() {
+  const hasSource = hasGuideDatasetSource();
+  const checked = Boolean(state.datasetFlightPlan || state.corpusSourcePreview);
+  const sftReady = Boolean(state.sftStarter || $("flight-chat-path")?.value.trim());
+  const evalReady = Boolean(state.evalStarter || $("flight-eval-path")?.value.trim());
+  const tuningChecked = Boolean(state.tuningInspection);
+  const launcherReady = launchReadiness().status !== "blocked";
+  const hasRun = Boolean(state.runJob || state.detail?.summary);
+  const hasEval = Boolean(state.detail?.summary?.eval?.num_examples || state.runJob?.summary?.eval?.num_examples);
+  return [
+    hasSource ? "done" : "next",
+    checked ? "done" : hasSource ? "next" : "todo",
+    sftReady ? "done" : checked ? "next" : "todo",
+    evalReady ? "done" : sftReady ? "next" : "todo",
+    tuningChecked ? "done" : evalReady ? "next" : "todo",
+    hasRun ? "done" : launcherReady ? "next" : "todo",
+    hasEval ? "done" : hasRun ? "next" : "todo",
+  ];
+}
+
+function hasGuideDatasetSource() {
+  return Boolean(
+    $("flight-pack-path")?.value.trim()
+    || $("flight-input-path")?.value.trim()
+    || state.datasetFlightPlan?.dataset_pack
+    || state.hfImport?.dataset_pack
+  );
+}
+
+function guideStepContent(index) {
+  return [
+    guideChooseDatasetContent,
+    guideCheckCorpusContent,
+    guideCreateSftContent,
+    guideCreateEvalContent,
+    guideEditValidateContent,
+    guideSmokeTrainContent,
+    guideReadResultContent,
+  ][index]?.() || "";
+}
+
+function guideChooseDatasetContent() {
+  return `
+    <div class="guide-page">
+      <div class="guide-page-head">
+        <p class="kicker">STEP 01</p>
+        <h2>Choose the text your tiny model will learn from.</h2>
+        <p>A dataset is just source material. Picochat converts it into local documents and a dataset pack so the rest of training is reproducible.</p>
+      </div>
+      <div class="guide-source-grid">
+        <div class="guide-card primary">
+          <strong>Import from Hugging Face</strong>
+          <p>Best when you have a dataset URL or repo id. Picochat writes local documents and a dataset pack.</p>
+          <label for="guide-hf-dataset">DATASET URL / ID</label>
+          <input id="guide-hf-dataset" type="text" spellcheck="false" value="${escapeHtml($("hf-dataset-input")?.value || "")}" placeholder="HuggingFaceTB/smollm-corpus">
+          <div class="guide-inline-grid">
+            <div>
+              <label for="guide-hf-config">CONFIG</label>
+              <input id="guide-hf-config" type="text" spellcheck="false" value="${escapeHtml($("hf-config-name")?.value || "")}" placeholder="optional">
+            </div>
+            <div>
+              <label for="guide-hf-split">SPLIT</label>
+              <input id="guide-hf-split" type="text" spellcheck="false" value="${escapeHtml($("hf-split")?.value || "train")}">
+            </div>
+            <div>
+              <label for="guide-hf-text-column">TEXT FIELD</label>
+              <input id="guide-hf-text-column" type="text" spellcheck="false" value="${escapeHtml($("hf-text-column")?.value || "text")}">
+            </div>
+            <div>
+              <label for="guide-hf-max-rows">MAX ROWS</label>
+              <input id="guide-hf-max-rows" type="number" min="1" max="100000" value="${escapeHtml($("hf-max-rows")?.value || "1000")}">
+            </div>
+          </div>
+          <label for="guide-hf-out-dir">LOCAL OUT FOLDER</label>
+          <input id="guide-hf-out-dir" type="text" spellcheck="false" value="${escapeHtml($("hf-out-dir")?.value || "")}" placeholder="runs/hf-my-dataset-1000">
+          <button type="button" data-guide-action="import-hf">IMPORT AND CONTINUE</button>
+        </div>
+        <div class="guide-card">
+          <strong>Use local docs</strong>
+          <p>Use this for a folder of text/markdown/pdf/docx files or a single .txt file.</p>
+          <label for="guide-local-path">LOCAL PATH</label>
+          <input id="guide-local-path" type="text" spellcheck="false" value="${escapeHtml($("flight-input-path")?.value || "")}" placeholder="my_docs/">
+          <button type="button" data-guide-action="use-local">USE LOCAL PATH</button>
+        </div>
+        <div class="guide-card">
+          <strong>Use an existing pack</strong>
+          <p>Use this when you already have dataset_pack.json connecting corpus, SFT, and eval.</p>
+          <label for="guide-pack-path">DATASET PACK</label>
+          <input id="guide-pack-path" type="text" spellcheck="false" value="${escapeHtml($("flight-pack-path")?.value || "")}" placeholder="my_pack/dataset_pack.json">
+          <button type="button" data-guide-action="use-pack">USE PACK</button>
+        </div>
+        <div class="guide-card">
+          <strong>I do not have a dataset yet</strong>
+          <p>Load Picochat's sample pack to learn the flow first. This is for practice, not a serious model.</p>
+          <button type="button" data-guide-action="use-sample">USE SAMPLE DATASET</button>
+        </div>
+      </div>
+      ${guideNotice()}
+    </div>
+  `;
+}
+
+function guideCheckCorpusContent() {
+  const report = state.datasetFlightPlan;
+  const coach = flightCoach(report);
+  return `
+    <div class="guide-page">
+      <div class="guide-page-head">
+        <p class="kicker">STEP 02</p>
+        <h2>Check the corpus before training.</h2>
+        <p>This reads your selected source, counts documents and characters, catches missing files, and checks whether SFT/eval files are real or just scaffolds.</p>
+      </div>
+      <div class="guide-current-source">
+        <label>CURRENT SOURCE</label>
+        <strong>${escapeHtml(currentGuideSource())}</strong>
+        <p>${escapeHtml(coach.evidence)}</p>
+      </div>
+      <div class="guide-action-card ${escapeHtml(coach.status)}">
+        <strong>${escapeHtml(coach.happened)}</strong>
+        <p>${escapeHtml(coach.detail)}</p>
+        <button type="button" data-guide-action="check-corpus">CHECK CORPUS NOW</button>
+      </div>
+      ${report ? guideReportStats(report) : ""}
+      ${guideNotice()}
+    </div>
+  `;
+}
+
+function guideCreateSftContent() {
+  const chatRows = state.datasetFlightPlan?.chat_data?.num_examples || 0;
+  return `
+    <div class="guide-page">
+      <div class="guide-page-head">
+        <p class="kicker">STEP 03</p>
+        <h2>Create the chat SFT starter.</h2>
+        <p>SFT teaches response style and behavior. It does not replace base training. Starter rows are scaffolds; you edit them before trusting a run.</p>
+      </div>
+      <div class="guide-action-card ${chatRows >= 8 ? "ready" : "caution"}">
+        <strong>${chatRows ? `${fmtInt(chatRows)} current SFT rows detected.` : "No usable SFT rows detected yet."}</strong>
+        <p>${chatRows < 8 ? "Create a starter from corpus sentences, then edit it into real domain Q&A." : "You can still regenerate a starter if these rows are placeholders."}</p>
+        <button type="button" data-guide-action="create-sft">CREATE SFT STARTER</button>
+      </div>
+      <div id="guide-sft-mirror" class="guide-mirror">${$("flight-sft-result")?.innerHTML || ""}</div>
+      ${guideNotice()}
+    </div>
+  `;
+}
+
+function guideCreateEvalContent() {
+  const evalRows = state.datasetFlightPlan?.eval_data?.num_items || 0;
+  return `
+    <div class="guide-page">
+      <div class="guide-page-head">
+        <p class="kicker">STEP 04</p>
+        <h2>Create the eval starter before scaling.</h2>
+        <p>Eval is the scoreboard. It should include answerable questions, refusals, and memorization probes that do not appear in SFT.</p>
+      </div>
+      <div class="guide-action-card ${evalRows >= 4 ? "ready" : "caution"}">
+        <strong>${evalRows ? `${fmtInt(evalRows)} current eval rows detected.` : "No usable eval rows detected yet."}</strong>
+        <p>${evalRows < 4 ? "Create an eval starter, then edit it into held-out questions." : "Starter eval rows still need review before scores mean anything."}</p>
+        <button type="button" data-guide-action="create-eval">CREATE EVAL STARTER</button>
+      </div>
+      <div id="guide-eval-mirror" class="guide-mirror">${$("flight-eval-result")?.innerHTML || ""}</div>
+      ${guideNotice()}
+    </div>
+  `;
+}
+
+function guideEditValidateContent() {
+  const report = state.tuningInspection;
+  const status = report?.status || "waiting";
+  return `
+    <div class="guide-page">
+      <div class="guide-page-head">
+        <p class="kicker">STEP 05</p>
+        <h2>Edit the starter rows and validate them.</h2>
+        <p>This is the human part. Replace generic rows with real questions, correct answers, refusals, and held-out eval checks.</p>
+      </div>
+      <div class="guide-split-actions">
+        <div class="guide-action-card">
+          <strong>Open the dashboard JSONL editor.</strong>
+          <p>This stays in the browser. No CLI needed. Save after editing, then validate again.</p>
+          <button type="button" data-guide-action="open-editor">OPEN EDITOR</button>
+        </div>
+        <div class="guide-action-card ${escapeHtml(status)}">
+          <strong>Tuning status: ${escapeHtml(String(status).toUpperCase())}</strong>
+          <p>${escapeHtml(report?.summary || "Run validation after editing starter rows.")}</p>
+          <button type="button" data-guide-action="inspect-tuning">VALIDATE TUNING DATA</button>
+        </div>
+      </div>
+      ${report ? renderTuningPreflight(report.chat_data, report.eval_data) : ""}
+      ${guideNotice()}
+    </div>
+  `;
+}
+
+function guideSmokeTrainContent() {
+  const readiness = launchReadiness();
+  return `
+    <div class="guide-page">
+      <div class="guide-page-head">
+        <p class="kicker">STEP 06</p>
+        <h2>Launch a smoke run.</h2>
+        <p>A smoke run proves the pipeline is wired. It is not the final model. Scale only after eval and trust checks make sense.</p>
+      </div>
+      <div class="guide-action-card ${escapeHtml(readiness.status)}">
+        <strong>${escapeHtml(readiness.title)}</strong>
+        <p>${escapeHtml(readiness.notes.slice(0, 3).join(" | "))}</p>
+        <div class="button-row">
+          <button type="button" data-guide-action="apply-plan">APPLY CHECKED PLAN</button>
+          <button type="button" data-guide-action="launch-smoke">LAUNCH SMOKE RUN</button>
+          <button type="button" data-guide-action="open-launcher">OPEN LAUNCH CONSOLE</button>
+        </div>
+      </div>
+      ${state.runJob ? renderGuideRunJob() : ""}
+      ${guideNotice()}
+    </div>
+  `;
+}
+
+function guideReadResultContent() {
+  const summary = state.detail?.summary || state.runJob?.summary || {};
+  const evalSummary = summary.eval || {};
+  return `
+    <div class="guide-page">
+      <div class="guide-page-head">
+        <p class="kicker">STEP 07</p>
+        <h2>Read the result like an experiment.</h2>
+        <p>Do not judge by one chat sample. Check eval pass rate, BPB/loss, memorization warnings, and compare against a previous run.</p>
+      </div>
+      <div class="guide-result-grid">
+        <div>
+          <label>EVAL</label>
+          <strong>${fmtInt(evalSummary.num_passed)}/${fmtInt(evalSummary.num_examples)}</strong>
+          <p>${fmtPercent(evalSummary.pass_rate)}</p>
+        </div>
+        <div>
+          <label>BASE BPB</label>
+          <strong>${fmtLoss(summary.base?.final_val_bpb)}</strong>
+          <p>Lower is better on the same tokenizer/eval setup.</p>
+        </div>
+        <div>
+          <label>SFT BPB</label>
+          <strong>${fmtLoss(summary.sft?.final_val_bpb)}</strong>
+          <p>Watch for overfitting and tiny SFT files.</p>
+        </div>
+      </div>
+      <div class="button-row">
+        <button type="button" data-guide-action="open-eval">OPEN EVAL SCOREBOARD</button>
+        <button type="button" data-guide-action="open-compare">COMPARE RUNS</button>
+        <button type="button" data-guide-action="open-chat">TRY CHAT</button>
+      </div>
+      ${guideNotice()}
+    </div>
+  `;
+}
+
+function guideReportStats(report) {
+  const stats = report.stats || {};
+  return `
+    <div class="guide-result-grid">
+      <div><label>DOCUMENTS</label><strong>${fmtInt(stats.num_documents)}</strong><p>Separate source units.</p></div>
+      <div><label>CHARACTERS</label><strong>${fmtInt(stats.num_characters)}</strong><p>Raw text size.</p></div>
+      <div><label>DUPLICATES</label><strong>${fmtPercent(stats.duplicate_document_rate || 0)}</strong><p>Repeated docs can fake progress.</p></div>
+    </div>
+  `;
+}
+
+function renderGuideRunJob() {
+  return `
+    <div class="guide-current-source">
+      <label>RUN STATUS</label>
+      <strong>${escapeHtml(state.runJob.run_name || "--")} | ${escapeHtml(state.runJob.state || "--")}</strong>
+      <p>${escapeHtml(state.runJob.summary_path ? "Summary is available after the run finishes." : "Training logs appear in the workbench launch console.")}</p>
+    </div>
+  `;
+}
+
+function currentGuideSource() {
+  return state.hfImport?.dataset_pack
+    || $("flight-pack-path")?.value.trim()
+    || $("flight-input-path")?.value.trim()
+    || "No dataset selected yet.";
+}
+
+function guideNotice() {
+  return '<div id="guide-status" class="guide-status">READY.</div>';
+}
+
+function renderGuideError(error) {
+  const target = $("guide-status");
+  if (target) target.textContent = `FAULT: ${error.message}`;
+  flashStatus(`GUIDE FAULT. | ${error.message}`);
+}
+
+function syncGuideInputs(event) {
+  const target = event.target;
+  if (!target?.id) return;
+  const map = {
+    "guide-hf-dataset": "hf-dataset-input",
+    "guide-hf-out-dir": "hf-out-dir",
+    "guide-hf-config": "hf-config-name",
+    "guide-hf-split": "hf-split",
+    "guide-hf-text-column": "hf-text-column",
+    "guide-hf-max-rows": "hf-max-rows",
+    "guide-local-path": "flight-input-path",
+    "guide-pack-path": "flight-pack-path",
+  };
+  const destination = map[target.id];
+  if (!destination || !$(destination)) return;
+  $(destination).value = target.value;
+  if (target.id === "guide-hf-dataset") seedHfOutDirFromDataset();
+  if (target.id === "guide-local-path" && target.value.trim()) $("flight-pack-path").value = "";
+  if (target.id === "guide-pack-path" && target.value.trim()) $("flight-input-path").value = "";
+  syncFlightStarterDefaults();
+}
+
+async function handleGuideAction(action) {
+  if (action === "import-hf") {
+    syncGuideInputValues();
+    await importHfDataset();
+    setGuideStep(1);
+    return;
+  }
+  if (action === "use-local") {
+    syncGuideInputValues();
+    if (!$("flight-input-path").value.trim()) throw new Error("enter a local corpus path first");
+    $("flight-pack-path").value = "";
+    syncFlightStarterDefaults();
+    setGuideStep(1);
+    flashStatus("LOCAL SOURCE SELECTED. | CHECK CORPUS NEXT.");
+    return;
+  }
+  if (action === "use-pack") {
+    syncGuideInputValues();
+    if (!$("flight-pack-path").value.trim()) throw new Error("enter a dataset pack path first");
+    $("flight-input-path").value = "";
+    syncFlightStarterDefaults();
+    setGuideStep(1);
+    flashStatus("DATASET PACK SELECTED. | CHECK CORPUS NEXT.");
+    return;
+  }
+  if (action === "use-sample") {
+    await useSampleDataset();
+    setGuideStep(1);
+    return;
+  }
+  if (action === "check-corpus") {
+    await checkDatasetFlightPlan();
+    setGuideStep(2);
+    return;
+  }
+  if (action === "create-sft") {
+    await createSftStarter();
+    setGuideStep(3);
+    return;
+  }
+  if (action === "create-eval") {
+    await createEvalStarter();
+    setGuideStep(4);
+    return;
+  }
+  if (action === "open-editor") {
+    await loadPackEditor();
+    setAppView("workbench");
+    setViewMode("inspect");
+    setPanel("dataset", { focus: true, focusTarget: "pack-editor-card" });
+    return;
+  }
+  if (action === "inspect-tuning") {
+    await inspectTuningData();
+    renderGuide();
+    return;
+  }
+  if (action === "apply-plan") {
+    applyFlightPlanToLauncher();
+    renderGuide();
+    return;
+  }
+  if (action === "launch-smoke") {
+    if (state.datasetFlightPlan) applyFlightPlanToLauncher(true);
+    if (state.runPresets.smoke) {
+      $("launch-preset").value = "smoke";
+      applyLaunchPreset(true);
+    }
+    await launchRun();
+    setGuideStep(6);
+    return;
+  }
+  if (action === "open-launcher") {
+    if (state.datasetFlightPlan) applyFlightPlanToLauncher(true);
+    setAppView("workbench");
+    setViewMode("inspect");
+    setPanel("dataset", { focus: true, focusTarget: "run-launcher-card" });
+    return;
+  }
+  if (action === "open-eval") {
+    setAppView("workbench");
+    setViewMode("learn");
+    setPanel("eval", { focus: true, focusTarget: "panel-eval" });
+    return;
+  }
+  if (action === "open-compare") {
+    setAppView("workbench");
+    setViewMode("learn");
+    setPanel("compare", { focus: true, focusTarget: "panel-compare" });
+    return;
+  }
+  if (action === "open-chat") {
+    setAppView("workbench");
+    setViewMode("learn");
+    setPanel("generation", { focus: true, focusTarget: "panel-generation" });
+  }
+}
+
+function syncGuideInputValues() {
+  ["guide-hf-dataset", "guide-hf-out-dir", "guide-hf-config", "guide-hf-split", "guide-hf-text-column", "guide-hf-max-rows", "guide-local-path", "guide-pack-path"].forEach((id) => {
+    const node = $(id);
+    if (node) syncGuideInputs({ target: node });
+  });
 }
 
 function focusGuideTarget(targetId) {
@@ -5246,7 +5786,7 @@ function renderStatus() {
   const ctx = summary?.config?.context_size ?? "--";
   const seed = padSeed(summary?.config?.seed);
   const run = state.selectedRun || "--";
-  $("status-line").textContent = `READY. | MODE ${state.viewMode.toUpperCase()} | PANEL ${state.activePanel.toUpperCase()} | RUN ${run} | CTX ${ctx} | TOK ${tok} | SEED ${seed}`;
+  $("status-line").textContent = `READY. | VIEW ${state.activeView.toUpperCase()} | MODE ${state.viewMode.toUpperCase()} | PANEL ${state.activePanel.toUpperCase()} | RUN ${run} | CTX ${ctx} | TOK ${tok} | SEED ${seed}`;
 }
 
 boot().catch((error) => {

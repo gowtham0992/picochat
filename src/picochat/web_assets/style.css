@@ -198,6 +198,7 @@ h2 {
 
 .header-actions,
 .mode-toggle,
+.view-toggle,
 .theme-toggle {
   align-items: center;
   display: flex;
@@ -205,12 +206,14 @@ h2 {
 }
 
 .mode-toggle,
+.view-toggle,
 .theme-toggle {
   border: 1px solid var(--line);
   gap: 0;
 }
 
 .mode-toggle button,
+.view-toggle button,
 .theme-toggle button {
   border: 0;
   border-right: 1px solid var(--line);
@@ -218,13 +221,268 @@ h2 {
 }
 
 .mode-toggle button:last-child,
+.view-toggle button:last-child,
 .theme-toggle button:last-child {
   border-right: 0;
+}
+
+.home-active .mode-toggle,
+.guide-active .mode-toggle {
+  display: none;
+}
+
+.app-view {
+  display: none;
+}
+
+.app-view.active {
+  display: block;
 }
 
 .learn-mode .inspect-only,
 .inspect-mode .learn-only {
   display: none !important;
+}
+
+.home-view,
+.guided-builder {
+  padding: 12px;
+}
+
+.home-hero,
+.home-choice,
+.home-signal-grid > div,
+.guide-shell,
+.guide-card,
+.guide-action-card,
+.guide-current-source,
+.guide-result-grid > div {
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.home-hero {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 16px;
+}
+
+.home-hero h2 {
+  font-size: 18px;
+}
+
+.home-hero p,
+.home-choice p,
+.home-signal-grid p,
+.guide-page-head p,
+.guide-card p,
+.guide-action-card p,
+.guide-current-source p,
+.guide-result-grid p {
+  color: var(--muted);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.home-choice-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.home-choice {
+  align-content: start;
+  display: grid;
+  gap: 8px;
+  min-height: 150px;
+  padding: 14px;
+  text-align: left;
+}
+
+.home-choice span,
+.guide-step span {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.home-choice strong {
+  font-size: 14px;
+}
+
+.home-choice.primary {
+  background: var(--field);
+}
+
+.home-signal-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.home-signal-grid > div {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.guide-shell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  min-height: calc(100vh - 132px);
+}
+
+.guide-rail {
+  background: var(--raised);
+  border-right: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  grid-template-rows: auto 1fr;
+  padding: 12px;
+}
+
+.guide-step-list {
+  display: grid;
+  gap: 8px;
+}
+
+.guide-step {
+  align-content: start;
+  background: var(--field);
+  display: grid;
+  gap: 4px;
+  height: auto;
+  min-height: 86px;
+  padding: 8px;
+  text-align: left;
+}
+
+.guide-step em {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.guide-step.done em {
+  color: var(--green);
+}
+
+.guide-step.next em {
+  color: var(--accent);
+}
+
+.guide-step p {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.guide-step.active p,
+.guide-step.active em,
+.guide-step.active span {
+  color: var(--inverse-muted);
+}
+
+.guide-main {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  min-width: 0;
+}
+
+.guide-content {
+  min-width: 0;
+  padding: 12px;
+}
+
+.guide-page {
+  display: grid;
+  gap: 12px;
+}
+
+.guide-page-head {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.guide-page-head h2 {
+  font-size: 16px;
+}
+
+.guide-source-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.guide-card,
+.guide-action-card,
+.guide-current-source {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.guide-card.primary {
+  background: var(--field);
+}
+
+.guide-inline-grid,
+.guide-split-actions,
+.guide-result-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.guide-result-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.guide-result-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+.guide-result-grid strong,
+.guide-action-card strong,
+.guide-current-source strong,
+.guide-card strong {
+  color: var(--accent);
+}
+
+.guide-action-card.ready strong {
+  color: var(--green);
+}
+
+.guide-action-card.blocked strong,
+.guide-action-card.fail strong {
+  color: var(--red);
+}
+
+.guide-actions {
+  align-items: center;
+  background: var(--raised);
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 10px 12px;
+}
+
+.guide-status {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  color: var(--muted);
+  font-weight: 700;
+  padding: 8px;
+}
+
+.guide-mirror:empty {
+  display: none;
 }
 
 .learn-mode #training-table,
@@ -237,6 +495,10 @@ h2 {
   gap: 12px;
   grid-template-columns: 280px minmax(0, 1fr);
   padding: 12px;
+}
+
+.app-view:not(.active) {
+  display: none !important;
 }
 
 .terminal-grid > *,
@@ -2491,6 +2753,13 @@ th {
 @media (max-width: 960px) {
   .terminal-grid,
   .two-col,
+  .home-choice-grid,
+  .home-signal-grid,
+  .guide-shell,
+  .guide-source-grid,
+  .guide-inline-grid,
+  .guide-split-actions,
+  .guide-result-grid,
   .tab-strip,
   .walkthrough-strip,
   .pipeline-strip,
