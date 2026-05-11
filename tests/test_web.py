@@ -755,6 +755,8 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
         "n_embd": 32,
         "n_head": 4,
         "n_layer": 1,
+        "base_learning_rate": 0.0002,
+        "sft_learning_rate": 0.0004,
         "preset": "smoke",
         "tokenizer_type": "bpe",
         "min_quality_score": 0,
@@ -768,11 +770,17 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert "--dataset-pack" in captured["command"]
     assert "--min-score" in captured["command"]
     assert "--tokenizer-type" in captured["command"]
+    assert "--base-learning-rate" in captured["command"]
+    assert "--sft-learning-rate" in captured["command"]
     assert "--base-early-stop-patience" in captured["command"]
     assert "--sft-early-stop-patience" in captured["command"]
     assert "--sft-sampling" in captured["command"]
     assert "bpe" in captured["command"]
+    assert "0.0002" in captured["command"]
+    assert "0.0004" in captured["command"]
     assert str(pack_path) in captured["command"]
+    assert status["job"]["launch_config"]["base_learning_rate"] == 0.0002
+    assert status["job"]["launch_config"]["sft_learning_rate"] == 0.0004
     assert status["job"]["launch_config"]["base_early_stop_patience"] == 4
     assert status["job"]["launch_config"]["sft_early_stop_patience"] == 4
     assert captured["kwargs"]["cwd"].name == "picochat"

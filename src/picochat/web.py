@@ -689,6 +689,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         maximum=8192,
     )
     tokenizer_min_freq = _bounded_int(payload.get("tokenizer_min_freq", preset.get("tokenizer_min_freq", 1)), 1, 1000)
+    base_learning_rate = _bounded_float(payload.get("base_learning_rate", preset.get("base_learning_rate", 3e-4)), 0.0, 1.0)
+    sft_learning_rate = _bounded_float(payload.get("sft_learning_rate", preset.get("sft_learning_rate", 3e-4)), 0.0, 1.0)
     base_lr_warmup_steps = _bounded_int(payload.get("base_lr_warmup_steps", preset.get("base_lr_warmup_steps", 0)), 0, base_steps)
     sft_lr_warmup_steps = _bounded_int(payload.get("sft_lr_warmup_steps", preset.get("sft_lr_warmup_steps", 0)), 0, sft_steps)
     base_lr_decay = str(payload.get("base_lr_decay", preset.get("base_lr_decay", "none")))
@@ -741,6 +743,10 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(base_batch_size),
         "--sft-batch-size",
         str(sft_batch_size),
+        "--base-learning-rate",
+        str(base_learning_rate),
+        "--sft-learning-rate",
+        str(sft_learning_rate),
         "--seed",
         str(seed),
         "--eval-max-new-tokens",
@@ -814,6 +820,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "sft_steps": sft_steps,
             "tokenizer_type": tokenizer_type,
             "tokenizer_vocab_size": tokenizer_vocab_size,
+            "base_learning_rate": base_learning_rate,
+            "sft_learning_rate": sft_learning_rate,
             "base_lr_decay": base_lr_decay,
             "sft_lr_decay": sft_lr_decay,
             "base_grad_clip": base_grad_clip,
