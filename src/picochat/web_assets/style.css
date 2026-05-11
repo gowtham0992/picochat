@@ -325,12 +325,46 @@ h2 {
   white-space: nowrap;
 }
 
+.walkthrough-strip {
+  align-items: center;
+  background: var(--field);
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px 12px;
+}
+
+.walkthrough-strip > div {
+  display: grid;
+  gap: 3px;
+}
+
+.walkthrough-strip label {
+  margin: 0;
+}
+
+.walkthrough-strip strong {
+  color: var(--accent);
+}
+
+.walkthrough-strip p {
+  color: var(--muted);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
 .start-here-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .guide-target-focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.guide-target-context {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
@@ -394,6 +428,10 @@ textarea.guide-target-focus {
 
 .start-step.next {
   background: var(--raised);
+}
+
+.start-step.todo:not(.next) {
+  color: var(--muted);
 }
 
 .start-step.next span,
@@ -1233,6 +1271,10 @@ textarea.guide-target-focus {
   align-self: end;
   margin-top: 4px;
   min-height: 30px;
+}
+
+.learn-mode .beginner-secondary {
+  display: none;
 }
 
 .hf-import-controls {
@@ -2149,6 +2191,7 @@ th {
   .terminal-grid,
   .two-col,
   .tab-strip,
+  .walkthrough-strip,
   .pipeline-strip,
   .start-here-grid,
   .pipeline-detail-grid,

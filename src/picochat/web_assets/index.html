@@ -101,14 +101,17 @@
                 <div>
                   <strong>Hugging Face</strong>
                   <p>Paste a dataset URL or repo id in the Hugging Face Import box below. Picochat downloads rows and creates a dataset pack.</p>
+                  <button class="source-action" type="button" data-source-mode="hf" data-guide-panel="dataset" data-guide-target="hf-dataset-input">PASTE HF DATASET</button>
                 </div>
                 <div>
                   <strong>Local docs</strong>
                   <p>Put a folder or text file path into <b>OR CORPUS PATH</b>, then check readiness before training.</p>
+                  <button class="source-action" type="button" data-source-mode="local" data-guide-panel="dataset" data-guide-target="flight-input-path">ENTER LOCAL PATH</button>
                 </div>
                 <div>
                   <strong>Existing pack</strong>
                   <p>Put a <b>dataset_pack.json</b> path into <b>DATASET PACK</b>. Packs connect corpus, SFT, and eval files.</p>
+                  <button class="source-action" type="button" data-source-mode="pack" data-guide-panel="dataset" data-guide-target="flight-pack-path">SELECT PACK</button>
                 </div>
                 <div>
                   <strong>No dataset yet</strong>
@@ -132,23 +135,23 @@
                   <label for="flight-input-path">OR CORPUS PATH</label>
                   <input id="flight-input-path" type="text" spellcheck="false" placeholder="my_docs/">
                 </div>
-                <div>
+                <div class="beginner-secondary">
                   <label for="flight-chat-path">CHAT SFT JSONL</label>
                   <input id="flight-chat-path" type="text" spellcheck="false" placeholder="my_pack/chat.jsonl">
                 </div>
-                <div>
+                <div class="beginner-secondary">
                   <label for="flight-sft-out-path">SFT STARTER OUT</label>
                   <input id="flight-sft-out-path" type="text" spellcheck="false" placeholder="my_pack/chat_starter.jsonl">
                 </div>
-                <div>
+                <div class="beginner-secondary">
                   <label for="flight-eval-path">EVAL JSONL</label>
                   <input id="flight-eval-path" type="text" spellcheck="false" placeholder="my_pack/eval.jsonl">
                 </div>
-                <div>
+                <div class="beginner-secondary">
                   <label for="flight-eval-out-path">EVAL STARTER OUT</label>
                   <input id="flight-eval-out-path" type="text" spellcheck="false" placeholder="my_pack/eval_starter.jsonl">
                 </div>
-                <div>
+                <div class="beginner-secondary">
                   <label for="flight-min-score">MIN SCORE</label>
                   <input id="flight-min-score" type="number" min="0" max="100" value="0">
                 </div>

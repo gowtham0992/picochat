@@ -214,6 +214,7 @@ function bindControls() {
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-guide-panel]");
     if (!button) return;
+    if (button.dataset.sourceMode) prepareDatasetSourceMode(button.dataset.sourceMode);
     const mode = button.dataset.guideMode;
     if (mode) setViewMode(mode);
     setPanel(button.dataset.guidePanel);
@@ -273,6 +274,12 @@ function bindControls() {
   });
   $("flight-apply-button").addEventListener("click", () => {
     applyFlightPlanToLauncher();
+  });
+  ["flight-pack-path", "flight-input-path", "flight-chat-path", "flight-eval-path"].forEach((id) => {
+    $(id).addEventListener("input", () => {
+      syncFlightStarterDefaults();
+      renderStartHere();
+    });
   });
   $("hf-dataset-input").addEventListener("input", seedHfOutDirFromDataset);
   $("hf-import-button").addEventListener("click", () => {
@@ -500,6 +507,17 @@ function setPanel(name, options = {}) {
 }
 
 function stageFocusTarget(stage) {
+  if (state.viewMode === "learn") {
+    return {
+      dataset: "dataset-source-card",
+      tokenizer: "tokenizer-input",
+      base: "base-loss-chart",
+      sft: "sft-loss-chart",
+      eval: "score-table",
+      chat: "prompt-input",
+      report: "report-select",
+    }[stage] || "panel-dataset";
+  }
   return {
     dataset: "panel-dataset",
     tokenizer: "panel-tokenizer",
@@ -524,6 +542,14 @@ function renderStartHere() {
       </div>
       <span>${escapeHtml(nextStep ? `NEXT: ${nextStep.label}` : "READY")}</span>
     </div>
+    <div class="walkthrough-strip">
+      <div>
+        <label>BEGINNER WALKTHROUGH</label>
+        <strong>${escapeHtml(nextStep?.label || "Ready")}</strong>
+        <p>${escapeHtml(nextStep?.action || "Pick a step below to inspect the exact place in the factory.")}</p>
+      </div>
+      <button type="button" data-guide-panel="${escapeHtml(nextStep?.panel || "dataset")}" data-guide-mode="${escapeHtml(nextStep?.mode || "learn")}" data-guide-target="${escapeHtml(nextStep?.target || "panel-dataset")}">SHOW ME</button>
+    </div>
     <div class="start-here-grid">
       ${steps.map((step, index) => `
         <button class="start-step ${escapeHtml(step.status)} ${step.status === "next" ? "active" : ""}" type="button" data-guide-panel="${escapeHtml(step.panel)}" data-guide-mode="${escapeHtml(step.mode || "learn")}" data-guide-target="${escapeHtml(step.target || "")}">
@@ -541,9 +567,12 @@ function focusGuideTarget(targetId) {
   if (!targetId) return;
   const target = $(targetId);
   if (!target) return;
+  const context = target.closest(".terminal-card, .panel-screen, .start-here, .assembly-line");
   target.scrollIntoView({ behavior: "smooth", block: "center" });
   target.classList.remove("guide-target-focus");
+  if (context && context !== target) context.classList.remove("guide-target-context");
   window.requestAnimationFrame(() => {
+    if (context && context !== target) context.classList.add("guide-target-context");
     target.classList.add("guide-target-focus");
     const focusable = target.classList.contains("panel-screen")
       ? null
@@ -553,12 +582,17 @@ function focusGuideTarget(targetId) {
     if (focusable && !focusable.disabled) {
       focusable.focus({ preventScroll: true });
     }
-    window.setTimeout(() => target.classList.remove("guide-target-focus"), 1800);
+    window.setTimeout(() => {
+      target.classList.remove("guide-target-focus");
+      if (context && context !== target) context.classList.remove("guide-target-context");
+    }, 2400);
   });
 }
 
 function startHereSteps() {
-  const hasPack = Boolean($("flight-pack-path")?.value.trim() || state.datasetFlightPlan?.dataset_pack);
+  const flightPack = $("flight-pack-path")?.value.trim();
+  const flightInput = $("flight-input-path")?.value.trim();
+  const hasDatasetSource = Boolean(flightPack || flightInput || state.datasetFlightPlan?.dataset_pack || state.hfImport?.dataset_pack);
   const checkedDataset = Boolean(state.datasetFlightPlan || state.corpusSourcePreview);
   const sftReady = Boolean(state.sftStarter || $("flight-chat-path")?.value.trim());
   const evalReady = Boolean(state.evalStarter || $("flight-eval-path")?.value.trim());
@@ -572,9 +606,10 @@ function startHereSteps() {
       label: "Choose dataset",
       panel: "dataset",
       target: "dataset-source-card",
-      status: hasPack ? "done" : "todo",
-      signal: hasPack ? "Pack selected" : "HF, local docs, or sample",
+      status: hasDatasetSource ? "done" : "todo",
+      signal: hasDatasetSource ? "Source selected" : "HF, local docs, or sample",
       note: "A dataset is the raw text Picochat learns from. Hugging Face import is one way to get it.",
+      action: "Choose Hugging Face, local files, an existing pack, or the sample pack if you do not have data yet.",
     },
     {
       label: "Check readiness",
@@ -583,6 +618,7 @@ function startHereSteps() {
       status: checkedDataset ? "done" : "todo",
       signal: checkedDataset ? "Corpus checked" : "Run dataset check",
       note: "This catches missing files, tiny corpora, duplicate text, and tuning-data blockers early.",
+      action: "Press CHECK DATASET. Picochat will inspect the corpus before any training starts.",
     },
     {
       label: "Create SFT",
@@ -591,6 +627,7 @@ function startHereSteps() {
       status: sftReady ? "done" : "todo",
       signal: sftReady ? "Chat rows selected" : "Generate starter chat rows",
       note: "SFT teaches chat behavior. It is not a substitute for base training knowledge.",
+      action: "Generate starter chat rows, then edit them into real domain conversations before trusting a run.",
     },
     {
       label: "Create eval",
@@ -599,6 +636,7 @@ function startHereSteps() {
       status: evalReady ? "done" : "todo",
       signal: evalReady ? "Eval rows selected" : "Generate starter eval rows",
       note: "Eval is the scoreboard. Keep answerable, refusal, and memorization probes.",
+      action: "Generate starter eval rows. These become the evidence that the model improved without cheating.",
     },
     {
       label: "Inspect/edit",
@@ -608,6 +646,7 @@ function startHereSteps() {
       status: tuningReady ? "done" : "todo",
       signal: tuningReady ? "Tuning ready" : "Open JSONL editor",
       note: "Rewrite starter rows into real domain questions before trusting a run.",
+      action: "Open the JSONL editor and replace starter rows with examples from the dataset domain.",
     },
     {
       label: "Train smoke",
@@ -617,6 +656,7 @@ function startHereSteps() {
       status: hasRun ? "done" : "todo",
       signal: hasRun ? "Run loaded" : "Launch a small run",
       note: "Smoke runs prove the wiring before you spend time on larger experiments.",
+      action: "Launch a smoke run first. Scale only after the data, SFT, and eval wiring are proven.",
     },
     {
       label: "Evaluate/chat",
@@ -625,6 +665,7 @@ function startHereSteps() {
       status: hasEval ? "done" : "todo",
       signal: hasEval ? `${evalSummary.num_passed}/${evalSummary.num_examples} pass` : "Inspect behavior",
       note: "Use eval for evidence and chat for qualitative failure discovery.",
+      action: "Read the eval scoreboard first, then use chat samples to understand the failure cases.",
     },
     {
       label: "Compare",
@@ -633,6 +674,7 @@ function startHereSteps() {
       status: "todo",
       signal: canCompare ? `${state.runs.length} runs available` : "Need two runs",
       note: "A better SLM is a measured improvement, not a single good sample.",
+      action: "Compare runs side by side. Better means lower loss, stronger evals, and no trust regressions.",
     },
   ];
   let markedNext = false;
@@ -1486,6 +1528,39 @@ function applyDatasetPackToWorkflow({ datasetPack, chatInput = "", evalInput = "
 
   $("launch-pack-path").value = datasetPack;
   $("launch-run-name").value = uniqueRunName(runNameSeed || suggestedRunName(datasetPack));
+}
+
+function syncFlightStarterDefaults() {
+  const packPath = $("flight-pack-path").value.trim();
+  const inputPath = $("flight-input-path").value.trim();
+  const chatPath = $("flight-chat-path").value.trim();
+  const evalPath = $("flight-eval-path").value.trim();
+  const sourcePath = packPath || inputPath;
+  if (sourcePath && !$("flight-sft-out-path").value.trim()) {
+    $("flight-sft-out-path").value = suggestedSftStarterPath(chatPath || sourcePath);
+  }
+  if (sourcePath && !$("flight-eval-out-path").value.trim()) {
+    $("flight-eval-out-path").value = suggestedEvalStarterPath(evalPath || sourcePath);
+  }
+  if (packPath) {
+    if (!$("preview-pack-path").value.trim()) $("preview-pack-path").value = packPath;
+    if (!$("tuning-pack-path").value.trim()) $("tuning-pack-path").value = packPath;
+    if (!$("editor-pack-path").value.trim()) $("editor-pack-path").value = packPath;
+    if (!$("launch-pack-path").value.trim()) $("launch-pack-path").value = packPath;
+    if (!$("launch-run-name").value.trim()) $("launch-run-name").value = suggestedRunName(packPath);
+  } else if (inputPath && !$("preview-input-path").value.trim()) {
+    $("preview-input-path").value = inputPath;
+  }
+}
+
+function prepareDatasetSourceMode(mode) {
+  if (mode === "local") {
+    $("flight-pack-path").value = "";
+  } else if (mode === "pack") {
+    $("flight-input-path").value = "";
+  }
+  syncFlightStarterDefaults();
+  renderStartHere();
 }
 
 async function importHfDataset() {
@@ -2521,6 +2596,7 @@ function tuningActionText(chatData, evalData) {
 }
 
 async function createSftStarter() {
+  syncFlightStarterDefaults();
   const packPath = $("flight-pack-path").value.trim();
   const inputPath = $("flight-input-path").value.trim();
   const outPath = $("flight-sft-out-path").value.trim();
@@ -2597,6 +2673,7 @@ function renderSftStarter(report) {
 }
 
 async function createEvalStarter() {
+  syncFlightStarterDefaults();
   const packPath = $("flight-pack-path").value.trim();
   const inputPath = $("flight-input-path").value.trim();
   const outPath = $("flight-eval-out-path").value.trim();
