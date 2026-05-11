@@ -1,0 +1,7 @@
+{
+  "name": "TinyStories v7 transfer curriculum pack (../runs/tinystories-1k/documents)",
+  "description": "TinyStories corpus plus a transfer-focused SFT curriculum. v7 keeps the v6 eval style while adding natural prompts for required words, story continuation, story knowledge, and safety.",
+  "corpus": "../runs/tinystories-1k/documents",
+  "chat": "tinystories_chat_v7.jsonl",
+  "eval": "tinystories_eval_v7.jsonl"
+}

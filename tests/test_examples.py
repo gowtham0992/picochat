@@ -181,6 +181,35 @@ def test_tinystories_eval_v6_examples_are_valid_jsonl():
     assert any("needle" in item.must_not_include for item in items)
 
 
+def test_tinystories_chat_v7_examples_are_valid_jsonl():
+    examples = load_chat_examples(Path("examples/tinystories_chat_v7.jsonl"))
+
+    assert len(examples) >= 1500
+    assert all(example.group for example in examples)
+    assert any(example.group == "v7-required-natural-0" for example in examples)
+    assert any(example.category == "required_words" for example in examples)
+    assert any(example.category == "story_generation" for example in examples)
+    assert any(example.category == "story_knowledge" for example in examples)
+    assert any(example.category == "continuation" for example in examples)
+    assert any(example.category == "memorization_probe" for example in examples)
+    assert any("Do not write a story" in example.user for example in examples)
+    assert any(example.assistant.startswith("Words:") for example in examples)
+    assert any("I do not know" in example.assistant for example in examples)
+
+
+def test_tinystories_eval_v7_examples_are_valid_jsonl():
+    items = load_chat_eval_items(Path("examples/tinystories_eval_v7.jsonl"))
+
+    assert len(items) >= 52
+    assert any(item.category == "required_words" for item in items)
+    assert any(item.category == "story_knowledge" for item in items)
+    assert any(item.split == "transfer" for item in items)
+    assert any(item.split == "knowledge" for item in items)
+    assert any(item.split == "safety" for item in items)
+    assert any(not item.answerable for item in items)
+    assert any("needle" in item.must_not_include for item in items)
+
+
 def test_tinystories_dataset_pack_points_at_local_import_and_examples():
     pack = load_dataset_pack(Path("examples/tinystories_dataset_pack.json"))
 
@@ -243,3 +272,19 @@ def test_tinystories_dataset_pack_v6_10k_points_at_larger_import():
     assert pack.corpus_input == "examples/../runs/tinystories-10k/documents"
     assert pack.chat_input == "examples/tinystories_chat_v6.jsonl"
     assert pack.eval_input == "examples/tinystories_eval_v6.jsonl"
+
+
+def test_tinystories_dataset_pack_v7_points_at_transfer_examples():
+    pack = load_dataset_pack(Path("examples/tinystories_dataset_pack_v7.json"))
+
+    assert pack.corpus_input == "examples/../runs/tinystories-1k/documents"
+    assert pack.chat_input == "examples/tinystories_chat_v7.jsonl"
+    assert pack.eval_input == "examples/tinystories_eval_v7.jsonl"
+
+
+def test_tinystories_dataset_pack_v7_10k_points_at_larger_import():
+    pack = load_dataset_pack(Path("examples/tinystories_dataset_pack_v7_10k.json"))
+
+    assert pack.corpus_input == "examples/../runs/tinystories-10k/documents"
+    assert pack.chat_input == "examples/tinystories_chat_v7.jsonl"
+    assert pack.eval_input == "examples/tinystories_eval_v7.jsonl"
