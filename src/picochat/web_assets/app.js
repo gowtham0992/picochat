@@ -219,7 +219,7 @@ async function requestJson(url, options = {}) {
     try {
       payload = JSON.parse(text);
     } catch {
-      throw new Error(apiNonJsonMessage(response, text));
+      throw new Error(apiNonJsonMessage(url, response, text));
     }
   }
   if (!response.ok) throw apiError(payload, response.statusText);
@@ -245,12 +245,15 @@ function apiTransportMessage(error) {
   return `API request failed: ${error.message}.${hint}`;
 }
 
-function apiNonJsonMessage(response, text) {
+function apiNonJsonMessage(url, response, text) {
   const preview = String(text || "").replace(/\s+/g, " ").trim().slice(0, 160);
+  const restartHint = " Stop the terminal running Picochat web, then restart it: PYTHONPATH=src python -m picochat.cli web --port 8765";
   const hint = location.protocol === "file:"
     ? " You are on file://, so /api routes are not available. Start Picochat with: PYTHONPATH=src python -m picochat.cli web"
-    : " Make sure the Picochat web server is running the latest code.";
-  return `API returned non-JSON (${response.status} ${response.statusText}). ${hint}${preview ? ` Response starts: ${preview}` : ""}`;
+    : response.status === 404 && String(url).startsWith("/api/")
+      ? ` The browser has newer UI code, but the running Python server does not know this API route yet.${restartHint}`
+      : ` The Picochat server returned a page instead of JSON.${restartHint}`;
+  return `API returned non-JSON for ${url} (${response.status} ${response.statusText}).${hint}${preview ? ` Response starts: ${preview}` : ""}`;
 }
 
 function apiError(payload, fallback) {
