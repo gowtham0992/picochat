@@ -8,8 +8,7 @@ from pathlib import Path
 import random
 import re
 
-from picochat.data import read_documents
-from picochat.dataset_pack import load_dataset_pack
+from picochat.data import read_corpus_documents
 
 
 @dataclass(frozen=True)
@@ -38,18 +37,7 @@ def generate_sft_starter(
     out_path = Path(out_path)
     if out_path.exists() and not force:
         raise FileExistsError(f"{out_path} already exists; pass --force to overwrite")
-    if dataset_pack:
-        pack = load_dataset_pack(dataset_pack)
-        if pack.corpus_recipe and not pack.corpus_input:
-            raise ValueError(
-                "sft-starter needs a corpus file/folder path; build or preview the recipe first, "
-                "then pass the built corpus or documents folder with --input"
-            )
-        input_path = pack.corpus_input
-    if input_path is None:
-        raise ValueError("input_path or dataset_pack is required")
-
-    documents = read_documents(input_path)
+    input_display, documents = read_corpus_documents(input_path, dataset_pack=dataset_pack)
     sentences = _sentences_from_documents(documents)
     rng = random.Random(seed)
     rng.shuffle(sentences)
@@ -62,7 +50,7 @@ def generate_sft_starter(
         categories[row["category"]] = categories.get(row["category"], 0) + 1
 
     report = SFTStarterReport(
-        input_path=str(input_path),
+        input_path=input_display,
         output_path=str(out_path),
         num_documents=len(documents),
         num_sentences=len(sentences),

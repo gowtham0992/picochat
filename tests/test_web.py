@@ -661,6 +661,41 @@ def test_sft_starter_plan_accepts_dataset_pack(tmp_path):
     assert report["force"] is True
 
 
+def test_starter_plans_accept_recipe_backed_dataset_pack(tmp_path):
+    docs_dir = tmp_path / "docs"
+    pack_dir = tmp_path / "pack"
+    docs_dir.mkdir()
+    (docs_dir / "lesson.txt").write_text(
+        "Coffee shop training data describes espresso, filters, and pastry pairings. "
+        "The menu changes slowly and should not be treated as live news.\n"
+        "A careful assistant should answer from the provided material and refuse missing facts.",
+        encoding="utf-8",
+    )
+    init_report = init_dataset_pack_plan({
+        "name": "recipe-pack",
+        "corpus_path": str(docs_dir),
+        "out_dir": str(pack_dir),
+    })
+
+    sft_report = sft_starter_plan({
+        "dataset_pack": init_report["dataset_pack"],
+        "out_path": str(pack_dir / "chat_generated.jsonl"),
+        "force": True,
+    })
+    eval_report = eval_starter_plan({
+        "dataset_pack": init_report["dataset_pack"],
+        "out_path": str(pack_dir / "eval_generated.jsonl"),
+        "force": True,
+    })
+
+    assert sft_report["dataset_pack"] == init_report["dataset_pack"]
+    assert eval_report["dataset_pack"] == init_report["dataset_pack"]
+    assert sft_report["input_path"] == init_report["corpus_recipe"]
+    assert eval_report["input_path"] == init_report["corpus_recipe"]
+    assert sft_report["num_documents"] == 1
+    assert eval_report["num_documents"] == 1
+
+
 def test_starter_plans_can_promote_generated_files_to_dataset_pack(tmp_path):
     source_path = tmp_path / "lesson.txt"
     pack_path = tmp_path / "dataset_pack.json"

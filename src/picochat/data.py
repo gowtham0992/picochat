@@ -286,6 +286,27 @@ def read_documents(path: str | Path) -> list[str]:
     return documents
 
 
+def read_corpus_documents(
+    input_path: str | Path | None = None,
+    recipe_path: str | Path | None = None,
+    *,
+    dataset_pack: str | Path | None = None,
+    min_quality_score: int = 0,
+) -> tuple[str, list[str]]:
+    """Read corpus documents from a direct path, recipe, or dataset pack."""
+    if dataset_pack or recipe_path:
+        collected = _collect_corpus_sources(
+            input_path,
+            recipe_path,
+            dataset_pack=dataset_pack,
+            min_quality_score=min_quality_score,
+        )
+        return collected.input_path, list(collected.documents)
+    if input_path is None:
+        raise ValueError("input_path, recipe_path, or dataset_pack is required")
+    return str(input_path), read_documents(input_path)
+
+
 def inspect_documents(documents: list[str], num_files: int | None = None) -> CorpusStats:
     """Compute simple, explainable corpus quality stats."""
     if not documents:
