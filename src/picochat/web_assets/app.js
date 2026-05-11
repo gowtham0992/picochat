@@ -4,6 +4,7 @@ const state = {
   detail: null,
   activePanel: "dataset",
   activeStage: "dataset",
+  viewMode: readInitialViewMode(),
   activeReport: "summary",
   compareRuns: [],
   corpusSourcePreview: null,
@@ -134,12 +135,15 @@ async function postJson(url, body) {
 
 async function boot() {
   bindControls();
+  setViewMode(state.viewMode, { persist: false, render: false });
   await loadRunPresets();
   await loadRuns();
   await loadRunJobs();
 }
 
 function bindControls() {
+  $("learn-mode-button").addEventListener("click", () => setViewMode("learn"));
+  $("inspect-mode-button").addEventListener("click", () => setViewMode("inspect"));
   $("refresh-button").addEventListener("click", loadRuns);
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-copy-command]");
@@ -281,6 +285,34 @@ async function loadRun(name) {
   renderAll();
 }
 
+function readInitialViewMode() {
+  try {
+    return localStorage.getItem("picochat:view-mode") === "inspect" ? "inspect" : "learn";
+  } catch {
+    return "learn";
+  }
+}
+
+function setViewMode(mode, options = {}) {
+  const nextMode = mode === "inspect" ? "inspect" : "learn";
+  state.viewMode = nextMode;
+  document.body.classList.toggle("learn-mode", nextMode === "learn");
+  document.body.classList.toggle("inspect-mode", nextMode === "inspect");
+  $("learn-mode-button").classList.toggle("active", nextMode === "learn");
+  $("inspect-mode-button").classList.toggle("active", nextMode === "inspect");
+  if (options.persist !== false) {
+    try {
+      localStorage.setItem("picochat:view-mode", nextMode);
+    } catch {
+      // localStorage can be unavailable in restricted browser contexts.
+    }
+  }
+  if (options.render !== false) {
+    renderPanelGuide();
+    renderStatus();
+  }
+}
+
 function renderAll() {
   renderPanelGuide();
   renderPipeline();
@@ -359,6 +391,7 @@ function renderPipeline() {
   $("pipeline-run").textContent = state.selectedRun ? `RUN ${state.selectedRun}` : "NO RUN";
   $("pipeline-strip").innerHTML = stages.map((stage) => renderPipelineStage(stage)).join("");
   const active = stages.find((stage) => stage.id === state.activeStage) || stages[0];
+  $("pipeline-verdict").innerHTML = learningVerdict(stages);
   $("pipeline-detail").innerHTML = active ? stageDetail(active) : "LOAD A RUN TO INSPECT THE PIPELINE.";
   $("run-doctor").innerHTML = runDoctor(stages);
 }
@@ -721,6 +754,68 @@ function runDoctor(stages) {
       </div>
     </div>
   `;
+}
+
+function learningVerdict(stages) {
+  if (!state.detail) return "LOAD A RUN TO SEE THE EXPERIMENT VERDICT.";
+  const rows = doctorRows(stages);
+  const summary = state.detail?.summary || {};
+  const evalReport = state.detail?.eval_reports?.at(-1)?.report;
+  const evalSummary = evalReport?.summary || summary.eval || {};
+  const levelRows = evalReport ? evalLevelRows(evalReport) : [];
+  const strongest = bestLevel(levelRows, "high");
+  const weakest = bestLevel(levelRows, "low");
+  const firstRecommendation = evalReport?.analysis?.recommendations?.[0];
+  const baseStatus = summary.base?.loss_diagnostics?.status || state.detail?.base_report?.loss_diagnostics?.status || "--";
+  const sftStatus = summary.sft?.loss_diagnostics?.status || state.detail?.sft_report?.loss_diagnostics?.status || "--";
+  const next = rows.find((row) =>
+    row.health.className !== "ready" &&
+    row.health.className !== "live" &&
+    !row.missingInputs.length
+  ) || rows.find((row) =>
+    row.health.className !== "ready" &&
+    row.health.className !== "live"
+  );
+  const passRate = Number.isFinite(Number(evalSummary.pass_rate)) ? fmtPercent(evalSummary.pass_rate) : "--";
+  const headline = passRate === "--"
+    ? "This run has not reached eval yet."
+    : `This run passes ${passRate} of the visible eval.`;
+  const weakText = weakest
+    ? `${weakest.level} is weakest at ${fmtPercent(weakest.passRate)}.`
+    : "No eval ladder yet.";
+  const strongText = strongest
+    ? `${strongest.level} is strongest at ${fmtPercent(strongest.passRate)}.`
+    : "Train and eval to reveal strengths.";
+  const nextAction = firstRecommendation?.action || next?.message || "Open Inspect mode for artifacts and exact commands.";
+  const nextLabel = firstRecommendation?.area
+    ? String(firstRecommendation.area).toUpperCase()
+    : next?.stage?.label || "INSPECT";
+  return `
+    <div class="verdict-card">
+      <div>
+        <label>EXPERIMENT VERDICT</label>
+        <strong>${escapeHtml(headline)}</strong>
+        <p>${escapeHtml(weakText)}</p>
+      </div>
+      <div>
+        <label>LEARNED</label>
+        <strong>${escapeHtml(strongText)}</strong>
+        <p>Base ${escapeHtml(baseStatus)} | SFT ${escapeHtml(sftStatus)}</p>
+      </div>
+      <div>
+        <label>NEXT MOVE</label>
+        <strong>${escapeHtml(nextLabel)}</strong>
+        <p>${escapeHtml(nextAction)}</p>
+      </div>
+    </div>
+  `;
+}
+
+function bestLevel(rows, direction) {
+  const candidates = rows.filter((row) => row.numExamples > 0);
+  if (!candidates.length) return null;
+  const sorted = [...candidates].sort((left, right) => left.passRate - right.passRate);
+  return direction === "high" ? sorted.at(-1) : sorted[0];
 }
 
 function datasetCommand(config, artifacts) {
@@ -2353,6 +2448,7 @@ function renderEval() {
   $("eval-status").textContent = `${latest.name.toUpperCase()} ${report.summary.num_passed}/${report.summary.num_examples}`;
   $("score-table").innerHTML = `
     ${renderEvalReadout(report, levelRows)}
+    ${renderEvalLearningFocus(report, levelRows)}
     <label>HONESTY SUMMARY</label>
     <div class="eval-summary-cards">
       <div class="pipeline-stat">
@@ -2380,27 +2476,29 @@ function renderEval() {
         <span>${honesty.numUnanswerable}/${honesty.numExamples}</span>
       </div>
     </div>
-    ${renderEvalCategoryTable(categoryRows)}
-    ${renderEvalSplitTable(splitRows)}
-    ${renderEvalLevelTable(levelRows)}
-    <label>ARCADE SCORE TABLE</label>
-    <table>
-      <thead><tr><th>Rank</th><th>Prompt</th><th>Kind</th><th>Level</th><th>Status</th><th>Support</th><th>Echo</th><th>Forbidden</th></tr></thead>
-      <tbody>
-        ${report.examples.map((item, index) => `
-          <tr>
-            <td>${String(index + 1).padStart(2, "0")}</td>
-            <td>${escapeHtml(item.user)}</td>
-            <td>${evalKindTag(item)}</td>
-            <td>${escapeHtml(item.level || "heldout")}</td>
-            <td class="${item.passed ? "pass-text" : "fail-text"}">${item.passed ? "PASS" : "FAIL"}</td>
-            <td class="${hasMissingSupport(item) ? "fail-text" : "pass-text"}">${hasMissingSupport(item) ? "MISSING" : "COVERED"}</td>
-            <td class="${hasPromptEcho(item) ? "fail-text" : "pass-text"}">${hasPromptEcho(item) ? "ECHO" : "CLEAR"}</td>
-            <td class="${hasForbiddenClaim(item) ? "fail-text" : "pass-text"}">${hasForbiddenClaim(item) ? "FOUND" : "CLEAR"}</td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
+    <div class="inspect-only">
+      ${renderEvalCategoryTable(categoryRows)}
+      ${renderEvalSplitTable(splitRows)}
+      ${renderEvalLevelTable(levelRows)}
+      <label>ARCADE SCORE TABLE</label>
+      <table>
+        <thead><tr><th>Rank</th><th>Prompt</th><th>Kind</th><th>Level</th><th>Status</th><th>Support</th><th>Echo</th><th>Forbidden</th></tr></thead>
+        <tbody>
+          ${report.examples.map((item, index) => `
+            <tr>
+              <td>${String(index + 1).padStart(2, "0")}</td>
+              <td>${escapeHtml(item.user)}</td>
+              <td>${evalKindTag(item)}</td>
+              <td>${escapeHtml(item.level || "heldout")}</td>
+              <td class="${item.passed ? "pass-text" : "fail-text"}">${item.passed ? "PASS" : "FAIL"}</td>
+              <td class="${hasMissingSupport(item) ? "fail-text" : "pass-text"}">${hasMissingSupport(item) ? "MISSING" : "COVERED"}</td>
+              <td class="${hasPromptEcho(item) ? "fail-text" : "pass-text"}">${hasPromptEcho(item) ? "ECHO" : "CLEAR"}</td>
+              <td class="${hasForbiddenClaim(item) ? "fail-text" : "pass-text"}">${hasForbiddenClaim(item) ? "FOUND" : "CLEAR"}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
   `;
   $("eval-results").innerHTML = report.examples.map((item, index) => evalCard(item, index)).join("");
 }
@@ -2417,6 +2515,34 @@ function renderEvalReadout(report, levelRows) {
       <span>Pass rate is the broad score; ladder shows the failure type.</span>
       <span>Weakest level: ${escapeHtml(weakest ? `${weakest.level} ${fmtPercent(weakest.passRate)}` : "--")}</span>
       <span>${escapeHtml(supportText)}; this checks overlap, not semantic truth.</span>
+    </div>
+  `;
+}
+
+function renderEvalLearningFocus(report, levelRows) {
+  const failed = (report.analysis?.failed_examples || []).slice(0, 3);
+  const weakest = levelRows
+    .filter((row) => row.numExamples > 0)
+    .sort((left, right) => left.passRate - right.passRate)[0];
+  const recommendation = report.analysis?.recommendations?.[0];
+  return `
+    <div class="learning-focus learn-only">
+      <div>
+        <label>WEAKEST LEVEL</label>
+        <strong>${escapeHtml(weakest ? weakest.level : "--")}</strong>
+        <p>${weakest ? `${weakest.numPassed}/${weakest.numExamples} passed. Improve this before scaling.` : "No ladder data found."}</p>
+      </div>
+      <div>
+        <label>NEXT DATA FIX</label>
+        <strong>${escapeHtml(recommendation?.area || "curriculum")}</strong>
+        <p>${escapeHtml(recommendation?.action || "Inspect failed examples and add targeted SFT rows.")}</p>
+      </div>
+      <div>
+        <label>FAILURE SAMPLES</label>
+        ${failed.length ? failed.map((item) => `
+          <p><b>#${escapeHtml(item.index)}</b> ${escapeHtml(item.level || item.split || "--")} / ${escapeHtml((item.clusters || item.reasons || []).join(", ") || "inspect")}</p>
+        `).join("") : "<p>No failed examples in this report.</p>"}
+      </div>
     </div>
   `;
 }
@@ -2645,7 +2771,7 @@ function renderStatus() {
   const ctx = summary?.config?.context_size ?? "--";
   const seed = padSeed(summary?.config?.seed);
   const run = state.selectedRun || "--";
-  $("status-line").textContent = `READY. | PANEL ${state.activePanel.toUpperCase()} | RUN ${run} | CTX ${ctx} | TOK ${tok} | SEED ${seed}`;
+  $("status-line").textContent = `READY. | MODE ${state.viewMode.toUpperCase()} | PANEL ${state.activePanel.toUpperCase()} | RUN ${run} | CTX ${ctx} | TOK ${tok} | SEED ${seed}`;
 }
 
 boot().catch((error) => {

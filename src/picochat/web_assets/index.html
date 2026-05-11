@@ -14,7 +14,13 @@
           <p class="kicker">PICOCHAT / LOCAL LLM FACTORY</p>
           <h1>PICOCHAT WORKBENCH</h1>
         </div>
-        <button id="refresh-button" type="button">REFRESH</button>
+        <div class="header-actions">
+          <div class="mode-toggle" aria-label="Workbench mode">
+            <button id="learn-mode-button" class="active" type="button">LEARN</button>
+            <button id="inspect-mode-button" type="button">INSPECT</button>
+          </div>
+          <button id="refresh-button" type="button">REFRESH</button>
+        </div>
       </header>
 
       <main class="terminal-grid">
@@ -33,8 +39,9 @@
               <span id="pipeline-run">NO RUN</span>
             </div>
             <div id="pipeline-strip" class="pipeline-strip"></div>
-            <div id="pipeline-detail" class="pipeline-detail">LOAD A RUN TO INSPECT THE PIPELINE.</div>
-            <div id="run-doctor" class="run-doctor">RUN DOCTOR WAITING FOR A RUN.</div>
+            <div id="pipeline-verdict" class="learning-verdict learn-only">LOAD A RUN TO SEE THE EXPERIMENT VERDICT.</div>
+            <div id="pipeline-detail" class="pipeline-detail inspect-only">LOAD A RUN TO INSPECT THE PIPELINE.</div>
+            <div id="run-doctor" class="run-doctor inspect-only">RUN DOCTOR WAITING FOR A RUN.</div>
           </section>
 
           <nav class="tab-strip" aria-label="Pipeline panels">
@@ -76,7 +83,7 @@
                 <div id="corpus-files" class="source-list"></div>
               </div>
             </div>
-            <div class="terminal-card dataset-preview-card">
+            <div class="terminal-card dataset-preview-card inspect-only">
               <label>PACK BUILDER</label>
               <div class="pack-builder-controls">
                 <div>
@@ -104,7 +111,7 @@
               <div id="pack-builder-status" class="notice">NO PACK INIT REQUESTED.</div>
               <div id="pack-builder-result" class="command-tape source-command"></div>
             </div>
-            <div class="terminal-card dataset-preview-card">
+            <div class="terminal-card dataset-preview-card inspect-only">
               <label>TUNING DATA INSPECTOR</label>
               <div class="tuning-inspector-controls">
                 <div>
@@ -126,7 +133,7 @@
               <div id="tuning-inspector-result" class="tuning-preflight"></div>
               <div id="tuning-inspector-command" class="command-tape source-command"></div>
             </div>
-            <div class="terminal-card dataset-preview-card">
+            <div class="terminal-card dataset-preview-card inspect-only">
               <label>PACK JSONL EDITOR</label>
               <div class="pack-editor-controls">
                 <div>
@@ -160,7 +167,7 @@
                 </div>
               </div>
             </div>
-            <div class="terminal-card dataset-preview-card">
+            <div class="terminal-card dataset-preview-card inspect-only">
               <label>SOURCE PREVIEW</label>
               <div class="preview-controls">
                 <div>
@@ -207,7 +214,7 @@
               <label>PREVIEW TEXT</label>
               <pre id="source-preview-text">READY.</pre>
             </div>
-            <div class="terminal-card dataset-preview-card">
+            <div class="terminal-card dataset-preview-card inspect-only">
               <label>RUN LAUNCHER</label>
               <div class="run-launch-controls">
                 <div>
@@ -267,7 +274,7 @@
               <div id="run-launch-command" class="command-tape source-command"></div>
               <pre id="run-launch-log" class="run-log">READY.</pre>
             </div>
-            <div class="terminal-card dataset-preview-card">
+            <div class="terminal-card dataset-preview-card inspect-only">
               <label>RUN CORPUS PREVIEW</label>
               <pre id="corpus-preview"></pre>
             </div>

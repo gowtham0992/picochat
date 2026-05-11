@@ -159,6 +159,38 @@ h2 {
   padding: 16px;
 }
 
+.header-actions,
+.mode-toggle {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.mode-toggle {
+  border: 1px solid var(--line);
+  gap: 0;
+}
+
+.mode-toggle button {
+  border: 0;
+  border-right: 1px solid var(--line);
+  min-height: 32px;
+}
+
+.mode-toggle button:last-child {
+  border-right: 0;
+}
+
+.learn-mode .inspect-only,
+.inspect-mode .learn-only {
+  display: none !important;
+}
+
+.learn-mode #training-table,
+.learn-mode #eval-results {
+  display: none;
+}
+
 .terminal-grid {
   display: grid;
   gap: 12px;
@@ -338,6 +370,40 @@ h2 {
   gap: 8px;
   min-height: 70px;
   padding: 10px;
+}
+
+.learning-verdict {
+  border-top: 1px solid var(--line);
+  padding: 10px;
+}
+
+.verdict-card {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.verdict-card > div {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 5px;
+  min-height: 96px;
+  padding: 8px;
+}
+
+.verdict-card label {
+  margin: 0;
+}
+
+.verdict-card strong {
+  color: var(--accent);
+  line-height: 1.3;
+}
+
+.verdict-card p {
+  color: var(--muted);
+  line-height: 1.35;
 }
 
 .pipeline-detail-grid {
@@ -1305,6 +1371,39 @@ th {
   line-height: 1.35;
 }
 
+.learning-focus {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.learning-focus > div {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 5px;
+  min-height: 104px;
+  padding: 8px;
+}
+
+.learning-focus label {
+  margin: 0;
+}
+
+.learning-focus strong {
+  color: var(--accent);
+}
+
+.learning-focus p {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.learning-focus b {
+  color: var(--ink);
+}
+
 .eval-category-table {
   margin-bottom: 14px;
 }
@@ -1404,6 +1503,7 @@ th {
   .tab-strip,
   .pipeline-strip,
   .pipeline-detail-grid,
+  .verdict-card,
   .doctor-body,
   .doctor-list,
   .guide-strip,
@@ -1424,7 +1524,8 @@ th {
   .compare-layout,
   .compare-cards,
   .eval-summary-cards,
-  .teaching-note {
+  .teaching-note,
+  .learning-focus {
     grid-template-columns: 1fr;
   }
 
