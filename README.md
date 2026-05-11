@@ -73,17 +73,35 @@ pico web --runs-dir runs --port 8765
 The local web UI is artifact-backed. It reads files produced by runs; it does
 not show fake training data.
 
+- **Start Here:** beginner walkthrough for choosing data, checking readiness,
+  creating starter SFT/eval files, smoke training, evaluating, comparing, and
+  promoting a run.
 - **Factory Flow:** the real pipeline from dataset to report.
 - **Dataset Bay:** corpus stats, quality checks, training windows, pack builder,
-  JSONL editor, tuning-data inspection, run launcher, and preview.
+  Hugging Face import, JSONL editor, tuning-data inspection, run launcher, and
+  preview.
 - **Tokenizer Lab:** text-to-token-ID inspection from the trained tokenizer.
 - **Training Dash:** base and SFT loss traces, including memorization warnings.
 - **Generation Deck:** live generation from the selected base or SFT checkpoint,
   with temperature, top-k, top-p, repetition penalty, token probabilities, and
   seed controls.
-- **Eval Scoreboard:** pass/fail results plus honesty metrics.
+- **Eval Scoreboard:** pass/fail results, honesty metrics, failure ladder, and
+  repair guidance that keeps held-out eval prompts out of SFT.
 - **Report Vault:** generated Markdown reports rendered inside the workbench.
-- **Compare Runs:** side-by-side eval, loss, parameter, and context comparisons.
+- **Compare Runs:** side-by-side eval, loss, parameter, and context comparisons
+  with champion/regression/next-experiment gates.
+
+The intended learning loop is:
+
+```text
+choose data -> check readiness -> make held-out eval -> smoke train
+  -> inspect failures -> add non-eval SFT practice -> rerun
+  -> compare -> promote only if trust checks do not regress
+```
+
+Do not copy failed eval prompts directly into SFT. Eval is the scoreboard;
+SFT is the practice set. Picochat tries to make that separation visible because
+otherwise a tiny model can look better by memorizing the test.
 
 ## Run Artifacts
 
