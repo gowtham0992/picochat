@@ -1691,10 +1691,19 @@ function syncFlightStarterDefaults() {
 }
 
 function prepareDatasetSourceMode(mode) {
+  const messages = {
+    hf: "SOURCE MODE: HUGGING FACE. | Paste a dataset repo or URL, then import.",
+    local: "SOURCE MODE: LOCAL DOCS. | Enter a folder or file path, then check readiness.",
+    pack: "SOURCE MODE: DATASET PACK. | Enter dataset_pack.json, then check readiness.",
+  };
   if (mode === "local") {
     $("flight-pack-path").value = "";
   } else if (mode === "pack") {
     $("flight-input-path").value = "";
+  }
+  if (messages[mode]) {
+    $("flight-status").textContent = messages[mode];
+    flashStatus(messages[mode]);
   }
   syncFlightStarterDefaults();
   renderStartHere();
