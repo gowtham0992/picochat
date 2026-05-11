@@ -78,8 +78,8 @@ not show fake training data.
   promoting a run.
 - **Factory Flow:** the real pipeline from dataset to report.
 - **Dataset Bay:** corpus stats, quality checks, training windows, pack builder,
-  Hugging Face import, JSONL editor, tuning-data inspection, run launcher, and
-  preview.
+  Hugging Face import, JSONL editor, tuning-data inspection, launcher preflight,
+  live CLI command preview, run launcher, and preview.
 - **Tokenizer Lab:** text-to-token-ID inspection from the trained tokenizer.
 - **Training Dash:** base and SFT loss traces, including memorization warnings.
 - **Generation Deck:** live generation from the selected base or SFT checkpoint,
@@ -419,10 +419,19 @@ The inspector also reports eval ladder counts so you can see whether the suite
 is only smoke tests or has held-out, transfer, adversarial, and memorization
 coverage.
 The Pack JSONL Editor can load and save those chat/eval files directly, and
-the Run Launcher starts `run tiny` from a dataset pack while streaming a local
-`web_run.log` tail. Web-launched runs stay visible after page reload because
-the workbench rediscovers run folders that contain `web_run.log`; active runs
-can also be cancelled from the launcher. Launcher presets (`smoke`, `tiny`,
+starter results explain whether the generated SFT/eval file is connected to
+the dataset pack or merely saved as a standalone path. Connected starter files
+are loaded back into the editor so you can rewrite them before training; eval
+starter prompts must stay held out and should not be copied into SFT.
+
+The Run Launcher starts `run tiny` from a dataset pack while streaming a local
+`web_run.log` tail. Before launch, it runs a local preflight over the current
+fields, catches common shape mistakes such as `n_embd` not dividing by
+`n_head`, and shows the equivalent CLI command. The command preview is meant
+for learning and reproduction: the UI should never hide what it is about to
+run. Web-launched runs stay visible after page reload because the workbench
+rediscovers run folders that contain `web_run.log`; active runs can also be
+cancelled from the launcher. Launcher presets (`smoke`, `pico`,
 `small-local`, `small`, and `medium`) keep run sizes explicit, and Source
 Preview's budget estimate can be applied directly to the launcher controls.
 
