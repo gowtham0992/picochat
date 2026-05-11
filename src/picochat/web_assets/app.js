@@ -980,6 +980,7 @@ function guideChooseDatasetContent() {
         <p class="kicker">STEP 01</p>
         <h2>Choose the text your tiny model will learn from.</h2>
         <p>A dataset is just source material. Picochat converts it into local documents and a dataset pack so the rest of training is reproducible.</p>
+        <button type="button" data-guide-action="reset-guide">START A FRESH GUIDED BUILD</button>
       </div>
       <div class="guide-source-grid">
         <div class="guide-card primary">
@@ -1250,6 +1251,12 @@ function syncGuideInputs(event) {
 }
 
 async function handleGuideAction(action) {
+  if (action === "reset-guide") {
+    resetGuidedWorkflow();
+    setGuideStep(0);
+    flashStatus("GUIDE RESET. | CHOOSE A DATASET SOURCE.");
+    return;
+  }
   if (action === "import-hf") {
     syncGuideInputValues();
     await importHfDataset();
@@ -1346,6 +1353,57 @@ async function handleGuideAction(action) {
     setViewMode("learn");
     setPanel("generation", { focus: true, focusTarget: "panel-generation" });
   }
+}
+
+function resetGuidedWorkflow() {
+  state.datasetFlightPlan = null;
+  state.corpusSourcePreview = null;
+  state.hfImport = null;
+  state.sftStarter = null;
+  state.evalStarter = null;
+  state.tuningInspection = null;
+  state.packEditor = null;
+  state.runJob = null;
+  state.guideRunName = null;
+  [
+    "flight-pack-path",
+    "flight-input-path",
+    "flight-chat-path",
+    "flight-sft-out-path",
+    "flight-eval-path",
+    "flight-eval-out-path",
+    "hf-dataset-input",
+    "hf-out-dir",
+    "hf-config-name",
+    "preview-pack-path",
+    "preview-input-path",
+    "preview-chat-path",
+    "preview-eval-path",
+    "tuning-pack-path",
+    "tuning-chat-path",
+    "tuning-eval-path",
+    "editor-pack-path",
+    "editor-chat-path",
+    "editor-eval-path",
+    "launch-pack-path",
+  ].forEach((id) => {
+    if ($(id)) $(id).value = "";
+  });
+  $("hf-split").value = "train";
+  $("hf-text-column").value = "text";
+  $("hf-max-rows").value = "1000";
+  $("hf-min-chars").value = "20";
+  $("flight-min-score").value = "0";
+  $("launch-run-name").value = "";
+  renderDatasetFlightPlan(null);
+  renderHfImport(null);
+  renderSftStarter(null);
+  renderEvalStarter(null);
+  renderCorpusSourcePreview(null);
+  renderTuningInspection(null);
+  renderPackEditor(null);
+  renderRunJob(null);
+  renderLaunchReadiness();
 }
 
 function syncGuideInputValues() {
