@@ -389,9 +389,10 @@ def chat_eval_report_markdown(report: dict) -> str:
     lines.append("# Picochat Chat Eval Report")
     lines.append("")
     lines.append(
-        "This eval uses visible substring checks. It is intentionally simple: "
+        "This eval uses visible word-aware phrase checks. It is intentionally simple: "
         "a reply passes when all required phrases appear, each any-phrase group "
-        "has at least one match, and no forbidden phrases appear."
+        "has at least one match, and no forbidden phrases appear. Format markers "
+        "such as `Story:` stay literal."
     )
     lines.append("")
 
@@ -473,9 +474,10 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append(
             "These metrics are deliberately narrow and inspectable. "
             "Unsupported claim rate counts replies that contain forbidden phrases "
-            "from the eval row. Prompt echo rate counts replies that regenerate "
-            "chat role labels or visibly start with the user prompt. Missing "
-            "support rate counts replies that missed required phrases or any-phrase groups."
+            "from the eval row using word-aware matching. Prompt echo rate counts "
+            "replies that regenerate chat role labels or visibly start with the "
+            "user prompt. Missing support rate counts replies that missed required "
+            "phrases or any-phrase groups."
         )
         lines.append("")
         lines.append(

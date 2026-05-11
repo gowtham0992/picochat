@@ -173,48 +173,29 @@ def score_reply(
     support_corpus_text: str | None = None,
     corpus_support_threshold: float = 0.25,
 ) -> dict:
-    """Score a reply with visible substring rules."""
+    """Score a reply with visible word-aware phrase rules."""
     prompt_echo_reasons = detect_prompt_echo(reply, item.user, case_sensitive=case_sensitive)
     prompt_echo = bool(prompt_echo_reasons)
-    if case_sensitive:
-        haystack = reply
-        includes = item.must_include
-        include_any = item.must_include_any
-        forbidden = item.must_not_include
-    else:
-        haystack = reply.lower()
-        includes = tuple(phrase.lower() for phrase in item.must_include)
-        include_any = tuple(
-            tuple(phrase.lower() for phrase in group)
-            for group in item.must_include_any
-        )
-        forbidden = tuple(phrase.lower() for phrase in item.must_not_include)
 
     missing = [
-        original
-        for original, normalized in zip(item.must_include, includes, strict=True)
-        if normalized not in haystack
+        phrase
+        for phrase in item.must_include
+        if not _contains_eval_phrase(reply, phrase, case_sensitive=case_sensitive)
     ]
     missing_any = [
-        list(original_group)
-        for original_group, normalized_group in zip(
-            item.must_include_any,
-            include_any,
-            strict=True,
-        )
-        if not any(phrase in haystack for phrase in normalized_group)
+        list(group)
+        for group in item.must_include_any
+        if not any(_contains_eval_phrase(reply, phrase, case_sensitive=case_sensitive) for phrase in group)
     ]
     found_forbidden = [
-        original
-        for original, normalized in zip(item.must_not_include, forbidden, strict=True)
-        if normalized in haystack
+        phrase
+        for phrase in item.must_not_include
+        if _contains_eval_phrase(reply, phrase, case_sensitive=case_sensitive)
     ]
-    entity_haystack = haystack if case_sensitive else _normalize_for_match(reply)
-    entity_needles = item.required_entities if case_sensitive else tuple(_normalize_for_match(entity) for entity in item.required_entities)
     missing_entities = [
-        original
-        for original, normalized in zip(item.required_entities, entity_needles, strict=True)
-        if normalized and normalized not in entity_haystack
+        entity
+        for entity in item.required_entities
+        if not _contains_eval_phrase(reply, entity, case_sensitive=case_sensitive)
     ]
     length_violations = _length_violations(reply, item)
     reference_metrics = _reference_metrics(reply, item.reference_answer)
@@ -786,6 +767,47 @@ def _preview_text(text: str, limit: int = 160) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3] + "..."
+
+
+def _contains_eval_phrase(text: str, phrase: str, case_sensitive: bool = False) -> bool:
+    phrase = phrase.strip()
+    if not phrase:
+        return True
+
+    literal_text = text if case_sensitive else text.lower()
+    literal_phrase = phrase if case_sensitive else phrase.lower()
+    if _requires_literal_phrase_match(phrase):
+        return literal_phrase in literal_text
+
+    phrase_tokens = _match_tokens(phrase, case_sensitive=case_sensitive)
+    if not phrase_tokens:
+        return literal_phrase in literal_text
+    text_tokens = _match_tokens(text, case_sensitive=case_sensitive)
+    return _contains_token_sequence(text_tokens, phrase_tokens)
+
+
+def _requires_literal_phrase_match(phrase: str) -> bool:
+    """Keep format labels like `Story:` precise while matching normal words by token."""
+    return ":" in phrase and len(_match_tokens(phrase, case_sensitive=True)) == 1
+
+
+def _match_tokens(text: str, case_sensitive: bool = False) -> list[str]:
+    tokens = re.findall(r"[A-Za-z0-9]+", text)
+    if case_sensitive:
+        return tokens
+    return [token.lower() for token in tokens]
+
+
+def _contains_token_sequence(tokens: list[str], phrase_tokens: list[str]) -> bool:
+    if not phrase_tokens:
+        return True
+    if len(phrase_tokens) > len(tokens):
+        return False
+    limit = len(tokens) - len(phrase_tokens) + 1
+    for index in range(limit):
+        if tokens[index:index + len(phrase_tokens)] == phrase_tokens:
+            return True
+    return False
 
 
 def _length_violations(reply: str, item: ChatEvalItem) -> list[str]:

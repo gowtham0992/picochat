@@ -69,6 +69,39 @@ def test_score_reply_checks_required_and_forbidden_phrases():
     assert failing["found_forbidden"] == ["unknown"]
 
 
+def test_score_reply_uses_word_aware_phrase_matching():
+    item = ChatEvalItem(
+        user="Should refuse weather?",
+        must_include=("do not know",),
+        must_include_any=(("story model", "tiny story"),),
+        must_not_include=("no", "raining"),
+        answerable=False,
+    )
+
+    score = score_reply(
+        "I do not know. I am a tiny story model, so I should not give training facts.",
+        item,
+    )
+
+    assert score["passed"] is True
+    assert score["found_forbidden"] == []
+
+
+def test_score_reply_keeps_format_markers_literal():
+    item = ChatEvalItem(
+        user="Tell a story.",
+        must_include=("Story:",),
+        must_not_include=("User:",),
+    )
+
+    score = score_reply("A story can be short, but this has no label.", item)
+    tagged = score_reply("Story: A short tale.", item)
+
+    assert score["passed"] is False
+    assert score["missing"] == ["Story:"]
+    assert tagged["passed"] is True
+
+
 def test_score_reply_blocks_prompt_echo():
     item = ChatEvalItem(
         user="Subject = turtle; lesson = sharing.",

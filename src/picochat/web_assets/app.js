@@ -22,6 +22,51 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
+const PANEL_GUIDES = {
+  dataset: {
+    station: "DATASET BAY",
+    question: "Is this source worth training on?",
+    signal: "Low duplication, enough documents, clear held-out split.",
+    caution: "Tiny or repeated text mostly teaches memorization.",
+  },
+  tokenizer: {
+    station: "TOKENIZER LAB",
+    question: "How does text become model IDs?",
+    signal: "BPE should lower BPB versus char/byte on the same corpus.",
+    caution: "Bigger vocab can help compression but raises model parameters.",
+  },
+  training: {
+    station: "TRAINING DASH",
+    question: "Is loss improving without memorizing?",
+    signal: "Validation loss falls, gap stays controlled, best checkpoint is clear.",
+    caution: "Train loss falling while val stalls means more steps may hurt.",
+  },
+  generation: {
+    station: "GENERATION DECK",
+    question: "What does the checkpoint actually say?",
+    signal: "Prompt constraints appear without role echo or loops.",
+    caution: "Sampling settings change style; they do not add knowledge.",
+  },
+  eval: {
+    station: "EVAL SCOREBOARD",
+    question: "Which behavior failed, not just how many?",
+    signal: "Ladder levels separate heldout, transfer, adversarial, and memorization.",
+    caution: "Treat weak levels as the next curriculum target.",
+  },
+  report: {
+    station: "REPORT VAULT",
+    question: "Can the score be traced back to evidence?",
+    signal: "Reports tie data, config, checkpoint, loss, eval, and warnings together.",
+    caution: "A number without artifacts is not a useful experiment.",
+  },
+  compare: {
+    station: "COMPARE RUNS",
+    question: "Did the change actually help?",
+    signal: "Compare pass rate with BPB and memorization, not raw loss alone.",
+    caution: "Raw loss is only comparable when tokenizer and eval are the same.",
+  },
+};
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -237,6 +282,7 @@ async function loadRun(name) {
 }
 
 function renderAll() {
+  renderPanelGuide();
   renderPipeline();
   renderDataset();
   renderTokenizer();
@@ -285,6 +331,7 @@ function setPanel(name) {
   document.querySelectorAll(".panel-screen").forEach((panel) => {
     panel.classList.toggle("active", panel.id === `panel-${name}`);
   });
+  renderPanelGuide();
   renderPipeline();
   if (name === "report") {
     loadReport().catch((error) => renderReportError(error));
@@ -292,6 +339,19 @@ function setPanel(name) {
     loadComparison().catch((error) => renderCompareError(error));
   }
   renderStatus();
+}
+
+function renderPanelGuide() {
+  const guide = PANEL_GUIDES[state.activePanel] || PANEL_GUIDES.dataset;
+  $("panel-guide").innerHTML = `
+    <div>
+      <label>LEARNING SIGNAL</label>
+      <strong>${escapeHtml(guide.station)}</strong>
+    </div>
+    <p><b>Question</b> ${escapeHtml(guide.question)}</p>
+    <p><b>Healthy</b> ${escapeHtml(guide.signal)}</p>
+    <p><b>Watch</b> ${escapeHtml(guide.caution)}</p>
+  `;
 }
 
 function renderPipeline() {
@@ -2292,6 +2352,7 @@ function renderEval() {
   const levelRows = evalLevelRows(report);
   $("eval-status").textContent = `${latest.name.toUpperCase()} ${report.summary.num_passed}/${report.summary.num_examples}`;
   $("score-table").innerHTML = `
+    ${renderEvalReadout(report, levelRows)}
     <label>HONESTY SUMMARY</label>
     <div class="eval-summary-cards">
       <div class="pipeline-stat">
@@ -2342,6 +2403,22 @@ function renderEval() {
     </table>
   `;
   $("eval-results").innerHTML = report.examples.map((item, index) => evalCard(item, index)).join("");
+}
+
+function renderEvalReadout(report, levelRows) {
+  const weakest = levelRows
+    .filter((row) => row.numExamples > 0)
+    .sort((left, right) => left.passRate - right.passRate)[0];
+  const support = report.summary?.average_corpus_support_rate;
+  const supportText = support === null || support === undefined ? "no support corpus" : `${fmtPercent(support)} corpus overlap`;
+  return `
+    <div class="teaching-note">
+      <strong>READOUT</strong>
+      <span>Pass rate is the broad score; ladder shows the failure type.</span>
+      <span>Weakest level: ${escapeHtml(weakest ? `${weakest.level} ${fmtPercent(weakest.passRate)}` : "--")}</span>
+      <span>${escapeHtml(supportText)}; this checks overlap, not semantic truth.</span>
+    </div>
+  `;
 }
 
 function evalHonestySummary(report) {
