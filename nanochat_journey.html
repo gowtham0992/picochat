@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>nanochat Journey: From Initial Commit to 1.65h GPT-2</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 40px 20px; }
+.container { max-width: 1200px; margin: 0 auto; }
+h1 { text-align: center; font-size: 2em; margin-bottom: 10px; color: #58a6ff; }
+.subtitle { text-align: center; color: #8b949e; margin-bottom: 50px; }
+.chart-section { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 30px; margin-bottom: 40px; }
+.chart-section h2 { color: #58a6ff; margin-bottom: 20px; font-size: 1.3em; }
+.chart-wrapper { position: relative; width: 100%; height: 380px; }
+.timeline { position: relative; padding: 20px 0; }
+.timeline::before { content: ''; position: absolute; left: 50px; top: 0; bottom: 0; width: 3px; background: #30363d; }
+.event { position: relative; margin-bottom: 30px; padding-left: 90px; }
+.event::before { content: ''; position: absolute; left: 42px; top: 8px; width: 19px; height: 19px; border-radius: 50%; border: 3px solid #58a6ff; background: #0d1117; z-index: 1; }
+.event.major::before { background: #58a6ff; box-shadow: 0 0 10px #58a6ff; }
+.event.negative::before { border-color: #f85149; background: #0d1117; }
+.event .date { color: #8b949e; font-size: 0.85em; margin-bottom: 4px; }
+.event .title { color: #f0f6fc; font-weight: 600; font-size: 1.05em; margin-bottom: 4px; }
+.event .desc { color: #8b949e; font-size: 0.9em; line-height: 1.5; }
+.event .impact { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 600; }
+.impact.positive { background: #1b4332; color: #40c057; }
+.impact.neutral { background: #1c2333; color: #58a6ff; }
+.impact.negative { background: #3d1f1f; color: #f85149; }
+.legend { display: flex; gap: 20px; justify-content: center; margin: 20px 0; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.85em; }
+.legend-dot { width: 12px; height: 12px; border-radius: 50%; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }
+.stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; text-align: center; }
+.stat-card .value { font-size: 2em; font-weight: 700; color: #58a6ff; }
+.stat-card .label { color: #8b949e; font-size: 0.85em; margin-top: 5px; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>nanochat: The Journey to Beat GPT-2</h1>
+<p class="subtitle">How Karpathy trained a GPT-2 capability SLM from scratch for ~$48, going from 168 hours to 1.65 hours</p>
+
+<div class="stats">
+<div class="stat-card"><div class="value">168h → 1.65h</div><div class="label">Training Time (GPT-2 took 168h in 2019)</div></div>
+<div class="stat-card"><div class="value">$43,000 → $48</div><div class="label">Cost Reduction (99.9%)</div></div>
+<div class="stat-card"><div class="value">381</div><div class="label">Total Commits (Oct 2025 – Mar 2026)</div></div>
+<div class="stat-card"><div class="value">0.2626</div><div class="label">Best CORE Score (vs GPT-2's 0.2565)</div></div>
+</div>
+
+<div class="chart-section">
+<h2>Time to GPT-2 (hours) — The Speedrun Leaderboard</h2>
+<div class="chart-wrapper"><canvas id="speedChart"></canvas></div>
+</div>
+
+<div class="chart-section">
+<h2>Key Decisions & Their Impact (Timeline)</h2>
+<div class="legend">
+<div class="legend-item"><div class="legend-dot" style="background:#58a6ff"></div> Major breakthrough</div>
+<div class="legend-item"><div class="legend-dot" style="background:#40c057"></div> Positive improvement</div>
+<div class="legend-item"><div class="legend-dot" style="background:#f85149"></div> Negative result (tried & failed)</div>
+</div>
+
+<div class="timeline">
+
+<div class="event major">
+<div class="date">Oct 13, 2025</div>
+<div class="title">Initial Commit — The Starting Point</div>
+<div class="desc">Full end-to-end pipeline: tokenizer, pretraining, SFT, RL, inference, web UI. Dataset: FineWeb-Edu 100B. Architecture: basic GPT transformer with rotary embeddings, RMSNorm, ReLU². ~168h equivalent baseline.</div>
+<span class="impact neutral">FOUNDATION</span>
+</div>
+
+<div class="event">
+<div class="date">Oct 24, 2025</div>
+<div class="title">SpellingBee Task — Teaching the model to count letters</div>
+<div class="desc">Added synthetic data generation for spelling/counting tasks (e.g. "count r in strawberry"). Extended tool use with Python's count function.</div>
+<span class="impact neutral">CAPABILITY</span>
+</div>
+
+<div class="event">
+<div class="date">Nov 13, 2025</div>
+<div class="title">Training Resumption — Checkpoint recovery</div>
+<div class="desc">Added ability to resume training from checkpoints. Critical for long runs and recovering from loss spikes. Approximate resume to control complexity.</div>
+<span class="impact neutral">INFRASTRUCTURE</span>
+</div>
+
+<div class="event major">
+<div class="date">Jan 1, 2026</div>
+<div class="title">Model Initialization Cleanup</div>
+<div class="desc">Simplified and slightly tuned weight initialization. Clearer code, marginally better results. Foundation for later hyperparameter work.</div>
+<span class="impact positive">QUALITY</span>
+</div>
+
+<div class="event major">
+<div class="date">Jan 7, 2026</div>
+<div class="title">Hyperparameter Tuning via Scaling Laws</div>
+<div class="desc">Overnight sweeps revealed: warmdown_ratio 0.2→0.4 (biggest free win), embedding LR 0.2→0.3. Vocab size reduced to 32K. Data:Param ratio from 20→8. Published miniseries v1.</div>
+<span class="impact positive">MAJOR WIN — free speedup from better hyperparams</span>
+</div>
+
+<div class="event major">
+<div class="date">Jan 10, 2026</div>
+<div class="title">Muon Optimizer Overhaul</div>
+<div class="desc">Polar Express, Adafactor-style variance reduction, cautious weight decay scheduled to ramp down to zero. Found scaling law: optimal WD ∝ 1/channels². Solid bump to val_bpb.</div>
+<span class="impact positive">OPTIMIZER — significant loss improvement</span>
+</div>
+
+<div class="event major">
+<div class="date">Jan 12, 2026</div>
+<div class="title">Learnable Residual Lambdas + x0 Skip Connection</div>
+<div class="desc">Per-layer learnable scalars that gate the residual connection and blend initial embeddings back in. Inspired by modded-nanogpt. Solid bump to val_bpb.</div>
+<span class="impact positive">ARCHITECTURE — better gradient flow</span>
+</div>
+
+<div class="event major">
+<div class="date">Jan 14, 2026</div>
+<div class="title">Flash Attention 3 Integration</div>
+<div class="desc">+9% tokens/sec for d12 even at context length 2048. Enables efficient sliding window attention patterns.</div>
+<span class="impact positive">SPEED — 9% throughput boost</span>
+</div>
+
+<div class="event major">
+<div class="date">Jan 14, 2026</div>
+<div class="title">Sliding Window Attention (SSSL pattern)</div>
+<div class="desc">Alternating window sizes: 3 short (quarter context), 1 long (full context). Following GPT-3 style. Better FLOPs vs bpb tradeoff. Final layer always full context.</div>
+<span class="impact positive">ARCHITECTURE — better efficiency per FLOP</span>
+</div>
+
+<div class="event major">
+<div class="date">Jan 17, 2026</div>
+<div class="title">Value Embeddings (ResFormer-style)</div>
+<div class="desc">Per-layer value embeddings with input-dependent gating. Alternating layers get VE. Adds a "memory" of the original token into the value stream. Works very well.</div>
+<span class="impact positive">ARCHITECTURE — significant quality boost</span>
+</div>
+
+<div class="event">
+<div class="date">Jan 17, 2026</div>
+<div class="title">Adam beta1 tuning for x0 lambdas</div>
+<div class="desc">320 experiments just to tune beta1 from 0.8 to 0.96 for the x0 skip connection parameters. Small but measurable gain.</div>
+<span class="impact positive">TUNING</span>
+</div>
+
+<div class="event negative">
+<div class="date">Jan 18, 2026</div>
+<div class="title">Engram (tried & reverted)</div>
+<div class="desc">Implemented DeepSeek-style Engram following modded-nanogpt. Looked promising at small scale but didn't improve at larger scale (d24+). Reverted.</div>
+<span class="impact negative">NEGATIVE — didn't scale</span>
+</div>
+
+<div class="event">
+<div class="date">Jan 20, 2026</div>
+<div class="title">BOS-Aligned Dataloader with Best-Fit Packing</div>
+<div class="desc">Every sequence starts with BOS token. Documents packed using best-fit algorithm to minimize cropping. 100% utilization, ~35% tokens cropped but every token sees full document context.</div>
+<span class="impact positive">DATA — cleaner training signal</span>
+</div>
+
+<div class="event major">
+<div class="date">Jan 29, 2026 — Leaderboard #1</div>
+<div class="title">First Official Record: 3.04 hours</div>
+<div class="desc">d24 baseline, slightly overtrained. CORE: 0.2585. All the architecture + optimizer + data improvements combined to reach GPT-2 capability in ~3 hours.</div>
+<span class="impact positive">MILESTONE — 3.04h, $73</span>
+</div>
+
+<div class="event major">
+<div class="date">Feb 2, 2026 — Leaderboard #2</div>
+<div class="title">FP8 Training: 2.91 hours</div>
+<div class="desc">Added FP8 training via torchao (later replaced with custom implementation). d26 slightly undertrained. +4.3% speedup from reduced precision compute on H100 tensor cores.</div>
+<span class="impact positive">SPEED — 4.3% from FP8</span>
+</div>
+
+<div class="event major">
+<div class="date">Feb 5, 2026 — Leaderboard #3</div>
+<div class="title">Optimal Batch Size Auto-Calculation: 2.76 hours</div>
+<div class="desc">Implemented Power Lines paper (Bopt ∝ D^0.383). d12 optimal was 0.5M tokens, but d26 needs 1M. Auto-scales batch size, LR (√B scaling), and weight decay (T_epoch framework).</div>
+<span class="impact positive">THEORY — principled scaling</span>
+</div>
+
+<div class="event negative">
+<div class="date">Feb 2026</div>
+<div class="title">Multiple Negative Results</div>
+<div class="desc">Tried and failed: SwiGLU (replacing ReLU²), OLMo3 pretraining mix, MoE exploration, DyT (Dynamic Tanh). Not everything works — documenting failures is valuable.</div>
+<span class="impact negative">NEGATIVE — honest research</span>
+</div>
+
+<div class="event">
+<div class="date">Feb 15, 2026</div>
+<div class="title">Custom FP8 Implementation (deleted torchao)</div>
+<div class="desc">Wrote own Float8Linear — simpler, less code, and mysteriously 3% faster than torchao despite being functionally identical. Removed heavy dependency.</div>
+<span class="impact positive">ENGINEERING — faster + simpler</span>
+</div>
+
+<div class="event major">
+<div class="date">Mar 4, 2026 — Leaderboard #4</div>
+<div class="title">Dataset Switch: FineWeb-Edu → ClimbMix: 2.02 hours</div>
+<div class="desc">NVIDIA's ClimbMix-400B dataset (clustering-based optimal mixture). Same model, same compute, 27% faster training. Data quality is the biggest lever.</div>
+<span class="impact positive">DATA — 27% speedup, biggest single win</span>
+</div>
+
+<div class="event major">
+<div class="date">Mar 9, 2026 — Leaderboard #5</div>
+<div class="title">Autoresearch Round 1 (Claude autonomous): 1.80 hours</div>
+<div class="desc">Claude ran autonomously for ~2 days, tuning hyperparameters on d12 that generalized to d24. Karpathy "didn't touch anything — incredible." All improvements from automated experimentation.</div>
+<span class="impact positive">AI-ASSISTED — autonomous optimization</span>
+</div>
+
+<div class="event major">
+<div class="date">Mar 14, 2026 — Leaderboard #6</div>
+<div class="title">Autoresearch Round 2: Smear + Backout: 1.65 hours</div>
+<div class="desc">Two new architectural ideas: "Smear" (mix previous token's embedding into current — cheap bigram info) and "Backout" (subtract mid-layer residual before final norm to remove low-level features). Plus more hyperparameter tuning.</div>
+<span class="impact positive">ARCHITECTURE — current best: 1.65h, ~$40</span>
+</div>
+
+</div>
+</div>
+
+<div class="chart-section">
+<h2>Scaling Laws: The Brain Behind the Training Decisions</h2>
+<p style="color:#8b949e; margin-bottom:25px; line-height:1.7;">
+Scaling laws determine <em>how long</em> to train, <em>how big</em> the batches should be, and <em>how fast</em> to learn.
+Instead of guessing, nanochat uses math derived from research papers to auto-calculate optimal settings for any model size.
+Everything is anchored to a reference model (d12) and scaled up using principled formulas.
+</p>
+
+<div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-bottom:30px;">
+
+<div style="background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:20px;">
+<h3 style="color:#f0883e; margin-bottom:12px; font-size:1em;">1. Training Horizon (How many tokens?)</h3>
+<code style="color:#40c057; display:block; margin:10px 0; font-size:0.9em;">tokens = data_ratio × scaling_params</code>
+<p style="color:#8b949e; font-size:0.85em; line-height:1.6;">
+Chinchilla (2022) showed optimal ratio is ~20. Karpathy experimented and found <strong style="color:#c9d1d9;">ratio=8</strong> is enough to beat GPT-2 (slightly undertrained but faster). Changed from 20→8 in Jan 2026, then 8→12 in Mar 2026 after more scaling law runs.
+</p>
+</div>
+
+<div style="background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:20px;">
+<h3 style="color:#f0883e; margin-bottom:12px; font-size:1em;">2. Batch Size (How many tokens per step?)</h3>
+<code style="color:#40c057; display:block; margin:10px 0; font-size:0.9em;">B_opt ∝ D^0.383 (Power Lines paper)</code>
+<p style="color:#8b949e; font-size:0.85em; line-height:1.6;">
+Originally fixed at 524K tokens for all models. Discovery: d26 needs 1M tokens per batch, not 512K. Auto-calculating this gave a <strong style="color:#c9d1d9;">free 5% speedup</strong> (leaderboard #3). Clamped to nearest power of 2 for GPU efficiency.
+</p>
+</div>
+
+<div style="background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:20px;">
+<h3 style="color:#f0883e; margin-bottom:12px; font-size:1em;">3. Learning Rate Scaling</h3>
+<code style="color:#40c057; display:block; margin:10px 0; font-size:0.9em;">η ∝ √(B / B_ref) × (dim / 768)^-0.5</code>
+<p style="color:#8b949e; font-size:0.85em; line-height:1.6;">
+Two scaling factors: sqrt batch size scaling (standard AdamW theory) + muP-style 1/√width scaling. Tuned at d12 reference, automatically transfers to d24/d26. Applied blindly to Muon optimizer too — "hoping it works" (it does).
+</p>
+</div>
+
+<div style="background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:20px;">
+<h3 style="color:#f0883e; margin-bottom:12px; font-size:1em;">4. Weight Decay Scaling</h3>
+<code style="color:#40c057; display:block; margin:10px 0; font-size:0.9em;">λ = λ_ref × √(B/B_ref) × (D_ref/D)</code>
+<p style="color:#8b949e; font-size:0.85em; line-height:1.6;">
+From T_epoch framework (2024 paper). Keeps regularization strength consistent across model sizes. Earlier: found empirical law WD ∝ 1/channels². Later replaced with this more principled formula. Cosine-decayed to zero during training.
+</p>
+</div>
+
+</div>
+
+<h3 style="color:#58a6ff; margin-bottom:15px;">Key Scaling Law Decisions Over Time</h3>
+<table style="width:100%; border-collapse:collapse; font-size:0.9em;">
+<tr style="border-bottom:1px solid #30363d;">
+<th style="text-align:left; padding:10px; color:#8b949e;">When</th>
+<th style="text-align:left; padding:10px; color:#8b949e;">What Changed</th>
+<th style="text-align:left; padding:10px; color:#8b949e;">Why</th>
+<th style="text-align:left; padding:10px; color:#8b949e;">Impact</th>
+</tr>
+<tr style="border-bottom:1px solid #21262d;">
+<td style="padding:10px;">Oct 2025</td>
+<td style="padding:10px; color:#c9d1d9;">Data:Param ratio = 20 (Chinchilla)</td>
+<td style="padding:10px;">Following established literature</td>
+<td style="padding:10px; color:#8b949e;">Baseline</td>
+</tr>
+<tr style="border-bottom:1px solid #21262d;">
+<td style="padding:10px;">Jan 7, 2026</td>
+<td style="padding:10px; color:#c9d1d9;">Ratio 20 → 8 (undertrain for speed)</td>
+<td style="padding:10px;">Scaling law sweeps showed 8 is enough to beat GPT-2 CORE</td>
+<td style="padding:10px; color:#40c057;">~2.5× fewer tokens needed</td>
+</tr>
+<tr style="border-bottom:1px solid #21262d;">
+<td style="padding:10px;">Jan 10, 2026</td>
+<td style="padding:10px; color:#c9d1d9;">WD ∝ 1/channels² (empirical)</td>
+<td style="padding:10px;">Swept WD across d8, d12, d16, d20 — found power law</td>
+<td style="padding:10px; color:#40c057;">Better loss at all scales</td>
+</tr>
+<tr style="border-bottom:1px solid #21262d;">
+<td style="padding:10px;">Jan 27, 2026</td>
+<td style="padding:10px; color:#c9d1d9;">Scaling params = transformer + lm_head only</td>
+<td style="padding:10px;">Tested which param count gives cleanest scaling curves</td>
+<td style="padding:10px; color:#40c057;">More accurate predictions</td>
+</tr>
+<tr style="border-bottom:1px solid #21262d;">
+<td style="padding:10px;">Feb 5, 2026</td>
+<td style="padding:10px; color:#c9d1d9;">Auto batch size: B ∝ D^0.383</td>
+<td style="padding:10px;">Power Lines paper — larger models need larger batches</td>
+<td style="padding:10px; color:#40c057;">Leaderboard #3 (2.76h)</td>
+</tr>
+<tr style="border-bottom:1px solid #21262d;">
+<td style="padding:10px;">Feb 2026</td>
+<td style="padding:10px; color:#c9d1d9;">WD formula → T_epoch framework</td>
+<td style="padding:10px;">More principled than empirical 1/d² — derives from keeping T_epoch constant</td>
+<td style="padding:10px; color:#40c057;">Better generalization</td>
+</tr>
+<tr style="border-bottom:1px solid #21262d;">
+<td style="padding:10px;">Mar 2026</td>
+<td style="padding:10px; color:#c9d1d9;">Ratio 8 → 12</td>
+<td style="padding:10px;">Re-ran scaling laws with new architecture — optimal shifted</td>
+<td style="padding:10px; color:#40c057;">Better final quality</td>
+</tr>
+</table>
+
+<div style="margin-top:25px; padding:15px; background:#0d1117; border:1px solid #30363d; border-radius:8px;">
+<h3 style="color:#a371f7; margin-bottom:10px; font-size:1em;">The Scaling Laws Workflow</h3>
+<p style="color:#8b949e; font-size:0.85em; line-height:1.8;">
+<strong style="color:#c9d1d9;">1.</strong> Train many small models (d10–d20) at multiple compute budgets (1e18 to 1e19 FLOPs)<br>
+<strong style="color:#c9d1d9;">2.</strong> Plot loss vs. FLOPs for each model size — find the "frontier" (best loss per FLOP)<br>
+<strong style="color:#c9d1d9;">3.</strong> Fit power laws to predict optimal settings for larger models (d24–d26)<br>
+<strong style="color:#c9d1d9;">4.</strong> Use d12 as reference point — all hyperparameters tuned there, then transferred via formulas<br>
+<strong style="color:#c9d1d9;">5.</strong> The single dial is <code style="color:#40c057;">--depth</code> — everything else auto-calculates from it
+</p>
+</div>
+</div>
+
+<div class="chart-section">
+<h2>Categories of Improvements</h2>
+<div class="chart-wrapper"><canvas id="categoryChart"></canvas></div>
+</div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+// Speed chart
+const speedCtx = document.getElementById('speedChart');
+new Chart(speedCtx, {
+    type: 'line',
+    data: {
+        labels: ['GPT-2 (2019)', '#1 Jan 29', '#2 Feb 2', '#3 Feb 5', '#4 Mar 4', '#5 Mar 9', '#6 Mar 14'],
+        datasets: [{
+            label: 'Hours to GPT-2 capability',
+            data: [168, 3.04, 2.91, 2.76, 2.02, 1.80, 1.65],
+            borderColor: '#58a6ff',
+            backgroundColor: 'rgba(88,166,255,0.1)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 6,
+            pointBackgroundColor: '#58a6ff'
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { labels: { color: '#c9d1d9' } },
+            tooltip: {
+                callbacks: {
+                    afterLabel: function(ctx) {
+                        const notes = ['Original OpenAI', 'd24 baseline + all arch improvements', '+FP8 training', '+optimal batch size', '+ClimbMix dataset', '+autoresearch round 1', '+smear & backout'];
+                        return notes[ctx.dataIndex];
+                    }
+                }
+            }
+        },
+        scales: {
+            y: { type: 'logarithmic', title: { display: true, text: 'Hours (log scale)', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
+            x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }
+        }
+    }
+});
+
+// Category chart
+const catCtx = document.getElementById('categoryChart');
+new Chart(catCtx, {
+    type: 'doughnut',
+    data: {
+        labels: ['Architecture (lambdas, VE, FA3, windows, smear, backout)', 'Optimizer (Muon overhaul, WD scaling, LR tuning)', 'Data (ClimbMix switch, BOS dataloader)', 'Compute (FP8, batch size scaling)', 'Negative Results (Engram, SwiGLU, MoE, DyT)'],
+        datasets: [{
+            data: [35, 20, 25, 10, 10],
+            backgroundColor: ['#58a6ff', '#a371f7', '#40c057', '#f0883e', '#f85149'],
+            borderColor: '#0d1117',
+            borderWidth: 3
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { position: 'right', labels: { color: '#c9d1d9', padding: 15, font: { size: 12 } } }
+        }
+    }
+});
+</script>
+</body>
+</html>
