@@ -37,6 +37,10 @@ const state = {
 const SAMPLE_DATASET_PACK = "examples/tiny_dataset_pack.json";
 const SAMPLE_CHAT_INPUT = "examples/tiny_chat.jsonl";
 const SAMPLE_EVAL_INPUT = "examples/tiny_eval.jsonl";
+const STARTER_ROW_TARGETS = {
+  sft: 300,
+  eval: 80,
+};
 
 const LAUNCH_CONTROL_IDS = [
   "launch-pack-path",
@@ -413,7 +417,14 @@ function bindControls() {
   $("flight-apply-button").addEventListener("click", () => {
     applyFlightPlanToLauncher();
   });
-  ["flight-pack-path", "flight-input-path", "flight-chat-path", "flight-eval-path"].forEach((id) => {
+  [
+    "flight-pack-path",
+    "flight-input-path",
+    "flight-chat-path",
+    "flight-eval-path",
+    "flight-sft-max-items",
+    "flight-eval-max-items",
+  ].forEach((id) => {
     $(id).addEventListener("input", () => {
       syncFlightStarterDefaults();
       renderStartHere();
@@ -1066,6 +1077,7 @@ function guideCheckCorpusContent() {
 
 function guideCreateSftContent() {
   const chatRows = currentChatRowCount();
+  const requestedRows = boundedNumberInput("flight-sft-max-items", STARTER_ROW_TARGETS.sft, 8, 300);
   return `
     <div class="guide-page">
       <div class="guide-page-head">
@@ -1075,7 +1087,13 @@ function guideCreateSftContent() {
       </div>
       <div class="guide-action-card ${chatRows >= 8 ? "ready" : "caution"}">
         <strong>${chatRows ? `${fmtInt(chatRows)} current SFT rows detected.` : "No usable SFT rows detected yet."}</strong>
-        <p>${chatRows < 8 ? "Create a starter from corpus sentences, then edit it into real domain Q&A." : "You can still regenerate a starter if these rows are placeholders."}</p>
+        <p>${chatRows < STARTER_ROW_TARGETS.sft ? `For a meaningful medium run, generate about ${fmtInt(STARTER_ROW_TARGETS.sft)} rows. Smaller counts are only smoke-test scaffolds.` : "This is enough starter volume for the next medium experiment; still inspect and edit the rows before trusting a run."}</p>
+        <div class="guide-inline-fields">
+          <div>
+            <label for="guide-sft-max-items">ROWS TO GENERATE</label>
+            <input id="guide-sft-max-items" type="number" min="8" max="300" value="${escapeHtml(String(requestedRows))}">
+          </div>
+        </div>
         <button type="button" data-guide-action="create-sft">CREATE SFT STARTER</button>
       </div>
       <div id="guide-sft-mirror" class="guide-mirror">${$("flight-sft-result")?.innerHTML || ""}</div>
@@ -1086,6 +1104,7 @@ function guideCreateSftContent() {
 
 function guideCreateEvalContent() {
   const evalRows = currentEvalRowCount();
+  const requestedRows = boundedNumberInput("flight-eval-max-items", STARTER_ROW_TARGETS.eval, 4, 200);
   return `
     <div class="guide-page">
       <div class="guide-page-head">
@@ -1095,7 +1114,13 @@ function guideCreateEvalContent() {
       </div>
       <div class="guide-action-card ${evalRows >= 4 ? "ready" : "caution"}">
         <strong>${evalRows ? `${fmtInt(evalRows)} current eval rows detected.` : "No usable eval rows detected yet."}</strong>
-        <p>${evalRows < 4 ? "Create an eval starter, then edit it into held-out questions." : "Starter eval rows still need review before scores mean anything."}</p>
+        <p>${evalRows < STARTER_ROW_TARGETS.eval ? `Use about ${fmtInt(STARTER_ROW_TARGETS.eval)} eval rows before judging a medium run. The score should cover recall, transfer, refusals, and memorization probes.` : "This is enough eval volume to compare medium experiments; still inspect leakage and weak categories."}</p>
+        <div class="guide-inline-fields">
+          <div>
+            <label for="guide-eval-max-items">ROWS TO GENERATE</label>
+            <input id="guide-eval-max-items" type="number" min="4" max="200" value="${escapeHtml(String(requestedRows))}">
+          </div>
+        </div>
         <button type="button" data-guide-action="create-eval">CREATE EVAL STARTER</button>
       </div>
       <div id="guide-eval-mirror" class="guide-mirror">${$("flight-eval-result")?.innerHTML || ""}</div>
@@ -1243,6 +1268,8 @@ function syncGuideInputs(event) {
     "guide-hf-max-rows": "hf-max-rows",
     "guide-local-path": "flight-input-path",
     "guide-pack-path": "flight-pack-path",
+    "guide-sft-max-items": "flight-sft-max-items",
+    "guide-eval-max-items": "flight-eval-max-items",
   };
   const destination = map[target.id];
   if (!destination || !$(destination)) return;
@@ -1396,6 +1423,9 @@ function resetGuidedWorkflow() {
   $("hf-text-column").value = "text";
   $("hf-max-rows").value = "1000";
   $("hf-min-chars").value = "20";
+  $("flight-sft-max-items").value = String(STARTER_ROW_TARGETS.sft);
+  $("flight-eval-max-items").value = String(STARTER_ROW_TARGETS.eval);
+  $("flight-starter-force").checked = false;
   $("flight-min-score").value = "0";
   $("launch-run-name").value = "";
   renderDatasetFlightPlan(null);
@@ -1410,7 +1440,18 @@ function resetGuidedWorkflow() {
 }
 
 function syncGuideInputValues() {
-  ["guide-hf-dataset", "guide-hf-out-dir", "guide-hf-config", "guide-hf-split", "guide-hf-text-column", "guide-hf-max-rows", "guide-local-path", "guide-pack-path"].forEach((id) => {
+  [
+    "guide-hf-dataset",
+    "guide-hf-out-dir",
+    "guide-hf-config",
+    "guide-hf-split",
+    "guide-hf-text-column",
+    "guide-hf-max-rows",
+    "guide-local-path",
+    "guide-pack-path",
+    "guide-sft-max-items",
+    "guide-eval-max-items",
+  ].forEach((id) => {
     const node = $(id);
     if (node) syncGuideInputs({ target: node });
   });
@@ -3103,6 +3144,15 @@ function launchNumber(id) {
   return Number.isFinite(value) ? value : 0;
 }
 
+function boundedNumberInput(id, fallback, min, max) {
+  const node = $(id);
+  const raw = Number(node?.value);
+  const value = Number.isFinite(raw) ? raw : fallback;
+  const bounded = Math.min(max, Math.max(min, Math.round(value)));
+  if (node && String(node.value) !== String(bounded)) node.value = String(bounded);
+  return bounded;
+}
+
 function launchConfig() {
   const tokenizerVocab = $("launch-tokenizer-vocab-size").value.trim();
   return {
@@ -3156,6 +3206,10 @@ function launchReadiness(config = launchConfig()) {
   }
   if (config.tokenizer_type !== "bpe" && config.tokenizer_vocab_size) {
     cautions.push("Vocab size only changes BPE; char and byte tokenizers ignore it.");
+  }
+  const starterWarning = starterSizeWarning(currentChatRowCount(), currentEvalRowCount());
+  if (starterWarning) {
+    cautions.push(`${starterWarning}. Use Guide Me to regenerate roughly ${fmtInt(STARTER_ROW_TARGETS.sft)} SFT rows and ${fmtInt(STARTER_ROW_TARGETS.eval)} eval rows before judging a medium run.`);
   }
   if (config.base_lr_warmup_steps > config.base_steps) cautions.push("Base warmup is longer than base training.");
   if (config.sft_lr_warmup_steps > config.sft_steps) cautions.push("SFT warmup is longer than SFT training.");
@@ -3895,8 +3949,12 @@ function dataRowCount(data) {
 
 function starterSizeWarning(chatRows, evalRows) {
   const warnings = [];
-  if (chatRows > 0 && chatRows < 24) warnings.push(`${fmtInt(chatRows)} SFT rows`);
-  if (evalRows > 0 && evalRows < 8) warnings.push(`${fmtInt(evalRows)} eval rows`);
+  if (chatRows > 0 && chatRows < STARTER_ROW_TARGETS.sft) {
+    warnings.push(`${fmtInt(chatRows)} SFT rows < ${fmtInt(STARTER_ROW_TARGETS.sft)}`);
+  }
+  if (evalRows > 0 && evalRows < STARTER_ROW_TARGETS.eval) {
+    warnings.push(`${fmtInt(evalRows)} eval rows < ${fmtInt(STARTER_ROW_TARGETS.eval)}`);
+  }
   if (!warnings.length) return "";
   return `starter-sized ${warnings.join(" / ")}`;
 }
@@ -4014,6 +4072,7 @@ async function createSftStarter() {
   const packPath = $("flight-pack-path").value.trim();
   const inputPath = $("flight-input-path").value.trim();
   const outPath = $("flight-sft-out-path").value.trim();
+  const maxItems = boundedNumberInput("flight-sft-max-items", STARTER_ROW_TARGETS.sft, 8, 300);
   if (!packPath && !inputPath) {
     throw new Error("enter a dataset pack or corpus path first");
   }
@@ -4027,9 +4086,9 @@ async function createSftStarter() {
       dataset_pack: packPath || null,
       input_path: packPath ? null : inputPath,
       out_path: outPath,
-      max_items: 32,
+      max_items: maxItems,
       seed: state.detail?.summary?.config?.seed ?? 42,
-      force: false,
+      force: Boolean($("flight-starter-force")?.checked),
       promote_to_pack: Boolean(packPath),
     });
     state.sftStarter = report;
@@ -4099,6 +4158,7 @@ async function createEvalStarter() {
   const packPath = $("flight-pack-path").value.trim();
   const inputPath = $("flight-input-path").value.trim();
   const outPath = $("flight-eval-out-path").value.trim();
+  const maxItems = boundedNumberInput("flight-eval-max-items", STARTER_ROW_TARGETS.eval, 4, 200);
   if (!packPath && !inputPath) {
     throw new Error("enter a dataset pack or corpus path first");
   }
@@ -4112,9 +4172,9 @@ async function createEvalStarter() {
       dataset_pack: packPath || null,
       input_path: packPath ? null : inputPath,
       out_path: outPath,
-      max_items: 24,
+      max_items: maxItems,
       seed: state.detail?.summary?.config?.seed ?? 42,
-      force: false,
+      force: Boolean($("flight-starter-force")?.checked),
       promote_to_pack: Boolean(packPath),
     });
     state.evalStarter = report;

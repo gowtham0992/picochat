@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Picochat Workbench</title>
-    <link rel="stylesheet" href="/assets/style.css?v=20260511-home-hover-primary">
+    <link rel="stylesheet" href="/assets/style.css?v=20260511-starter-size-controls">
   </head>
   <body>
     <div class="desktop-grain" aria-hidden="true"></div>
@@ -205,6 +205,10 @@
                   <label for="flight-sft-out-path">SFT STARTER OUT</label>
                   <input id="flight-sft-out-path" type="text" spellcheck="false" placeholder="my_pack/chat_starter.jsonl">
                 </div>
+                <div>
+                  <label for="flight-sft-max-items">SFT ROWS</label>
+                  <input id="flight-sft-max-items" type="number" min="8" max="300" value="300">
+                </div>
                 <div class="beginner-secondary">
                   <label for="flight-eval-path">EVAL JSONL</label>
                   <input id="flight-eval-path" type="text" spellcheck="false" placeholder="my_pack/eval.jsonl">
@@ -213,10 +217,18 @@
                   <label for="flight-eval-out-path">EVAL STARTER OUT</label>
                   <input id="flight-eval-out-path" type="text" spellcheck="false" placeholder="my_pack/eval_starter.jsonl">
                 </div>
+                <div>
+                  <label for="flight-eval-max-items">EVAL ROWS</label>
+                  <input id="flight-eval-max-items" type="number" min="4" max="200" value="80">
+                </div>
                 <div class="beginner-secondary">
                   <label for="flight-min-score">MIN SCORE</label>
                   <input id="flight-min-score" type="number" min="0" max="100" value="0">
                 </div>
+                <label class="checkbox-line" for="flight-starter-force">
+                  <input id="flight-starter-force" type="checkbox">
+                  OVERWRITE STARTERS
+                </label>
                 <button id="flight-check-button" type="button">CHECK DATASET</button>
                 <button id="flight-sft-button" type="button">CREATE SFT STARTER</button>
                 <button id="flight-eval-button" type="button">CREATE EVAL STARTER</button>
@@ -719,6 +731,6 @@ Assistant:</textarea>
 
       <footer id="status-line" class="status-line">READY. | CTX -- | TOK -- | SEED 42</footer>
     </div>
-    <script src="/assets/app.js?v=20260511-selected-run-history"></script>
+    <script src="/assets/app.js?v=20260511-starter-size-controls"></script>
   </body>
 </html>

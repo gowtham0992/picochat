@@ -450,11 +450,16 @@ h2 {
 }
 
 .guide-inline-grid,
+.guide-inline-fields,
 .guide-split-actions,
 .guide-result-grid {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.guide-inline-fields {
+  grid-template-columns: minmax(160px, 260px);
 }
 
 .guide-result-grid {
