@@ -3280,35 +3280,7 @@ async function launchRun() {
   $("launch-run-button").disabled = true;
   $("run-launch-status").innerHTML = 'LAUNCHING RUN<span class="cursor"></span>';
   try {
-    const payload = await postJson("/api/run/start", {
-      dataset_pack: config.dataset_pack,
-      run_name: config.run_name,
-      preset: config.preset,
-      context_size: config.context_size,
-      n_embd: config.n_embd,
-      n_head: config.n_head,
-      n_layer: config.n_layer,
-      base_steps: config.base_steps,
-      sft_steps: config.sft_steps,
-      base_batch_size: config.base_batch_size,
-      sft_batch_size: config.sft_batch_size,
-      base_learning_rate: config.base_learning_rate,
-      sft_learning_rate: config.sft_learning_rate,
-      base_lr_decay: config.base_lr_decay,
-      sft_lr_decay: config.sft_lr_decay,
-      base_lr_warmup_steps: config.base_lr_warmup_steps,
-      sft_lr_warmup_steps: config.sft_lr_warmup_steps,
-      base_grad_clip: config.base_grad_clip,
-      sft_grad_clip: config.sft_grad_clip,
-      base_early_stop_patience: config.base_early_stop_patience,
-      sft_early_stop_patience: config.sft_early_stop_patience,
-      sft_sampling: config.sft_sampling,
-      eval_max_new_tokens: config.eval_max_new_tokens,
-      seed: config.seed,
-      tokenizer_type: config.tokenizer_type,
-      tokenizer_vocab_size: config.tokenizer_vocab_size,
-      min_quality_score: config.min_quality_score,
-    });
+    const payload = await startRunWithRetry(config);
     state.runJob = payload.job;
     state.runJobs = payload.jobs || [payload.job];
     state.runJobLoaded = false;
@@ -3319,6 +3291,51 @@ async function launchRun() {
   } finally {
     $("launch-run-button").disabled = false;
   }
+}
+
+async function startRunWithRetry(config) {
+  try {
+    return await postJson("/api/run/start", runStartPayload(config));
+  } catch (error) {
+    if (!/run output already exists/i.test(String(error?.message || ""))) throw error;
+    $("launch-run-name").value = uniqueRunName(config.run_name || suggestedRunName(config.dataset_pack || "picochat"));
+    const retryConfig = launchConfig();
+    renderLaunchReadiness();
+    flashStatus(`RUN NAME EXISTS. | RETRYING AS ${retryConfig.run_name}`);
+    return postJson("/api/run/start", runStartPayload(retryConfig));
+  }
+}
+
+function runStartPayload(config) {
+  return {
+    dataset_pack: config.dataset_pack,
+    run_name: config.run_name,
+    preset: config.preset,
+    context_size: config.context_size,
+    n_embd: config.n_embd,
+    n_head: config.n_head,
+    n_layer: config.n_layer,
+    base_steps: config.base_steps,
+    sft_steps: config.sft_steps,
+    base_batch_size: config.base_batch_size,
+    sft_batch_size: config.sft_batch_size,
+    base_learning_rate: config.base_learning_rate,
+    sft_learning_rate: config.sft_learning_rate,
+    base_lr_decay: config.base_lr_decay,
+    sft_lr_decay: config.sft_lr_decay,
+    base_lr_warmup_steps: config.base_lr_warmup_steps,
+    sft_lr_warmup_steps: config.sft_lr_warmup_steps,
+    base_grad_clip: config.base_grad_clip,
+    sft_grad_clip: config.sft_grad_clip,
+    base_early_stop_patience: config.base_early_stop_patience,
+    sft_early_stop_patience: config.sft_early_stop_patience,
+    sft_sampling: config.sft_sampling,
+    eval_max_new_tokens: config.eval_max_new_tokens,
+    seed: config.seed,
+    tokenizer_type: config.tokenizer_type,
+    tokenizer_vocab_size: config.tokenizer_vocab_size,
+    min_quality_score: config.min_quality_score,
+  };
 }
 
 async function refreshRunJob() {
