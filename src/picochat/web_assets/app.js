@@ -4327,22 +4327,22 @@ function renderEvalStarterError(error) {
 }
 
 function suggestedSftStarterPath(path) {
-  const text = String(path || "").trim();
-  if (!text) return "my_pack/chat_starter.jsonl";
-  const slash = text.lastIndexOf("/");
-  const dir = slash >= 0 ? text.slice(0, slash + 1) : "";
-  const file = slash >= 0 ? text.slice(slash + 1) : text;
-  const stem = file.replace(/\.jsonl$/i, "").replace(/\.json$/i, "") || "chat";
-  return `${dir}${stem}_starter.jsonl`;
+  return suggestedStarterPath(path, "chat");
 }
 
 function suggestedEvalStarterPath(path) {
+  return suggestedStarterPath(path, "eval");
+}
+
+function suggestedStarterPath(path, kind) {
   const text = String(path || "").trim();
-  if (!text) return "my_pack/eval_starter.jsonl";
+  if (!text) return `my_pack/${kind}_starter.jsonl`;
   const slash = text.lastIndexOf("/");
   const dir = slash >= 0 ? text.slice(0, slash + 1) : "";
   const file = slash >= 0 ? text.slice(slash + 1) : text;
-  const stem = file.replace(/\.jsonl$/i, "").replace(/\.json$/i, "") || "eval";
+  let stem = file.replace(/\.jsonl$/i, "").replace(/\.json$/i, "") || kind;
+  if (stem === "dataset_pack" || stem === "corpus_recipe") stem = kind;
+  if (/_starter$/i.test(stem)) return `${dir}${stem}.jsonl`;
   return `${dir}${stem}_starter.jsonl`;
 }
 
