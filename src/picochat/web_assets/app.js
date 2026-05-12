@@ -4342,6 +4342,7 @@ function suggestedStarterPath(path, kind) {
   const file = slash >= 0 ? text.slice(slash + 1) : text;
   let stem = file.replace(/\.jsonl$/i, "").replace(/\.json$/i, "") || kind;
   if (stem === "dataset_pack" || stem === "corpus_recipe") stem = kind;
+  stem = stem.replace(/(_starter)+$/i, "_starter");
   if (/_starter$/i.test(stem)) return `${dir}${stem}.jsonl`;
   return `${dir}${stem}_starter.jsonl`;
 }
