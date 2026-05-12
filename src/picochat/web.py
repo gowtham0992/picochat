@@ -926,6 +926,11 @@ def archive_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "source": str(run_dir),
             "archive_path": str(destination),
         })
+    archived_names = {item["run_name"] for item in archived_runs}
+    with _RUN_JOBS_LOCK:
+        for job_id, job in list(_RUN_JOBS.items()):
+            if job.get("run_name") in archived_names:
+                _RUN_JOBS.pop(job_id, None)
     return {
         "archived": True,
         "run_name": archived_runs[0]["run_name"],
@@ -1379,6 +1384,8 @@ def _job_in_runs_dir(job: dict, runs_root: Path) -> bool:
     try:
         out_dir = Path(job["out_dir"]).resolve()
     except (KeyError, OSError):
+        return False
+    if not out_dir.exists():
         return False
     return out_dir == runs_root or runs_root in out_dir.parents
 

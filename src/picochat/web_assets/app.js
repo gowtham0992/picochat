@@ -586,6 +586,8 @@ async function archiveSelectedRun() {
     state.detail = null;
     state.runJobs = (state.runJobs || []).filter((job) => !archivedNames.has(job.run_name));
     if (state.runJob && archivedNames.has(state.runJob.run_name)) state.runJob = null;
+    renderRunJob(state.runJob);
+    renderRunJobList();
     flashStatus(`ARCHIVED ${archivedNames.size} RUN${archivedNames.size === 1 ? "" : "S"}. | ${payload.archive_root || "ARCHIVE READY"}`);
     await loadRuns();
   } finally {
@@ -3278,6 +3280,10 @@ async function launchRun() {
   renderLaunchReadiness();
   if (readiness.status === "blocked") throw new Error(readiness.notes[0] || "fix launch settings");
   $("launch-run-button").disabled = true;
+  state.runJob = null;
+  state.runJobLoaded = false;
+  renderRunJob(null);
+  renderRunJobList();
   $("run-launch-status").innerHTML = 'LAUNCHING RUN<span class="cursor"></span>';
   try {
     const payload = await startRunWithRetry(config);
@@ -3351,10 +3357,11 @@ async function refreshRunJob() {
 async function loadRunJobs() {
   const payload = await fetchJson("/api/run/status");
   state.runJobs = payload.jobs || [];
-  state.runJob = state.runJob || payload.job;
   if (state.runJob) {
     const refreshed = state.runJobs.find((job) => job.id === state.runJob.id || job.run_name === state.runJob.run_name);
-    if (refreshed) state.runJob = refreshed;
+    state.runJob = refreshed || payload.job || null;
+  } else {
+    state.runJob = payload.job || null;
   }
   keepLauncherRunNameFresh();
   renderRunJob(state.runJob);
@@ -3532,6 +3539,10 @@ function mergeRunJobs(existing, incoming) {
 function renderRunJobError(error) {
   $("launch-run-button").disabled = false;
   $("run-launch-status").textContent = `RUN LAUNCH FAULT | ${error.message}`;
+  $("run-launch-progress").innerHTML = "";
+  $("run-launch-command").innerHTML = "";
+  $("run-launch-log").textContent = "Fix the launch fault, then start a new run.";
+  $("cancel-run-job-button").disabled = true;
 }
 
 function suggestedRunName(packPath) {

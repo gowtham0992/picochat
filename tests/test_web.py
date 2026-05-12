@@ -988,6 +988,37 @@ def test_archive_run_plan_refuses_running_job(tmp_path):
     assert run_dir.exists()
 
 
+def test_archive_run_plan_removes_completed_memory_job(tmp_path):
+    run_dir = write_run(tmp_path / "runs", "tiny-a")
+
+    class FakeProcess:
+        pid = 1234
+
+        def poll(self):
+            return 0
+
+    with _RUN_JOBS_LOCK:
+        _RUN_JOBS["archive-complete"] = {
+            "id": "archive-complete",
+            "run_name": "tiny-a",
+            "out_dir": str(run_dir),
+            "dataset_pack": "pack.json",
+            "log_path": str(run_dir / "web_run.log"),
+            "command": "python -m picochat.cli run tiny",
+            "started_at": 0,
+            "process": FakeProcess(),
+        }
+    try:
+        archive_run_plan(tmp_path / "runs", {"run_name": "tiny-a"})
+        with _RUN_JOBS_LOCK:
+            assert "archive-complete" not in _RUN_JOBS
+        status = run_status_plan(runs_dir=tmp_path / "runs")
+        assert all(job["run_name"] != "tiny-a" for job in status["jobs"])
+    finally:
+        with _RUN_JOBS_LOCK:
+            _RUN_JOBS.pop("archive-complete", None)
+
+
 def test_archive_run_plan_refuses_nested_run_name(tmp_path):
     write_run(tmp_path / "runs" / "archive-2026-05-11", "tiny-a")
 
