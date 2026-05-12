@@ -546,6 +546,7 @@ function renderRuns() {
       state.pendingArchiveRun = null;
       renderRuns();
       await loadRun(state.selectedRun);
+      await loadRunJobs();
     });
   });
 }
@@ -3355,7 +3356,25 @@ async function refreshRunJob() {
 }
 
 async function loadRunJobs() {
-  const payload = await fetchJson("/api/run/status");
+  const scope = runJobStatusScope();
+  if (!scope) {
+    state.runJobs = [];
+    state.runJob = null;
+    renderRunJob(null);
+    renderRunJobList();
+    return;
+  }
+  let payload;
+  try {
+    payload = await fetchJson(`/api/run/status?job=${encodeURIComponent(scope)}`);
+  } catch (error) {
+    if (!/unknown run job/i.test(String(error?.message || ""))) throw error;
+    state.runJobs = [];
+    state.runJob = null;
+    renderRunJob(null);
+    renderRunJobList();
+    return;
+  }
   state.runJobs = payload.jobs || [];
   if (state.runJob) {
     const refreshed = state.runJobs.find((job) => job.id === state.runJob.id || job.run_name === state.runJob.run_name);
@@ -3367,6 +3386,11 @@ async function loadRunJobs() {
   renderRunJob(state.runJob);
   renderRunJobList();
   if (state.runJob?.state === "running") startRunPolling();
+}
+
+function runJobStatusScope() {
+  if (state.runJob?.state === "running" && state.runJob.id) return state.runJob.id;
+  return state.selectedRun || "";
 }
 
 async function cancelRunJob() {
