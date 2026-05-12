@@ -234,6 +234,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "final_val_loss": sft_report["losses"][-1]["val_loss"],
             "final_val_bpb": sft_report["losses"][-1].get("val_bpb"),
             "truncated_examples": sft_report["dataset"]["truncated_examples"],
+            "skipped_long_examples": sft_report["dataset"].get("skipped_long_examples", 0),
             "loss_diagnostics": sft_report.get("loss_diagnostics", {}),
             "best_checkpoint": sft_report.get("best_checkpoint", {}),
             "eval_checkpoint": sft_eval_checkpoint,

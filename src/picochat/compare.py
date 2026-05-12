@@ -14,6 +14,8 @@ class CompareRow:
     tokenizer_type: str
     eval_score: str
     pass_rate: float
+    domain_pass_rate: float | None
+    refusal_pass_rate: float | None
     support_match_rate: float | None
     prompt_echo_rate: float | None
     base_val_loss: float
@@ -30,6 +32,7 @@ class CompareRow:
     num_parameters: int
     context_size: int
     truncated_examples: int
+    skipped_long_examples: int
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -58,6 +61,8 @@ def load_compare_row(run_dir: str | Path) -> CompareRow:
         ),
         eval_score=f"{eval_summary['num_passed']}/{eval_summary['num_examples']}",
         pass_rate=float(eval_summary["pass_rate"]),
+        domain_pass_rate=_optional_float(eval_summary.get("domain_pass_rate")),
+        refusal_pass_rate=_optional_float(eval_summary.get("refusal_pass_rate")),
         support_match_rate=_optional_float(eval_summary.get("support_match_rate")),
         prompt_echo_rate=_optional_float(eval_summary.get("prompt_echo_rate")),
         base_val_loss=float(base["final_val_loss"]),
@@ -74,6 +79,7 @@ def load_compare_row(run_dir: str | Path) -> CompareRow:
         num_parameters=int(base["num_parameters"]),
         context_size=int(config["context_size"]),
         truncated_examples=int(sft["truncated_examples"]),
+        skipped_long_examples=int(sft.get("skipped_long_examples", 0)),
     )
 
 
@@ -105,6 +111,8 @@ def comparison_table(comparison: dict) -> str:
             row["tokenizer_type"],
             row["eval_score"],
             f"{row['pass_rate'] * 100:.2f}%",
+            _format_optional_percent(row["domain_pass_rate"]),
+            _format_optional_percent(row["refusal_pass_rate"]),
             _format_optional_percent(row["support_match_rate"]),
             _format_optional_percent(row["prompt_echo_rate"]),
             _format_optional_float(row["base_val_bpb"]),
@@ -117,6 +125,7 @@ def comparison_table(comparison: dict) -> str:
             _short_int(row["num_parameters"]),
             str(row["context_size"]),
             str(row["truncated_examples"]),
+            str(row["skipped_long_examples"]),
         ]
         for row in rows
     ]
@@ -125,6 +134,8 @@ def comparison_table(comparison: dict) -> str:
         "Tok",
         "Eval",
         "Pass",
+        "Domain",
+        "Refusal",
         "Support",
         "Echo",
         "Base BPB",
@@ -137,6 +148,7 @@ def comparison_table(comparison: dict) -> str:
         "Params",
         "Ctx",
         "Trunc",
+        "Skip",
     ]
     widths = [
         max(len(headers[index]), *(len(row[index]) for row in table_rows))
@@ -203,20 +215,23 @@ def comparison_markdown(comparison: dict) -> str:
                 lines.append(f"- `{issue.get('severity', 'warn')}` {_markdown_text(issue.get('message'))}")
             lines.append("")
     lines.extend([
-        "| Run | Tokenizer | Eval | Pass Rate | Support Match | Prompt Echo | Base Val BPB | SFT Val BPB | Base Val Loss | SFT Val Loss | Best Steps | Stop Reasons | Base Loss Status | SFT Loss Status | Memorization | Params | Context | Truncated Examples |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | ---: | ---: | ---: |",
+        "| Run | Tokenizer | Eval | Pass Rate | Domain Pass | Refusal Pass | Support Match | Prompt Echo | Base Val BPB | SFT Val BPB | Base Val Loss | SFT Val Loss | Best Steps | Stop Reasons | Base Loss Status | SFT Loss Status | Memorization | Params | Context | Truncated Examples | Skipped Too-Long |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: |",
     ])
     for row in comparison["rows"]:
         lines.append(
             f"| `{row['run']}` | `{row['tokenizer_type']}` | {row['eval_score']} | "
-            f"{row['pass_rate'] * 100:.2f}% | {_format_optional_percent(row['support_match_rate'])} | "
+            f"{row['pass_rate'] * 100:.2f}% | {_format_optional_percent(row['domain_pass_rate'])} | "
+            f"{_format_optional_percent(row['refusal_pass_rate'])} | "
+            f"{_format_optional_percent(row['support_match_rate'])} | "
             f"{_format_optional_percent(row['prompt_echo_rate'])} | "
             f"{_format_optional_float(row['base_val_bpb'])} | "
             f"{_format_optional_float(row['sft_val_bpb'])} | {row['base_val_loss']:.4f} | "
             f"{row['sft_val_loss']:.4f} | {_format_best_steps(row)} | "
             f"{_format_stop_reasons(row)} | `{row['base_loss_status']}` | "
             f"`{row['sft_loss_status']}` | `{row['memorization_status']}` | "
-            f"{row['num_parameters']:,} | {row['context_size']} | {row['truncated_examples']} |"
+            f"{row['num_parameters']:,} | {row['context_size']} | {row['truncated_examples']} | "
+            f"{row.get('skipped_long_examples', 0)} |"
         )
     lines.append("")
     lines.append("## Notes")
@@ -307,11 +322,17 @@ def _regression_issues(best: CompareRow, baseline: CompareRow | None) -> list[di
         return []
     issues: list[dict] = []
     pass_delta = best.pass_rate - baseline.pass_rate
+    domain_delta = _optional_delta(best.domain_pass_rate, baseline.domain_pass_rate)
+    refusal_delta = _optional_delta(best.refusal_pass_rate, baseline.refusal_pass_rate)
     support_delta = _optional_delta(best.support_match_rate, baseline.support_match_rate)
     echo_delta = _optional_delta(best.prompt_echo_rate, baseline.prompt_echo_rate)
     sft_bpb_delta = _optional_delta(best.sft_val_bpb, baseline.sft_val_bpb)
     if pass_delta < 0.02:
         issues.append({"severity": "warn", "message": "Eval gain is under +2 points."})
+    if domain_delta is not None and domain_delta < 0.02:
+        issues.append({"severity": "warn", "message": "Domain-answer gain is under +2 points."})
+    if refusal_delta is not None and refusal_delta < -0.05:
+        issues.append({"severity": "fail", "message": f"Refusal/boundary pass dropped {_signed_percent(refusal_delta)}."})
     if support_delta is not None and support_delta < -0.05:
         issues.append({"severity": "fail", "message": f"Support match dropped {_signed_percent(support_delta)}."})
     if echo_delta is not None and echo_delta > 0.02:
@@ -320,6 +341,8 @@ def _regression_issues(best: CompareRow, baseline: CompareRow | None) -> list[di
         issues.append({"severity": "warn", "message": f"SFT BPB rose {_signed_float(sft_bpb_delta)}."})
     if best.truncated_examples > baseline.truncated_examples:
         issues.append({"severity": "warn", "message": "More SFT rows were truncated."})
+    if best.skipped_long_examples > baseline.skipped_long_examples:
+        issues.append({"severity": "warn", "message": "More SFT rows were skipped for exceeding context."})
     if best.memorization_status.lower() != "low":
         issues.append({"severity": "fail", "message": f"Memorization status is {best.memorization_status}."})
     return issues
@@ -359,11 +382,17 @@ def _next_experiment(
             "title": "SFT quality mismatch",
             "message": f"{best_sft_bpb.run} has better SFT BPB; inspect SFT curriculum before choosing a champion.",
         }
-    if best.pass_rate >= 0.70:
+    if best.pass_rate >= 0.70 and (best.domain_pass_rate is None or best.domain_pass_rate >= 0.50):
         return {
             "status": "pass",
             "title": "Attack harder eval",
             "message": "Keep this as reference, add harder eval rows, then run a stronger preset.",
+        }
+    if best.domain_pass_rate is not None and best.domain_pass_rate < 0.25:
+        return {
+            "status": "warn",
+            "title": "Improve answer data",
+            "message": "The model is not passing enough domain-answer rows yet; improve SFT/eval data before scaling.",
         }
     return {
         "status": "warn",

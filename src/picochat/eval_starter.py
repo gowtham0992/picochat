@@ -25,6 +25,13 @@ class EvalStarterReport:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class SourceSentence:
+    text: str
+    document_index: int
+    sentence_index: int
+
+
 def generate_eval_starter(
     input_path: str | Path | None,
     out_path: str | Path,
@@ -94,49 +101,53 @@ def eval_starter_markdown(report: EvalStarterReport) -> str:
     return "\n".join(lines)
 
 
-def _starter_rows(sentences: list[str], max_items: int) -> list[dict]:
-    usable = [sentence for sentence in sentences if len(_content_words(sentence)) >= 5]
+def _starter_rows(sentences: list[SourceSentence], max_items: int) -> list[dict]:
+    usable = [sentence for sentence in sentences if len(_content_words(sentence.text)) >= 5]
     rows: list[dict] = []
-    answerable_budget = max(2, max_items - 6)
-    for index, sentence in enumerate(usable[:answerable_budget], start=1):
+    boundary_rows = _boundary_rows()
+    answerable_budget = max(2, max_items - len(boundary_rows))
+    for index, source in enumerate(usable[:answerable_budget], start=1):
+        sentence = source.text
         words = _content_words(sentence)
-        required = _required_phrases(words)
+        entities = _entities(sentence)
+        required = _required_phrases(words, entities)
         prefix = _prefix(sentence)
+        topic = ", ".join(entities[:2]) if entities else ", ".join(words[:2])
         rows.append({
-            "user": f"Using only the domain material, complete or explain this source idea: {prefix}",
+            "user": f"What does the domain material say about {topic or 'this source idea'}?",
             "answerable": True,
             "category": "domain_recall",
             "split": "heldout",
             "level": "heldout",
             "reference_answer": sentence,
             "must_include": required,
-            "required_entities": _entities(sentence),
+            "required_entities": entities[:2],
             "min_words": 4,
             "max_words": 80,
             "require_corpus_support": True,
         })
         if index % 3 == 0:
             rows.append({
-                "user": f"Say the same idea in different words while preserving the key terms: {prefix}",
+                "user": f"Explain this held-out note in different words: {prefix}",
                 "answerable": True,
                 "category": "domain_transfer",
                 "split": "transfer",
                 "level": "transfer",
                 "reference_answer": sentence,
                 "must_include_any": [[phrase] for phrase in required[:2]],
-                "required_entities": _entities(sentence),
+                "required_entities": entities[:1],
                 "min_words": 4,
                 "max_words": 90,
                 "require_corpus_support": True,
             })
-        if len(rows) >= max_items - 4:
+        if len(rows) >= answerable_budget:
             break
 
-    rows.extend(_boundary_rows())
+    rows.extend(boundary_rows)
     return rows[:max_items]
 
 
-def _heldout_sentences(sentences: list[str], *, reserve: int) -> list[str]:
+def _heldout_sentences(sentences: list[SourceSentence], *, reserve: int) -> list[SourceSentence]:
     """Use a later sentence window so eval starters do not mirror SFT starters."""
     if len(sentences) <= reserve + 4:
         return sentences
@@ -188,13 +199,19 @@ def _boundary_rows() -> list[dict]:
     ]
 
 
-def _sentences_from_documents(documents: list[str]) -> list[str]:
-    sentences: list[str] = []
-    for document in documents:
+def _sentences_from_documents(documents: list[str]) -> list[SourceSentence]:
+    sentences: list[SourceSentence] = []
+    for document_index, document in enumerate(documents):
+        sentence_index = 0
         for sentence in re.split(r"(?<=[.!?])\s+|\n+", document):
             cleaned = " ".join(sentence.split())
             if 40 <= len(cleaned) <= 320:
-                sentences.append(cleaned)
+                sentences.append(SourceSentence(
+                    text=cleaned,
+                    document_index=document_index,
+                    sentence_index=sentence_index,
+                ))
+                sentence_index += 1
     return sentences
 
 
@@ -206,10 +223,11 @@ def _content_words(text: str) -> list[str]:
     ]
 
 
-def _required_phrases(words: list[str]) -> list[str]:
+def _required_phrases(words: list[str], entities: list[str] | None = None) -> list[str]:
     unique: list[str] = []
     seen: set[str] = set()
-    for word in words:
+    candidates = [*(entities or []), *[word for word in words if len(word) >= 6], *words]
+    for word in candidates:
         key = word.lower()
         if key in seen:
             continue

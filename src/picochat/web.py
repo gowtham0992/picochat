@@ -150,11 +150,14 @@ def discover_runs(runs_dir: str | Path) -> list[dict]:
             "path": str(run_dir),
             "eval_score": f"{eval_summary['num_passed']}/{eval_summary['num_examples']}",
             "pass_rate": eval_summary["pass_rate"],
+            "domain_pass_rate": eval_summary.get("domain_pass_rate"),
+            "refusal_pass_rate": eval_summary.get("refusal_pass_rate"),
             "base_val_loss": summary["base"]["final_val_loss"],
             "sft_val_loss": summary["sft"]["final_val_loss"],
             "num_parameters": summary["base"]["num_parameters"],
             "context_size": summary["config"]["context_size"],
             "truncated_examples": summary["sft"]["truncated_examples"],
+            "skipped_long_examples": summary["sft"].get("skipped_long_examples", 0),
         })
     return rows
 

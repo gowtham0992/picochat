@@ -56,6 +56,7 @@ def write_run(root, name):
         "sft": {
             "final_val_loss": 4.0,
             "truncated_examples": 0,
+            "skipped_long_examples": 0,
         },
         "eval": {
             "num_examples": 2,
@@ -149,11 +150,14 @@ def test_discover_runs_returns_dashboard_rows(tmp_path):
         "path": str(tmp_path / "tiny-a"),
         "eval_score": "1/2",
         "pass_rate": 0.5,
+        "domain_pass_rate": None,
+        "refusal_pass_rate": None,
         "base_val_loss": 2.0,
         "sft_val_loss": 4.0,
         "num_parameters": 1234,
         "context_size": 128,
         "truncated_examples": 0,
+        "skipped_long_examples": 0,
     }]
 
 

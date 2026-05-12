@@ -29,7 +29,7 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     summary = run_tiny(TinyRunConfig(
         out_dir=str(out_dir),
         dataset_pack=str(pack_path),
-        context_size=16,
+        context_size=32,
         n_embd=16,
         n_head=4,
         n_layer=1,

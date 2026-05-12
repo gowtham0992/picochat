@@ -46,19 +46,24 @@ def test_chat_sft_dataset_masks_prompt_tokens():
     assert dataset.stats().supervised_tokens > 0
 
 
-def test_chat_sft_dataset_keeps_answer_tokens_when_prompt_is_too_long():
+def test_chat_sft_dataset_skips_rows_that_do_not_fit_context():
     tokenizer = CharTokenizer.train([
         "User: this prompt is far too long for a tiny context\nAssistant: ok"
+        "User: hi\nAssistant: ok"
     ])
 
     dataset = ChatSFTDataset(
-        [ChatExample(user="this prompt is far too long for a tiny context", assistant="ok")],
+        [
+            ChatExample(user="this prompt is far too long for a tiny context", assistant="ok"),
+            ChatExample(user="hi", assistant="ok"),
+        ],
         tokenizer=tokenizer,
-        context_size=8,
+        context_size=24,
     )
 
     assert len(dataset) == 1
-    assert dataset.stats().truncated_examples == 1
+    assert dataset.stats().truncated_examples == 0
+    assert dataset.stats().skipped_long_examples == 1
     assert dataset.stats().supervised_tokens > 0
 
 

@@ -337,6 +337,10 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     answerable_support_total = sum(int(row["support_total"]) for row in rows if row["answerable"])
     answerable_support_matched = sum(int(row["support_matched"]) for row in rows if row["answerable"])
     answerable = sum(1 for row in rows if row["answerable"])
+    answerable_pass_rate = _filtered_pass_rate(rows, lambda row: bool(row.get("answerable", True)))
+    unanswerable_pass_rate = _filtered_pass_rate(rows, lambda row: not bool(row.get("answerable", True)))
+    domain_pass_rate = _filtered_pass_rate(rows, lambda row: str(row.get("category", "")).startswith("domain_"))
+    refusal_pass_rate = _filtered_pass_rate(rows, lambda row: "refusal" in str(row.get("category", "")) or not bool(row.get("answerable", True)))
     category_breakdown = _breakdown(rows, "category", "answerable")
     split_breakdown = _breakdown(rows, "split", "default")
     level_breakdown = _breakdown(rows, "level", "heldout")
@@ -355,6 +359,10 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "pass_rate": passed / len(rows),
             "num_answerable": answerable,
             "num_unanswerable": len(rows) - answerable,
+            "answerable_pass_rate": answerable_pass_rate,
+            "unanswerable_pass_rate": unanswerable_pass_rate,
+            "domain_pass_rate": domain_pass_rate,
+            "refusal_pass_rate": refusal_pass_rate,
             "unsupported_claims": unsupported_claims,
             "unsupported_claim_rate": unsupported_claims / len(rows),
             "prompt_echoes": prompt_echoes,
@@ -448,6 +456,13 @@ def analyze_eval_failures(
             weak_levels,
         ),
     }
+
+
+def _filtered_pass_rate(rows: list[dict], predicate) -> float | None:
+    selected = [row for row in rows if predicate(row)]
+    if not selected:
+        return None
+    return sum(1 for row in selected if row.get("passed")) / len(selected)
 
 
 def _breakdown(rows: list[dict], field: str, default: str) -> dict[str, dict]:

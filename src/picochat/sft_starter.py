@@ -24,6 +24,17 @@ class SFTStarterReport:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class SourceSentence:
+    text: str
+    document_index: int
+    sentence_index: int
+
+    @property
+    def group(self) -> str:
+        return f"doc{self.document_index:05d}:sent{self.sentence_index:05d}"
+
+
 def generate_sft_starter(
     input_path: str | Path | None,
     out_path: str | Path,
@@ -88,38 +99,35 @@ def sft_starter_markdown(report: SFTStarterReport) -> str:
     return "\n".join(lines)
 
 
-def _starter_rows(sentences: list[str], max_items: int) -> list[dict[str, str]]:
-    usable = [sentence for sentence in sentences if len(_content_words(sentence)) >= 5]
+def _starter_rows(sentences: list[SourceSentence], max_items: int) -> list[dict[str, str]]:
+    usable = [sentence for sentence in sentences if len(_content_words(sentence.text)) >= 5]
     rows: list[dict[str, str]] = []
-    domain_budget = max(4, max_items - 6)
-    for index, sentence in enumerate(usable[:domain_budget], start=1):
+    boundary_rows = _boundary_rows()
+    domain_budget = max(4, max_items - min(len(boundary_rows), max(2, max_items // 20)))
+    templates = (
+        ("domain_direct", "What does the source say about {topic}?", "{sentence}"),
+        ("domain_qa", "Answer from the domain notes: {topic}.", "The domain notes say: {sentence}"),
+        ("domain_summary", "Summarize this domain point: {prefix}", "{sentence}"),
+        ("domain_paraphrase", "Explain this in simpler words: {prefix}", "In simpler words: {sentence}"),
+        ("domain_entity", "Which detail is important about {topic}?", "{sentence}"),
+    )
+    for index, source in enumerate(usable[:domain_budget], start=1):
+        sentence = source.text
         prefix = _prefix(sentence)
         entities = _entities(sentence)
-        key_terms = ", ".join(entities[:2]) if entities else ", ".join(_content_words(sentence)[:2])
+        key_terms = _content_words(sentence)
+        topic = ", ".join(entities[:2]) if entities else ", ".join(key_terms[:2])
+        category, user_template, assistant_template = templates[(index - 1) % len(templates)]
         rows.append({
-            "user": f"Using only the provided domain material, explain this idea: {prefix}",
-            "assistant": sentence,
-            "category": "domain_recall",
+            "user": user_template.format(topic=topic or "this domain note", prefix=prefix),
+            "assistant": assistant_template.format(sentence=sentence),
+            "category": category,
+            "group": source.group,
         })
-        if len(rows) >= domain_budget:
-            break
-        rows.append({
-            "user": f"What should I remember about {key_terms or 'this domain note'}?",
-            "assistant": f"The provided material says: {sentence}",
-            "category": "domain_qa",
-        })
-        if len(rows) >= domain_budget:
-            break
-        if index % 2 == 0:
-            rows.append({
-                "user": f"Restate this domain fact in simpler words: {prefix}",
-                "assistant": f"In simpler terms: {sentence}",
-                "category": "domain_paraphrase",
-            })
         if len(rows) >= domain_budget:
             break
 
-    rows.extend(_boundary_rows())
+    rows.extend(boundary_rows)
     return rows[:max_items]
 
 
@@ -159,13 +167,19 @@ def _boundary_rows() -> list[dict[str, str]]:
     ]
 
 
-def _sentences_from_documents(documents: list[str]) -> list[str]:
-    sentences: list[str] = []
-    for document in documents:
+def _sentences_from_documents(documents: list[str]) -> list[SourceSentence]:
+    sentences: list[SourceSentence] = []
+    for document_index, document in enumerate(documents):
+        sentence_index = 0
         for sentence in re.split(r"(?<=[.!?])\s+|\n+", document):
             cleaned = " ".join(sentence.split())
             if 40 <= len(cleaned) <= 320:
-                sentences.append(cleaned)
+                sentences.append(SourceSentence(
+                    text=cleaned,
+                    document_index=document_index,
+                    sentence_index=sentence_index,
+                ))
+                sentence_index += 1
     return sentences
 
 

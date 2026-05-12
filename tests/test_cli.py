@@ -471,10 +471,14 @@ def test_cli_train_sft(tmp_path, capsys):
         "1",
         "--sample-tokens",
         "2",
+        "--sampling",
+        "category_balanced",
     ])
 
     assert exit_code == 0
     assert (out_dir / "checkpoint" / "model.pt").exists()
+    report = json.loads((out_dir / "sft_report.json").read_text(encoding="utf-8"))
+    assert report["dataset"]["sampling"] == "category_balanced"
     assert "saved sft checkpoint" in capsys.readouterr().out
 
 
@@ -547,7 +551,7 @@ def test_cli_run_tiny(tmp_path, capsys):
         "--eval-input",
         str(eval_path),
         "--context-size",
-        "16",
+        "32",
         "--n-embd",
         "16",
         "--n-layer",

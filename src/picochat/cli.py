@@ -903,6 +903,7 @@ def run_train_sft(args: argparse.Namespace) -> int:
         lr_decay=args.lr_decay,
         min_lr_ratio=args.min_lr_ratio,
         grad_clip=args.grad_clip,
+        sampling=args.sampling,
     )
     report = train_sft(config)
     print(f"saved sft checkpoint: {report['checkpoint']}")

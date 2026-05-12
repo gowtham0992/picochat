@@ -35,6 +35,7 @@ class ChatDatasetStats:
     context_size: int
     supervised_tokens: int
     truncated_examples: int
+    skipped_long_examples: int
     num_groups: int
     category_counts: dict[str, int]
 
@@ -92,7 +93,7 @@ class ChatSFTDataset(torch.utils.data.Dataset):
         self.groups: list[str | None] = []
         self.categories: list[str] = []
         supervised_tokens = 0
-        truncated_examples = 0
+        skipped_long_examples = 0
 
         for example in examples:
             prompt = render_chat_prompt([], example.user)
@@ -101,11 +102,8 @@ class ChatSFTDataset(torch.utils.data.Dataset):
             max_ids = context_size + 1
 
             if len(prompt_ids) + len(answer_ids) > max_ids:
-                truncated_examples += 1
-                answer_keep = min(len(answer_ids), max_ids)
-                prompt_keep = max_ids - answer_keep
-                prompt_ids = prompt_ids[-prompt_keep:] if prompt_keep > 0 else []
-                answer_ids = answer_ids[:answer_keep]
+                skipped_long_examples += 1
+                continue
 
             full_ids = prompt_ids + answer_ids
             if len(full_ids) < 2:
@@ -133,14 +131,18 @@ class ChatSFTDataset(torch.utils.data.Dataset):
             supervised_tokens += supervised
 
         if not self.rows:
-            raise ValueError("no usable chat examples fit inside the model context")
+            raise ValueError(
+                "no usable chat examples fit inside the model context; "
+                "increase --context-size or shorten the chat SFT rows"
+            )
 
         explicit_groups = {group for group in self.groups if group is not None}
         self._stats = ChatDatasetStats(
             num_examples=len(self.rows),
             context_size=context_size,
             supervised_tokens=supervised_tokens,
-            truncated_examples=truncated_examples,
+            truncated_examples=0,
+            skipped_long_examples=skipped_long_examples,
             num_groups=len(explicit_groups),
             category_counts=dict(sorted(Counter(self.categories).items())),
         )

@@ -257,6 +257,7 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Context size: {dataset['context_size']}")
     lines.append(f"- Supervised answer tokens: {dataset['supervised_tokens']}")
     lines.append(f"- Truncated examples: {dataset.get('truncated_examples', 0)}")
+    lines.append(f"- Skipped too-long examples: {dataset.get('skipped_long_examples', 0)}")
     lines.append(f"- Train examples: {dataset['train_examples']}")
     lines.append(f"- Validation examples: {dataset['val_examples']}")
     lines.append(f"- SFT sampling: `{dataset.get('sampling', config.get('sampling', 'uniform'))}`")
@@ -422,6 +423,12 @@ def chat_eval_report_markdown(report: dict) -> str:
     if "unsupported_claim_rate" in summary:
         lines.append(f"- Answerable examples: {summary.get('num_answerable', 0)}")
         lines.append(f"- Unanswerable examples: {summary.get('num_unanswerable', 0)}")
+        if summary.get("answerable_pass_rate") is not None:
+            lines.append(f"- Answerable pass rate: {_format_percent_or_dash(summary.get('answerable_pass_rate'))}")
+        if summary.get("domain_pass_rate") is not None:
+            lines.append(f"- Domain answer pass rate: {_format_percent_or_dash(summary.get('domain_pass_rate'))}")
+        if summary.get("refusal_pass_rate") is not None:
+            lines.append(f"- Refusal/boundary pass rate: {_format_percent_or_dash(summary.get('refusal_pass_rate'))}")
         lines.append(f"- Unsupported claim rate: {format_float(summary['unsupported_claim_rate'] * 100)}%")
         lines.append(f"- Prompt echo rate: {format_float(summary.get('prompt_echo_rate', 0.0) * 100)}%")
         lines.append(f"- Missing support rate: {format_float(summary.get('missing_support_rate', 0.0) * 100)}%")
@@ -583,6 +590,10 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Failed examples: {eval_summary['num_failed']}")
     if "unsupported_claim_rate" in eval_summary:
         lines.append(f"- Unsupported claim rate: {format_float(eval_summary['unsupported_claim_rate'] * 100)}%")
+        if eval_summary.get("domain_pass_rate") is not None:
+            lines.append(f"- Domain answer pass rate: {_format_percent_or_dash(eval_summary.get('domain_pass_rate'))}")
+        if eval_summary.get("refusal_pass_rate") is not None:
+            lines.append(f"- Refusal/boundary pass rate: {_format_percent_or_dash(eval_summary.get('refusal_pass_rate'))}")
         lines.append(f"- Prompt echo rate: {format_float(eval_summary.get('prompt_echo_rate', 0.0) * 100)}%")
         lines.append(f"- Missing support rate: {format_float(eval_summary.get('missing_support_rate', 0.0) * 100)}%")
         lines.append(f"- Support match rate: {format_float(eval_summary.get('support_match_rate', 0.0) * 100)}%")
@@ -665,6 +676,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     if sft.get("final_val_bpb") is not None:
         lines.append(f"- SFT final val BPB: {format_optional_float(sft.get('final_val_bpb'))}")
     lines.append(f"- SFT truncated examples: {sft['truncated_examples']}")
+    if "skipped_long_examples" in sft:
+        lines.append(f"- SFT skipped too-long examples: {sft['skipped_long_examples']}")
     if base_coverage:
         lines.append(f"- Base stop reason: `{base.get('stop_reason', 'unknown')}`")
         lines.append(f"- Base estimated train epochs: {format_optional_float(base_coverage.get('estimated_train_epochs'))}")

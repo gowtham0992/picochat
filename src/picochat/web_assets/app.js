@@ -1767,6 +1767,7 @@ function pipelineStages() {
         ["Stop", summary.sft?.stop_reason || detail?.sft_report?.stop_reason || "--"],
         ["Sampling", detail?.sft_report?.dataset?.sampling || config.sft_sampling || "--"],
         ["Truncated", summary.sft?.truncated_examples ?? "--"],
+        ["Skipped", summary.sft?.skipped_long_examples ?? detail?.sft_report?.dataset?.skipped_long_examples ?? "--"],
       ],
       note: "Tunes the base model on User/Assistant examples. A large loss gap is a memorization warning.",
       command: shellCommand([
@@ -2206,7 +2207,8 @@ function stageLearningSignal(stage) {
   if (stage.id === "sft") {
     const loss = summary.sft?.val_bpb ?? state.detail?.sft_report?.losses?.at(-1)?.val_bpb;
     const truncated = summary.sft?.truncated_examples ?? state.detail?.sft_report?.dataset?.truncated_examples;
-    return `SFT BPB ${fmtLoss(loss)} / trunc ${truncated ?? "--"}`;
+    const skipped = summary.sft?.skipped_long_examples ?? state.detail?.sft_report?.dataset?.skipped_long_examples;
+    return `SFT BPB ${fmtLoss(loss)} / trunc ${truncated ?? "--"} / skip ${skipped ?? "--"}`;
   }
   if (stage.id === "eval") {
     return evalSummary ? `${evalSummary.num_passed}/${evalSummary.num_examples} pass` : "not evaluated";
@@ -2254,6 +2256,9 @@ function trustChecks() {
   const missingSupportRate = Number(evalSummary.missing_support_rate || 0);
   const promptEchoRate = Number(evalSummary.prompt_echo_rate || 0);
   const truncation = Number(sft.truncated_examples || 0);
+  const skippedLong = Number(sft.skipped_long_examples || 0);
+  const domainPassRate = optionalNumber(evalSummary.domain_pass_rate);
+  const refusalPassRate = optionalNumber(evalSummary.refusal_pass_rate);
   const leakageSummary = honesty.summary || "No honesty report summary found.";
   const leakageClean = /no obvious eval leakage/i.test(leakageSummary) || honesty.status === "ready";
   return [
@@ -2271,6 +2276,16 @@ function trustChecks() {
       label: "Memorization",
       status: String(baseMem.status || "low") === "low" ? "pass" : String(baseMem.status || "").includes("high") ? "fail" : "warn",
       value: baseMem.summary || "No memorization probe summary found.",
+    },
+    {
+      label: "Domain answers",
+      status: domainPassRate == null ? "warn" : domainPassRate >= 0.5 ? "pass" : domainPassRate >= 0.25 ? "warn" : "fail",
+      value: domainPassRate == null ? "No domain-answer gate found in this eval." : `${fmtPercent(domainPassRate)} domain-answer pass rate.`,
+    },
+    {
+      label: "Refusal boundary",
+      status: refusalPassRate == null ? "warn" : refusalPassRate >= 0.8 ? "pass" : refusalPassRate >= 0.5 ? "warn" : "fail",
+      value: refusalPassRate == null ? "No refusal/boundary gate found in this eval." : `${fmtPercent(refusalPassRate)} refusal/boundary pass rate.`,
     },
     {
       label: "Unsupported claims",
@@ -2291,6 +2306,11 @@ function trustChecks() {
       label: "SFT truncation",
       status: truncation === 0 ? "pass" : truncation <= 3 ? "warn" : "fail",
       value: `${fmtInt(truncation)} examples truncated during SFT.`,
+    },
+    {
+      label: "SFT too long",
+      status: skippedLong === 0 ? "pass" : skippedLong <= 5 ? "warn" : "fail",
+      value: `${fmtInt(skippedLong)} examples skipped because they exceeded context.`,
     },
   ];
 }
@@ -4936,6 +4956,8 @@ function renderComparison(comparison) {
           <th>Tok</th>
           <th>Eval</th>
           <th>Pass</th>
+          <th>Domain</th>
+          <th>Refusal</th>
           <th>Base BPB</th>
           <th>SFT BPB</th>
           <th>Base Val</th>
@@ -4946,6 +4968,7 @@ function renderComparison(comparison) {
           <th>Params</th>
           <th>Ctx</th>
           <th>Trunc</th>
+          <th>Skip</th>
         </tr>
       </thead>
       <tbody>
@@ -4955,6 +4978,8 @@ function renderComparison(comparison) {
             <td>${escapeHtml(row.tokenizer_type || "--")}</td>
             <td>${escapeHtml(row.eval_score)}</td>
             <td>${fmtPercent(row.pass_rate)}</td>
+            <td>${fmtPercent(row.domain_pass_rate)}</td>
+            <td>${fmtPercent(row.refusal_pass_rate)}</td>
             <td>${fmtLoss(row.base_val_bpb)}</td>
             <td>${fmtLoss(row.sft_val_bpb)}</td>
             <td>${fmtLoss(row.base_val_loss)}</td>
@@ -4965,6 +4990,7 @@ function renderComparison(comparison) {
             <td>${fmtInt(row.num_parameters)}</td>
             <td>${escapeHtml(row.context_size)}</td>
             <td>${escapeHtml(row.truncated_examples)}</td>
+            <td>${escapeHtml(row.skipped_long_examples ?? 0)}</td>
           </tr>
         `).join("")}
       </tbody>
@@ -5085,11 +5111,19 @@ function compareRegressionIssues(best, baseline) {
   if (!baseline) return [];
   const issues = [];
   const passDelta = Number(best.pass_rate || 0) - Number(baseline.pass_rate || 0);
+  const domainDelta = optionalNumberDelta(best.domain_pass_rate, baseline.domain_pass_rate);
+  const refusalDelta = optionalNumberDelta(best.refusal_pass_rate, baseline.refusal_pass_rate);
   const supportDelta = optionalNumberDelta(best.support_match_rate, baseline.support_match_rate);
   const echoDelta = optionalNumberDelta(best.prompt_echo_rate, baseline.prompt_echo_rate);
   const sftBpbDelta = optionalNumberDelta(best.sft_val_bpb, baseline.sft_val_bpb);
   if (passDelta < 0.02) {
     issues.push({ severity: "warn", message: "Eval gain is under +2 points." });
+  }
+  if (domainDelta != null && domainDelta < 0.02) {
+    issues.push({ severity: "warn", message: "Domain-answer gain is under +2 points." });
+  }
+  if (refusalDelta != null && refusalDelta < -0.05) {
+    issues.push({ severity: "fail", message: `Refusal/boundary pass dropped ${signedPercent(refusalDelta)}.` });
   }
   if (supportDelta != null && supportDelta < -0.05) {
     issues.push({ severity: "fail", message: `Support match dropped ${signedPercent(supportDelta)}.` });
@@ -5102,6 +5136,9 @@ function compareRegressionIssues(best, baseline) {
   }
   if (Number(best.truncated_examples || 0) > Number(baseline.truncated_examples || 0)) {
     issues.push({ severity: "warn", message: "More SFT rows were truncated." });
+  }
+  if (Number(best.skipped_long_examples || 0) > Number(baseline.skipped_long_examples || 0)) {
+    issues.push({ severity: "warn", message: "More SFT rows were skipped for exceeding context." });
   }
   if (String(best.memorization_status || "").toLowerCase() !== "low") {
     issues.push({ severity: "fail", message: `Memorization status is ${best.memorization_status || "unknown"}.` });
@@ -5138,11 +5175,18 @@ function compareNextExperiment(best, baseline, issues, bestBaseBpb, bestSftBpb) 
       message: `${bestSftBpb.run} has better SFT BPB; inspect SFT curriculum before choosing a champion.`,
     };
   }
-  if (Number(best.pass_rate || 0) >= 0.7) {
+  if (Number(best.pass_rate || 0) >= 0.7 && (best.domain_pass_rate == null || Number(best.domain_pass_rate) >= 0.5)) {
     return {
       status: "pass",
       title: "Attack harder eval",
       message: "Keep this as reference, add harder eval rows, then run a stronger preset.",
+    };
+  }
+  if (best.domain_pass_rate != null && Number(best.domain_pass_rate) < 0.25) {
+    return {
+      status: "warn",
+      title: "Improve answer data",
+      message: "The model is not passing enough domain-answer rows yet; improve SFT/eval data before scaling.",
     };
   }
   return {
@@ -5332,6 +5376,11 @@ function signedPercent(value) {
 function signedLoss(value) {
   const sign = value > 0 ? "+" : "";
   return `${sign}${fmtLoss(value)}`;
+}
+
+function optionalNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function optionalNumberDelta(after, before) {
