@@ -1094,6 +1094,10 @@ function guideCreateSftContent() {
             <input id="guide-sft-max-items" type="number" min="8" max="300" value="${escapeHtml(String(requestedRows))}">
           </div>
         </div>
+        <label class="checkbox-line guide-starter-overwrite" for="guide-starter-force">
+          <input id="guide-starter-force" type="checkbox" ${$("flight-starter-force")?.checked ? "checked" : ""}>
+          OVERWRITE EXISTING STARTER FILE
+        </label>
         <button type="button" data-guide-action="create-sft">CREATE SFT STARTER</button>
       </div>
       <div id="guide-sft-mirror" class="guide-mirror">${$("flight-sft-result")?.innerHTML || ""}</div>
@@ -1121,6 +1125,10 @@ function guideCreateEvalContent() {
             <input id="guide-eval-max-items" type="number" min="4" max="200" value="${escapeHtml(String(requestedRows))}">
           </div>
         </div>
+        <label class="checkbox-line guide-starter-overwrite" for="guide-starter-force">
+          <input id="guide-starter-force" type="checkbox" ${$("flight-starter-force")?.checked ? "checked" : ""}>
+          OVERWRITE EXISTING STARTER FILE
+        </label>
         <button type="button" data-guide-action="create-eval">CREATE EVAL STARTER</button>
       </div>
       <div id="guide-eval-mirror" class="guide-mirror">${$("flight-eval-result")?.innerHTML || ""}</div>
@@ -1270,10 +1278,15 @@ function syncGuideInputs(event) {
     "guide-pack-path": "flight-pack-path",
     "guide-sft-max-items": "flight-sft-max-items",
     "guide-eval-max-items": "flight-eval-max-items",
+    "guide-starter-force": "flight-starter-force",
   };
   const destination = map[target.id];
   if (!destination || !$(destination)) return;
-  $(destination).value = target.value;
+  if (target.type === "checkbox") {
+    $(destination).checked = target.checked;
+  } else {
+    $(destination).value = target.value;
+  }
   if (target.id === "guide-hf-dataset") seedHfOutDirFromDataset();
   if (target.id === "guide-local-path" && target.value.trim()) $("flight-pack-path").value = "";
   if (target.id === "guide-pack-path" && target.value.trim()) $("flight-input-path").value = "";
@@ -1451,6 +1464,7 @@ function syncGuideInputValues() {
     "guide-pack-path",
     "guide-sft-max-items",
     "guide-eval-max-items",
+    "guide-starter-force",
   ].forEach((id) => {
     const node = $(id);
     if (node) syncGuideInputs({ target: node });
