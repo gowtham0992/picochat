@@ -315,6 +315,18 @@ h2 {
   background: var(--field);
 }
 
+.home-choice:hover p,
+.home-choice:hover strong,
+.home-choice:focus-visible p,
+.home-choice:focus-visible strong {
+  color: var(--inverse-ink);
+}
+
+.home-choice:hover span,
+.home-choice:focus-visible span {
+  color: var(--inverse-accent);
+}
+
 .home-signal-grid {
   display: grid;
   gap: 12px;
