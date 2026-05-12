@@ -28,6 +28,7 @@ from picochat.web import (
     _error_payload,
 )
 from picochat.hf_import import HFSplitError
+from picochat.honesty import inspect_data_honesty
 
 
 def write_run(root, name):
@@ -694,6 +695,37 @@ def test_starter_plans_accept_recipe_backed_dataset_pack(tmp_path):
     assert eval_report["input_path"] == init_report["corpus_recipe"]
     assert sft_report["num_documents"] == 1
     assert eval_report["num_documents"] == 1
+
+
+def test_generated_sft_and_eval_starters_do_not_exactly_overlap(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    chat_path = tmp_path / "chat_generated.jsonl"
+    eval_path = tmp_path / "eval_generated.jsonl"
+    source_path.write_text(
+        "\n".join(
+            f"Training document sentence {index} explains careful domain concept {index} "
+            f"with enough supporting words for starter generation."
+            for index in range(80)
+        ),
+        encoding="utf-8",
+    )
+
+    sft_starter_plan({
+        "input_path": str(source_path),
+        "out_path": str(chat_path),
+        "force": True,
+        "seed": 42,
+    })
+    eval_starter_plan({
+        "input_path": str(source_path),
+        "out_path": str(eval_path),
+        "force": True,
+        "seed": 42,
+    })
+
+    honesty = inspect_data_honesty(chat_path, eval_path, source_path)
+    assert honesty.exact_prompt_leaks == 0
+    assert all(finding.kind != "exact_sft_prompt_leak" for finding in honesty.findings)
 
 
 def test_starter_plans_can_promote_generated_files_to_dataset_pack(tmp_path):
