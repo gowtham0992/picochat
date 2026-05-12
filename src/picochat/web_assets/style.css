@@ -315,6 +315,14 @@ h2 {
   background: var(--field);
 }
 
+.home-choice:hover,
+.home-choice:focus-visible,
+.home-choice.primary:hover,
+.home-choice.primary:focus-visible {
+  background: var(--inverse);
+  color: var(--inverse-ink);
+}
+
 .home-choice:hover p,
 .home-choice:hover strong,
 .home-choice:focus-visible p,
