@@ -1159,6 +1159,7 @@ function guideEditValidateContent() {
           <button type="button" data-guide-action="inspect-tuning">VALIDATE TUNING DATA</button>
         </div>
       </div>
+      ${report ? renderTuningPaths(report) : ""}
       ${report ? renderTuningPreflight(report.chat_data, report.eval_data) : ""}
       ${guideNotice()}
     </div>
@@ -2952,7 +2953,7 @@ function renderTuningInspection(report) {
   $("tuning-inspector-status").textContent =
     `TUNING ${status} | CHAT ${escapeHtml(report.chat_data?.status || "--")} | EVAL ${escapeHtml(report.eval_data?.status || "--")}`;
   $("tuning-inspector-actions").innerHTML = renderTuningActions(report);
-  $("tuning-inspector-result").innerHTML = renderTuningPreflight(report.chat_data, report.eval_data);
+  $("tuning-inspector-result").innerHTML = `${renderTuningPaths(report)}${renderTuningPreflight(report.chat_data, report.eval_data)}`;
   $("tuning-inspector-command").innerHTML = report.preview_command ? `
     <div class="command-head">
       <label>NEXT PREVIEW COMMAND</label>
@@ -2983,6 +2984,28 @@ function renderTuningActions(report) {
         <p>${escapeHtml(action)}</p>
       </div>
     `).join("")}
+  `;
+}
+
+function renderTuningPaths(report) {
+  const chatPath = report?.chat_input || "--";
+  const evalPath = report?.eval_input || "--";
+  const packPath = report?.dataset_pack || $("flight-pack-path")?.value.trim() || "--";
+  const hasRepeatedStarter = /_starter_starter/i.test(`${chatPath} ${evalPath}`);
+  const status = hasRepeatedStarter ? "caution" : "ready";
+  const message = hasRepeatedStarter ? "Path needs cleanup before launch." : "Paths are clean for launch.";
+  return `
+    <div class="tuning-path-card ${status}">
+      <div>
+        <label>TUNING FILE PATHS</label>
+        <strong>${escapeHtml(message)}</strong>
+      </div>
+      <div class="command-meta">
+        <span>PACK ${escapeHtml(packPath)}</span>
+        <span>SFT ${escapeHtml(chatPath)}</span>
+        <span>EVAL ${escapeHtml(evalPath)}</span>
+      </div>
+    </div>
   `;
 }
 

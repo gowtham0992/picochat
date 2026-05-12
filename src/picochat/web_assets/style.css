@@ -1853,6 +1853,21 @@ textarea.guide-target-focus {
   color: var(--accent);
 }
 
+.tuning-path-card {
+  border: 1px solid var(--dim-line);
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+}
+
+.tuning-path-card.ready strong {
+  color: var(--green);
+}
+
+.tuning-path-card.caution strong {
+  color: var(--accent);
+}
+
 .hf-import-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 8px 0;
