@@ -24,6 +24,7 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 DEFAULT_BENCHMARK_SFT_ROWS = 300
 DEFAULT_BENCHMARK_EVAL_ROWS = 80
 BENCHMARK_SOURCES = ("offline", "auto", "hf")
+SFT_CHAR_BUDGET = 900
 
 
 class BenchmarkSourceError(RuntimeError):
@@ -149,6 +150,8 @@ def generate_benchmark_tuning_pack(
             "This pack adds a nanochat-style curated SFT/eval curriculum.",
             f"Curriculum source mode: {source}.",
             "Eval prompts are generated from a held-out stream and are not copied into SFT.",
+            "Synthetic behavior rows use separate train/eval templates and held-out word pools.",
+            f"HF chat SFT rows are length-budgeted to about {SFT_CHAR_BUDGET} characters for local 512-context runs.",
             "Choice eval facts use a held-out fact pool separate from SFT choice facts.",
             "Multiple-choice eval rows include choice labels so Picochat can score next-token choice likelihood.",
             *chat_result.source_notes,
@@ -238,17 +241,20 @@ def _normalize_source(source: str) -> str:
 
 def _build_hf_sft_result(count: int, seed: int) -> _RowBuildResult:
     quotas = _quotas(count, (
-        ("smoltalk", 0.40),
-        ("mmlu", 0.24),
-        ("gsm8k", 0.18),
-        ("spelling", 0.10),
+        ("smoltalk", 0.25),
+        ("mmlu", 0.20),
+        ("gsm8k", 0.20),
+        ("choice", 0.10),
+        ("math", 0.10),
+        ("spelling", 0.08),
         ("identity", 0.04),
-        ("refusal", 0.04),
+        ("refusal", 0.03),
     ))
     rows: list[dict[str, Any]] = []
     notes: list[str] = []
     datasets: Counter[str] = Counter()
     external_rows = 0
+    filler_rows = 0
 
     for name, builder in (
         ("HuggingFaceTB/smol-smoltalk", lambda limit: _hf_smoltalk_sft_rows(limit, seed)),
@@ -267,6 +273,8 @@ def _build_hf_sft_result(count: int, seed: int) -> _RowBuildResult:
             notes.append(str(exc))
 
     local_rows = _build_local_behavior_rows(
+        choice=quotas["choice"],
+        math=quotas["math"],
         spelling=quotas["spelling"],
         identity=quotas["identity"],
         refusal=quotas["refusal"],
@@ -289,12 +297,13 @@ def _build_hf_sft_result(count: int, seed: int) -> _RowBuildResult:
         added = _unique_rows(filler, rows, limit=count - len(rows))
         rows.extend(added)
         datasets["picochat_offline_fill"] += len(added)
+        filler_rows = len(added)
         notes.append(f"Filled {len(added)} missing SFT rows with offline deterministic rows.")
 
     return _RowBuildResult(
         rows=rows[:count],
         source_mode="hf",
-        source_status="hf",
+        source_status="hf_mixed" if filler_rows else "hf",
         source_datasets=dict(sorted(datasets.items())),
         fallback_reason=None,
         source_notes=tuple(notes) or ("HF benchmark SFT sources loaded successfully.",),
@@ -314,6 +323,7 @@ def _build_hf_eval_result(count: int, seed: int) -> _RowBuildResult:
     notes: list[str] = []
     datasets: Counter[str] = Counter()
     external_rows = 0
+    filler_rows = 0
 
     for name, target, builder in (
         ("allenai/ai2_arc", quotas["arc"], lambda limit: _hf_arc_eval_rows(limit, seed)),
@@ -353,12 +363,13 @@ def _build_hf_eval_result(count: int, seed: int) -> _RowBuildResult:
         added = _unique_rows(filler, rows, limit=count - len(rows))
         rows.extend(added)
         datasets["picochat_offline_fill"] += len(added)
+        filler_rows = len(added)
         notes.append(f"Filled {len(added)} missing eval rows with offline deterministic rows.")
 
     return _RowBuildResult(
         rows=rows[:count],
         source_mode="hf",
-        source_status="hf",
+        source_status="hf_mixed" if filler_rows else "hf",
         source_datasets=dict(sorted(datasets.items())),
         fallback_reason=None,
         source_notes=tuple(notes) or ("HF benchmark eval sources loaded successfully.",),
@@ -383,9 +394,15 @@ def _build_local_behavior_rows(
     seed: int,
     split: str,
     eval_rows: bool,
+    choice: int = 0,
+    math: int = 0,
 ) -> list[dict[str, Any]]:
     rng = random.Random(seed)
     rows: list[dict[str, Any]] = []
+    for index in range(choice):
+        rows.append(_choice_row(index, rng, split=split, eval_rows=eval_rows))
+    for index in range(math):
+        rows.append(_math_row(index, rng, split=split, eval_rows=eval_rows))
     for index in range(spelling):
         rows.append(_spelling_row(index, rng, split=split, eval_rows=eval_rows))
     for index in range(identity):
@@ -416,12 +433,12 @@ def _unique_rows(
 
 def _hf_smoltalk_sft_rows(limit: int, seed: int) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for index, item in enumerate(_hf_rows("HuggingFaceTB/smol-smoltalk", None, "train", seed, limit * 8)):
+    for index, item in enumerate(_hf_rows("HuggingFaceTB/smol-smoltalk", None, "train", seed, limit * 20)):
         pair = _first_user_assistant_pair(item.get("messages"))
         if not pair:
             continue
         user, assistant = pair
-        if len(user) > 900 or len(assistant) > 1400:
+        if not _within_sft_budget(user, assistant):
             continue
         rows.append({
             "user": user,
@@ -437,11 +454,13 @@ def _hf_smoltalk_sft_rows(limit: int, seed: int) -> list[dict[str, Any]]:
 
 def _hf_mmlu_sft_rows(limit: int, seed: int) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for index, item in enumerate(_hf_rows("cais/mmlu", "all", "auxiliary_train", seed, limit * 4)):
+    for index, item in enumerate(_hf_rows("cais/mmlu", "all", "auxiliary_train", seed, limit * 12)):
         rendered = _mmlu_rendered(item)
         if rendered is None:
             continue
         user, correct_label, subject = rendered
+        if not _within_sft_budget(user, correct_label):
+            continue
         rows.append({
             "user": user,
             "assistant": correct_label,
@@ -518,8 +537,11 @@ def _hf_gsm8k_sft_rows(limit: int, seed: int) -> list[dict[str, Any]]:
         answer = _gsm8k_final_answer(item.get("answer"))
         if not question or not answer:
             continue
+        user = f"Solve this math problem. Give only the final answer.\n{question}"
+        if not _within_sft_budget(user, answer):
+            continue
         rows.append({
-            "user": f"Solve this math problem. Give only the final answer.\n{question}",
+            "user": user,
             "assistant": answer,
             "category": "gsm8k",
             "group": f"hf-gsm8k-train-{index}",
@@ -668,6 +690,15 @@ def _clean_text(value: Any) -> str:
     return " ".join(str(value).strip().split())
 
 
+def _within_sft_budget(user: str, assistant: str, budget: int = SFT_CHAR_BUDGET) -> bool:
+    """Keep generated SFT rows small enough for local 512-token experiments."""
+    user = _clean_text(user)
+    assistant = _clean_text(assistant)
+    if not user or not assistant:
+        return False
+    return len(user) <= int(budget * 0.85) and len(assistant) <= int(budget * 0.75) and len(user) + len(assistant) <= budget
+
+
 def _slug(text: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
     return slug or "general"
@@ -784,18 +815,30 @@ def _math_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> di
     kind = index % 4
     if kind == 0:
         answer = a + b
-        user = f"A box has {a} blue marbles and {b} green marbles. How many marbles are in the box?"
+        if eval_rows:
+            user = f"Solve carefully. A box has {a} blue marbles and {b} green marbles. How many marbles are in the box?"
+        else:
+            user = f"Arithmetic drill: compute {a} plus {b}. Reply with only the number."
     elif kind == 1:
         total = a + b + c
         answer = total - c
-        user = f"Nora had {total} stickers. She gave away {c}. How many stickers remain?"
+        if eval_rows:
+            user = f"Nora had {total} stickers. She gave away {c}. How many stickers remain?"
+        else:
+            user = f"Subtraction drill: start with {total}, remove {c}, and output the remaining count only."
     elif kind == 2:
         answer = a * c
-        user = f"There are {a} trays with {c} cookies on each tray. How many cookies are there?"
+        if eval_rows:
+            user = f"There are {a} trays with {c} cookies on each tray. How many cookies are there?"
+        else:
+            user = f"Multiplication drill: {a} groups have {c} items each. Return only the product."
     else:
         total = a * c + b
         answer = total - b
-        user = f"A shop packed {total} pencils, then removed {b}. How many pencils stayed packed?"
+        if eval_rows:
+            user = f"A shop packed {total} pencils, then removed {b}. How many pencils stayed packed?"
+        else:
+            user = f"Reverse addition drill: {b} extra items were added after packing. Final count {total}. What was packed before extras?"
     assistant = f"{answer}"
     row = {
         "user": user,
@@ -815,25 +858,39 @@ def _math_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> di
     return row
 
 
-_SPELLING_WORDS = (
+_TRAIN_SPELLING_WORDS = (
     "planet", "garden", "silver", "bridge", "rocket", "window", "little", "forest",
-    "button", "orange", "paper", "pencil", "market", "river", "winter", "summer",
+    "button", "orange", "paper", "pencil",
+)
+
+_HELDOUT_SPELLING_WORDS = (
+    "market", "river", "winter", "summer",
     "candle", "basket", "needle", "school", "travel", "purple", "camera", "animal",
 )
 
 
 def _spelling_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> dict[str, Any]:
-    word = _SPELLING_WORDS[(index * 5 + (7 if eval_rows else 0)) % len(_SPELLING_WORDS)]
+    words = _HELDOUT_SPELLING_WORDS if eval_rows else _TRAIN_SPELLING_WORDS
+    word = words[(index * 5 + (7 if eval_rows else 0)) % len(words)]
     mode = index % 3
     if mode == 0:
         answer = " ".join(word)
-        user = f"Spell the word '{word}' with spaces between letters."
+        if eval_rows:
+            user = f"Spelling check: output spaced letters for <<{word}>>."
+        else:
+            user = f"WORD TASK\nword={word}\noperation=write each character separated by one space\nanswer only"
     elif mode == 1:
         answer = str(len(word))
-        user = f"How many letters are in the word '{word}'?"
+        if eval_rows:
+            user = f"Count the characters in this word and give only the number: {word}"
+        else:
+            user = f"WORD TASK\nword={word}\noperation=count letters\nanswer only"
     else:
         answer = word[::-1]
-        user = f"Reverse the word '{word}'."
+        if eval_rows:
+            user = f"Write this word backward and give only the reversed word: {word}"
+        else:
+            user = f"WORD TASK\nword={word}\noperation=reverse the letters\nanswer only"
     row = {
         "user": user,
         "assistant": answer,
@@ -854,32 +911,35 @@ def _spelling_row(index: int, rng: random.Random, split: str, eval_rows: bool) -
 
 _IDENTITY_ROWS = (
     (
-        "What are you?",
+        "Identity lesson: name the Picochat system in one sentence.",
         "I am Picochat, a tiny local language model trained through the Picochat factory.",
-        ("Picochat", "tiny local language model"),
+        "What system are you?",
+        ("Picochat",),
     ),
     (
-        "What should Picochat do when it lacks support?",
+        "Honesty lesson: say what Picochat should do when support is missing.",
         "Picochat should say it does not know instead of inventing unsupported details.",
+        "How should Picochat answer when the material does not support an answer?",
         ("does not know", "unsupported"),
     ),
     (
-        "What is the purpose of the Picochat workbench?",
+        "Workbench lesson: list the main things the Picochat workbench exposes.",
         "The workbench shows the dataset, tokenizer, training, SFT, eval, chat, and reports so a run can be inspected.",
+        "What does the workbench help inspect?",
         ("dataset", "training", "eval"),
     ),
     (
-        "Is a low eval score useful?",
+        "Evaluation lesson: explain why a low score can still be useful.",
         "Yes. A low eval score is useful when it exposes a real failure that can guide the next data or training change.",
+        "Can a low eval score still help the next experiment?",
         ("useful", "failure"),
     ),
 )
 
 
 def _identity_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> dict[str, Any]:
-    user, assistant, expected = _IDENTITY_ROWS[index % len(_IDENTITY_ROWS)]
-    if eval_rows:
-        user = f"Briefly answer: {user}"
+    train_user, assistant, eval_user, expected = _IDENTITY_ROWS[index % len(_IDENTITY_ROWS)]
+    user = eval_user if eval_rows else train_user
     row = {
         "user": user,
         "assistant": assistant,
@@ -960,11 +1020,12 @@ def _contamination_report(chat_rows: list[dict[str, Any]], eval_rows: list[dict[
         for train_prompt, train_raw in train_prompts:
             ratio = difflib.SequenceMatcher(None, eval_prompt, train_prompt).ratio()
             jaccard = _token_jaccard(eval_prompt, train_prompt)
-            if (ratio, jaccard) > (best_ratio, best_jaccard):
+            similarity = max(ratio, jaccard)
+            if similarity > max(best_ratio, best_jaccard):
                 best_ratio = ratio
                 best_jaccard = jaccard
                 best_train = train_raw
-        if best_ratio >= 0.96 and best_jaccard >= 0.90:
+        if max(best_ratio, best_jaccard) >= 0.86:
             near_prompt_overlaps.append({
                 "similarity": round(best_ratio, 4),
                 "token_jaccard": round(best_jaccard, 4),

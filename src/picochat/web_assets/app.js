@@ -42,6 +42,19 @@ const STARTER_ROW_TARGETS = {
   sft: 300,
   eval: 80,
 };
+const BENCHMARK_SFT_DEFAULTS = {
+  sftSteps: 300,
+  sftLearningRate: 0.0001,
+  sftPatience: 2,
+};
+const MUON_EMA_TRIAL_DEFAULTS = {
+  baseOptimizer: "muon",
+  sftOptimizer: "adamw",
+  baseMuonLearningRate: 0.02,
+  sftMuonLearningRate: 0.02,
+  baseEmaDecay: 0.995,
+  sftEmaDecay: 0.995,
+};
 const APP_VIEWS = ["home", "guide", "workbench", "scale"];
 const PICOCHAT_REPO_URL = "https://github.com/gowtham0992/picochat.git";
 
@@ -502,6 +515,9 @@ function bindControls() {
   });
   $("apply-budget-button").addEventListener("click", () => {
     applyPreviewBudgetToLauncher();
+  });
+  $("apply-muon-ema-button")?.addEventListener("click", () => {
+    applyMuonEmaTrial();
   });
   $("tokenize-button").addEventListener("click", () => animateTokenizer());
   $("tokenize-sample-button").addEventListener("click", () => {
@@ -3413,11 +3429,16 @@ function launchReadiness(config = launchConfig()) {
   if (config.base_optimizer === "muon" || config.sft_optimizer === "muon") {
     cautions.push("Muon is experimental here; compare against an AdamW baseline before trusting a win.");
   }
+  const usingBenchmarkPack = Boolean(state.benchmarkPack && state.benchmarkPack.dataset_pack === config.dataset_pack);
+  if (usingBenchmarkPack && config.sft_steps > 500) {
+    cautions.push("Curated benchmark SFT usually overfits past a few hundred steps; start near 300, then compare.");
+  }
   if (config.sft_steps > config.base_steps * 2) cautions.push("SFT is much longer than base; watch eval leakage and overfitting.");
   notes.push(`${config.n_layer}L x ${config.n_embd} embd / ${config.n_head} heads`);
   notes.push(`${config.norm_type} / ${config.position_encoding} / ${config.activation}`);
   notes.push(`${String(config.tokenizer_type).toUpperCase()} tokenizer${config.tokenizer_vocab_size ? ` vocab ${config.tokenizer_vocab_size}` : ""}`);
   notes.push(`base ${config.base_steps} / sft ${config.sft_steps}`);
+  if (usingBenchmarkPack) notes.push("clean benchmark pack active");
   notes.push(`optimizer ${config.base_optimizer}/${config.sft_optimizer}`);
   if (config.base_ema_decay > 0 || config.sft_ema_decay > 0) notes.push(`EMA ${config.base_ema_decay}/${config.sft_ema_decay}`);
   notes.push(`effective batch ${config.base_batch_size * config.base_grad_accum_steps} / ${config.sft_batch_size * config.sft_grad_accum_steps}`);
@@ -4807,12 +4828,36 @@ function applyFlightPlanToLauncher(quiet = false) {
   $("launch-context-size").value = budget.suggested_context_size || $("launch-context-size").value;
   $("launch-base-steps").value = budget.suggested_base_steps || $("launch-base-steps").value;
   $("launch-sft-steps").value = Math.max(60, Number(budget.suggested_base_steps || 30));
+  applyBenchmarkSftDefaults(report);
   $("launch-min-score").value = report.min_quality_score ?? ($("flight-min-score").value || 0);
   if (!quiet) flashStatus("APPLIED PLAN. | Review launcher values before starting the run.");
   renderFlightCoach(report);
   renderSmokeReadiness(report);
   renderLaunchReadiness();
   renderStartHere();
+}
+
+function applyBenchmarkSftDefaults(report = state.datasetFlightPlan) {
+  const packPath = report?.dataset_pack || $("launch-pack-path")?.value.trim() || "";
+  const benchmark = state.benchmarkPack;
+  if (!benchmark || !packPath || benchmark.dataset_pack !== packPath) return false;
+  $("launch-sft-steps").value = String(BENCHMARK_SFT_DEFAULTS.sftSteps);
+  $("launch-sft-learning-rate").value = String(BENCHMARK_SFT_DEFAULTS.sftLearningRate);
+  $("launch-sft-early-stop-patience").value = String(BENCHMARK_SFT_DEFAULTS.sftPatience);
+  $("launch-sft-sampling").value = "category_balanced";
+  return true;
+}
+
+function applyMuonEmaTrial() {
+  $("launch-base-optimizer").value = MUON_EMA_TRIAL_DEFAULTS.baseOptimizer;
+  $("launch-sft-optimizer").value = MUON_EMA_TRIAL_DEFAULTS.sftOptimizer;
+  $("launch-base-muon-learning-rate").value = String(MUON_EMA_TRIAL_DEFAULTS.baseMuonLearningRate);
+  $("launch-sft-muon-learning-rate").value = String(MUON_EMA_TRIAL_DEFAULTS.sftMuonLearningRate);
+  $("launch-base-ema-decay").value = String(MUON_EMA_TRIAL_DEFAULTS.baseEmaDecay);
+  $("launch-sft-ema-decay").value = String(MUON_EMA_TRIAL_DEFAULTS.sftEmaDecay);
+  renderLaunchReadiness();
+  renderLaunchCommandPreview();
+  flashStatus("APPLIED MUON/EMA TRIAL. | Compare it against the AdamW baseline.");
 }
 
 function renderDatasetFlightPlanError(error) {

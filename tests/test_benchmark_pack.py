@@ -5,6 +5,7 @@ import pytest
 from picochat import benchmark_pack
 from picochat.benchmark_pack import BenchmarkSourceError, generate_benchmark_tuning_pack
 from picochat.dataset_pack import load_dataset_pack
+from picochat.honesty import inspect_data_honesty
 from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
 
@@ -48,9 +49,11 @@ def test_generate_benchmark_tuning_pack_promotes_heldout_files(tmp_path):
     eval_rows = [json.loads(line) for line in eval_path.read_text(encoding="utf-8").splitlines()]
     assert inspect_chat_sft_data(chat_path).status == "ready"
     assert inspect_chat_eval_data(eval_path).status == "ready"
+    assert inspect_data_honesty(chat_path, eval_path).status == "ready"
     assert any(row["category"].startswith("bench_choice") for row in chat_rows)
     assert any(row.get("correct_choice") for row in eval_rows)
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+    assert max(len(row["user"]) + len(row["assistant"]) for row in chat_rows) <= benchmark_pack.SFT_CHAR_BUDGET
 
 
 def test_generate_benchmark_tuning_pack_refuses_overwrite_without_force(tmp_path):
