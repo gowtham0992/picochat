@@ -21,6 +21,11 @@ from picochat.chat import ChatConfig, chat_loop
 from picochat.eval import ChatEvalConfig, run_chat_eval
 from picochat.eval_starter import generate_eval_starter
 from picochat.sft_starter import generate_sft_starter
+from picochat.benchmark_pack import (
+    DEFAULT_BENCHMARK_EVAL_ROWS,
+    DEFAULT_BENCHMARK_SFT_ROWS,
+    generate_benchmark_tuning_pack,
+)
 from picochat.run import TinyRunConfig, run_tiny
 from picochat.compare import compare_runs, comparison_table, write_comparison_report
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
@@ -207,6 +212,39 @@ def build_parser() -> argparse.ArgumentParser:
     data_sft_starter.add_argument("--max-items", type=int, default=32, help="Maximum chat SFT rows to write.")
     data_sft_starter.add_argument("--seed", type=int, default=42)
     data_sft_starter.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
+
+    data_benchmark_pack = data_subparsers.add_parser(
+        "benchmark-pack",
+        help="Generate a nanochat-style curated SFT/eval curriculum for a dataset pack.",
+    )
+    data_benchmark_pack.add_argument(
+        "--dataset-pack",
+        "--pack",
+        dest="dataset_pack",
+        required=True,
+        help="Dataset pack whose chat/eval paths should be replaced or supplemented.",
+    )
+    data_benchmark_pack.add_argument("--chat-out", default=None, help="Optional output path for chat SFT JSONL.")
+    data_benchmark_pack.add_argument("--eval-out", default=None, help="Optional output path for eval JSONL.")
+    data_benchmark_pack.add_argument(
+        "--sft-rows",
+        type=int,
+        default=DEFAULT_BENCHMARK_SFT_ROWS,
+        help="Number of curated SFT rows to write.",
+    )
+    data_benchmark_pack.add_argument(
+        "--eval-rows",
+        type=int,
+        default=DEFAULT_BENCHMARK_EVAL_ROWS,
+        help="Number of held-out eval rows to write.",
+    )
+    data_benchmark_pack.add_argument("--seed", type=int, default=42)
+    data_benchmark_pack.add_argument("--force", action="store_true", help="Overwrite existing benchmark pack files.")
+    data_benchmark_pack.add_argument(
+        "--no-promote",
+        action="store_true",
+        help="Write files but do not point dataset_pack.json at them.",
+    )
 
     data_hf_import = data_subparsers.add_parser(
         "hf-import",
@@ -771,6 +809,34 @@ def sft_starter_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def benchmark_pack_data(args: argparse.Namespace) -> int:
+    report = generate_benchmark_tuning_pack(
+        dataset_pack=args.dataset_pack,
+        chat_out=args.chat_out,
+        eval_out=args.eval_out,
+        sft_rows=args.sft_rows,
+        eval_rows=args.eval_rows,
+        seed=args.seed,
+        force=args.force,
+        promote_to_pack=not args.no_promote,
+    )
+    print(f"benchmark chat SFT: {report.chat_output_path}")
+    print(f"benchmark eval: {report.eval_output_path}")
+    print(f"sft_rows: {report.sft_rows}")
+    print(f"eval_rows: {report.eval_rows}")
+    print(f"promoted_to_pack: {report.promoted_to_pack}")
+    print("chat categories:")
+    for name, count in report.chat_categories.items():
+        print(f"- {name}: {count}")
+    print("eval categories:")
+    for name, count in report.eval_categories.items():
+        print(f"- {name}: {count}")
+    print(f"report: {report.report_path}")
+    print("\nnext:")
+    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {report.dataset_pack}")
+    return 0
+
+
 def hf_import_data(args: argparse.Namespace) -> int:
     report = import_hf_dataset(HFImportConfig(
         dataset=args.dataset,
@@ -1199,6 +1265,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "sft-starter":
         return sft_starter_data(args)
+
+    if args.command == "data" and args.data_command == "benchmark-pack":
+        return benchmark_pack_data(args)
 
     if args.command == "data" and args.data_command == "hf-import":
         return hf_import_data(args)

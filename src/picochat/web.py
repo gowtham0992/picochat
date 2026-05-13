@@ -24,6 +24,11 @@ from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack, update_dataset_pack_tuning_paths
 from picochat.device import DEVICE_CHOICES
 from picochat.eval_starter import generate_eval_starter
+from picochat.benchmark_pack import (
+    DEFAULT_BENCHMARK_EVAL_ROWS,
+    DEFAULT_BENCHMARK_SFT_ROWS,
+    generate_benchmark_tuning_pack,
+)
 from picochat.generate import GenerateConfig, generate_text_with_trace
 from picochat.hf_import import HFImportConfig, HFSplitError, import_hf_dataset
 from picochat.optim import LR_DECAYS
@@ -676,6 +681,73 @@ def eval_starter_plan(payload: dict) -> dict:
     }
 
 
+def benchmark_tuning_pack_plan(payload: dict) -> dict:
+    """Generate a curated benchmark SFT/eval pair from a web request."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+
+    dataset_pack = _optional_string(payload.get("dataset_pack"))
+    if not dataset_pack:
+        raise ValueError("dataset_pack is required")
+    chat_out = _optional_string(payload.get("chat_out"))
+    eval_out = _optional_string(payload.get("eval_out"))
+    sft_rows = _bounded_int(payload.get("sft_rows", DEFAULT_BENCHMARK_SFT_ROWS), 32, 2000)
+    eval_rows = _bounded_int(payload.get("eval_rows", DEFAULT_BENCHMARK_EVAL_ROWS), 16, 500)
+    seed = _bounded_int(payload.get("seed", 42), 0, 9999)
+    force = payload.get("force", False)
+    if not isinstance(force, bool):
+        raise ValueError("force must be true or false")
+    promote_to_pack = payload.get("promote_to_pack", True)
+    if not isinstance(promote_to_pack, bool):
+        raise ValueError("promote_to_pack must be true or false")
+
+    report = generate_benchmark_tuning_pack(
+        dataset_pack=dataset_pack,
+        chat_out=chat_out,
+        eval_out=eval_out,
+        sft_rows=sft_rows,
+        eval_rows=eval_rows,
+        seed=seed,
+        force=force,
+        promote_to_pack=promote_to_pack,
+    )
+    command_parts = [
+        "PYTHONPATH=src",
+        "python",
+        "-m",
+        "picochat.cli",
+        "data",
+        "benchmark-pack",
+        "--dataset-pack",
+        dataset_pack,
+        "--sft-rows",
+        str(sft_rows),
+        "--eval-rows",
+        str(eval_rows),
+        "--seed",
+        str(seed),
+    ]
+    if chat_out:
+        command_parts.extend(["--chat-out", chat_out])
+    if eval_out:
+        command_parts.extend(["--eval-out", eval_out])
+    if force:
+        command_parts.append("--force")
+    if not promote_to_pack:
+        command_parts.append("--no-promote")
+    return {
+        **report.to_dict(),
+        "command": _shell_command(*command_parts),
+        "chat_data": inspect_chat_sft_data(report.pack_chat_input or report.chat_output_path).to_dict(),
+        "eval_data": inspect_chat_eval_data(report.pack_eval_input or report.eval_output_path).to_dict(),
+        "next_actions": [
+            "Preview the dataset pack again so the launcher reads the curated chat/eval files.",
+            "Run a smoke or small-local experiment before scaling the base run.",
+            "Use failed eval categories to add targeted non-eval SFT rows, not copied eval prompts.",
+        ],
+    }
+
+
 def load_pack_editor_plan(payload: dict) -> dict:
     """Load editable chat/eval JSONL text for a dataset pack or explicit paths."""
     if not isinstance(payload, dict):
@@ -1160,6 +1232,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(sft_starter_plan(self._read_json_body()))
                 elif parsed.path == "/api/eval/starter":
                     self._send_json(eval_starter_plan(self._read_json_body()))
+                elif parsed.path == "/api/tuning/benchmark-pack":
+                    self._send_json(benchmark_tuning_pack_plan(self._read_json_body()))
                 elif parsed.path == "/api/pack/editor/load":
                     self._send_json(load_pack_editor_plan(self._read_json_body()))
                 elif parsed.path == "/api/pack/editor/save":

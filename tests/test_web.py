@@ -6,6 +6,7 @@ import pytest
 
 from picochat.web import (
     archive_run_plan,
+    benchmark_tuning_pack_plan,
     cancel_run_plan,
     discover_runs,
     eval_starter_plan,
@@ -665,6 +666,34 @@ def test_sft_starter_plan_accepts_dataset_pack(tmp_path):
     assert report["input_path"] == str(source_path)
     assert "--dataset-pack" in report["command"]
     assert report["force"] is True
+
+
+def test_benchmark_tuning_pack_plan_generates_and_promotes_curriculum(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    pack_path = tmp_path / "dataset_pack.json"
+    source_path.write_text("Picochat base data lives here.", encoding="utf-8")
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    report = benchmark_tuning_pack_plan({
+        "dataset_pack": str(pack_path),
+        "sft_rows": 64,
+        "eval_rows": 24,
+        "seed": 3,
+        "force": True,
+        "promote_to_pack": True,
+    })
+
+    assert report["dataset_pack"] == str(pack_path)
+    assert report["promoted_to_pack"] is True
+    assert report["chat_data"]["status"] == "ready"
+    assert report["eval_data"]["status"] == "ready"
+    assert report["chat_categories"]
+    assert report["eval_categories"]
+    assert "benchmark-pack" in report["command"]
 
 
 def test_starter_plans_accept_recipe_backed_dataset_pack(tmp_path):

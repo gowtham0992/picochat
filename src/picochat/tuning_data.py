@@ -307,6 +307,15 @@ def _parse_eval_item(line_number: int, record: Any) -> tuple[dict[str, Any], lis
     require_corpus_support = record.get("require_corpus_support", False)
     if not isinstance(require_corpus_support, bool):
         issues.append(TuningDataIssue(line_number, "require_corpus_support field must be a boolean"))
+    choice_labels = _string_list(record.get("choice_labels", ()), line_number, "choice_labels", issues)
+    correct_choice = record.get("correct_choice", record.get("answer_choice"))
+    if correct_choice is not None:
+        if not isinstance(correct_choice, str) or not correct_choice.strip():
+            issues.append(TuningDataIssue(line_number, "correct_choice field must be a non-empty string"))
+        elif not choice_labels:
+            issues.append(TuningDataIssue(line_number, "correct_choice requires choice_labels"))
+        elif correct_choice.strip() not in choice_labels:
+            issues.append(TuningDataIssue(line_number, "correct_choice must be present in choice_labels"))
 
     if issues:
         return {}, issues
@@ -326,6 +335,8 @@ def _parse_eval_item(line_number: int, record: Any) -> tuple[dict[str, Any], lis
         "min_chars": record.get("min_chars"),
         "max_chars": record.get("max_chars"),
         "require_corpus_support": require_corpus_support,
+        "choice_labels": choice_labels,
+        "correct_choice": correct_choice,
     }, []
 
 

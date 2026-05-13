@@ -45,6 +45,21 @@ def test_load_chat_eval_items_supports_expected_alias(tmp_path):
     ]
 
 
+def test_load_chat_eval_items_supports_choice_eval_fields(tmp_path):
+    input_path = tmp_path / "eval.jsonl"
+    write_jsonl(input_path, [{
+        "user": "Pick one.\nA. red\nB. blue\nRespond only with the letter.",
+        "must_include": ["B"],
+        "choice_labels": ["A", "B"],
+        "correct_choice": "B",
+    }])
+
+    items = load_chat_eval_items(input_path)
+
+    assert items[0].choice_labels == ("A", "B")
+    assert items[0].correct_choice == "B"
+
+
 def test_score_reply_checks_required_and_forbidden_phrases():
     item = ChatEvalItem(
         user="What is Picochat?",

@@ -297,7 +297,7 @@
                 </div>
                 <div>
                   <label for="flight-sft-max-items">SFT ROWS</label>
-                  <input id="flight-sft-max-items" type="number" min="8" max="300" value="300">
+                  <input id="flight-sft-max-items" type="number" min="8" max="2000" value="300">
                 </div>
                 <div class="beginner-secondary">
                   <label for="flight-eval-path">EVAL JSONL</label>
@@ -309,7 +309,7 @@
                 </div>
                 <div>
                   <label for="flight-eval-max-items">EVAL ROWS</label>
-                  <input id="flight-eval-max-items" type="number" min="4" max="200" value="80">
+                  <input id="flight-eval-max-items" type="number" min="4" max="500" value="80">
                 </div>
                 <div class="beginner-secondary">
                   <label for="flight-min-score">MIN SCORE</label>
@@ -322,6 +322,7 @@
                 <button id="flight-check-button" type="button">CHECK DATASET</button>
                 <button id="flight-sft-button" type="button">CREATE SFT STARTER</button>
                 <button id="flight-eval-button" type="button">CREATE EVAL STARTER</button>
+                <button id="flight-benchmark-button" type="button">CREATE CURATED SFT + EVAL</button>
                 <button id="flight-apply-button" type="button">APPLY PLAN</button>
               </div>
               <div id="flight-status" class="notice">NO DATASET CHECKED.</div>

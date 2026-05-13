@@ -104,6 +104,22 @@ def test_inspect_chat_eval_data_reports_rules_and_categories(tmp_path):
     assert report.splits["safety"] == 1
 
 
+def test_inspect_chat_eval_data_validates_choice_fields(tmp_path):
+    eval_path = tmp_path / "eval.jsonl"
+    eval_path.write_text(json.dumps({
+        "user": "Pick one. A. red B. blue",
+        "must_include": ["B"],
+        "choice_labels": ["A", "B"],
+        "correct_choice": "B",
+    }), encoding="utf-8")
+
+    report = inspect_chat_eval_data(eval_path)
+
+    assert report.status == "caution"
+    assert report.preview[0]["choice_labels"] == ["A", "B"]
+    assert report.preview[0]["correct_choice"] == "B"
+
+
 def test_inspect_chat_eval_data_blocks_missing_rules(tmp_path):
     eval_path = tmp_path / "eval.jsonl"
     eval_path.write_text(json.dumps({"user": "No scoring rules?"}), encoding="utf-8")

@@ -21,6 +21,7 @@ const state = {
   hfImport: null,
   sftStarter: null,
   evalStarter: null,
+  benchmarkPack: null,
   datasetPackInit: null,
   tuningInspection: null,
   packEditor: null,
@@ -422,6 +423,9 @@ function bindControls() {
   });
   $("flight-eval-button").addEventListener("click", () => {
     createEvalStarter().catch((error) => renderEvalStarterError(error));
+  });
+  $("flight-benchmark-button").addEventListener("click", () => {
+    createBenchmarkTuningPack().catch((error) => renderBenchmarkPackError(error));
   });
   $("flight-apply-button").addEventListener("click", () => {
     applyFlightPlanToLauncher();
@@ -1111,7 +1115,7 @@ function guideCheckCorpusContent() {
 
 function guideCreateSftContent() {
   const chatRows = currentChatRowCount();
-  const requestedRows = boundedNumberInput("flight-sft-max-items", STARTER_ROW_TARGETS.sft, 8, 300);
+  const requestedRows = boundedNumberInput("flight-sft-max-items", STARTER_ROW_TARGETS.sft, 8, 2000);
   return `
     <div class="guide-page">
       <div class="guide-page-head">
@@ -1125,7 +1129,7 @@ function guideCreateSftContent() {
         <div class="guide-inline-fields">
           <div>
             <label for="guide-sft-max-items">ROWS TO GENERATE</label>
-            <input id="guide-sft-max-items" type="number" min="8" max="300" value="${escapeHtml(String(requestedRows))}">
+            <input id="guide-sft-max-items" type="number" min="8" max="2000" value="${escapeHtml(String(requestedRows))}">
           </div>
         </div>
         <label class="checkbox-line guide-starter-overwrite" for="guide-starter-force">
@@ -1133,6 +1137,7 @@ function guideCreateSftContent() {
           OVERWRITE EXISTING STARTER FILE
         </label>
         <button type="button" data-guide-action="create-sft">CREATE SFT STARTER</button>
+        <button type="button" data-guide-action="create-benchmark-pack">CREATE CURATED SFT + EVAL</button>
       </div>
       <div id="guide-sft-mirror" class="guide-mirror">${$("flight-sft-result")?.innerHTML || ""}</div>
       ${guideNotice()}
@@ -1142,7 +1147,7 @@ function guideCreateSftContent() {
 
 function guideCreateEvalContent() {
   const evalRows = currentEvalRowCount();
-  const requestedRows = boundedNumberInput("flight-eval-max-items", STARTER_ROW_TARGETS.eval, 4, 200);
+  const requestedRows = boundedNumberInput("flight-eval-max-items", STARTER_ROW_TARGETS.eval, 4, 500);
   return `
     <div class="guide-page">
       <div class="guide-page-head">
@@ -1156,7 +1161,7 @@ function guideCreateEvalContent() {
         <div class="guide-inline-fields">
           <div>
             <label for="guide-eval-max-items">ROWS TO GENERATE</label>
-            <input id="guide-eval-max-items" type="number" min="4" max="200" value="${escapeHtml(String(requestedRows))}">
+            <input id="guide-eval-max-items" type="number" min="4" max="500" value="${escapeHtml(String(requestedRows))}">
           </div>
         </div>
         <label class="checkbox-line guide-starter-overwrite" for="guide-starter-force">
@@ -1164,6 +1169,7 @@ function guideCreateEvalContent() {
           OVERWRITE EXISTING STARTER FILE
         </label>
         <button type="button" data-guide-action="create-eval">CREATE EVAL STARTER</button>
+        <button type="button" data-guide-action="create-benchmark-pack">CREATE CURATED SFT + EVAL</button>
       </div>
       <div id="guide-eval-mirror" class="guide-mirror">${$("flight-eval-result")?.innerHTML || ""}</div>
       ${guideNotice()}
@@ -1377,6 +1383,11 @@ async function handleGuideAction(action) {
   }
   if (action === "create-eval") {
     await createEvalStarter();
+    setGuideStep(4);
+    return;
+  }
+  if (action === "create-benchmark-pack") {
+    await createBenchmarkTuningPack();
     setGuideStep(4);
     return;
   }
@@ -4580,6 +4591,102 @@ function renderEvalStarter(report) {
   `;
 }
 
+async function createBenchmarkTuningPack() {
+  syncFlightStarterDefaults();
+  const packPath = $("flight-pack-path").value.trim();
+  if (!packPath) {
+    throw new Error("enter a dataset pack first; curated SFT/eval needs a pack to update");
+  }
+  const maxSftRows = boundedNumberInput("flight-sft-max-items", STARTER_ROW_TARGETS.sft, 32, 2000);
+  const maxEvalRows = boundedNumberInput("flight-eval-max-items", STARTER_ROW_TARGETS.eval, 16, 500);
+  const chatOut = benchmarkOutputPath(packPath, "chat_benchmark.jsonl");
+  const evalOut = benchmarkOutputPath(packPath, "eval_benchmark.jsonl");
+  $("flight-benchmark-button").disabled = true;
+  $("flight-sft-result").innerHTML = 'CREATING CURATED SFT + EVAL<span class="cursor"></span>';
+  $("flight-eval-result").innerHTML = "";
+  try {
+    const report = await postJson("/api/tuning/benchmark-pack", {
+      dataset_pack: packPath,
+      chat_out: chatOut,
+      eval_out: evalOut,
+      sft_rows: maxSftRows,
+      eval_rows: maxEvalRows,
+      seed: state.detail?.summary?.config?.seed ?? 42,
+      force: Boolean($("flight-starter-force")?.checked),
+      promote_to_pack: true,
+    });
+    state.benchmarkPack = report;
+    const chatPath = report.pack_chat_input || report.chat_output_path || chatOut;
+    const evalPath = report.pack_eval_input || report.eval_output_path || evalOut;
+    $("flight-chat-path").value = chatPath;
+    $("flight-sft-out-path").value = chatPath;
+    $("flight-eval-path").value = evalPath;
+    $("flight-eval-out-path").value = evalPath;
+    $("preview-chat-path").value = chatPath;
+    $("preview-eval-path").value = evalPath;
+    $("tuning-pack-path").value = packPath;
+    $("tuning-chat-path").value = "";
+    $("tuning-eval-path").value = "";
+    $("editor-pack-path").value = packPath;
+    $("editor-chat-path").value = "";
+    $("editor-eval-path").value = "";
+    $("launch-pack-path").value = packPath;
+    renderBenchmarkTuningPack(report);
+    await refreshDatasetFlightPlanAfterChange();
+    loadPackEditor().catch((error) => renderPackEditorError(error));
+    renderLaunchReadiness();
+    renderStartHere();
+  } finally {
+    $("flight-benchmark-button").disabled = false;
+  }
+}
+
+function renderBenchmarkTuningPack(report) {
+  if (!report) {
+    $("flight-sft-result").innerHTML = "";
+    $("flight-eval-result").innerHTML = "";
+    return;
+  }
+  $("flight-sft-result").innerHTML = `
+    <label>CURATED SFT + EVAL RESULT</label>
+    <div class="flight-eval-grid">
+      <div><strong>${fmtInt(report.sft_rows)}</strong><span>chat rows</span></div>
+      <div><strong>${fmtInt(report.eval_rows)}</strong><span>eval rows</span></div>
+      <div><strong>${escapeHtml(shortPath(report.chat_output_path))}</strong><span>SFT jsonl</span></div>
+      <div><strong>${escapeHtml(shortPath(report.eval_output_path))}</strong><span>eval jsonl</span></div>
+    </div>
+    <div class="starter-handoff ready">
+      <strong>NANOCHAT-STYLE TRACK CONNECTED</strong>
+      <span>Base training still uses your selected corpus. Chat SFT now uses a curated instruction mix, and eval uses held-out benchmark/refusal rows.</span>
+      <em>Do not copy held-out eval prompts into SFT; use failed categories to create separate practice rows.</em>
+    </div>
+    <div class="mini-stat-row">
+      ${Object.entries(report.chat_categories || {}).map(([name, count]) => `<span>SFT ${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
+    </div>
+    <div class="command-tape source-command">
+      <div class="command-head">
+        <label>BENCHMARK PACK COMMAND</label>
+        ${copyCommandButton(report.command)}
+      </div>
+      <code>${escapeHtml(report.command || "")}</code>
+      ${(report.next_actions || []).map((action) => `<p>${escapeHtml(action)}</p>`).join("")}
+    </div>
+  `;
+  $("flight-eval-result").innerHTML = `
+    <label>CURATED EVAL MIX</label>
+    <div class="mini-stat-row">
+      ${Object.entries(report.eval_categories || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
+    </div>
+    ${renderTuningPreflight(report.chat_data, report.eval_data)}
+  `;
+}
+
+function benchmarkOutputPath(packPath, filename) {
+  const index = packPath.lastIndexOf("/");
+  const dir = index >= 0 ? packPath.slice(0, index + 1) : "";
+  return `${dir}${filename}`;
+}
+
 function starterHandoff(report, kind) {
   const isEval = kind === "eval";
   const connected = Boolean(report.promoted_to_pack);
@@ -4651,6 +4758,11 @@ function renderSftStarterError(error) {
 function renderEvalStarterError(error) {
   $("flight-eval-button").disabled = false;
   $("flight-eval-result").innerHTML = `<div class="notice">EVAL STARTER FAULT: ${escapeHtml(error.message)}</div>`;
+}
+
+function renderBenchmarkPackError(error) {
+  $("flight-benchmark-button").disabled = false;
+  $("flight-sft-result").innerHTML = `<div class="notice">CURATED PACK FAULT: ${escapeHtml(error.message)}</div>`;
 }
 
 function suggestedSftStarterPath(path) {

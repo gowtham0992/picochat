@@ -134,6 +134,42 @@ def test_cli_data_build_from_recipe(tmp_path, capsys):
     assert "built corpus" in output
 
 
+def test_cli_data_benchmark_pack(tmp_path, capsys):
+    import json
+
+    corpus = tmp_path / "corpus.txt"
+    corpus.write_text("Picochat trains tiny local models.\n", encoding="utf-8")
+    chat = tmp_path / "chat.jsonl"
+    chat.write_text(json.dumps({"user": "hi", "assistant": "hello"}) + "\n", encoding="utf-8")
+    eval_path = tmp_path / "eval.jsonl"
+    eval_path.write_text(json.dumps({"user": "hi", "must_include": ["hello"]}) + "\n", encoding="utf-8")
+    pack = tmp_path / "dataset_pack.json"
+    pack.write_text(json.dumps({
+        "corpus": str(corpus),
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    exit_code = main([
+        "data",
+        "benchmark-pack",
+        "--dataset-pack",
+        str(pack),
+        "--sft-rows",
+        "32",
+        "--eval-rows",
+        "16",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "benchmark chat SFT:" in output
+    assert "benchmark eval:" in output
+    assert "promoted_to_pack: True" in output
+    assert (tmp_path / "chat_benchmark.jsonl").exists()
+    assert (tmp_path / "eval_benchmark.jsonl").exists()
+
+
 def test_cli_data_preview_from_recipe(tmp_path, capsys):
     import json
 

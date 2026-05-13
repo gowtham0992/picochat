@@ -33,6 +33,8 @@ class ChatEvalItem:
     min_chars: int | None = None
     max_chars: int | None = None
     require_corpus_support: bool = False
+    choice_labels: tuple[str, ...] = ()
+    correct_choice: str | None = None
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,20 @@ def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
         require_corpus_support = record.get("require_corpus_support", False)
         if not isinstance(require_corpus_support, bool):
             raise ValueError(f"line {line_number} require_corpus_support field must be a boolean")
+        choice_labels = _as_string_tuple(
+            record.get("choice_labels", ()),
+            line_number,
+            "choice_labels",
+        )
+        correct_choice = record.get("correct_choice", record.get("answer_choice"))
+        if correct_choice is not None:
+            if not isinstance(correct_choice, str) or not correct_choice.strip():
+                raise ValueError(f"line {line_number} correct_choice field must be a non-empty string")
+            correct_choice = correct_choice.strip()
+            if not choice_labels:
+                raise ValueError(f"line {line_number} correct_choice requires choice_labels")
+            if correct_choice not in choice_labels:
+                raise ValueError(f"line {line_number} correct_choice must be present in choice_labels")
         items.append(ChatEvalItem(
             user=user,
             must_include=_as_string_tuple(must_include, line_number, "must_include"),
@@ -109,6 +125,8 @@ def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
             min_chars=_optional_int(record.get("min_chars"), line_number, "min_chars"),
             max_chars=_optional_int(record.get("max_chars"), line_number, "max_chars"),
             require_corpus_support=require_corpus_support,
+            choice_labels=choice_labels,
+            correct_choice=correct_choice,
         ))
 
     if not items:
@@ -297,7 +315,11 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
 
     rows = []
     for index, item in enumerate(load_chat_eval_items(config.input_path)):
-        reply = _generate_eval_reply(model, tokenizer, config, item.user, seed=config.seed + index)
+        choice_scores = None
+        if item.correct_choice:
+            reply, choice_scores = _predict_choice_reply(model, tokenizer, config, item)
+        else:
+            reply = _generate_eval_reply(model, tokenizer, config, item.user, seed=config.seed + index)
         score = score_reply(
             reply,
             item,
@@ -323,6 +345,10 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "min_chars": item.min_chars,
             "max_chars": item.max_chars,
             "require_corpus_support": item.require_corpus_support,
+            "choice_labels": list(item.choice_labels),
+            "correct_choice": item.correct_choice,
+            "choice_logprobs": choice_scores,
+            "choice_predicted": reply if item.correct_choice else None,
             **score,
         })
 
@@ -998,6 +1024,46 @@ _STOPWORDS = {
     "about", "into", "out", "what", "when", "where", "why", "how", "who",
     "assistant", "user", "story", "answer", "using", "provided", "material",
 }
+
+
+@torch.no_grad()
+def _predict_choice_reply(
+    model,
+    tokenizer: Tokenizer,
+    config: ChatEvalConfig,
+    item: ChatEvalItem,
+) -> tuple[str, dict[str, float]]:
+    """Predict a categorical answer by scoring each choice continuation."""
+    prompt_ids = tokenizer.encode(render_chat_prompt([], item.user), add_bos=True)
+    scores: dict[str, float] = {}
+    for label in item.choice_labels:
+        label_ids = tokenizer.encode(f" {label}", add_bos=False)
+        if not label_ids:
+            scores[label] = float("-inf")
+            continue
+        scores[label] = _sequence_logprob(model, prompt_ids, label_ids)
+    best_label = max(scores, key=scores.get)
+    return best_label, scores
+
+
+@torch.no_grad()
+def _sequence_logprob(model, prompt_ids: list[int], continuation_ids: list[int]) -> float:
+    """Score a short continuation under the model."""
+    device = next(model.parameters()).device
+    context = list(prompt_ids)
+    total = 0.0
+    context_size = model.config.context_size
+    for token_id in continuation_ids:
+        input_ids = torch.tensor(
+            [context[-context_size:]],
+            dtype=torch.long,
+            device=device,
+        )
+        logits, _ = model(input_ids)
+        log_probs = torch.log_softmax(logits[0, -1], dim=-1)
+        total += float(log_probs[token_id].item())
+        context.append(token_id)
+    return total
 
 
 @torch.no_grad()
