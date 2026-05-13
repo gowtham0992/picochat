@@ -33,6 +33,7 @@ DOCUMENT_EXTENSIONS = {
 SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | DOCUMENT_EXTENSIONS
 DEFAULT_CHAT_INPUT = "examples/tiny_chat.jsonl"
 DEFAULT_EVAL_INPUT = "examples/tiny_eval.jsonl"
+DEFAULT_CORPUS_INPUT = "examples/tiny_corpus.txt"
 
 
 class DocumentExtractionError(RuntimeError):
@@ -503,6 +504,23 @@ def suggest_training_command(
             note="No training command yet; fix blocked corpus readiness checks first.",
         )
 
+    custom_source = not dataset_pack and not (
+        recipe_path is None and _same_path_text(input_path, DEFAULT_CORPUS_INPUT)
+    )
+    uses_default_tuning = chat_input == DEFAULT_CHAT_INPUT or eval_input == DEFAULT_EVAL_INPUT
+    if custom_source and uses_default_tuning:
+        return CorpusTrainingCommand(
+            out_dir=out_dir,
+            chat_input=chat_input,
+            eval_input=eval_input,
+            dataset_pack=dataset_pack,
+            command="",
+            note=(
+                "No training command yet; create domain chat/eval files or a dataset pack. "
+                "Picochat will not silently train a custom corpus with demo tuning data."
+            ),
+        )
+
     if dataset_pack:
         source_args = ["--dataset-pack", dataset_pack]
     else:
@@ -572,6 +590,10 @@ def _slugify_path(path: str) -> str:
 def _default_path(path: str | Path | None, default: str) -> str:
     text = str(path).strip() if path is not None else ""
     return text or default
+
+
+def _same_path_text(left: str | Path | None, right: str) -> bool:
+    return str(left or "").strip() == right
 
 
 def _shell_command(parts: list[object]) -> str:
@@ -756,7 +778,7 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         f"- Note: {report.training_command.note}",
         "",
         "```bash",
-        report.training_command.command or "# Fix corpus readiness issues before running training.",
+        report.training_command.command or f"# {report.training_command.note}",
         "```",
         "",
         "## Chat/Eval Data Preflight",

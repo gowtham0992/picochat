@@ -6,7 +6,12 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
-from picochat.data import build_corpus_artifacts
+from picochat.data import (
+    DEFAULT_CHAT_INPUT,
+    DEFAULT_CORPUS_INPUT,
+    DEFAULT_EVAL_INPUT,
+    build_corpus_artifacts,
+)
 from picochat.eval import ChatEvalConfig, run_chat_eval
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.report import tiny_run_summary_markdown
@@ -20,7 +25,7 @@ class TinyRunConfig:
     out_dir: str
     scale: str = "custom"
     dataset_pack: str | None = None
-    corpus_input: str = "examples/tiny_corpus.txt"
+    corpus_input: str = DEFAULT_CORPUS_INPUT
     corpus_recipe: str | None = None
     chat_input: str = "examples/tiny_chat.jsonl"
     eval_input: str = "examples/tiny_eval.jsonl"
@@ -64,6 +69,7 @@ class TinyRunConfig:
     base_grad_accum_steps: int = 1
     sft_grad_accum_steps: int = 1
     sft_sampling: str = "uniform"
+    allow_default_tuning_data: bool = False
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -87,6 +93,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
     )
     chat_input = corpus_build.training_command.chat_input
     eval_input = corpus_build.training_command.eval_input
+    _validate_tuning_data_source(config, chat_input=chat_input, eval_input=eval_input)
 
     if config.tokenizer_type not in TOKENIZER_TYPES:
         raise ValueError(f"Unsupported tokenizer type: {config.tokenizer_type}")
@@ -269,3 +276,39 @@ def run_tiny(config: TinyRunConfig) -> dict:
     )
     print(f"summary: {out_dir / 'summary.md'}")
     return summary
+
+
+def _validate_tuning_data_source(
+    config: TinyRunConfig,
+    *,
+    chat_input: str,
+    eval_input: str,
+) -> None:
+    if config.dataset_pack or config.allow_default_tuning_data:
+        return
+
+    using_default_corpus = (
+        config.corpus_recipe is None
+        and _same_path_text(config.corpus_input, DEFAULT_CORPUS_INPUT)
+    )
+    using_default_chat = _same_path_text(chat_input, DEFAULT_CHAT_INPUT)
+    using_default_eval = _same_path_text(eval_input, DEFAULT_EVAL_INPUT)
+    if using_default_corpus and using_default_chat and using_default_eval:
+        return
+
+    if using_default_chat or using_default_eval:
+        defaults = []
+        if using_default_chat:
+            defaults.append(DEFAULT_CHAT_INPUT)
+        if using_default_eval:
+            defaults.append(DEFAULT_EVAL_INPUT)
+        raise ValueError(
+            "custom corpus runs must not silently use Picochat demo tuning data; "
+            f"provide domain --chat-input and --eval-input or use --dataset-pack. "
+            f"Default file(s) still selected: {', '.join(defaults)}. "
+            "Use --allow-default-tuning-data only for a diagnostic wiring check."
+        )
+
+
+def _same_path_text(left: str | None, right: str) -> bool:
+    return str(left or "").strip() == right

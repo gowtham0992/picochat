@@ -238,8 +238,12 @@ on that estimate. Add `--chat-input` and `--eval-input` to `data preview` or
 PYTHONPATH=src python -m picochat.cli data preview --recipe examples/corpus_recipe.json --chat-input my_data/chat.jsonl --eval-input my_data/eval.jsonl
 ```
 
-If those flags are omitted, the suggested command keeps the default chat/eval
-files visible so you remember to replace them before a real domain-specific run.
+If those flags are omitted for a custom corpus, Picochat does not print a
+runnable training command. This is intentional: a real dataset should not
+silently train or score against the bundled demo chat/eval files. Create a
+dataset pack, or pass domain-specific `--chat-input` and `--eval-input`. The
+`run tiny` command has `--allow-default-tuning-data` only for diagnostic wiring
+checks.
 The same preview also preflights both JSONL files: chat SFT rows need string
 `user` and `assistant` fields, while eval rows need a string `user` plus visible
 pass/fail rules such as `must_include`, `must_include_any`, `must_not_include`,

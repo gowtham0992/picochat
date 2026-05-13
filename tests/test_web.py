@@ -971,6 +971,22 @@ def test_archive_run_plan_moves_multiple_runs(tmp_path):
     assert discover_runs(tmp_path / "runs") == []
 
 
+def test_archive_run_plan_moves_failed_no_summary_run(tmp_path):
+    run_dir = tmp_path / "runs" / "failed-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "web_run.log").write_text("Traceback: failed before summary\n", encoding="utf-8")
+    (run_dir / "web_returncode.txt").write_text("1\n", encoding="utf-8")
+
+    report = archive_run_plan(tmp_path / "runs", {"run_name": "failed-run"})
+
+    archive_path = Path(report["archive_path"])
+    assert report["archived"] is True
+    assert not run_dir.exists()
+    assert (archive_path / "web_run.log").exists()
+    assert report["archived_runs"][0]["summary_exists"] is False
+    assert run_status_plan(runs_dir=tmp_path / "runs")["jobs"] == []
+
+
 def test_archive_run_plan_refuses_running_job(tmp_path):
     run_dir = write_run(tmp_path / "runs", "tiny-a")
 

@@ -3900,10 +3900,13 @@ function renderRunJobList() {
     return;
   }
   $("run-job-list").innerHTML = jobs.slice(-8).reverse().map((job) => `
-    <button class="run-job-button ${state.runJob?.id === job.id ? "active" : ""}" type="button" data-run-job="${escapeHtml(job.id)}">
-      <strong>${escapeHtml(job.run_name)}</strong>
-      <span>${escapeHtml(String(job.state || "--").toUpperCase())} | ${job.summary_exists ? "SUMMARY" : "NO SUMMARY"} | ${escapeHtml(job.source || "--")}</span>
-    </button>
+    <div class="run-job-row">
+      <button class="run-job-button ${state.runJob?.id === job.id ? "active" : ""}" type="button" data-run-job="${escapeHtml(job.id)}">
+        <strong>${escapeHtml(job.run_name)}</strong>
+        <span>${escapeHtml(String(job.state || "--").toUpperCase())} | ${job.summary_exists ? "SUMMARY" : "NO SUMMARY"} | ${escapeHtml(job.source || "--")}</span>
+      </button>
+      ${job.can_cancel ? "" : `<button class="run-job-archive-button" type="button" data-archive-job-run="${escapeHtml(job.run_name)}">ARCHIVE</button>`}
+    </div>
   `).join("");
   document.querySelectorAll("[data-run-job]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -3916,6 +3919,29 @@ function renderRunJobList() {
       if (job.summary_exists) {
         state.selectedRun = job.run_name;
         loadRuns().catch((error) => renderRunJobError(error));
+      }
+    });
+  });
+  document.querySelectorAll("[data-archive-job-run]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const runName = button.dataset.archiveJobRun;
+      if (!runName) return;
+      button.disabled = true;
+      button.textContent = "ARCHIVING";
+      try {
+        const payload = await postJson("/api/run/archive", { run_names: [runName] });
+        const archivedNames = new Set((payload.archived_runs || []).map((run) => run.run_name));
+        state.runJobs = (state.runJobs || []).filter((job) => !archivedNames.has(job.run_name));
+        if (state.runJob && archivedNames.has(state.runJob.run_name)) state.runJob = null;
+        if (archivedNames.has(state.selectedRun)) state.selectedRun = null;
+        renderRunJob(state.runJob);
+        renderRunJobList();
+        flashStatus(`ARCHIVED ${runName}. | ${payload.archive_root || "ARCHIVE READY"}`);
+        await loadRuns();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = "ARCHIVE";
+        flashStatus(`ARCHIVE FAULT. | ${error.message}`);
       }
     });
   });

@@ -107,3 +107,24 @@ def test_run_tiny_blocks_leaky_eval_by_default(tmp_path):
 
     assert (out_dir / "honesty" / "honesty_report.json").exists()
     assert not (out_dir / "tokenizer.json").exists()
+
+
+def test_run_tiny_blocks_custom_corpus_with_default_tuning_data(tmp_path):
+    corpus_path = tmp_path / "domain.txt"
+    out_dir = tmp_path / "run"
+    corpus_path.write_text("This is a custom domain corpus about coffee.\n" * 40, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="demo tuning data"):
+        run_tiny(TinyRunConfig(
+            out_dir=str(out_dir),
+            corpus_input=str(corpus_path),
+            context_size=32,
+            n_embd=16,
+            n_head=4,
+            n_layer=1,
+            base_steps=1,
+            sft_steps=1,
+        ))
+
+    assert (out_dir / "corpus.txt").exists()
+    assert not (out_dir / "honesty").exists()

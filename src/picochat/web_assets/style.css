@@ -1974,6 +1974,11 @@ textarea.guide-target-focus {
   margin-top: 10px;
 }
 
+.run-job-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px;
+}
+
 .run-job-button {
   align-items: start;
   display: grid;
@@ -1983,6 +1988,12 @@ textarea.guide-target-focus {
   min-height: 46px;
   padding: 7px;
   text-align: left;
+}
+
+.run-job-archive-button {
+  border-left: 0;
+  font-size: var(--font-xs);
+  min-height: 46px;
 }
 
 .run-job-button span {

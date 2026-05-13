@@ -123,6 +123,18 @@ def test_build_corpus_artifacts_writes_manifest_and_report(tmp_path):
     assert "## Documents" in (output_path.parent / "corpus_report.md").read_text(encoding="utf-8")
 
 
+def test_custom_corpus_preview_does_not_suggest_demo_tuning_data(tmp_path):
+    input_dir = tmp_path / "input"
+    output_path = tmp_path / "out" / "corpus.txt"
+    input_dir.mkdir()
+    (input_dir / "domain.txt").write_text("domain text " * 200, encoding="utf-8")
+
+    report = build_corpus_artifacts(input_dir, output_path)
+
+    assert report.training_command.command == ""
+    assert "demo tuning data" in report.training_command.note
+
+
 def test_build_corpus_artifacts_extracts_document_sources(tmp_path, monkeypatch):
     input_dir = tmp_path / "input"
     output_path = tmp_path / "out" / "corpus.txt"
@@ -290,7 +302,8 @@ def test_build_corpus_artifacts_can_filter_by_quality_score(tmp_path):
 
     assert output_path.read_text(encoding="utf-8") == f"{good_text}\n"
     assert report.min_quality_score == 80
-    assert "--min-score 80" in report.training_command.command
+    assert report.training_command.command == ""
+    assert "demo tuning data" in report.training_command.note
     assert records[str(input_dir / "good.txt")].included is True
     assert records[str(input_dir / "good.txt")].quality_score >= 80
     assert records[str(input_dir / "short.txt")].included is False

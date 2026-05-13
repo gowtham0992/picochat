@@ -518,6 +518,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow a diagnostic run to continue when data honesty detects blocking eval leakage.",
     )
+    run_tiny_parser.add_argument(
+        "--allow-default-tuning-data",
+        action="store_true",
+        help=(
+            "Allow a custom corpus run to keep Picochat's demo chat/eval files. "
+            "Use only for diagnostic wiring checks."
+        ),
+    )
 
     compare_parser = subparsers.add_parser("compare", help="Compare completed run summaries.")
     compare_parser.add_argument("runs", nargs="+", help="Run directories containing summary.json.")
@@ -571,7 +579,7 @@ def print_training_command(training_command) -> None:
     if training_command.command:
         print(training_command.command)
     else:
-        print("(no command until corpus readiness is unblocked)")
+        print("(no training command generated; see note above)")
 
 
 def print_tuning_data(chat_data, eval_data) -> None:
@@ -1121,6 +1129,7 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         base_grad_accum_steps=_resolve_tiny_value(args, defaults, "base_grad_accum_steps"),
         sft_grad_accum_steps=_resolve_tiny_value(args, defaults, "sft_grad_accum_steps"),
         sft_sampling=_resolve_tiny_value(args, defaults, "sft_sampling"),
+        allow_default_tuning_data=args.allow_default_tuning_data,
     ))
     print(
         f"tiny run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "

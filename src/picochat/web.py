@@ -1002,8 +1002,8 @@ def archive_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     run_dirs = []
     for run_name in run_names:
         run_dir = _safe_child(root, run_name)
-        if not run_dir.exists() or not (run_dir / "summary.json").exists():
-            raise FileNotFoundError(f"missing run summary: {run_dir / 'summary.json'}")
+        if not run_dir.exists() or not run_dir.is_dir():
+            raise FileNotFoundError(f"missing run folder: {run_dir}")
         active_job = _active_job_for_run(run_dir)
         if active_job:
             raise ValueError(f"cannot archive running run: {run_name}. Cancel or wait for it first.")
@@ -1019,6 +1019,7 @@ def archive_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "run_name": run_name,
             "source": str(run_dir),
             "archive_path": str(destination),
+            "summary_exists": (destination / "summary.json").exists(),
         })
     archived_names = {item["run_name"] for item in archived_runs}
     with _RUN_JOBS_LOCK:
