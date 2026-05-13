@@ -36,6 +36,7 @@ from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
 from picochat.optim import LR_DECAYS, OPTIMIZER_TYPES
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
+from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep
 from picochat.web import WebConfig, serve_web
 
 
@@ -442,6 +443,51 @@ def build_parser() -> argparse.ArgumentParser:
             "category_balanced gives rare categories equal training probability."
         ),
     )
+    train_sft_sweep_parser = train_subparsers.add_parser(
+        "sft-sweep",
+        help="Run a controlled SFT schedule sweep from one base checkpoint.",
+    )
+    train_sft_sweep_parser.add_argument("--input", required=True, help="Path to chat SFT JSONL.")
+    train_sft_sweep_parser.add_argument("--eval-input", default=None, help="Optional held-out eval JSONL.")
+    train_sft_sweep_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
+    train_sft_sweep_parser.add_argument("--checkpoint", required=True, help="Base checkpoint directory.")
+    train_sft_sweep_parser.add_argument("--out-dir", required=True, help="Output sweep directory.")
+    train_sft_sweep_parser.add_argument("--support-corpus", default=None, help="Optional corpus text file for support diagnostics.")
+    train_sft_sweep_parser.add_argument(
+        "--learning-rates",
+        default="0.00003,0.00005,0.0001",
+        help="Comma-separated SFT learning rates.",
+    )
+    train_sft_sweep_parser.add_argument(
+        "--steps",
+        default="160,400,800",
+        help="Comma-separated SFT step counts.",
+    )
+    train_sft_sweep_parser.add_argument(
+        "--samplings",
+        default="category_sqrt",
+        help="Comma-separated sampling modes: uniform, category_sqrt, category_balanced.",
+    )
+    train_sft_sweep_parser.add_argument("--batch-size", type=int, default=8)
+    train_sft_sweep_parser.add_argument("--seed", type=int, default=42)
+    train_sft_sweep_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    train_sft_sweep_parser.add_argument("--eval-max-new-tokens", type=int, default=120)
+    train_sft_sweep_parser.add_argument("--fit-max-rows", type=int, default=500)
+    train_sft_sweep_parser.add_argument("--val-fraction", type=float, default=0.2)
+    train_sft_sweep_parser.add_argument("--eval-batches", type=int, default=10)
+    train_sft_sweep_parser.add_argument("--sample-prompt", default="What is Picochat?")
+    train_sft_sweep_parser.add_argument("--sample-tokens", type=int, default=120)
+    train_sft_sweep_parser.add_argument("--early-stop-patience", type=int, default=0)
+    train_sft_sweep_parser.add_argument("--early-stop-min-delta", type=float, default=0.0)
+    train_sft_sweep_parser.add_argument("--max-minutes", type=float, default=None)
+    train_sft_sweep_parser.add_argument("--lr-warmup-steps", type=int, default=20)
+    train_sft_sweep_parser.add_argument("--lr-decay", choices=LR_DECAYS, default="cosine")
+    train_sft_sweep_parser.add_argument("--min-lr-ratio", type=float, default=0.1)
+    train_sft_sweep_parser.add_argument("--grad-clip", type=float, default=1.0)
+    train_sft_sweep_parser.add_argument("--grad-accum-steps", type=int, default=1)
+    train_sft_sweep_parser.add_argument("--optimizer", choices=OPTIMIZER_TYPES, default="adamw")
+    train_sft_sweep_parser.add_argument("--muon-learning-rate", type=float, default=0.02)
+    train_sft_sweep_parser.add_argument("--ema-decay", type=float, default=0.0)
 
     generate_parser = subparsers.add_parser("generate", help="Generate from a checkpoint.")
     generate_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
@@ -1145,6 +1191,84 @@ def run_train_sft(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_train_sft_sweep(args: argparse.Namespace) -> int:
+    report = run_sft_sweep(SFTSweepConfig(
+        input_path=args.input,
+        eval_input_path=args.eval_input,
+        tokenizer_path=args.tokenizer,
+        checkpoint_path=args.checkpoint,
+        out_dir=args.out_dir,
+        support_corpus_path=args.support_corpus,
+        learning_rates=_parse_float_csv(args.learning_rates, "learning-rates"),
+        step_counts=_parse_int_csv(args.steps, "steps"),
+        samplings=_parse_sampling_csv(args.samplings),
+        batch_size=args.batch_size,
+        seed=args.seed,
+        device=args.device,
+        eval_max_new_tokens=args.eval_max_new_tokens,
+        fit_max_rows=args.fit_max_rows,
+        val_fraction=args.val_fraction,
+        eval_batches=args.eval_batches,
+        sample_prompt=args.sample_prompt,
+        sample_tokens=args.sample_tokens,
+        early_stop_patience=args.early_stop_patience,
+        early_stop_min_delta=args.early_stop_min_delta,
+        max_minutes=args.max_minutes,
+        lr_warmup_steps=args.lr_warmup_steps,
+        lr_decay=args.lr_decay,
+        min_lr_ratio=args.min_lr_ratio,
+        grad_clip=args.grad_clip,
+        grad_accum_steps=args.grad_accum_steps,
+        optimizer=args.optimizer,
+        muon_learning_rate=args.muon_learning_rate,
+        ema_decay=args.ema_decay,
+    ))
+    print(f"sft sweep report: {Path(args.out_dir) / 'sft_sweep.md'}")
+    best_fit = report.get("best_sft_fit") or {}
+    best_eval = report.get("best_eval") or {}
+    if best_fit:
+        print(
+            f"best sft fit: {best_fit['candidate']} "
+            f"({best_fit['sft_fit_pass_rate'] * 100:.2f}%)"
+        )
+    if best_eval:
+        print(
+            f"best eval: {best_eval['candidate']} "
+            f"({best_eval['eval_pass_rate'] * 100:.2f}%)"
+        )
+    return 0
+
+
+def _parse_float_csv(value: str, label: str) -> tuple[float, ...]:
+    try:
+        values = tuple(float(item.strip()) for item in value.split(",") if item.strip())
+    except ValueError as error:
+        raise SystemExit(f"--{label} must be a comma-separated list of numbers") from error
+    if not values:
+        raise SystemExit(f"--{label} must include at least one number")
+    return values
+
+
+def _parse_int_csv(value: str, label: str) -> tuple[int, ...]:
+    try:
+        values = tuple(int(item.strip()) for item in value.split(",") if item.strip())
+    except ValueError as error:
+        raise SystemExit(f"--{label} must be a comma-separated list of integers") from error
+    if not values:
+        raise SystemExit(f"--{label} must include at least one integer")
+    return values
+
+
+def _parse_sampling_csv(value: str) -> tuple[str, ...]:
+    values = tuple(item.strip() for item in value.split(",") if item.strip())
+    if not values:
+        raise SystemExit("--samplings must include at least one sampling mode")
+    unsupported = [item for item in values if item not in SFT_SAMPLING_MODES]
+    if unsupported:
+        raise SystemExit(f"unsupported --samplings value(s): {', '.join(unsupported)}")
+    return values
+
+
 def run_generate(args: argparse.Namespace) -> int:
     top_k = None if args.top_k <= 0 else args.top_k
     text = generate_text(GenerateConfig(
@@ -1412,6 +1536,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "train" and args.train_command == "sft":
         return run_train_sft(args)
+
+    if args.command == "train" and args.train_command == "sft-sweep":
+        return run_train_sft_sweep(args)
 
     if args.command == "generate":
         return run_generate(args)

@@ -1,0 +1,94 @@
+import json
+
+from picochat.checkpoint import save_checkpoint
+from picochat.model import GPTConfig, TinyGPT
+from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep, sft_sweep_markdown
+from picochat.tokenizer import CharTokenizer
+
+
+def write_jsonl(path, rows):
+    path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+
+def test_run_sft_sweep_writes_candidate_and_summary_artifacts(tmp_path):
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "base"
+    out_dir = tmp_path / "sweep"
+    rows = [
+        {"user": "What is Picochat?", "assistant": "Picochat is small.", "category": "identity"},
+        {"user": "What comes next?", "assistant": "SFT fit comes next.", "category": "identity"},
+    ]
+    write_jsonl(chat_path, rows)
+    write_jsonl(eval_path, [{"user": "Say hello.", "category": "smoke"}])
+    tokenizer = CharTokenizer.train([
+        "User: What is Picochat?\nAssistant: Picochat is small.\n"
+        "User: What comes next?\nAssistant: SFT fit comes next.\n"
+        "User: Say hello.\nAssistant: hello"
+    ])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=64,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    report = run_sft_sweep(SFTSweepConfig(
+        input_path=str(chat_path),
+        eval_input_path=str(eval_path),
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=str(checkpoint_path),
+        out_dir=str(out_dir),
+        learning_rates=(1e-4,),
+        step_counts=(1,),
+        samplings=("uniform",),
+        batch_size=1,
+        eval_batches=1,
+        sample_tokens=4,
+        eval_max_new_tokens=0,
+        fit_max_rows=1,
+    ))
+
+    row = report["rows"][0]
+    candidate_dir = out_dir / row["candidate"]
+    assert (out_dir / "sft_sweep.json").exists()
+    assert (out_dir / "sft_sweep.md").exists()
+    assert (candidate_dir / "sft" / "best_checkpoint" / "model.pt").exists()
+    assert (candidate_dir / "sft_fit" / "eval_report.json").exists()
+    assert (candidate_dir / "eval" / "eval_report.json").exists()
+    assert (candidate_dir / "candidate_summary.json").exists()
+    assert row["sft_fit_examples"] == 1
+    assert row["eval_score"] is not None
+    assert report["best_sft_fit"]["candidate"] == row["candidate"]
+
+
+def test_sft_sweep_markdown_explains_sft_fit_first():
+    markdown = sft_sweep_markdown({
+        "config": {
+            "input_path": "chat.jsonl",
+            "tokenizer_path": "tokenizer.json",
+            "checkpoint_path": "base",
+            "eval_input_path": "eval.jsonl",
+        },
+        "rows": [{
+            "candidate": "uniform-lr1em04-steps1",
+            "candidate_dir": "sweep/uniform-lr1em04-steps1",
+            "learning_rate": 1e-4,
+            "step_count": 1,
+            "sampling": "uniform",
+            "sft_fit_pass_rate": 0.5,
+            "eval_pass_rate": 0.25,
+            "sft_final_val_bpb": 1.2,
+            "stop_reason": "max_steps",
+        }],
+        "best_sft_fit": {"candidate": "uniform-lr1em04-steps1"},
+        "best_eval": {"candidate": "uniform-lr1em04-steps1"},
+    })
+
+    assert "# Picochat SFT Sweep" in markdown
+    assert "Use SFT fit first" in markdown
+    assert "uniform-lr1em04-steps1" in markdown
