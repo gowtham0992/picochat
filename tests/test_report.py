@@ -394,6 +394,20 @@ def test_tiny_run_summary_markdown_contains_key_sections():
                 },
             },
         },
+        "sft_fit": {
+            "num_examples": 5,
+            "num_passed": 4,
+            "num_failed": 1,
+            "pass_rate": 0.8,
+            "category_breakdown": {
+                "identity": {
+                    "num_examples": 5,
+                    "num_passed": 4,
+                    "num_failed": 1,
+                    "pass_rate": 0.8,
+                },
+            },
+        },
         "eval_analysis": {
             "failure_counts": {"missing_required": 1},
             "recommendations": [{
@@ -418,6 +432,8 @@ def test_tiny_run_summary_markdown_contains_key_sections():
 
     assert "# Picochat Tiny Run Summary" in markdown
     assert "Eval passed: 3 / 4" in markdown
+    assert "SFT fit passed: 4 / 5" in markdown
+    assert "## SFT Fit Categories" in markdown
     assert "## Data Honesty" in markdown
     assert "Data honesty report" in markdown
     assert "## Eval Categories" in markdown

@@ -18,6 +18,7 @@ class CompareRow:
     refusal_pass_rate: float | None
     support_match_rate: float | None
     prompt_echo_rate: float | None
+    sft_fit_rate: float | None
     base_val_loss: float
     sft_val_loss: float
     base_val_bpb: float | None
@@ -50,6 +51,7 @@ def load_compare_row(run_dir: str | Path) -> CompareRow:
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     eval_summary = summary["eval"]
+    sft_fit_summary = summary.get("sft_fit") or {}
     config = summary.get("config", {})
     tokenizer = summary.get("tokenizer", {})
     base = summary.get("base", {})
@@ -68,6 +70,7 @@ def load_compare_row(run_dir: str | Path) -> CompareRow:
         refusal_pass_rate=_optional_float(eval_summary.get("refusal_pass_rate")),
         support_match_rate=_optional_float(eval_summary.get("support_match_rate")),
         prompt_echo_rate=_optional_float(eval_summary.get("prompt_echo_rate")),
+        sft_fit_rate=_optional_float(sft_fit_summary.get("pass_rate")),
         base_val_loss=float(base["final_val_loss"]),
         sft_val_loss=float(sft["final_val_loss"]),
         base_val_bpb=_optional_float(base.get("final_val_bpb")),
@@ -123,6 +126,7 @@ def comparison_table(comparison: dict) -> str:
             _format_optional_percent(row["refusal_pass_rate"]),
             _format_optional_percent(row["support_match_rate"]),
             _format_optional_percent(row["prompt_echo_rate"]),
+            _format_optional_percent(row["sft_fit_rate"]),
             _format_optional_float(row["base_val_bpb"]),
             _format_optional_float(row["sft_val_bpb"]),
             f"{row['base_val_loss']:.4f}",
@@ -149,6 +153,7 @@ def comparison_table(comparison: dict) -> str:
         "Refusal",
         "Support",
         "Echo",
+        "SFT Fit",
         "Base BPB",
         "SFT BPB",
         "Base Val",
@@ -232,8 +237,8 @@ def comparison_markdown(comparison: dict) -> str:
                 lines.append(f"- `{issue.get('severity', 'warn')}` {_markdown_text(issue.get('message'))}")
             lines.append("")
     lines.extend([
-        "| Run | Tokenizer | Eval | Pass Rate | Domain Pass | Refusal Pass | Support Match | Prompt Echo | Base Val BPB | SFT Val BPB | Base Val Loss | SFT Val Loss | Best Steps | Stop Reasons | Base Loss Status | SFT Loss Status | Memorization | Params | Context | Device | Base Eff B | SFT Eff B | Truncated Examples | Skipped Too-Long |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: |",
+        "| Run | Tokenizer | Eval | Pass Rate | Domain Pass | Refusal Pass | Support Match | Prompt Echo | SFT Fit | Base Val BPB | SFT Val BPB | Base Val Loss | SFT Val Loss | Best Steps | Stop Reasons | Base Loss Status | SFT Loss Status | Memorization | Params | Context | Device | Base Eff B | SFT Eff B | Truncated Examples | Skipped Too-Long |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: |",
     ])
     for row in comparison["rows"]:
         lines.append(
@@ -242,6 +247,7 @@ def comparison_markdown(comparison: dict) -> str:
             f"{_format_optional_percent(row['refusal_pass_rate'])} | "
             f"{_format_optional_percent(row['support_match_rate'])} | "
             f"{_format_optional_percent(row['prompt_echo_rate'])} | "
+            f"{_format_optional_percent(row.get('sft_fit_rate'))} | "
             f"{_format_optional_float(row['base_val_bpb'])} | "
             f"{_format_optional_float(row['sft_val_bpb'])} | {row['base_val_loss']:.4f} | "
             f"{row['sft_val_loss']:.4f} | {_format_best_steps(row)} | "
@@ -345,6 +351,7 @@ def _regression_issues(best: CompareRow, baseline: CompareRow | None) -> list[di
     refusal_delta = _optional_delta(best.refusal_pass_rate, baseline.refusal_pass_rate)
     support_delta = _optional_delta(best.support_match_rate, baseline.support_match_rate)
     echo_delta = _optional_delta(best.prompt_echo_rate, baseline.prompt_echo_rate)
+    sft_fit_delta = _optional_delta(best.sft_fit_rate, baseline.sft_fit_rate)
     sft_bpb_delta = _optional_delta(best.sft_val_bpb, baseline.sft_val_bpb)
     if pass_delta < 0.02:
         issues.append({"severity": "warn", "message": "Eval gain is under +2 points."})
@@ -356,6 +363,8 @@ def _regression_issues(best: CompareRow, baseline: CompareRow | None) -> list[di
         issues.append({"severity": "fail", "message": f"Support match dropped {_signed_percent(support_delta)}."})
     if echo_delta is not None and echo_delta > 0.02:
         issues.append({"severity": "fail", "message": f"Prompt echo worsened {_signed_percent(echo_delta)}."})
+    if sft_fit_delta is not None and sft_fit_delta < -0.05:
+        issues.append({"severity": "warn", "message": f"SFT exact-fit dropped {_signed_percent(sft_fit_delta)}."})
     if sft_bpb_delta is not None and sft_bpb_delta > 0.10:
         issues.append({"severity": "warn", "message": f"SFT BPB rose {_signed_float(sft_bpb_delta)}."})
     if best.truncated_examples > baseline.truncated_examples:
@@ -385,6 +394,15 @@ def _next_experiment(
             "status": "fail",
             "title": "Repair before scaling",
             "message": "Fix trust regressions before longer runs or larger models.",
+        }
+    if best.sft_fit_rate is not None and best.sft_fit_rate < 0.70:
+        return {
+            "status": "warn",
+            "title": "Increase SFT fit first",
+            "message": (
+                "The eval checkpoint cannot reliably reproduce its own SFT rows yet; "
+                "raise SFT fit before treating held-out eval as the main blocker."
+            ),
         }
     if best_base_bpb and best.run != best_base_bpb.run:
         return {

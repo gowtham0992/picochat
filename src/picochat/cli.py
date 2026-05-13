@@ -586,6 +586,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_tiny_parser.add_argument(
+        "--sft-fit-max-rows",
+        type=int,
+        default=None,
+        help=(
+            "Maximum SFT rows to score in the automatic fit diagnostic. "
+            "Use 0 to score every SFT row."
+        ),
+    )
+    run_tiny_parser.add_argument(
         "--min-score",
         type=int,
         default=0,
@@ -1298,6 +1307,7 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         base_ema_decay=_resolve_tiny_value(args, defaults, "base_ema_decay"),
         sft_ema_decay=_resolve_tiny_value(args, defaults, "sft_ema_decay"),
         sft_sampling=_resolve_tiny_value(args, defaults, "sft_sampling"),
+        sft_fit_max_rows=_resolve_tiny_value(args, defaults, "sft_fit_max_rows"),
         allow_default_tuning_data=args.allow_default_tuning_data,
     ))
     print(

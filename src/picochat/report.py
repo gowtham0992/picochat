@@ -620,6 +620,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     """Render a one-page summary for an end-to-end tiny run."""
     config = summary["config"]
     eval_summary = summary["eval"]
+    sft_fit_summary = summary.get("sft_fit") or {}
     base = summary["base"]
     sft = summary["sft"]
     artifacts = summary["artifacts"]
@@ -644,6 +645,14 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append("")
     lines.append(f"- Eval passed: {eval_summary['num_passed']} / {eval_summary['num_examples']}")
     lines.append(f"- Eval pass rate: {format_float(eval_summary['pass_rate'] * 100)}%")
+    if sft_fit_summary:
+        lines.append(
+            f"- SFT fit passed: {sft_fit_summary.get('num_passed', 0)} / "
+            f"{sft_fit_summary.get('num_examples', 0)}"
+        )
+        lines.append(
+            f"- SFT fit rate: {format_float(float(sft_fit_summary.get('pass_rate', 0.0)) * 100)}%"
+        )
     lines.append(f"- Failed examples: {eval_summary['num_failed']}")
     if "unsupported_claim_rate" in eval_summary:
         lines.append(f"- Unsupported claim rate: {format_float(eval_summary['unsupported_claim_rate'] * 100)}%")
@@ -678,6 +687,18 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.append("## Eval Categories")
         lines.append("")
         lines.extend(_category_breakdown_table(eval_summary["category_breakdown"]))
+        lines.append("")
+
+    if sft_fit_summary.get("category_breakdown"):
+        lines.append("## SFT Fit Categories")
+        lines.append("")
+        lines.append(
+            "This checks whether the checkpoint used for eval can reproduce its own "
+            "SFT rows. Low fit means the chat stage is undertrained or too broad "
+            "before held-out eval can be trusted."
+        )
+        lines.append("")
+        lines.extend(_category_breakdown_table(sft_fit_summary["category_breakdown"]))
         lines.append("")
 
     if eval_summary.get("split_breakdown"):
@@ -728,6 +749,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- SFT grad accumulation: {config.get('sft_grad_accum_steps', 1)}")
     lines.append(f"- Base early stop patience: {config.get('base_early_stop_patience', 0)}")
     lines.append(f"- SFT early stop patience: {config.get('sft_early_stop_patience', 0)}")
+    lines.append(f"- SFT fit diagnostic max rows: {config.get('sft_fit_max_rows', 500)}")
     lines.append(f"- Train-only canaries: {config.get('canary_count', 0)}")
     lines.append(f"- Device: `{config['device']}`")
     if config.get("dataset_pack"):
@@ -782,6 +804,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- SFT report: `{artifacts['sft_report']}`")
     if artifacts.get("sft_eval_checkpoint"):
         lines.append(f"- SFT checkpoint used for eval: `{artifacts['sft_eval_checkpoint']}`")
+    if artifacts.get("sft_fit_report"):
+        lines.append(f"- SFT fit report: `{artifacts['sft_fit_report']}`")
     lines.append(f"- Eval report: `{artifacts['eval_report']}`")
     lines.append("- Machine-readable summary: `summary.json`")
     lines.append("")

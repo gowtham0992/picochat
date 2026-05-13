@@ -12,7 +12,7 @@ from picochat.data import (
     DEFAULT_EVAL_INPUT,
     build_corpus_artifacts,
 )
-from picochat.eval import ChatEvalConfig, run_chat_eval
+from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.report import tiny_run_summary_markdown
 from picochat.sft import SFTConfig, SFT_SAMPLING_MODES, train_sft
@@ -75,6 +75,7 @@ class TinyRunConfig:
     base_ema_decay: float = 0.0
     sft_ema_decay: float = 0.0
     sft_sampling: str = "uniform"
+    sft_fit_max_rows: int = 500
     allow_default_tuning_data: bool = False
 
 
@@ -87,7 +88,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
     corpus_path = out_dir / "corpus.txt"
     tokenizer_path = out_dir / "tokenizer.json"
 
-    print(f"[1/5] build corpus -> {corpus_path}")
+    print(f"[1/7] build corpus -> {corpus_path}")
     corpus_build = build_corpus_artifacts(
         None if config.dataset_pack else config.corpus_input,
         corpus_path,
@@ -106,7 +107,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
     if config.sft_sampling not in SFT_SAMPLING_MODES:
         raise ValueError(f"Unsupported SFT sampling mode: {config.sft_sampling}")
 
-    print("[2/6] check data honesty")
+    print("[2/7] check data honesty")
     honesty_report = inspect_data_honesty(
         corpus_path=corpus_path,
         chat_input=chat_input,
@@ -122,7 +123,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             f"{honesty_markdown_path} or rerun with --allow-leaky-eval for a diagnostic-only run"
         )
 
-    print(f"[3/6] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
+    print(f"[3/7] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
     text = corpus_path.read_text(encoding="utf-8")
     tokenizer = train_tokenizer(
         config.tokenizer_type,
@@ -132,7 +133,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
     )
     tokenizer.save(tokenizer_path)
 
-    print("[4/6] train base model")
+    print("[4/7] train base model")
     base_report = train_base(TrainConfig(
         corpus_path=str(corpus_path),
         tokenizer_path=str(tokenizer_path),
@@ -172,7 +173,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         str(out_dir / "base" / "checkpoint"),
     )
 
-    print("[5/6] train chat SFT")
+    print("[5/7] train chat SFT")
     sft_report = train_sft(SFTConfig(
         input_path=chat_input,
         tokenizer_path=str(tokenizer_path),
@@ -203,7 +204,25 @@ def run_tiny(config: TinyRunConfig) -> dict:
         str(out_dir / "sft" / "checkpoint"),
     )
 
-    print("[6/6] run chat eval")
+    print("[6/7] run SFT fit diagnostic")
+    sft_fit_input = out_dir / "sft_fit" / "sft_fit_eval.jsonl"
+    sft_fit_dataset = write_sft_fit_eval(
+        chat_input,
+        sft_fit_input,
+        max_rows=None if config.sft_fit_max_rows <= 0 else config.sft_fit_max_rows,
+    )
+    sft_fit_report = run_chat_eval(ChatEvalConfig(
+        input_path=str(sft_fit_input),
+        checkpoint_path=sft_eval_checkpoint,
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir / "sft_fit"),
+        max_new_tokens=config.eval_max_new_tokens,
+        seed=config.seed,
+        device=config.device,
+        support_corpus_path=str(corpus_path),
+    ))
+
+    print("[7/7] run chat eval")
     eval_report = run_chat_eval(ChatEvalConfig(
         input_path=eval_input,
         checkpoint_path=sft_eval_checkpoint,
@@ -243,6 +262,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "sft_best_checkpoint": sft_report.get("best_checkpoint", {}).get("path"),
             "sft_ema_checkpoint": sft_report.get("ema_checkpoint"),
             "sft_eval_checkpoint": sft_eval_checkpoint,
+            "sft_fit_report": str(out_dir / "sft_fit" / "report.md"),
             "eval_report": str(out_dir / "eval" / "report.md"),
         },
         "corpus": corpus_build.stats.to_dict(),
@@ -288,6 +308,9 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "effective_tokens_per_step": sft_report.get("config", {}).get("effective_tokens_per_step"),
             "stop_reason": sft_report.get("stop_reason"),
         },
+        "sft_fit": sft_fit_report["summary"],
+        "sft_fit_dataset": sft_fit_dataset,
+        "sft_fit_analysis": sft_fit_report.get("analysis", {}),
         "eval": eval_report["summary"],
         "eval_analysis": eval_report.get("analysis", {}),
     }

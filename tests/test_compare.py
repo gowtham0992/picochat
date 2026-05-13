@@ -44,6 +44,12 @@ def write_summary(
             "support_match_rate": 0.5,
             "prompt_echo_rate": 0.25,
         },
+        "sft_fit": {
+            "num_examples": 10,
+            "num_passed": 8,
+            "num_failed": 2,
+            "pass_rate": 0.8,
+        },
     }
     (path / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
 
@@ -59,6 +65,7 @@ def test_load_compare_row_reads_summary(tmp_path):
     assert row.pass_rate == 0.75
     assert row.support_match_rate == 0.5
     assert row.prompt_echo_rate == 0.25
+    assert row.sft_fit_rate == 0.8
     assert row.num_parameters == 114609
     assert row.tokenizer_type == "char"
     assert row.base_val_bpb == 1.5
@@ -101,8 +108,10 @@ def test_comparison_table_and_markdown_include_metrics(tmp_path):
     assert "Base BPB" in table
     assert "Support" in table
     assert "Echo" in table
+    assert "SFT Fit" in table
     assert "50.00%" in table
     assert "25.00%" in table
+    assert "80.00%" in table
     assert "1.5000" in table
     assert "10/20" in table
     assert "max/early" in table
@@ -114,6 +123,7 @@ def test_comparison_table_and_markdown_include_metrics(tmp_path):
     assert "Base Val BPB" in markdown
     assert "Support Match" in markdown
     assert "Prompt Echo" in markdown
+    assert "SFT Fit" in markdown
     assert "`stable`" in markdown
     assert "114,609" in markdown
 

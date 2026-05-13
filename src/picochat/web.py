@@ -1830,6 +1830,9 @@ def _progress_stage(index: int, total: int, label: str) -> dict:
     elif normalized.startswith("train chat"):
         stage_id = "sft"
         message = "Teaching the model chat format and preferred behavior."
+    elif normalized.startswith("run sft fit"):
+        stage_id = "sft_fit"
+        message = "Checking whether chat SFT learned its own training rows."
     elif normalized.startswith("run chat eval"):
         stage_id = "eval"
         message = "Scoring behavior against the eval set."

@@ -943,11 +943,12 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
 def test_run_progress_parser_extracts_training_and_eval_steps():
     progress = _parse_run_progress(
         "\n".join([
-            "[4/6] train base model",
+            "[4/7] train base model",
             "step 0030/0100 | train 3.0000 | val 3.5000 | val_bpb 1.9000 | 2.5s",
-            "[5/6] train chat SFT",
+            "[5/7] train chat SFT",
             "sft step 0040/0200 | train 2.0000 | val 2.5000 | val_bpb 1.4000 | 4.0s",
-            "[6/6] run chat eval",
+            "[6/7] run SFT fit diagnostic",
+            "[7/7] run chat eval",
             "done: 7/10 passed (70.00%)",
         ]),
         state="succeeded",
@@ -961,6 +962,14 @@ def test_run_progress_parser_extracts_training_and_eval_steps():
     assert progress["sft"]["val_bpb"] == 1.4
     assert progress["eval"]["passed"] == 7
     assert progress["eval"]["pass_rate"] == 70.0
+
+
+def test_run_progress_parser_understands_sft_fit_stage():
+    progress = _parse_run_progress("[6/7] run SFT fit diagnostic")
+
+    assert progress["stage"]["id"] == "sft_fit"
+    assert progress["stage"]["index"] == 6
+    assert progress["stage"]["total"] == 7
 
 
 def test_run_status_discovers_completed_web_runs_from_disk(tmp_path):
