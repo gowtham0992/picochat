@@ -55,6 +55,12 @@ class ChatEvalConfig:
     corpus_support_threshold: float = 0.25
 
 
+@dataclass(frozen=True)
+class _ChoiceCandidate:
+    variant: str
+    token_ids: tuple[int, ...]
+
+
 def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
     """Load transparent chat eval items from JSONL."""
     items: list[ChatEvalItem] = []
@@ -316,8 +322,9 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     rows = []
     for index, item in enumerate(load_chat_eval_items(config.input_path)):
         choice_scores = None
+        choice_details = None
         if item.correct_choice:
-            reply, choice_scores = _predict_choice_reply(model, tokenizer, config, item)
+            reply, choice_scores, choice_details = _predict_choice_reply(model, tokenizer, config, item)
         else:
             reply = _generate_eval_reply(model, tokenizer, config, item.user, seed=config.seed + index)
         score = score_reply(
@@ -348,6 +355,11 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "choice_labels": list(item.choice_labels),
             "correct_choice": item.correct_choice,
             "choice_logprobs": choice_scores,
+            "choice_score_details": choice_details,
+            "choice_eval_method": (
+                "normalized_logprob_best_of_whitespace_and_eos_variants"
+                if item.correct_choice else None
+            ),
             "choice_predicted": reply if item.correct_choice else None,
             **score,
         })
@@ -371,6 +383,12 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     category_breakdown = _breakdown(rows, "category", "answerable")
     split_breakdown = _breakdown(rows, "split", "default")
     level_breakdown = _breakdown(rows, "level", "heldout")
+    choice_rows = [row for row in rows if row.get("correct_choice")]
+    choice_correct = sum(
+        1 for row in choice_rows
+        if row.get("choice_predicted") == row.get("correct_choice")
+    )
+    choice_passed = sum(1 for row in choice_rows if row.get("passed"))
     analysis = analyze_eval_failures(rows, category_breakdown, split_breakdown, level_breakdown)
     report = {
         "config": {
@@ -418,6 +436,15 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "average_entity_match_rate": _metric_average(rows, "entity_match_rate"),
             "average_corpus_support_rate": _metric_average(rows, "corpus_support_rate"),
             "average_repetition_ngram_rate": _metric_average(rows, "repetition_ngram_rate"),
+            "choice_examples": len(choice_rows),
+            "choice_correct": choice_correct,
+            "choice_accuracy": _safe_rate(choice_correct, len(choice_rows)) if choice_rows else None,
+            "choice_passed": choice_passed,
+            "choice_pass_rate": _safe_rate(choice_passed, len(choice_rows)) if choice_rows else None,
+            "choice_scoring": (
+                "normalized_logprob_best_of_whitespace_and_eos_variants"
+                if choice_rows else None
+            ),
             "category_breakdown": category_breakdown,
             "split_breakdown": split_breakdown,
             "level_breakdown": level_breakdown,
@@ -587,6 +614,11 @@ def _failure_reasons(row: dict) -> list[str]:
         reasons.append("prompt_echo")
     if row.get("corpus_support_failed"):
         reasons.append("weak_corpus_support")
+    if (
+        row.get("correct_choice")
+        and row.get("choice_predicted") != row.get("correct_choice")
+    ):
+        reasons.append("wrong_choice")
     if _number(row.get("reference_token_f1")) is not None and float(row.get("reference_token_f1")) < 0.25:
         reasons.append("low_reference_overlap")
     if float(row.get("repetition_ngram_rate") or 0.0) > 0.25:
@@ -603,6 +635,8 @@ def _failure_clusters(row: dict, reasons: list[str]) -> list[str]:
     reason_set = set(reasons)
     if reason_set & {"missing_required", "missing_any_group", "missing_entity", "low_reference_overlap"}:
         clusters.append("content_mismatch")
+    if "wrong_choice" in reason_set:
+        clusters.append("choice_mismatch")
     if reason_set & {"forbidden_phrase", "weak_corpus_support"}:
         clusters.append("unsupported_or_forbidden")
     if "prompt_echo" in reason_set:
@@ -692,6 +726,13 @@ def _eval_recommendations(
             "area": "sft",
             "message": "The model missed required support phrases.",
             "action": "Add more varied SFT rows for the weakest categories, then rerun SFT before increasing base training.",
+        })
+    if failure_counts.get("wrong_choice"):
+        recommendations.append({
+            "priority": "high",
+            "area": "choice_eval",
+            "message": "Some multiple-choice rows selected the wrong label under logprob scoring.",
+            "action": "Add more held-out-style multiple-choice SFT rows, then inspect choice logprob margins before changing decoding.",
         })
     if failure_counts.get("forbidden_phrase"):
         recommendations.append({
@@ -1032,18 +1073,70 @@ def _predict_choice_reply(
     tokenizer: Tokenizer,
     config: ChatEvalConfig,
     item: ChatEvalItem,
-) -> tuple[str, dict[str, float]]:
+) -> tuple[str, dict[str, float], dict[str, dict]]:
     """Predict a categorical answer by scoring each choice continuation."""
     prompt_ids = tokenizer.encode(render_chat_prompt([], item.user), add_bos=True)
     scores: dict[str, float] = {}
+    details: dict[str, dict] = {}
     for label in item.choice_labels:
-        label_ids = tokenizer.encode(f" {label}", add_bos=False)
-        if not label_ids:
+        variants = _choice_continuation_candidates(tokenizer, label)
+        if not variants:
             scores[label] = float("-inf")
+            details[label] = {
+                "best_variant": None,
+                "best_avg_logprob": float("-inf"),
+                "best_raw_logprob": float("-inf"),
+                "token_count": 0,
+                "variants": [],
+            }
             continue
-        scores[label] = _sequence_logprob(model, prompt_ids, label_ids)
+        variant_scores = []
+        for candidate in variants:
+            raw_logprob = _sequence_logprob(model, prompt_ids, list(candidate.token_ids))
+            avg_logprob = raw_logprob / len(candidate.token_ids)
+            variant_scores.append({
+                "variant": candidate.variant,
+                "raw_logprob": raw_logprob,
+                "avg_logprob": avg_logprob,
+                "token_count": len(candidate.token_ids),
+            })
+        best = max(
+            variant_scores,
+            key=lambda row: (float(row["avg_logprob"]), float(row["raw_logprob"])),
+        )
+        scores[label] = float(best["avg_logprob"])
+        details[label] = {
+            "best_variant": best["variant"],
+            "best_avg_logprob": best["avg_logprob"],
+            "best_raw_logprob": best["raw_logprob"],
+            "token_count": best["token_count"],
+            "variants": variant_scores,
+        }
     best_label = max(scores, key=scores.get)
-    return best_label, scores
+    return best_label, scores, details
+
+
+def _choice_continuation_candidates(tokenizer: Tokenizer, label: str) -> list[_ChoiceCandidate]:
+    """Return fair answer-label continuations for choice likelihood scoring."""
+    label = str(label).strip()
+    if not label:
+        return []
+
+    raw_candidates = (
+        ("space+eos", tokenizer.encode(f" {label}", add_bos=False) + [tokenizer.eos_id]),
+        ("space", tokenizer.encode(f" {label}", add_bos=False)),
+        ("bare+eos", tokenizer.encode(label, add_bos=False) + [tokenizer.eos_id]),
+        ("bare", tokenizer.encode(label, add_bos=False)),
+    )
+    candidates: list[_ChoiceCandidate] = []
+    seen: set[tuple[int, ...]] = set()
+    for variant, token_ids in raw_candidates:
+        ids = tuple(int(token_id) for token_id in token_ids)
+        if not ids or ids in seen:
+            continue
+        candidates.append(_ChoiceCandidate(variant=variant, token_ids=ids))
+        seen.add(ids)
+    return candidates
 
 
 @torch.no_grad()

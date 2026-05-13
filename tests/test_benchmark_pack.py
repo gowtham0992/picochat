@@ -56,6 +56,20 @@ def test_generate_benchmark_tuning_pack_promotes_heldout_files(tmp_path):
     assert max(len(row["user"]) + len(row["assistant"]) for row in chat_rows) <= benchmark_pack.SFT_CHAR_BUDGET
 
 
+def test_offline_behavior_curriculum_has_unique_skill_coverage():
+    chat_rows = benchmark_pack.build_benchmark_sft_rows(160, seed=19, source="offline")
+    eval_rows = benchmark_pack.build_benchmark_eval_rows(64, seed=29, source="offline")
+
+    assert sum(row["category"] == "bench_math" for row in chat_rows) >= 30
+    assert sum(row["category"] == "bench_spelling" for row in chat_rows) >= 25
+    assert sum(row["category"] == "identity" for row in chat_rows) >= 10
+    assert sum(row["category"] == "bench_math" for row in eval_rows) >= 8
+    assert sum(row["category"] == "bench_spelling" for row in eval_rows) >= 8
+    assert sum(row["category"] == "identity" for row in eval_rows) >= 4
+    assert any(row.get("correct_choice") for row in eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
 def test_generate_benchmark_tuning_pack_refuses_overwrite_without_force(tmp_path):
     pack = write_pack(tmp_path)
     generate_benchmark_tuning_pack(pack, sft_rows=32, eval_rows=16)

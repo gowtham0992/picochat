@@ -501,6 +501,11 @@ def chat_eval_report_markdown(report: dict) -> str:
             lines.append(f"- Avg entity match rate: {format_float(summary['average_entity_match_rate'] * 100)}%")
         if summary.get("average_corpus_support_rate") is not None:
             lines.append(f"- Avg corpus support rate: {format_float(summary['average_corpus_support_rate'] * 100)}%")
+        if summary.get("choice_examples"):
+            lines.append(f"- Choice-likelihood examples: {summary.get('choice_examples', 0)}")
+            lines.append(f"- Choice accuracy: {_format_percent_or_dash(summary.get('choice_accuracy'))}")
+            lines.append(f"- Choice pass rate: {_format_percent_or_dash(summary.get('choice_pass_rate'))}")
+            lines.append(f"- Choice scorer: `{summary.get('choice_scoring')}`")
     lines.append("")
 
     if summary.get("category_breakdown"):
@@ -950,6 +955,20 @@ def _eval_metric_lines(item: dict) -> list[str]:
         lines.append(f"- Length: {item.get('word_count')} words / {item.get('char_count')} chars")
     if item.get("answerable") is False:
         lines.append(f"- Refusal phrase detected: `{bool(item.get('refusal_match'))}`")
+    if item.get("correct_choice"):
+        lines.append(
+            f"- Choice predicted: `{item.get('choice_predicted')}` "
+            f"(correct `{item.get('correct_choice')}`)"
+        )
+        scores = item.get("choice_logprobs") or {}
+        if isinstance(scores, dict) and scores:
+            rendered = ", ".join(
+                f"{label}:{format_float(float(score))}"
+                for label, score in sorted(scores.items())
+            )
+            lines.append(f"- Choice scores: {rendered}")
+        if item.get("choice_eval_method"):
+            lines.append(f"- Choice eval method: `{item.get('choice_eval_method')}`")
     return lines
 
 

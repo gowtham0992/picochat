@@ -4,6 +4,7 @@ from picochat.checkpoint import save_checkpoint
 from picochat.eval import (
     ChatEvalConfig,
     ChatEvalItem,
+    _choice_continuation_candidates,
     analyze_eval_failures,
     detect_prompt_echo,
     load_chat_eval_items,
@@ -58,6 +59,17 @@ def test_load_chat_eval_items_supports_choice_eval_fields(tmp_path):
 
     assert items[0].choice_labels == ("A", "B")
     assert items[0].correct_choice == "B"
+
+
+def test_choice_continuation_candidates_cover_sft_and_bare_styles():
+    tokenizer = CharTokenizer.train(["Assistant: A B\n"])
+
+    candidates = _choice_continuation_candidates(tokenizer, "A")
+
+    assert candidates
+    assert candidates[0].variant == "space+eos"
+    assert {"space", "bare"}.issubset({candidate.variant for candidate in candidates})
+    assert len({candidate.token_ids for candidate in candidates}) == len(candidates)
 
 
 def test_score_reply_checks_required_and_forbidden_phrases():
@@ -204,6 +216,32 @@ def test_analyze_eval_failures_recommends_next_actions():
     assert analysis["cluster_counts"]["content_mismatch"] == 1
     assert analysis["weak_categories"][0]["category"] == "story_generation"
     assert any(item["area"] == "story_generation" for item in analysis["recommendations"])
+
+
+def test_analyze_eval_failures_tracks_wrong_choice():
+    rows = [{
+        "index": 1,
+        "category": "arc_easy",
+        "split": "benchmark",
+        "level": "choice",
+        "answerable": True,
+        "reply": "A",
+        "choice_predicted": "A",
+        "correct_choice": "B",
+        "missing": ["B"],
+        "missing_any": [],
+        "found_forbidden": [],
+        "prompt_echo": False,
+        "passed": False,
+        "support_total": 1,
+        "support_matched": 0,
+    }]
+
+    analysis = analyze_eval_failures(rows)
+
+    assert analysis["failure_counts"]["wrong_choice"] == 1
+    assert analysis["cluster_counts"]["choice_mismatch"] == 1
+    assert any(item["area"] == "choice_eval" for item in analysis["recommendations"])
 
 
 def test_run_chat_eval_writes_artifacts(tmp_path):

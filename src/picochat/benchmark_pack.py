@@ -151,6 +151,7 @@ def generate_benchmark_tuning_pack(
             f"Curriculum source mode: {source}.",
             "Eval prompts are generated from a held-out stream and are not copied into SFT.",
             "Synthetic behavior rows use separate train/eval templates and held-out word pools.",
+            "Behavior curriculum now intentionally over-samples identity, short math, spelling, and choice-format drills because these are the first fragile closed-book skills.",
             f"HF chat SFT rows are length-budgeted to about {SFT_CHAR_BUDGET} characters for local 512-context runs.",
             "Choice eval facts use a held-out fact pool separate from SFT choice facts.",
             "Multiple-choice eval rows include choice labels so Picochat can score next-token choice likelihood.",
@@ -241,13 +242,13 @@ def _normalize_source(source: str) -> str:
 
 def _build_hf_sft_result(count: int, seed: int) -> _RowBuildResult:
     quotas = _quotas(count, (
-        ("smoltalk", 0.25),
-        ("mmlu", 0.20),
-        ("gsm8k", 0.20),
-        ("choice", 0.10),
-        ("math", 0.10),
-        ("spelling", 0.08),
-        ("identity", 0.04),
+        ("smoltalk", 0.20),
+        ("mmlu", 0.18),
+        ("gsm8k", 0.12),
+        ("choice", 0.12),
+        ("math", 0.16),
+        ("spelling", 0.12),
+        ("identity", 0.07),
         ("refusal", 0.03),
     ))
     rows: list[dict[str, Any]] = []
@@ -312,12 +313,13 @@ def _build_hf_sft_result(count: int, seed: int) -> _RowBuildResult:
 
 def _build_hf_eval_result(count: int, seed: int) -> _RowBuildResult:
     quotas = _quotas(count, (
-        ("arc", 0.28),
-        ("mmlu", 0.24),
-        ("gsm8k", 0.20),
+        ("arc", 0.25),
+        ("mmlu", 0.20),
+        ("gsm8k", 0.15),
+        ("math", 0.15),
         ("spelling", 0.12),
-        ("identity", 0.06),
-        ("refusal", 0.10),
+        ("identity", 0.08),
+        ("refusal", 0.05),
     ))
     rows: list[dict[str, Any]] = []
     notes: list[str] = []
@@ -341,6 +343,7 @@ def _build_hf_eval_result(count: int, seed: int) -> _RowBuildResult:
             notes.append(str(exc))
 
     local_rows = _build_local_behavior_rows(
+        math=quotas["math"],
         spelling=quotas["spelling"],
         identity=quotas["identity"],
         refusal=quotas["refusal"],
@@ -813,32 +816,55 @@ def _math_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> di
     b = 2 + ((index * 13 + (19 if eval_rows else 7)) % 41)
     c = 1 + ((index * 5 + (23 if eval_rows else 3)) % 13)
     kind = index % 4
+    train_template = (index // 4) % 4
+
+    def train_prompt(problem: str, compact: str) -> str:
+        templates = (
+            f"Solve this arithmetic problem. Give only the final answer.\n{problem}",
+            f"Math drill. Return only the number.\n{problem}",
+            f"Compute carefully and answer with digits only: {compact}",
+            f"One-line arithmetic check: {problem} Answer only with the number.",
+        )
+        return templates[train_template]
+
     if kind == 0:
         answer = a + b
         if eval_rows:
             user = f"Solve carefully. A box has {a} blue marbles and {b} green marbles. How many marbles are in the box?"
         else:
-            user = f"Arithmetic drill: compute {a} plus {b}. Reply with only the number."
+            user = train_prompt(
+                f"A box has {a} blue marbles and {b} green marbles. How many marbles are in the box?",
+                f"{a} + {b}",
+            )
     elif kind == 1:
         total = a + b + c
         answer = total - c
         if eval_rows:
             user = f"Nora had {total} stickers. She gave away {c}. How many stickers remain?"
         else:
-            user = f"Subtraction drill: start with {total}, remove {c}, and output the remaining count only."
+            user = train_prompt(
+                f"Nora had {total} stickers. She gave away {c}. How many stickers remain?",
+                f"{total} - {c}",
+            )
     elif kind == 2:
         answer = a * c
         if eval_rows:
             user = f"There are {a} trays with {c} cookies on each tray. How many cookies are there?"
         else:
-            user = f"Multiplication drill: {a} groups have {c} items each. Return only the product."
+            user = train_prompt(
+                f"There are {a} trays with {c} cookies on each tray. How many cookies are there?",
+                f"{a} * {c}",
+            )
     else:
         total = a * c + b
         answer = total - b
         if eval_rows:
             user = f"A shop packed {total} pencils, then removed {b}. How many pencils stayed packed?"
         else:
-            user = f"Reverse addition drill: {b} extra items were added after packing. Final count {total}. What was packed before extras?"
+            user = train_prompt(
+                f"A shop packed {total} pencils, then removed {b}. How many pencils stayed packed?",
+                f"{total} - {b}",
+            )
     assistant = f"{answer}"
     row = {
         "user": user,
@@ -860,37 +886,64 @@ def _math_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> di
 
 _TRAIN_SPELLING_WORDS = (
     "planet", "garden", "silver", "bridge", "rocket", "window", "little", "forest",
-    "button", "orange", "paper", "pencil",
+    "button", "orange", "paper", "pencil", "castle", "yellow", "circle", "flower",
+    "rabbit", "mirror", "pocket", "stream", "cloudy", "friend", "gentle", "simple",
+    "bright", "branch", "kitten", "lesson", "mother", "smooth", "ticket", "velvet",
 )
 
 _HELDOUT_SPELLING_WORDS = (
     "market", "river", "winter", "summer",
     "candle", "basket", "needle", "school", "travel", "purple", "camera", "animal",
+    "doctor", "engine", "island", "ladder", "magnet", "napkin", "pillow", "square",
+    "temple", "wonder", "zipper", "artist",
 )
 
 
 def _spelling_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> dict[str, Any]:
     words = _HELDOUT_SPELLING_WORDS if eval_rows else _TRAIN_SPELLING_WORDS
-    word = words[(index * 5 + (7 if eval_rows else 0)) % len(words)]
-    mode = index % 3
-    if mode == 0:
+    modes = ("spaced", "count", "reverse", "first", "last")
+    word = words[index % len(words)]
+    mode = modes[(index // len(words)) % len(modes)]
+    prompt_style = (index // (len(words) * len(modes))) % 3
+
+    def train_prompt(operation: str) -> str:
+        templates = (
+            f"WORD TASK\nword={word}\noperation={operation}\nanswer only",
+            f"Word drill. Word: {word}. Task: {operation}. Reply with only the answer.",
+            f"For the word <<{word}>>, {operation}. Give no explanation.",
+        )
+        return templates[prompt_style]
+
+    if mode == "spaced":
         answer = " ".join(word)
         if eval_rows:
             user = f"Spelling check: output spaced letters for <<{word}>>."
         else:
-            user = f"WORD TASK\nword={word}\noperation=write each character separated by one space\nanswer only"
-    elif mode == 1:
+            user = train_prompt("write each character separated by one space")
+    elif mode == "count":
         answer = str(len(word))
         if eval_rows:
             user = f"Count the characters in this word and give only the number: {word}"
         else:
-            user = f"WORD TASK\nword={word}\noperation=count letters\nanswer only"
-    else:
+            user = train_prompt("count letters")
+    elif mode == "reverse":
         answer = word[::-1]
         if eval_rows:
             user = f"Write this word backward and give only the reversed word: {word}"
         else:
-            user = f"WORD TASK\nword={word}\noperation=reverse the letters\nanswer only"
+            user = train_prompt("reverse the letters")
+    elif mode == "first":
+        answer = word[0]
+        if eval_rows:
+            user = f"Give only the first letter of this word: {word}"
+        else:
+            user = train_prompt("return the first letter")
+    else:
+        answer = word[-1]
+        if eval_rows:
+            user = f"Give only the last letter of this word: {word}"
+        else:
+            user = train_prompt("return the last letter")
     row = {
         "user": user,
         "assistant": answer,
@@ -911,35 +964,125 @@ def _spelling_row(index: int, rng: random.Random, split: str, eval_rows: bool) -
 
 _IDENTITY_ROWS = (
     (
-        "Identity lesson: name the Picochat system in one sentence.",
+        (
+            "Identity lesson: name the Picochat system in one sentence.",
+            "System card: What should Picochat call itself?",
+            "Teach the assistant its name and purpose.",
+        ),
         "I am Picochat, a tiny local language model trained through the Picochat factory.",
-        "What system are you?",
+        (
+            "What system are you?",
+            "State your name and what kind of model you are.",
+            "Who are you in this experiment?",
+        ),
         ("Picochat",),
     ),
     (
-        "Honesty lesson: say what Picochat should do when support is missing.",
+        (
+            "Honesty lesson: say what Picochat should do when support is missing.",
+            "Boundary lesson: answer unsupported questions without inventing.",
+            "Policy drill: what should happen when the data does not contain the answer?",
+        ),
         "Picochat should say it does not know instead of inventing unsupported details.",
-        "How should Picochat answer when the material does not support an answer?",
+        (
+            "How should Picochat answer when the material does not support an answer?",
+            "What should you do if the dataset does not contain the requested fact?",
+            "How do you avoid hallucinating an unsupported answer?",
+        ),
         ("does not know", "unsupported"),
     ),
     (
-        "Workbench lesson: list the main things the Picochat workbench exposes.",
+        (
+            "Workbench lesson: list the main things the Picochat workbench exposes.",
+            "Dashboard lesson: explain what the run workbench is for.",
+            "Observability lesson: what artifacts does Picochat show after a run?",
+        ),
         "The workbench shows the dataset, tokenizer, training, SFT, eval, chat, and reports so a run can be inspected.",
-        "What does the workbench help inspect?",
+        (
+            "What does the workbench help inspect?",
+            "Which stages can I inspect in the Picochat workbench?",
+            "Why does Picochat keep reports next to a run?",
+        ),
         ("dataset", "training", "eval"),
     ),
     (
-        "Evaluation lesson: explain why a low score can still be useful.",
-        "Yes. A low eval score is useful when it exposes a real failure that can guide the next data or training change.",
-        "Can a low eval score still help the next experiment?",
+        (
+            "Evaluation lesson: explain why a low score can still be useful.",
+            "Experiment lesson: what does a failed eval teach us?",
+            "Scoreboard lesson: explain how a failure helps the next run.",
+        ),
+        "A low eval score is useful when it exposes a real failure that can guide the next data or training change.",
+        (
+            "Can a low eval score still help the next experiment?",
+            "Why is a failed eval useful in Picochat?",
+            "What should I do with a weak benchmark result?",
+        ),
         ("useful", "failure"),
+    ),
+    (
+        (
+            "Training lesson: define base training for Picochat.",
+            "Base model lesson: explain next-token prediction.",
+            "Pretraining lesson: what does the base stage learn?",
+        ),
+        "Base training teaches Picochat next-token prediction from the corpus before chat behavior is added.",
+        (
+            "What does base training teach Picochat?",
+            "What is the base model stage learning?",
+            "Why train the base model before SFT?",
+        ),
+        ("next-token", "corpus"),
+    ),
+    (
+        (
+            "SFT lesson: define chat SFT for Picochat.",
+            "Instruction lesson: explain what SFT changes.",
+            "Chat behavior lesson: what does supervised fine-tuning add?",
+        ),
+        "Chat SFT teaches response format and behavior using user and assistant examples; it does not replace base learning.",
+        (
+            "What does chat SFT teach?",
+            "Does SFT replace base training?",
+            "Why does Picochat need SFT after base training?",
+        ),
+        ("format", "behavior"),
+    ),
+    (
+        (
+            "Closed-book lesson: explain the current Picochat target.",
+            "Memory lesson: say what closed-book means for this project.",
+            "Factory lesson: distinguish closed-book training from retrieval.",
+        ),
+        "The current Picochat target is closed-book: the model should answer from learned weights, not from retrieval at inference time.",
+        (
+            "What does closed-book mean for Picochat?",
+            "Is the current Picochat benchmark using retrieval at answer time?",
+            "What is Picochat trying to prove with closed-book runs?",
+        ),
+        ("closed-book", "weights"),
+    ),
+    (
+        (
+            "Scale lesson: explain why bigger runs need better evidence.",
+            "Compute lesson: say when to scale a run.",
+            "Research lesson: why compare runs before increasing training time?",
+        ),
+        "Picochat should scale only after a smaller run has clean data, useful evals, low leakage, and a measurable improvement.",
+        (
+            "When should I scale a Picochat run?",
+            "Why not just train longer immediately?",
+            "What evidence should come before a bigger run?",
+        ),
+        ("clean data", "measurable improvement"),
     ),
 )
 
 
 def _identity_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> dict[str, Any]:
-    train_user, assistant, eval_user, expected = _IDENTITY_ROWS[index % len(_IDENTITY_ROWS)]
-    user = eval_user if eval_rows else train_user
+    train_prompts, assistant, eval_prompts, expected = _IDENTITY_ROWS[index % len(_IDENTITY_ROWS)]
+    prompt_pool = eval_prompts if eval_rows else train_prompts
+    prompt_index = (index // len(_IDENTITY_ROWS)) % len(prompt_pool)
+    user = prompt_pool[prompt_index]
     row = {
         "user": user,
         "assistant": assistant,
