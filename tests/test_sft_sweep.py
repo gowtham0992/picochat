@@ -2,7 +2,7 @@ import json
 
 from picochat.checkpoint import save_checkpoint
 from picochat.model import GPTConfig, TinyGPT
-from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep, sft_sweep_markdown
+from picochat.sft_sweep import SFTSweepConfig, _candidate_name, run_sft_sweep, sft_sweep_markdown
 from picochat.tokenizer import CharTokenizer
 
 
@@ -64,6 +64,17 @@ def test_run_sft_sweep_writes_candidate_and_summary_artifacts(tmp_path):
     assert row["sft_fit_examples"] == 1
     assert row["eval_score"] is not None
     assert report["best_sft_fit"]["candidate"] == row["candidate"]
+
+
+def test_sft_sweep_candidate_name_preserves_fractional_learning_rate():
+    one = _candidate_name(sampling="category_sqrt", learning_rate=1e-4, step_count=400)
+    one_point_five = _candidate_name(sampling="category_sqrt", learning_rate=1.5e-4, step_count=400)
+    seven_point_five = _candidate_name(sampling="category_sqrt", learning_rate=7.5e-5, step_count=400)
+
+    assert one == "category-sqrt-lr1em04-steps400"
+    assert one_point_five == "category-sqrt-lr1p5em04-steps400"
+    assert seven_point_five == "category-sqrt-lr7p5em05-steps400"
+    assert len({one, one_point_five, seven_point_five}) == 3
 
 
 def test_sft_sweep_markdown_explains_sft_fit_first():

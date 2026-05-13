@@ -50,6 +50,7 @@ def run_sft_sweep(config: SFTSweepConfig) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict] = []
+    seen_candidates: set[str] = set()
     for sampling in config.samplings:
         for learning_rate in config.learning_rates:
             for step_count in config.step_counts:
@@ -58,6 +59,13 @@ def run_sft_sweep(config: SFTSweepConfig) -> dict:
                     learning_rate=learning_rate,
                     step_count=step_count,
                 )
+                if candidate in seen_candidates:
+                    raise ValueError(
+                        "sweep candidate name collision; adjust candidate naming "
+                        f"for sampling={sampling}, learning_rate={learning_rate:g}, "
+                        f"steps={step_count}"
+                    )
+                seen_candidates.add(candidate)
                 candidate_dir = out_dir / candidate
                 print(
                     f"sft sweep candidate: {candidate} "
@@ -250,8 +258,16 @@ def _validate_sweep_config(config: SFTSweepConfig) -> None:
 
 
 def _candidate_name(*, sampling: str, learning_rate: float, step_count: int) -> str:
-    lr_text = f"{learning_rate:.0e}".replace("+", "").replace("-", "m")
+    lr_text = _learning_rate_slug(learning_rate)
     return f"{sampling.replace('_', '-')}-lr{lr_text}-steps{step_count}"
+
+
+def _learning_rate_slug(learning_rate: float) -> str:
+    mantissa_text, exponent_text = f"{learning_rate:.6e}".split("e")
+    mantissa_text = mantissa_text.rstrip("0").rstrip(".").replace(".", "p")
+    exponent = int(exponent_text)
+    sign = "m" if exponent < 0 else ""
+    return f"{mantissa_text}e{sign}{abs(exponent):02d}"
 
 
 def _best_row(rows: list[dict], metric: str) -> dict | None:
