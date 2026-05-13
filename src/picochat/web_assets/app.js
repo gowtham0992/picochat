@@ -4599,6 +4599,7 @@ async function createBenchmarkTuningPack() {
   }
   const maxSftRows = boundedNumberInput("flight-sft-max-items", STARTER_ROW_TARGETS.sft, 32, 2000);
   const maxEvalRows = boundedNumberInput("flight-eval-max-items", STARTER_ROW_TARGETS.eval, 16, 500);
+  const source = $("flight-benchmark-source")?.value || "offline";
   const chatOut = benchmarkOutputPath(packPath, "chat_benchmark.jsonl");
   const evalOut = benchmarkOutputPath(packPath, "eval_benchmark.jsonl");
   $("flight-benchmark-button").disabled = true;
@@ -4611,6 +4612,7 @@ async function createBenchmarkTuningPack() {
       eval_out: evalOut,
       sft_rows: maxSftRows,
       eval_rows: maxEvalRows,
+      source,
       seed: state.detail?.summary?.config?.seed ?? 42,
       force: Boolean($("flight-starter-force")?.checked),
       promote_to_pack: true,
@@ -4652,6 +4654,8 @@ function renderBenchmarkTuningPack(report) {
     <div class="flight-eval-grid">
       <div><strong>${fmtInt(report.sft_rows)}</strong><span>chat rows</span></div>
       <div><strong>${fmtInt(report.eval_rows)}</strong><span>eval rows</span></div>
+      <div><strong>${escapeHtml(report.source_status || report.source_mode || "offline")}</strong><span>source</span></div>
+      <div><strong>${escapeHtml(report.contamination?.status || "unknown")}</strong><span>contamination</span></div>
       <div><strong>${escapeHtml(shortPath(report.chat_output_path))}</strong><span>SFT jsonl</span></div>
       <div><strong>${escapeHtml(shortPath(report.eval_output_path))}</strong><span>eval jsonl</span></div>
     </div>
@@ -4663,6 +4667,10 @@ function renderBenchmarkTuningPack(report) {
     <div class="mini-stat-row">
       ${Object.entries(report.chat_categories || {}).map(([name, count]) => `<span>SFT ${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
     </div>
+    <div class="mini-stat-row">
+      ${Object.entries(report.source_datasets || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
+    </div>
+    ${report.fallback_reason ? `<div class="notice caution">SOURCE FALLBACK: ${escapeHtml(report.fallback_reason)}</div>` : ""}
     <div class="command-tape source-command">
       <div class="command-head">
         <label>BENCHMARK PACK COMMAND</label>

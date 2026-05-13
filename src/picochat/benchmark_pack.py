@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import asdict, dataclass
+import difflib
 import json
 from pathlib import Path
 import random
+import re
 from typing import Any
 
 from picochat.dataset_pack import load_dataset_pack, update_dataset_pack_tuning_paths
@@ -21,6 +23,11 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
 DEFAULT_BENCHMARK_SFT_ROWS = 300
 DEFAULT_BENCHMARK_EVAL_ROWS = 80
+BENCHMARK_SOURCES = ("offline", "auto", "hf")
+
+
+class BenchmarkSourceError(RuntimeError):
+    """Raised when a requested external benchmark source cannot be loaded."""
 
 
 @dataclass(frozen=True)
@@ -37,6 +44,11 @@ class BenchmarkTuningPackReport:
     promoted_to_pack: bool
     pack_chat_input: str | None
     pack_eval_input: str | None
+    source_mode: str
+    source_status: str
+    source_datasets: dict[str, int]
+    fallback_reason: str | None
+    contamination: dict[str, Any]
     source_notes: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,6 +58,16 @@ class BenchmarkTuningPackReport:
         }
 
 
+@dataclass(frozen=True)
+class _RowBuildResult:
+    rows: list[dict[str, Any]]
+    source_mode: str
+    source_status: str
+    source_datasets: dict[str, int]
+    fallback_reason: str | None
+    source_notes: tuple[str, ...]
+
+
 def generate_benchmark_tuning_pack(
     dataset_pack: str | Path,
     chat_out: str | Path | None = None,
@@ -53,6 +75,7 @@ def generate_benchmark_tuning_pack(
     sft_rows: int = DEFAULT_BENCHMARK_SFT_ROWS,
     eval_rows: int = DEFAULT_BENCHMARK_EVAL_ROWS,
     seed: int = 42,
+    source: str = "offline",
     force: bool = False,
     promote_to_pack: bool = True,
 ) -> BenchmarkTuningPackReport:
@@ -61,6 +84,7 @@ def generate_benchmark_tuning_pack(
         raise ValueError("sft_rows must be at least 32")
     if eval_rows < 16:
         raise ValueError("eval_rows must be at least 16")
+    source = _normalize_source(source)
 
     pack = load_dataset_pack(dataset_pack)
     pack_dir = Path(pack.path).parent
@@ -73,9 +97,12 @@ def generate_benchmark_tuning_pack(
         names = ", ".join(str(path) for path in existing)
         raise FileExistsError(f"Refusing to overwrite existing benchmark tuning file(s): {names}")
 
-    chat_rows = build_benchmark_sft_rows(sft_rows, seed=seed)
-    eval_items = build_benchmark_eval_rows(eval_rows, seed=seed + 100_000)
+    chat_result = _build_benchmark_sft_result(sft_rows, seed=seed, source=source)
+    eval_result = _build_benchmark_eval_result(eval_rows, seed=seed + 100_000, source=source)
+    chat_rows = chat_result.rows
+    eval_items = eval_result.rows
     _assert_no_prompt_overlap(chat_rows, eval_items)
+    contamination = _contamination_report(chat_rows, eval_items)
 
     chat_path.parent.mkdir(parents=True, exist_ok=True)
     eval_path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,26 +137,540 @@ def generate_benchmark_tuning_pack(
         promoted_to_pack=promoted_pack is not None,
         pack_chat_input=promoted_pack.chat_input if promoted_pack else None,
         pack_eval_input=promoted_pack.eval_input if promoted_pack else None,
+        source_mode=source,
+        source_status=_combined_source_status(chat_result.source_status, eval_result.source_status),
+        source_datasets=dict(sorted((
+            Counter(chat_result.source_datasets) + Counter(eval_result.source_datasets)
+        ).items())),
+        fallback_reason=chat_result.fallback_reason or eval_result.fallback_reason,
+        contamination=contamination,
         source_notes=(
             "ClimbMix or the selected corpus remains the base pretraining data.",
             "This pack adds a nanochat-style curated SFT/eval curriculum.",
+            f"Curriculum source mode: {source}.",
             "Eval prompts are generated from a held-out stream and are not copied into SFT.",
             "Choice eval facts use a held-out fact pool separate from SFT choice facts.",
             "Multiple-choice eval rows include choice labels so Picochat can score next-token choice likelihood.",
+            *chat_result.source_notes,
+            *eval_result.source_notes,
         ),
     )
     report_path.write_text(_report_markdown(report), encoding="utf-8")
     return report
 
 
-def build_benchmark_sft_rows(count: int, seed: int = 42) -> list[dict[str, Any]]:
+def build_benchmark_sft_rows(count: int, seed: int = 42, source: str = "offline") -> list[dict[str, Any]]:
     """Build deterministic SFT rows from separate train-only task streams."""
-    return _build_rows(count, seed=seed, split="train", eval_rows=False)
+    return _build_benchmark_sft_result(count, seed=seed, source=source).rows
 
 
-def build_benchmark_eval_rows(count: int, seed: int = 42) -> list[dict[str, Any]]:
+def build_benchmark_eval_rows(count: int, seed: int = 42, source: str = "offline") -> list[dict[str, Any]]:
     """Build deterministic held-out transparent eval rows."""
-    return _build_rows(count, seed=seed, split="heldout", eval_rows=True)
+    return _build_benchmark_eval_result(count, seed=seed, source=source).rows
+
+
+def _build_benchmark_sft_result(count: int, seed: int, source: str) -> _RowBuildResult:
+    source = _normalize_source(source)
+    if source == "offline":
+        return _offline_result(count, seed=seed, split="train", eval_rows=False)
+    try:
+        result = _build_hf_sft_result(count, seed=seed)
+    except BenchmarkSourceError as exc:
+        if source == "hf":
+            raise
+        fallback = _offline_result(count, seed=seed, split="train", eval_rows=False)
+        return _RowBuildResult(
+            rows=fallback.rows,
+            source_mode=source,
+            source_status="offline_fallback",
+            source_datasets=fallback.source_datasets,
+            fallback_reason=str(exc),
+            source_notes=(
+                "HF SFT curriculum was requested in auto mode but could not be loaded; offline deterministic rows were used.",
+                str(exc),
+            ),
+        )
+    return result
+
+
+def _build_benchmark_eval_result(count: int, seed: int, source: str) -> _RowBuildResult:
+    source = _normalize_source(source)
+    if source == "offline":
+        return _offline_result(count, seed=seed, split="heldout", eval_rows=True)
+    try:
+        result = _build_hf_eval_result(count, seed=seed)
+    except BenchmarkSourceError as exc:
+        if source == "hf":
+            raise
+        fallback = _offline_result(count, seed=seed, split="heldout", eval_rows=True)
+        return _RowBuildResult(
+            rows=fallback.rows,
+            source_mode=source,
+            source_status="offline_fallback",
+            source_datasets=fallback.source_datasets,
+            fallback_reason=str(exc),
+            source_notes=(
+                "HF eval curriculum was requested in auto mode but could not be loaded; offline deterministic rows were used.",
+                str(exc),
+            ),
+        )
+    return result
+
+
+def _offline_result(count: int, seed: int, split: str, eval_rows: bool) -> _RowBuildResult:
+    rows = _build_rows(count, seed=seed, split=split, eval_rows=eval_rows)
+    return _RowBuildResult(
+        rows=rows,
+        source_mode="offline",
+        source_status="offline",
+        source_datasets={"picochat_offline": len(rows)},
+        fallback_reason=None,
+        source_notes=("Offline deterministic benchmark rows were used.",),
+    )
+
+
+def _normalize_source(source: str) -> str:
+    normalized = str(source or "offline").strip().lower()
+    if normalized not in BENCHMARK_SOURCES:
+        raise ValueError(f"source must be one of {', '.join(BENCHMARK_SOURCES)}")
+    return normalized
+
+
+def _build_hf_sft_result(count: int, seed: int) -> _RowBuildResult:
+    quotas = _quotas(count, (
+        ("smoltalk", 0.40),
+        ("mmlu", 0.24),
+        ("gsm8k", 0.18),
+        ("spelling", 0.10),
+        ("identity", 0.04),
+        ("refusal", 0.04),
+    ))
+    rows: list[dict[str, Any]] = []
+    notes: list[str] = []
+    datasets: Counter[str] = Counter()
+    external_rows = 0
+
+    for name, builder in (
+        ("HuggingFaceTB/smol-smoltalk", lambda limit: _hf_smoltalk_sft_rows(limit, seed)),
+        ("cais/mmlu", lambda limit: _hf_mmlu_sft_rows(limit, seed + 11)),
+        ("openai/gsm8k", lambda limit: _hf_gsm8k_sft_rows(limit, seed + 23)),
+    ):
+        target = quotas["smoltalk" if "smol" in name else "mmlu" if "mmlu" in name else "gsm8k"]
+        try:
+            added = _unique_rows(builder(target), rows, limit=target)
+            rows.extend(added)
+            datasets[name] += len(added)
+            external_rows += len(added)
+            if len(added) < target:
+                notes.append(f"{name} supplied {len(added)}/{target} requested SFT rows.")
+        except BenchmarkSourceError as exc:
+            notes.append(str(exc))
+
+    local_rows = _build_local_behavior_rows(
+        spelling=quotas["spelling"],
+        identity=quotas["identity"],
+        refusal=quotas["refusal"],
+        seed=seed + 101,
+        split="train",
+        eval_rows=False,
+    )
+    added_local = _unique_rows(local_rows, rows, limit=len(local_rows))
+    rows.extend(added_local)
+    datasets["picochat_behavior"] += len(added_local)
+
+    if external_rows == 0:
+        raise BenchmarkSourceError(
+            "could not load HF benchmark SFT sources; install with pip install -e '.[hf]' "
+            "and make sure network access is available"
+        )
+
+    if len(rows) < count:
+        filler = _build_rows(count, seed=seed + 909, split="train", eval_rows=False)
+        added = _unique_rows(filler, rows, limit=count - len(rows))
+        rows.extend(added)
+        datasets["picochat_offline_fill"] += len(added)
+        notes.append(f"Filled {len(added)} missing SFT rows with offline deterministic rows.")
+
+    return _RowBuildResult(
+        rows=rows[:count],
+        source_mode="hf",
+        source_status="hf",
+        source_datasets=dict(sorted(datasets.items())),
+        fallback_reason=None,
+        source_notes=tuple(notes) or ("HF benchmark SFT sources loaded successfully.",),
+    )
+
+
+def _build_hf_eval_result(count: int, seed: int) -> _RowBuildResult:
+    quotas = _quotas(count, (
+        ("arc", 0.28),
+        ("mmlu", 0.24),
+        ("gsm8k", 0.20),
+        ("spelling", 0.12),
+        ("identity", 0.06),
+        ("refusal", 0.10),
+    ))
+    rows: list[dict[str, Any]] = []
+    notes: list[str] = []
+    datasets: Counter[str] = Counter()
+    external_rows = 0
+
+    for name, target, builder in (
+        ("allenai/ai2_arc", quotas["arc"], lambda limit: _hf_arc_eval_rows(limit, seed)),
+        ("cais/mmlu", quotas["mmlu"], lambda limit: _hf_mmlu_eval_rows(limit, seed + 17)),
+        ("openai/gsm8k", quotas["gsm8k"], lambda limit: _hf_gsm8k_eval_rows(limit, seed + 31)),
+    ):
+        try:
+            added = _unique_rows(builder(target), rows, limit=target)
+            rows.extend(added)
+            datasets[name] += len(added)
+            external_rows += len(added)
+            if len(added) < target:
+                notes.append(f"{name} supplied {len(added)}/{target} requested eval rows.")
+        except BenchmarkSourceError as exc:
+            notes.append(str(exc))
+
+    local_rows = _build_local_behavior_rows(
+        spelling=quotas["spelling"],
+        identity=quotas["identity"],
+        refusal=quotas["refusal"],
+        seed=seed + 211,
+        split="heldout",
+        eval_rows=True,
+    )
+    added_local = _unique_rows(local_rows, rows, limit=len(local_rows))
+    rows.extend(added_local)
+    datasets["picochat_behavior"] += len(added_local)
+
+    if external_rows == 0:
+        raise BenchmarkSourceError(
+            "could not load HF benchmark eval sources; install with pip install -e '.[hf]' "
+            "and make sure network access is available"
+        )
+
+    if len(rows) < count:
+        filler = _build_rows(count, seed=seed + 919, split="heldout", eval_rows=True)
+        added = _unique_rows(filler, rows, limit=count - len(rows))
+        rows.extend(added)
+        datasets["picochat_offline_fill"] += len(added)
+        notes.append(f"Filled {len(added)} missing eval rows with offline deterministic rows.")
+
+    return _RowBuildResult(
+        rows=rows[:count],
+        source_mode="hf",
+        source_status="hf",
+        source_datasets=dict(sorted(datasets.items())),
+        fallback_reason=None,
+        source_notes=tuple(notes) or ("HF benchmark eval sources loaded successfully.",),
+    )
+
+
+def _quotas(total: int, weights: tuple[tuple[str, float], ...]) -> dict[str, int]:
+    raw = {name: int(total * weight) for name, weight in weights}
+    remaining = total - sum(raw.values())
+    for name, _ in weights:
+        if remaining <= 0:
+            break
+        raw[name] += 1
+        remaining -= 1
+    return raw
+
+
+def _build_local_behavior_rows(
+    spelling: int,
+    identity: int,
+    refusal: int,
+    seed: int,
+    split: str,
+    eval_rows: bool,
+) -> list[dict[str, Any]]:
+    rng = random.Random(seed)
+    rows: list[dict[str, Any]] = []
+    for index in range(spelling):
+        rows.append(_spelling_row(index, rng, split=split, eval_rows=eval_rows))
+    for index in range(identity):
+        rows.append(_identity_row(index, rng, split=split, eval_rows=eval_rows))
+    for index in range(refusal):
+        rows.append(_refusal_row(index, rng, split=split, eval_rows=eval_rows))
+    rng.shuffle(rows)
+    return rows
+
+
+def _unique_rows(
+    candidates: list[dict[str, Any]],
+    existing: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    seen = {_norm_prompt(row["user"]) for row in existing}
+    rows: list[dict[str, Any]] = []
+    for row in candidates:
+        prompt = _norm_prompt(row.get("user", ""))
+        if not prompt or prompt in seen:
+            continue
+        rows.append(row)
+        seen.add(prompt)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _hf_smoltalk_sft_rows(limit: int, seed: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(_hf_rows("HuggingFaceTB/smol-smoltalk", None, "train", seed, limit * 8)):
+        pair = _first_user_assistant_pair(item.get("messages"))
+        if not pair:
+            continue
+        user, assistant = pair
+        if len(user) > 900 or len(assistant) > 1400:
+            continue
+        rows.append({
+            "user": user,
+            "assistant": assistant,
+            "category": "smoltalk",
+            "group": f"hf-smoltalk-train-{index}",
+            "answerable": True,
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _hf_mmlu_sft_rows(limit: int, seed: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(_hf_rows("cais/mmlu", "all", "auxiliary_train", seed, limit * 4)):
+        rendered = _mmlu_rendered(item)
+        if rendered is None:
+            continue
+        user, correct_label, subject = rendered
+        rows.append({
+            "user": user,
+            "assistant": correct_label,
+            "category": f"mmlu_{subject}",
+            "group": f"hf-mmlu-train-{index}",
+            "answerable": True,
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _hf_mmlu_eval_rows(limit: int, seed: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(_hf_rows("cais/mmlu", "all", "test", seed, limit * 4)):
+        rendered = _mmlu_rendered(item)
+        if rendered is None:
+            continue
+        user, correct_label, subject = rendered
+        rows.append({
+            "user": user,
+            "assistant": correct_label,
+            "category": f"mmlu_{subject}",
+            "group": f"hf-mmlu-test-{index}",
+            "answerable": True,
+            "split": "benchmark",
+            "level": "choice",
+            "choice_labels": ["A", "B", "C", "D"],
+            "correct_choice": correct_label,
+            "must_include": [correct_label],
+            "max_words": 3,
+            "reference_answer": correct_label,
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _hf_arc_eval_rows(limit: int, seed: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    per_config = max(1, limit // 2)
+    for config_name in ("ARC-Easy", "ARC-Challenge"):
+        target = limit - len(rows) if config_name == "ARC-Challenge" else per_config
+        for index, item in enumerate(_hf_rows("allenai/ai2_arc", config_name, "test", seed + len(rows), target * 6)):
+            rendered = _arc_rendered(item)
+            if rendered is None:
+                continue
+            user, labels, correct = rendered
+            rows.append({
+                "user": user,
+                "assistant": correct,
+                "category": config_name.lower().replace("-", "_"),
+                "group": f"hf-{config_name.lower()}-test-{index}",
+                "answerable": True,
+                "split": "benchmark",
+                "level": "choice",
+                "choice_labels": labels,
+                "correct_choice": correct,
+                "must_include": [correct],
+                "max_words": 3,
+                "reference_answer": correct,
+            })
+            if len(rows) >= limit or sum(1 for row in rows if row["category"] == config_name.lower().replace("-", "_")) >= target:
+                break
+        if len(rows) >= limit:
+            break
+    return rows[:limit]
+
+
+def _hf_gsm8k_sft_rows(limit: int, seed: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(_hf_rows("openai/gsm8k", "main", "train", seed, limit * 4)):
+        question = _clean_text(item.get("question"))
+        answer = _gsm8k_final_answer(item.get("answer"))
+        if not question or not answer:
+            continue
+        rows.append({
+            "user": f"Solve this math problem. Give only the final answer.\n{question}",
+            "assistant": answer,
+            "category": "gsm8k",
+            "group": f"hf-gsm8k-train-{index}",
+            "answerable": True,
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _hf_gsm8k_eval_rows(limit: int, seed: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(_hf_rows("openai/gsm8k", "main", "test", seed, limit * 4)):
+        question = _clean_text(item.get("question"))
+        answer = _gsm8k_final_answer(item.get("answer"))
+        if not question or not answer:
+            continue
+        rows.append({
+            "user": f"Solve this math problem. Give only the final answer.\n{question}",
+            "assistant": answer,
+            "category": "gsm8k",
+            "group": f"hf-gsm8k-test-{index}",
+            "answerable": True,
+            "split": "benchmark",
+            "level": "math",
+            "must_include": [answer],
+            "max_words": 24,
+            "reference_answer": answer,
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _hf_rows(dataset: str, config: str | None, split: str, seed: int, limit: int) -> list[dict[str, Any]]:
+    try:
+        from datasets import load_dataset
+    except Exception as exc:  # pragma: no cover - depends on optional dependency
+        raise BenchmarkSourceError(f"{dataset} needs optional dependency: pip install -e '.[hf]'") from exc
+
+    try:
+        kwargs = {"split": split, "streaming": True}
+        stream = load_dataset(dataset, config, **kwargs) if config else load_dataset(dataset, **kwargs)
+        try:
+            stream = stream.shuffle(seed=seed, buffer_size=max(1000, limit * 4))
+        except Exception:
+            pass
+        rows = []
+        for item in stream:
+            if isinstance(item, dict):
+                rows.append(item)
+            if len(rows) >= limit:
+                break
+        return rows
+    except Exception as streaming_exc:
+        try:
+            kwargs = {"split": split}
+            dataset_obj = load_dataset(dataset, config, **kwargs) if config else load_dataset(dataset, **kwargs)
+            try:
+                dataset_obj = dataset_obj.shuffle(seed=seed)
+            except Exception:
+                pass
+            rows = []
+            for index, item in enumerate(dataset_obj):
+                if isinstance(item, dict):
+                    rows.append(item)
+                if index + 1 >= limit:
+                    break
+            return rows
+        except Exception as exc:
+            raise BenchmarkSourceError(
+                f"could not load {dataset}"
+                f"{'/' + config if config else ''} split {split}: {exc}"
+            ) from streaming_exc
+
+
+def _first_user_assistant_pair(messages: Any) -> tuple[str, str] | None:
+    if not isinstance(messages, list):
+        return None
+    pending_user: str | None = None
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role", "")).lower()
+        content = _clean_text(message.get("content"))
+        if not content:
+            continue
+        if role == "user":
+            pending_user = content
+        elif role == "assistant" and pending_user:
+            return pending_user, content
+    return None
+
+
+def _mmlu_rendered(item: dict[str, Any]) -> tuple[str, str, str] | None:
+    question = _clean_text(item.get("question"))
+    choices = item.get("choices")
+    answer = item.get("answer")
+    if not question or not isinstance(choices, list) or len(choices) != 4:
+        return None
+    try:
+        answer_index = int(answer)
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= answer_index < 4:
+        return None
+    labels = ["A", "B", "C", "D"]
+    subject = _clean_text(item.get("subject")) or "general"
+    return _render_choice_prompt(question, labels, choices), labels[answer_index], _slug(subject)
+
+
+def _arc_rendered(item: dict[str, Any]) -> tuple[str, list[str], str] | None:
+    question = _clean_text(item.get("question"))
+    choices_obj = item.get("choices")
+    answer = _clean_text(item.get("answerKey"))
+    if not question or not answer or not isinstance(choices_obj, dict):
+        return None
+    labels = [_clean_text(label) for label in choices_obj.get("label", [])]
+    choices = [_clean_text(text) for text in choices_obj.get("text", [])]
+    if not labels or len(labels) != len(choices) or answer not in labels:
+        return None
+    return _render_choice_prompt(question, labels, choices), labels, answer
+
+
+def _render_choice_prompt(question: str, labels: list[str], choices: list[Any]) -> str:
+    lines = [question]
+    for label, choice in zip(labels, choices, strict=False):
+        lines.append(f"{label}. {_clean_text(choice)}")
+    lines.append("Respond only with the correct choice label.")
+    return "\n".join(lines)
+
+
+def _gsm8k_final_answer(answer: Any) -> str:
+    text = _clean_text(answer)
+    if not text:
+        return ""
+    match = re.search(r"####\s*([^\n]+)", text)
+    if not match:
+        return ""
+    return match.group(1).strip().replace(",", "")
+
+
+def _clean_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).strip().split())
+
+
+def _slug(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+    return slug or "general"
 
 
 def _build_rows(count: int, seed: int, split: str, eval_rows: bool) -> list[dict[str, Any]]:
@@ -399,6 +940,95 @@ def _assert_no_prompt_overlap(chat_rows: list[dict[str, Any]], eval_rows: list[d
         raise ValueError(f"generated benchmark pack leaked an eval prompt into SFT: {sample[:80]}")
 
 
+def _contamination_report(chat_rows: list[dict[str, Any]], eval_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    train_prompts = [(_norm_prompt(row["user"]), row["user"]) for row in chat_rows]
+    eval_prompts = [(_norm_prompt(row["user"]), row["user"]) for row in eval_rows]
+    train_prompt_set = {prompt for prompt, _ in train_prompts}
+    exact_prompt_overlaps = [
+        {"eval_prompt": raw[:240]}
+        for prompt, raw in eval_prompts
+        if prompt in train_prompt_set
+    ]
+
+    near_prompt_overlaps: list[dict[str, Any]] = []
+    for eval_prompt, eval_raw in eval_prompts:
+        if eval_prompt in train_prompt_set:
+            continue
+        best_ratio = 0.0
+        best_jaccard = 0.0
+        best_train = ""
+        for train_prompt, train_raw in train_prompts:
+            ratio = difflib.SequenceMatcher(None, eval_prompt, train_prompt).ratio()
+            jaccard = _token_jaccard(eval_prompt, train_prompt)
+            if (ratio, jaccard) > (best_ratio, best_jaccard):
+                best_ratio = ratio
+                best_jaccard = jaccard
+                best_train = train_raw
+        if best_ratio >= 0.96 and best_jaccard >= 0.90:
+            near_prompt_overlaps.append({
+                "similarity": round(best_ratio, 4),
+                "token_jaccard": round(best_jaccard, 4),
+                "eval_prompt": eval_raw[:180],
+                "train_prompt": best_train[:180],
+            })
+
+    train_assistant_text = "\n".join(_norm_prompt(row.get("assistant", "")) for row in chat_rows)
+    answer_overlaps: list[dict[str, Any]] = []
+    for item in eval_rows:
+        category = str(item.get("category", ""))
+        if item.get("answerable") is False or category.startswith(("refusal", "identity", "honesty")):
+            continue
+        answers = item.get("must_include") or []
+        if isinstance(answers, str):
+            answers = [answers]
+        for answer in answers:
+            answer_text = _norm_prompt(str(answer))
+            if len(answer_text) < 12 or answer_text in {"a", "b", "c", "d"}:
+                continue
+            if answer_text in train_assistant_text:
+                answer_overlaps.append({
+                    "answer": str(answer)[:120],
+                    "eval_prompt": str(item.get("user", ""))[:180],
+                })
+                break
+
+    status = "ready"
+    if exact_prompt_overlaps:
+        status = "blocked"
+    elif near_prompt_overlaps or answer_overlaps:
+        status = "caution"
+    return {
+        "status": status,
+        "exact_prompt_overlaps": len(exact_prompt_overlaps),
+        "near_prompt_overlaps": len(near_prompt_overlaps),
+        "answer_overlaps": len(answer_overlaps),
+        "samples": {
+            "exact_prompt_overlaps": exact_prompt_overlaps[:5],
+            "near_prompt_overlaps": near_prompt_overlaps[:5],
+            "answer_overlaps": answer_overlaps[:5],
+        },
+    }
+
+
+def _combined_source_status(chat_status: str, eval_status: str) -> str:
+    statuses = {chat_status, eval_status}
+    if "offline_fallback" in statuses:
+        return "offline_fallback"
+    if statuses == {"hf"}:
+        return "hf"
+    if "hf" in statuses and "offline" in statuses:
+        return "mixed"
+    return chat_status if chat_status == eval_status else "mixed"
+
+
+def _token_jaccard(left: str, right: str) -> float:
+    left_tokens = set(re.findall(r"[a-z0-9]+", left.lower()))
+    right_tokens = set(re.findall(r"[a-z0-9]+", right.lower()))
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+
+
 def _norm_prompt(text: str) -> str:
     return " ".join(text.lower().split())
 
@@ -420,6 +1050,8 @@ def _report_markdown(report: BenchmarkTuningPackReport) -> str:
     chat_lines = "\n".join(f"- {name}: {count}" for name, count in report.chat_categories.items())
     eval_lines = "\n".join(f"- {name}: {count}" for name, count in report.eval_categories.items())
     source_lines = "\n".join(f"- {note}" for note in report.source_notes)
+    dataset_lines = "\n".join(f"- {name}: {count}" for name, count in report.source_datasets.items())
+    contamination = report.contamination
     return f"""# Benchmark Tuning Pack
 
 Dataset pack: `{report.dataset_pack}`
@@ -430,6 +1062,10 @@ Eval: `{report.eval_output_path}`
 
 Promoted to pack: `{report.promoted_to_pack}`
 
+Source mode: `{report.source_mode}`
+
+Source status: `{report.source_status}`
+
 ## Why This Exists
 
 Picochat's corpus-derived starters are useful for domain adaptation, but they
@@ -439,6 +1075,17 @@ mixture for instruction behavior and transparent held-out scoring.
 ## Source Notes
 
 {source_lines}
+
+## Source Datasets
+
+{dataset_lines or "- none"}
+
+## Contamination Check
+
+- status: {contamination.get("status")}
+- exact prompt overlaps: {contamination.get("exact_prompt_overlaps")}
+- near prompt overlaps: {contamination.get("near_prompt_overlaps")}
+- answer overlaps: {contamination.get("answer_overlaps")}
 
 ## Chat Categories
 

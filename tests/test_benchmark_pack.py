@@ -2,7 +2,8 @@ import json
 
 import pytest
 
-from picochat.benchmark_pack import generate_benchmark_tuning_pack
+from picochat import benchmark_pack
+from picochat.benchmark_pack import BenchmarkSourceError, generate_benchmark_tuning_pack
 from picochat.dataset_pack import load_dataset_pack
 from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
@@ -36,6 +37,8 @@ def test_generate_benchmark_tuning_pack_promotes_heldout_files(tmp_path):
     assert (tmp_path / "benchmark_tuning_pack.md").exists()
     assert report.sft_rows == 64
     assert report.eval_rows == 24
+    assert report.source_status == "offline"
+    assert report.contamination["status"] == "ready"
     assert report.promoted_to_pack is True
     promoted = load_dataset_pack(pack)
     assert promoted.chat_input == str(chat_path)
@@ -56,3 +59,28 @@ def test_generate_benchmark_tuning_pack_refuses_overwrite_without_force(tmp_path
 
     with pytest.raises(FileExistsError):
         generate_benchmark_tuning_pack(pack, sft_rows=32, eval_rows=16)
+
+
+def test_generate_benchmark_tuning_pack_auto_falls_back_to_offline(tmp_path, monkeypatch):
+    pack = write_pack(tmp_path)
+
+    def fail_sft(count, seed):
+        raise BenchmarkSourceError("hf unavailable")
+
+    def fail_eval(count, seed):
+        raise BenchmarkSourceError("hf unavailable")
+
+    monkeypatch.setattr(benchmark_pack, "_build_hf_sft_result", fail_sft)
+    monkeypatch.setattr(benchmark_pack, "_build_hf_eval_result", fail_eval)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=32,
+        eval_rows=16,
+        source="auto",
+        force=True,
+    )
+
+    assert report.source_status == "offline_fallback"
+    assert report.fallback_reason == "hf unavailable"
+    assert (tmp_path / "chat_benchmark.jsonl").exists()

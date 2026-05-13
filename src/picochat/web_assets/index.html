@@ -311,6 +311,14 @@
                   <label for="flight-eval-max-items">EVAL ROWS</label>
                   <input id="flight-eval-max-items" type="number" min="4" max="500" value="80">
                 </div>
+                <div>
+                  <label for="flight-benchmark-source">CURRICULUM SOURCE</label>
+                  <select id="flight-benchmark-source">
+                    <option value="offline" selected>OFFLINE SAFE</option>
+                    <option value="auto">HF AUTO</option>
+                    <option value="hf">HF REQUIRED</option>
+                  </select>
+                </div>
                 <div class="beginner-secondary">
                   <label for="flight-min-score">MIN SCORE</label>
                   <input id="flight-min-score" type="number" min="0" max="100" value="0">

@@ -165,6 +165,8 @@ def test_cli_data_benchmark_pack(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "benchmark chat SFT:" in output
     assert "benchmark eval:" in output
+    assert "source_status: offline" in output
+    assert "contamination: ready" in output
     assert "promoted_to_pack: True" in output
     assert (tmp_path / "chat_benchmark.jsonl").exists()
     assert (tmp_path / "eval_benchmark.jsonl").exists()

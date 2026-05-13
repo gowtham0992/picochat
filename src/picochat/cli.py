@@ -22,6 +22,7 @@ from picochat.eval import ChatEvalConfig, run_chat_eval
 from picochat.eval_starter import generate_eval_starter
 from picochat.sft_starter import generate_sft_starter
 from picochat.benchmark_pack import (
+    BENCHMARK_SOURCES,
     DEFAULT_BENCHMARK_EVAL_ROWS,
     DEFAULT_BENCHMARK_SFT_ROWS,
     generate_benchmark_tuning_pack,
@@ -32,6 +33,7 @@ from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.device import DEVICE_CHOICES
 from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
+from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
 from picochat.optim import LR_DECAYS
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.web import WebConfig, serve_web
@@ -237,6 +239,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_BENCHMARK_EVAL_ROWS,
         help="Number of held-out eval rows to write.",
+    )
+    data_benchmark_pack.add_argument(
+        "--source",
+        choices=BENCHMARK_SOURCES,
+        default="offline",
+        help="Curriculum source: offline deterministic rows, auto HF with offline fallback, or HF-required.",
     )
     data_benchmark_pack.add_argument("--seed", type=int, default=42)
     data_benchmark_pack.add_argument("--force", action="store_true", help="Overwrite existing benchmark pack files.")
@@ -569,6 +577,10 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument("runs", nargs="+", help="Run directories containing summary.json.")
     compare_parser.add_argument("--out", default=None, help="Optional Markdown report output path.")
 
+    leaderboard_parser = subparsers.add_parser("leaderboard", help="Build a formal benchmark leaderboard from eval reports.")
+    leaderboard_parser.add_argument("runs", nargs="+", help="Run directories containing eval/eval_report.json.")
+    leaderboard_parser.add_argument("--out", default=None, help="Optional Markdown leaderboard output path.")
+
     web_parser = subparsers.add_parser("web", help="Start the local run dashboard.")
     web_parser.add_argument("--runs-dir", default="runs", help="Directory containing run folders.")
     web_parser.add_argument("--host", default="127.0.0.1")
@@ -817,6 +829,7 @@ def benchmark_pack_data(args: argparse.Namespace) -> int:
         sft_rows=args.sft_rows,
         eval_rows=args.eval_rows,
         seed=args.seed,
+        source=args.source,
         force=args.force,
         promote_to_pack=not args.no_promote,
     )
@@ -824,6 +837,11 @@ def benchmark_pack_data(args: argparse.Namespace) -> int:
     print(f"benchmark eval: {report.eval_output_path}")
     print(f"sft_rows: {report.sft_rows}")
     print(f"eval_rows: {report.eval_rows}")
+    print(f"source: {report.source_mode}")
+    print(f"source_status: {report.source_status}")
+    if report.fallback_reason:
+        print(f"fallback_reason: {report.fallback_reason}")
+    print(f"contamination: {report.contamination['status']}")
     print(f"promoted_to_pack: {report.promoted_to_pack}")
     print("chat categories:")
     for name, count in report.chat_categories.items():
@@ -1226,6 +1244,16 @@ def run_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_leaderboard(args: argparse.Namespace) -> int:
+    leaderboard = build_benchmark_leaderboard(args.runs)
+    print(leaderboard_table(leaderboard))
+    print(f"\nBest benchmark run: {leaderboard['best_run']}")
+    if args.out:
+        write_leaderboard_report(leaderboard, args.out)
+        print(f"saved leaderboard report: {args.out}")
+    return 0
+
+
 def run_web(args: argparse.Namespace) -> int:
     serve_web(WebConfig(
         runs_dir=args.runs_dir,
@@ -1304,6 +1332,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "compare":
         return run_compare(args)
+
+    if args.command == "leaderboard":
+        return run_leaderboard(args)
 
     if args.command == "web":
         return run_web(args)

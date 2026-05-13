@@ -682,6 +682,7 @@ def test_benchmark_tuning_pack_plan_generates_and_promotes_curriculum(tmp_path):
         "dataset_pack": str(pack_path),
         "sft_rows": 64,
         "eval_rows": 24,
+        "source": "offline",
         "seed": 3,
         "force": True,
         "promote_to_pack": True,
@@ -693,7 +694,10 @@ def test_benchmark_tuning_pack_plan_generates_and_promotes_curriculum(tmp_path):
     assert report["eval_data"]["status"] == "ready"
     assert report["chat_categories"]
     assert report["eval_categories"]
+    assert report["source_status"] == "offline"
+    assert report["contamination"]["status"] == "ready"
     assert "benchmark-pack" in report["command"]
+    assert "--source offline" in report["command"]
 
 
 def test_starter_plans_accept_recipe_backed_dataset_pack(tmp_path):
