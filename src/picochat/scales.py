@@ -41,6 +41,12 @@ class RunScale:
     sft_early_stop_patience: int
     canary_count: int
     eval_max_new_tokens: int
+    base_optimizer: str = "adamw"
+    sft_optimizer: str = "adamw"
+    base_muon_learning_rate: float = 0.02
+    sft_muon_learning_rate: float = 0.02
+    base_ema_decay: float = 0.0
+    sft_ema_decay: float = 0.0
 
     def to_dict(self) -> dict:
         return asdict(self)

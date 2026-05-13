@@ -131,6 +131,10 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Gradient accumulation steps: {config.get('grad_accum_steps', 1)}")
     lines.append(f"- Effective batch size: {config.get('effective_batch_size', config['batch_size'])}")
     lines.append(f"- Effective tokens/update: {config.get('effective_tokens_per_step', config['batch_size'] * config.get('context_size', 0))}")
+    lines.append(f"- Optimizer: `{config.get('optimizer', 'adamw')}`")
+    if config.get("optimizer") == "muon":
+        lines.append(f"- Muon matrix LR: {config.get('muon_learning_rate')}")
+    lines.append(f"- EMA decay: {config.get('ema_decay', 0.0) or 'disabled'}")
     lines.append(f"- Learning rate: {config['learning_rate']}")
     lines.append(f"- LR decay: `{config.get('lr_decay', 'none')}`")
     lines.append(f"- LR warmup steps: {config.get('lr_warmup_steps', 0)}")
@@ -143,18 +147,31 @@ def training_report_markdown(report: dict) -> str:
     if config.get("requested_device") and config.get("requested_device") != config.get("device"):
         lines.append(f"- Requested device: `{config['requested_device']}`")
     lines.append("")
-    lines.append("| Step | Train Loss | Train BPB | Val Loss | Val BPB | LR | Grad Norm | Elapsed Seconds |")
-    lines.append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    has_ema = any("ema_val_loss" in item for item in losses)
+    if has_ema:
+        lines.append("| Step | Train Loss | Train BPB | Val Loss | Val BPB | EMA Val Loss | EMA Val BPB | LR | Grad Norm | Elapsed Seconds |")
+        lines.append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    else:
+        lines.append("| Step | Train Loss | Train BPB | Val Loss | Val BPB | LR | Grad Norm | Elapsed Seconds |")
+        lines.append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for item in losses:
-        lines.append(
+        row = (
             f"| {item['step']} | {format_float(item['train_loss'])} | "
             f"{format_optional_float(item.get('train_bpb'))} | "
             f"{format_float(item['val_loss'])} | "
             f"{format_optional_float(item.get('val_bpb'))} | "
+        )
+        if has_ema:
+            row += (
+                f"{format_optional_float(item.get('ema_val_loss'))} | "
+                f"{format_optional_float(item.get('ema_val_bpb'))} | "
+            )
+        row += (
             f"{format_optional_float(item.get('learning_rate'))} | "
             f"{format_optional_float(item.get('grad_norm'))} | "
             f"{format_float(item['elapsed_sec'])} |"
         )
+        lines.append(row)
     lines.append("")
 
     if report.get("coverage"):
@@ -313,6 +330,10 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Gradient accumulation steps: {config.get('grad_accum_steps', 1)}")
     lines.append(f"- Effective batch size: {config.get('effective_batch_size', config['batch_size'])}")
     lines.append(f"- Effective tokens/update: {config.get('effective_tokens_per_step', config['batch_size'] * report.get('dataset', {}).get('context_size', 0))}")
+    lines.append(f"- Optimizer: `{config.get('optimizer', 'adamw')}`")
+    if config.get("optimizer") == "muon":
+        lines.append(f"- Muon matrix LR: {config.get('muon_learning_rate')}")
+    lines.append(f"- EMA decay: {config.get('ema_decay', 0.0) or 'disabled'}")
     lines.append(f"- Learning rate: {config['learning_rate']}")
     lines.append(f"- LR decay: `{config.get('lr_decay', 'none')}`")
     lines.append(f"- LR warmup steps: {config.get('lr_warmup_steps', 0)}")
@@ -324,18 +345,31 @@ def sft_report_markdown(report: dict) -> str:
     if config.get("requested_device") and config.get("requested_device") != config.get("device"):
         lines.append(f"- Requested device: `{config['requested_device']}`")
     lines.append("")
-    lines.append("| Step | Train Loss | Train BPB | Val Loss | Val BPB | LR | Grad Norm | Elapsed Seconds |")
-    lines.append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    has_ema = any("ema_val_loss" in item for item in losses)
+    if has_ema:
+        lines.append("| Step | Train Loss | Train BPB | Val Loss | Val BPB | EMA Val Loss | EMA Val BPB | LR | Grad Norm | Elapsed Seconds |")
+        lines.append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    else:
+        lines.append("| Step | Train Loss | Train BPB | Val Loss | Val BPB | LR | Grad Norm | Elapsed Seconds |")
+        lines.append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for item in losses:
-        lines.append(
+        row = (
             f"| {item['step']} | {format_float(item['train_loss'])} | "
             f"{format_optional_float(item.get('train_bpb'))} | "
             f"{format_float(item['val_loss'])} | "
             f"{format_optional_float(item.get('val_bpb'))} | "
+        )
+        if has_ema:
+            row += (
+                f"{format_optional_float(item.get('ema_val_loss'))} | "
+                f"{format_optional_float(item.get('ema_val_bpb'))} | "
+            )
+        row += (
             f"{format_optional_float(item.get('learning_rate'))} | "
             f"{format_optional_float(item.get('grad_norm'))} | "
             f"{format_float(item['elapsed_sec'])} |"
         )
+        lines.append(row)
     lines.append("")
 
     if report.get("coverage"):
@@ -676,6 +710,13 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.append(f"- Tokenizer vocab size target: {config.get('tokenizer_vocab_size')}")
     lines.append(f"- Base LR decay: `{config.get('base_lr_decay', 'none')}`")
     lines.append(f"- SFT LR decay: `{config.get('sft_lr_decay', 'none')}`")
+    lines.append(f"- Base optimizer: `{config.get('base_optimizer', 'adamw')}`")
+    lines.append(f"- SFT optimizer: `{config.get('sft_optimizer', 'adamw')}`")
+    if config.get("base_optimizer") == "muon" or config.get("sft_optimizer") == "muon":
+        lines.append(f"- Base Muon LR: {config.get('base_muon_learning_rate')}")
+        lines.append(f"- SFT Muon LR: {config.get('sft_muon_learning_rate')}")
+    lines.append(f"- Base EMA decay: {config.get('base_ema_decay', 0.0) or 'disabled'}")
+    lines.append(f"- SFT EMA decay: {config.get('sft_ema_decay', 0.0) or 'disabled'}")
     lines.append(f"- Base grad clip: {config.get('base_grad_clip', 0.0) or 'disabled'}")
     lines.append(f"- SFT grad clip: {config.get('sft_grad_clip', 0.0) or 'disabled'}")
     lines.append(f"- Base grad accumulation: {config.get('base_grad_accum_steps', 1)}")
@@ -694,10 +735,14 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Base final val loss: {format_float(base['final_val_loss'])}")
     if base.get("final_val_bpb") is not None:
         lines.append(f"- Base final val BPB: {format_optional_float(base.get('final_val_bpb'))}")
+    if base.get("final_ema_val_bpb") is not None:
+        lines.append(f"- Base final EMA val BPB: {format_optional_float(base.get('final_ema_val_bpb'))}")
     lines.append(f"- SFT final train loss: {format_float(sft['final_train_loss'])}")
     lines.append(f"- SFT final val loss: {format_float(sft['final_val_loss'])}")
     if sft.get("final_val_bpb") is not None:
         lines.append(f"- SFT final val BPB: {format_optional_float(sft.get('final_val_bpb'))}")
+    if sft.get("final_ema_val_bpb") is not None:
+        lines.append(f"- SFT final EMA val BPB: {format_optional_float(sft.get('final_ema_val_bpb'))}")
     lines.append(f"- SFT truncated examples: {sft['truncated_examples']}")
     if "skipped_long_examples" in sft:
         lines.append(f"- SFT skipped too-long examples: {sft['skipped_long_examples']}")

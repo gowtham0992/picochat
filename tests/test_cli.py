@@ -608,6 +608,18 @@ def test_cli_run_tiny(tmp_path, capsys):
         "0",
         "--tokenizer-type",
         "byte",
+        "--base-optimizer",
+        "muon",
+        "--sft-optimizer",
+        "muon",
+        "--base-muon-learning-rate",
+        "0.01",
+        "--sft-muon-learning-rate",
+        "0.01",
+        "--base-ema-decay",
+        "0.5",
+        "--sft-ema-decay",
+        "0.5",
         "--allow-leaky-eval",
     ])
 
@@ -616,6 +628,12 @@ def test_cli_run_tiny(tmp_path, capsys):
     summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     assert summary["config"]["tokenizer_type"] == "byte"
     assert summary["config"]["sft_sampling"] == "category_balanced"
+    assert summary["config"]["base_optimizer"] == "muon"
+    assert summary["config"]["sft_optimizer"] == "muon"
+    assert summary["base"]["best_checkpoint"]["weights"] == "ema"
+    assert summary["sft"]["best_checkpoint"]["weights"] == "ema"
+    assert (out_dir / "base" / "ema_checkpoint" / "model.pt").exists()
+    assert (out_dir / "sft" / "ema_checkpoint" / "model.pt").exists()
     assert summary["tokenizer"]["tokenizer_type"] == "byte"
     assert "tiny run: 1/1 passed" in capsys.readouterr().out
 

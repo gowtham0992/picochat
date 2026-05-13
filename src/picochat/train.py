@@ -15,7 +15,15 @@ from picochat.checkpoint import save_checkpoint
 from picochat.device import resolve_device
 from picochat.memorization import memorization_diagnostics
 from picochat.model import GPTConfig, TinyGPT
-from picochat.optim import learning_rate_for_step, maybe_clip_grad_norm, set_optimizer_lr, validate_optim_controls
+from picochat.optim import (
+    ExponentialMovingAverage,
+    create_optimizer,
+    learning_rate_for_step,
+    maybe_clip_grad_norm,
+    set_optimizer_lr,
+    using_ema_weights,
+    validate_optim_controls,
+)
 from picochat.report import loss_diagnostics, training_report_markdown
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 
@@ -53,6 +61,9 @@ class TrainConfig:
     min_lr_ratio: float = 1.0
     grad_clip: float = 0.0
     grad_accum_steps: int = 1
+    optimizer: str = "adamw"
+    muon_learning_rate: float = 0.02
+    ema_decay: float = 0.0
 
 
 @torch.no_grad()
@@ -119,6 +130,9 @@ def train_base(config: TrainConfig) -> dict:
         min_lr_ratio=config.min_lr_ratio,
         grad_clip=config.grad_clip,
         grad_accum_steps=config.grad_accum_steps,
+        optimizer_type=config.optimizer,
+        muon_learning_rate=config.muon_learning_rate,
+        ema_decay=config.ema_decay,
     )
     torch.manual_seed(config.seed)
     out_dir = Path(config.out_dir)
@@ -155,7 +169,13 @@ def train_base(config: TrainConfig) -> dict:
         activation=config.activation,
     )
     model = TinyGPT(model_config).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+    optimizer = create_optimizer(
+        model,
+        optimizer_type=config.optimizer,
+        learning_rate=config.learning_rate,
+        muon_learning_rate=config.muon_learning_rate,
+    )
+    ema = ExponentialMovingAverage(model, config.ema_decay) if config.ema_decay > 0 else None
     effective_batch_size = config.batch_size * config.grad_accum_steps
     effective_tokens_per_step = effective_batch_size * config.context_size
 
@@ -197,6 +217,8 @@ def train_base(config: TrainConfig) -> dict:
             (loss / config.grad_accum_steps).backward()
         grad_norm = maybe_clip_grad_norm(model, config.grad_clip)
         optimizer.step()
+        if ema is not None:
+            ema.update(model)
 
         last_loss = sum(micro_losses) / len(micro_losses)
         final_step = step
@@ -220,6 +242,16 @@ def train_base(config: TrainConfig) -> dict:
             val_bpb = val_metrics["bpb"]
             train_eval_loss = float(train_metrics["loss"])
             train_bpb = train_metrics["bpb"]
+            ema_val_metrics = None
+            if ema is not None:
+                with using_ema_weights(model, ema):
+                    ema_val_metrics = evaluate_metrics(
+                        model,
+                        val_loader,
+                        device,
+                        max_batches=config.eval_batches,
+                        token_bytes=token_bytes,
+                    )
             losses.append({
                 "step": step,
                 "train_loss": last_loss,
@@ -233,28 +265,53 @@ def train_base(config: TrainConfig) -> dict:
                 "effective_batch_size": effective_batch_size,
                 "effective_tokens_per_step": effective_tokens_per_step,
                 "elapsed_sec": elapsed,
+                **({
+                    "ema_val_loss": float(ema_val_metrics["loss"]),
+                    "ema_val_bpb": ema_val_metrics["bpb"],
+                    "ema_decay": config.ema_decay,
+                } if ema_val_metrics is not None else {}),
             })
-            metric = val_bpb if val_bpb is not None else val_loss
+            if ema_val_metrics is not None:
+                ema_val_loss = float(ema_val_metrics["loss"])
+                ema_val_bpb = ema_val_metrics["bpb"]
+                metric = ema_val_bpb if ema_val_bpb is not None else ema_val_loss
+                checkpoint_weights = "ema"
+                checkpoint_val_loss = ema_val_loss
+                checkpoint_val_bpb = ema_val_bpb
+            else:
+                metric = val_bpb if val_bpb is not None else val_loss
+                checkpoint_weights = "raw"
+                checkpoint_val_loss = val_loss
+                checkpoint_val_bpb = val_bpb
             if metric < best_metric - config.early_stop_min_delta:
                 best_metric = metric
                 evals_without_improvement = 0
-                save_checkpoint(
-                    best_checkpoint_dir,
-                    model,
-                    step=step,
-                    train_loss=last_loss,
-                    extra_metadata={
-                        "checkpoint_kind": "best_validation",
-                        "val_loss": val_loss,
-                        "val_bpb": val_bpb,
-                    },
-                )
+                with using_ema_weights(model, ema):
+                    save_checkpoint(
+                        best_checkpoint_dir,
+                        model,
+                        step=step,
+                        train_loss=last_loss,
+                        extra_metadata={
+                            "checkpoint_kind": "best_validation",
+                            "weights": checkpoint_weights,
+                            "val_loss": checkpoint_val_loss,
+                            "val_bpb": checkpoint_val_bpb,
+                            "raw_val_loss": val_loss,
+                            "raw_val_bpb": val_bpb,
+                            "ema_decay": config.ema_decay if ema is not None else None,
+                            "ema_updates": ema.num_updates if ema is not None else 0,
+                        },
+                    )
                 best_checkpoint = {
                     "path": str(best_checkpoint_dir),
                     "step": step,
                     "train_loss": last_loss,
-                    "val_loss": val_loss,
-                    "val_bpb": val_bpb,
+                    "val_loss": checkpoint_val_loss,
+                    "val_bpb": checkpoint_val_bpb,
+                    "weights": checkpoint_weights,
+                    "raw_val_loss": val_loss,
+                    "raw_val_bpb": val_bpb,
                 }
             else:
                 evals_without_improvement += 1
@@ -279,6 +336,7 @@ def train_base(config: TrainConfig) -> dict:
             break
 
     checkpoint_dir = out_dir / "checkpoint"
+    ema_checkpoint_dir = out_dir / "ema_checkpoint"
     save_checkpoint(
         checkpoint_dir,
         model,
@@ -286,24 +344,50 @@ def train_base(config: TrainConfig) -> dict:
         train_loss=last_loss,
         extra_metadata={
             "checkpoint_kind": "final",
+            "weights": "raw",
             "stop_reason": stop_reason,
             "best_checkpoint": best_checkpoint,
+            "ema_checkpoint": str(ema_checkpoint_dir) if ema is not None else None,
         },
     )
+    if ema is not None:
+        with using_ema_weights(model, ema):
+            save_checkpoint(
+                ema_checkpoint_dir,
+                model,
+                step=final_step,
+                train_loss=last_loss,
+                extra_metadata={
+                    "checkpoint_kind": "final_ema",
+                    "weights": "ema",
+                    "stop_reason": stop_reason,
+                    "ema_decay": config.ema_decay,
+                    "ema_updates": ema.num_updates,
+                    "raw_checkpoint": str(checkpoint_dir),
+                    "best_checkpoint": best_checkpoint,
+                },
+            )
     if best_checkpoint is None:
-        save_checkpoint(
-            best_checkpoint_dir,
-            model,
-            step=final_step,
-            train_loss=last_loss,
-            extra_metadata={"checkpoint_kind": "best_validation_fallback"},
-        )
+        with using_ema_weights(model, ema):
+            save_checkpoint(
+                best_checkpoint_dir,
+                model,
+                step=final_step,
+                train_loss=last_loss,
+                extra_metadata={
+                    "checkpoint_kind": "best_validation_fallback",
+                    "weights": "ema" if ema is not None else "raw",
+                    "ema_decay": config.ema_decay if ema is not None else None,
+                    "ema_updates": ema.num_updates if ema is not None else 0,
+                },
+            )
         best_checkpoint = {
             "path": str(best_checkpoint_dir),
             "step": final_step,
             "train_loss": last_loss,
             "val_loss": losses[-1]["val_loss"] if losses else None,
             "val_bpb": losses[-1].get("val_bpb") if losses else None,
+            "weights": "ema" if ema is not None else "raw",
         }
 
     sample = _generate_sample(model, tokenizer, device, config.sample_tokens, config.seed)
@@ -326,6 +410,7 @@ def train_base(config: TrainConfig) -> dict:
             "device": device.type,
             "effective_batch_size": effective_batch_size,
             "effective_tokens_per_step": effective_tokens_per_step,
+            "optimizer_metadata": optimizer.metadata,
         },
         "dataset": {
             **split.stats,
@@ -341,6 +426,7 @@ def train_base(config: TrainConfig) -> dict:
         "sample": sample,
         "canary_probe": canary_probe,
         "checkpoint": str(checkpoint_dir),
+        "ema_checkpoint": str(ema_checkpoint_dir) if ema is not None else None,
         "best_checkpoint": best_checkpoint,
         "stop_reason": stop_reason,
     }

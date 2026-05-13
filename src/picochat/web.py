@@ -32,7 +32,7 @@ from picochat.benchmark_pack import (
 )
 from picochat.generate import GenerateConfig, generate_text_with_trace
 from picochat.hf_import import HFImportConfig, HFSplitError, import_hf_dataset
-from picochat.optim import LR_DECAYS
+from picochat.optim import LR_DECAYS, OPTIMIZER_TYPES
 from picochat.scales import RUN_SCALES
 from picochat.sft_starter import generate_sft_starter
 from picochat.sft import SFT_SAMPLING_MODES
@@ -72,6 +72,12 @@ RUN_PRESETS = {
         "sft_grad_clip": 0.0,
         "base_grad_accum_steps": 1,
         "sft_grad_accum_steps": 1,
+        "base_optimizer": "adamw",
+        "sft_optimizer": "adamw",
+        "base_muon_learning_rate": 0.02,
+        "sft_muon_learning_rate": 0.02,
+        "base_ema_decay": 0.0,
+        "sft_ema_decay": 0.0,
         "device": "cpu",
         "sft_sampling": "uniform",
         "base_early_stop_patience": 4,
@@ -107,6 +113,12 @@ RUN_PRESETS = {
         "sft_grad_clip": 0.0,
         "base_grad_accum_steps": 1,
         "sft_grad_accum_steps": 1,
+        "base_optimizer": "adamw",
+        "sft_optimizer": "adamw",
+        "base_muon_learning_rate": 0.02,
+        "sft_muon_learning_rate": 0.02,
+        "base_ema_decay": 0.0,
+        "sft_ema_decay": 0.0,
         "device": "cpu",
         "sft_sampling": "uniform",
         "base_early_stop_patience": 3,
@@ -142,6 +154,12 @@ RUN_PRESETS = {
         "sft_grad_clip": 1.0,
         "base_grad_accum_steps": 2,
         "sft_grad_accum_steps": 1,
+        "base_optimizer": "adamw",
+        "sft_optimizer": "adamw",
+        "base_muon_learning_rate": 0.02,
+        "sft_muon_learning_rate": 0.02,
+        "base_ema_decay": 0.0,
+        "sft_ema_decay": 0.0,
         "device": "auto",
         "sft_sampling": "category_balanced",
         "base_early_stop_patience": 3,
@@ -863,6 +881,22 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         1,
         128,
     )
+    base_optimizer = str(payload.get("base_optimizer", preset.get("base_optimizer", "adamw")))
+    sft_optimizer = str(payload.get("sft_optimizer", preset.get("sft_optimizer", "adamw")))
+    if base_optimizer not in OPTIMIZER_TYPES or sft_optimizer not in OPTIMIZER_TYPES:
+        raise ValueError(f"optimizer must be one of {', '.join(OPTIMIZER_TYPES)}")
+    base_muon_learning_rate = _bounded_float(
+        payload.get("base_muon_learning_rate", preset.get("base_muon_learning_rate", 0.02)),
+        0.000001,
+        1.0,
+    )
+    sft_muon_learning_rate = _bounded_float(
+        payload.get("sft_muon_learning_rate", preset.get("sft_muon_learning_rate", 0.02)),
+        0.000001,
+        1.0,
+    )
+    base_ema_decay = _bounded_float(payload.get("base_ema_decay", preset.get("base_ema_decay", 0.0)), 0.0, 0.9999)
+    sft_ema_decay = _bounded_float(payload.get("sft_ema_decay", preset.get("sft_ema_decay", 0.0)), 0.0, 0.9999)
     base_early_stop_patience = _bounded_int(
         payload.get("base_early_stop_patience", preset.get("base_early_stop_patience", 3)),
         0,
@@ -946,6 +980,18 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(base_grad_accum_steps),
         "--sft-grad-accum-steps",
         str(sft_grad_accum_steps),
+        "--base-optimizer",
+        base_optimizer,
+        "--sft-optimizer",
+        sft_optimizer,
+        "--base-muon-learning-rate",
+        str(base_muon_learning_rate),
+        "--sft-muon-learning-rate",
+        str(sft_muon_learning_rate),
+        "--base-ema-decay",
+        str(base_ema_decay),
+        "--sft-ema-decay",
+        str(sft_ema_decay),
         "--base-early-stop-patience",
         str(base_early_stop_patience),
         "--sft-early-stop-patience",
@@ -1006,6 +1052,12 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "sft_grad_clip": sft_grad_clip,
             "base_grad_accum_steps": base_grad_accum_steps,
             "sft_grad_accum_steps": sft_grad_accum_steps,
+            "base_optimizer": base_optimizer,
+            "sft_optimizer": sft_optimizer,
+            "base_muon_learning_rate": base_muon_learning_rate,
+            "sft_muon_learning_rate": sft_muon_learning_rate,
+            "base_ema_decay": base_ema_decay,
+            "sft_ema_decay": sft_ema_decay,
             "base_early_stop_patience": base_early_stop_patience,
             "sft_early_stop_patience": sft_early_stop_patience,
             "sft_sampling": sft_sampling,

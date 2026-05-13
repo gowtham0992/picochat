@@ -72,6 +72,12 @@ const LAUNCH_CONTROL_IDS = [
   "launch-sft-grad-clip",
   "launch-base-grad-accum-steps",
   "launch-sft-grad-accum-steps",
+  "launch-base-optimizer",
+  "launch-sft-optimizer",
+  "launch-base-muon-learning-rate",
+  "launch-sft-muon-learning-rate",
+  "launch-base-ema-decay",
+  "launch-sft-ema-decay",
   "launch-device",
   "launch-base-early-stop-patience",
   "launch-sft-early-stop-patience",
@@ -3274,6 +3280,12 @@ function applyLaunchPreset(quiet = false) {
   $("launch-sft-grad-clip").value = values.sft_grad_clip;
   $("launch-base-grad-accum-steps").value = values.base_grad_accum_steps || 1;
   $("launch-sft-grad-accum-steps").value = values.sft_grad_accum_steps || 1;
+  $("launch-base-optimizer").value = values.base_optimizer || "adamw";
+  $("launch-sft-optimizer").value = values.sft_optimizer || "adamw";
+  $("launch-base-muon-learning-rate").value = values.base_muon_learning_rate || 0.02;
+  $("launch-sft-muon-learning-rate").value = values.sft_muon_learning_rate || 0.02;
+  $("launch-base-ema-decay").value = values.base_ema_decay || 0;
+  $("launch-sft-ema-decay").value = values.sft_ema_decay || 0;
   $("launch-device").value = values.device || "cpu";
   $("launch-base-early-stop-patience").value = values.base_early_stop_patience;
   $("launch-sft-early-stop-patience").value = values.sft_early_stop_patience;
@@ -3342,6 +3354,12 @@ function launchConfig() {
     sft_grad_clip: launchNumber("launch-sft-grad-clip"),
     base_grad_accum_steps: boundedNumberInput("launch-base-grad-accum-steps", 1, 1, 128),
     sft_grad_accum_steps: boundedNumberInput("launch-sft-grad-accum-steps", 1, 1, 128),
+    base_optimizer: $("launch-base-optimizer").value,
+    sft_optimizer: $("launch-sft-optimizer").value,
+    base_muon_learning_rate: launchNumber("launch-base-muon-learning-rate"),
+    sft_muon_learning_rate: launchNumber("launch-sft-muon-learning-rate"),
+    base_ema_decay: launchNumber("launch-base-ema-decay"),
+    sft_ema_decay: launchNumber("launch-sft-ema-decay"),
     device: $("launch-device").value,
     base_early_stop_patience: launchNumber("launch-base-early-stop-patience"),
     sft_early_stop_patience: launchNumber("launch-sft-early-stop-patience"),
@@ -3372,6 +3390,13 @@ function launchReadiness(config = launchConfig()) {
   if (config.base_batch_size < 1 || config.sft_batch_size < 1) blockers.push("Batch sizes must be at least 1.");
   if (config.base_grad_accum_steps < 1 || config.sft_grad_accum_steps < 1) blockers.push("Gradient accumulation must be at least 1.");
   if (config.base_learning_rate <= 0 || config.sft_learning_rate <= 0) blockers.push("Learning rates must be above zero.");
+  if (!["adamw", "muon"].includes(config.base_optimizer) || !["adamw", "muon"].includes(config.sft_optimizer)) {
+    blockers.push("Optimizer must be ADAMW or MUON.");
+  }
+  if (config.base_muon_learning_rate <= 0 || config.sft_muon_learning_rate <= 0) blockers.push("Muon learning rates must be above zero.");
+  if (config.base_ema_decay < 0 || config.base_ema_decay >= 1 || config.sft_ema_decay < 0 || config.sft_ema_decay >= 1) {
+    blockers.push("EMA decay must be at least 0 and below 1.");
+  }
   if (config.eval_max_new_tokens < 1) blockers.push("Eval tokens must be at least 1.");
   if (config.tokenizer_type === "bpe" && !config.tokenizer_vocab_size) {
     cautions.push("BPE vocab is empty, so the backend default will decide tokenizer size.");
@@ -3385,11 +3410,16 @@ function launchReadiness(config = launchConfig()) {
   }
   if (config.base_lr_warmup_steps > config.base_steps) cautions.push("Base warmup is longer than base training.");
   if (config.sft_lr_warmup_steps > config.sft_steps) cautions.push("SFT warmup is longer than SFT training.");
+  if (config.base_optimizer === "muon" || config.sft_optimizer === "muon") {
+    cautions.push("Muon is experimental here; compare against an AdamW baseline before trusting a win.");
+  }
   if (config.sft_steps > config.base_steps * 2) cautions.push("SFT is much longer than base; watch eval leakage and overfitting.");
   notes.push(`${config.n_layer}L x ${config.n_embd} embd / ${config.n_head} heads`);
   notes.push(`${config.norm_type} / ${config.position_encoding} / ${config.activation}`);
   notes.push(`${String(config.tokenizer_type).toUpperCase()} tokenizer${config.tokenizer_vocab_size ? ` vocab ${config.tokenizer_vocab_size}` : ""}`);
   notes.push(`base ${config.base_steps} / sft ${config.sft_steps}`);
+  notes.push(`optimizer ${config.base_optimizer}/${config.sft_optimizer}`);
+  if (config.base_ema_decay > 0 || config.sft_ema_decay > 0) notes.push(`EMA ${config.base_ema_decay}/${config.sft_ema_decay}`);
   notes.push(`effective batch ${config.base_batch_size * config.base_grad_accum_steps} / ${config.sft_batch_size * config.sft_grad_accum_steps}`);
   notes.push(`device ${String(config.device || "cpu").toUpperCase()}`);
   notes.push(`LR ${config.base_learning_rate} -> ${config.sft_learning_rate}`);
@@ -3473,6 +3503,18 @@ function launchPreviewCommand(config = launchConfig()) {
     config.base_grad_accum_steps,
     "--sft-grad-accum-steps",
     config.sft_grad_accum_steps,
+    "--base-optimizer",
+    config.base_optimizer,
+    "--sft-optimizer",
+    config.sft_optimizer,
+    "--base-muon-learning-rate",
+    config.base_muon_learning_rate,
+    "--sft-muon-learning-rate",
+    config.sft_muon_learning_rate,
+    "--base-ema-decay",
+    config.base_ema_decay,
+    "--sft-ema-decay",
+    config.sft_ema_decay,
     "--base-early-stop-patience",
     config.base_early_stop_patience,
     "--sft-early-stop-patience",
@@ -3578,6 +3620,12 @@ function runStartPayload(config) {
     sft_grad_clip: config.sft_grad_clip,
     base_grad_accum_steps: config.base_grad_accum_steps,
     sft_grad_accum_steps: config.sft_grad_accum_steps,
+    base_optimizer: config.base_optimizer,
+    sft_optimizer: config.sft_optimizer,
+    base_muon_learning_rate: config.base_muon_learning_rate,
+    sft_muon_learning_rate: config.sft_muon_learning_rate,
+    base_ema_decay: config.base_ema_decay,
+    sft_ema_decay: config.sft_ema_decay,
     base_early_stop_patience: config.base_early_stop_patience,
     sft_early_stop_patience: config.sft_early_stop_patience,
     sft_sampling: config.sft_sampling,

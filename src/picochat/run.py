@@ -68,6 +68,12 @@ class TinyRunConfig:
     sft_grad_clip: float = 0.0
     base_grad_accum_steps: int = 1
     sft_grad_accum_steps: int = 1
+    base_optimizer: str = "adamw"
+    sft_optimizer: str = "adamw"
+    base_muon_learning_rate: float = 0.02
+    sft_muon_learning_rate: float = 0.02
+    base_ema_decay: float = 0.0
+    sft_ema_decay: float = 0.0
     sft_sampling: str = "uniform"
     allow_default_tuning_data: bool = False
 
@@ -157,6 +163,9 @@ def run_tiny(config: TinyRunConfig) -> dict:
         min_lr_ratio=config.base_min_lr_ratio,
         grad_clip=config.base_grad_clip,
         grad_accum_steps=config.base_grad_accum_steps,
+        optimizer=config.base_optimizer,
+        muon_learning_rate=config.base_muon_learning_rate,
+        ema_decay=config.base_ema_decay,
     ))
     base_eval_checkpoint = base_report.get("best_checkpoint", {}).get(
         "path",
@@ -185,6 +194,9 @@ def run_tiny(config: TinyRunConfig) -> dict:
         grad_clip=config.sft_grad_clip,
         sampling=config.sft_sampling,
         grad_accum_steps=config.sft_grad_accum_steps,
+        optimizer=config.sft_optimizer,
+        muon_learning_rate=config.sft_muon_learning_rate,
+        ema_decay=config.sft_ema_decay,
     ))
     sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",
@@ -225,9 +237,11 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "tokenizer": str(tokenizer_path),
             "base_report": str(out_dir / "base" / "report.md"),
             "base_best_checkpoint": base_report.get("best_checkpoint", {}).get("path"),
+            "base_ema_checkpoint": base_report.get("ema_checkpoint"),
             "base_eval_checkpoint": base_eval_checkpoint,
             "sft_report": str(out_dir / "sft" / "report.md"),
             "sft_best_checkpoint": sft_report.get("best_checkpoint", {}).get("path"),
+            "sft_ema_checkpoint": sft_report.get("ema_checkpoint"),
             "sft_eval_checkpoint": sft_eval_checkpoint,
             "eval_report": str(out_dir / "eval" / "report.md"),
         },
@@ -241,10 +255,15 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "final_train_loss": base_report["losses"][-1]["train_loss"],
             "final_val_loss": base_report["losses"][-1]["val_loss"],
             "final_val_bpb": base_report["losses"][-1].get("val_bpb"),
+            "final_ema_val_loss": base_report["losses"][-1].get("ema_val_loss"),
+            "final_ema_val_bpb": base_report["losses"][-1].get("ema_val_bpb"),
             "num_parameters": base_report["model"]["num_parameters"],
             "loss_diagnostics": base_report.get("loss_diagnostics", {}),
             "memorization": base_report.get("memorization", {}),
             "coverage": base_report.get("coverage", {}),
+            "optimizer": base_report.get("config", {}).get("optimizer"),
+            "optimizer_metadata": base_report.get("config", {}).get("optimizer_metadata", {}),
+            "ema_checkpoint": base_report.get("ema_checkpoint"),
             "effective_batch_size": base_report.get("config", {}).get("effective_batch_size"),
             "effective_tokens_per_step": base_report.get("config", {}).get("effective_tokens_per_step"),
             "stop_reason": base_report.get("stop_reason"),
@@ -254,12 +273,17 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "final_train_loss": sft_report["losses"][-1]["train_loss"],
             "final_val_loss": sft_report["losses"][-1]["val_loss"],
             "final_val_bpb": sft_report["losses"][-1].get("val_bpb"),
+            "final_ema_val_loss": sft_report["losses"][-1].get("ema_val_loss"),
+            "final_ema_val_bpb": sft_report["losses"][-1].get("ema_val_bpb"),
             "truncated_examples": sft_report["dataset"]["truncated_examples"],
             "skipped_long_examples": sft_report["dataset"].get("skipped_long_examples", 0),
             "loss_diagnostics": sft_report.get("loss_diagnostics", {}),
             "best_checkpoint": sft_report.get("best_checkpoint", {}),
             "eval_checkpoint": sft_eval_checkpoint,
             "coverage": sft_report.get("coverage", {}),
+            "optimizer": sft_report.get("config", {}).get("optimizer"),
+            "optimizer_metadata": sft_report.get("config", {}).get("optimizer_metadata", {}),
+            "ema_checkpoint": sft_report.get("ema_checkpoint"),
             "effective_batch_size": sft_report.get("config", {}).get("effective_batch_size"),
             "effective_tokens_per_step": sft_report.get("config", {}).get("effective_tokens_per_step"),
             "stop_reason": sft_report.get("stop_reason"),

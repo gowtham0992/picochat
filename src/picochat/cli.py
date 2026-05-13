@@ -34,7 +34,7 @@ from picochat.device import DEVICE_CHOICES
 from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
-from picochat.optim import LR_DECAYS
+from picochat.optim import LR_DECAYS, OPTIMIZER_TYPES
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.web import WebConfig, serve_web
 
@@ -386,6 +386,9 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--min-lr-ratio", type=float, default=1.0)
     train_base_parser.add_argument("--grad-clip", type=float, default=0.0)
     train_base_parser.add_argument("--grad-accum-steps", type=int, default=1)
+    train_base_parser.add_argument("--optimizer", choices=OPTIMIZER_TYPES, default="adamw")
+    train_base_parser.add_argument("--muon-learning-rate", type=float, default=0.02)
+    train_base_parser.add_argument("--ema-decay", type=float, default=0.0)
     train_base_parser.add_argument(
         "--canary-count",
         type=int,
@@ -427,6 +430,9 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_parser.add_argument("--min-lr-ratio", type=float, default=1.0)
     train_sft_parser.add_argument("--grad-clip", type=float, default=0.0)
     train_sft_parser.add_argument("--grad-accum-steps", type=int, default=1)
+    train_sft_parser.add_argument("--optimizer", choices=OPTIMIZER_TYPES, default="adamw")
+    train_sft_parser.add_argument("--muon-learning-rate", type=float, default=0.02)
+    train_sft_parser.add_argument("--ema-decay", type=float, default=0.0)
     train_sft_parser.add_argument(
         "--sampling",
         choices=SFT_SAMPLING_MODES,
@@ -541,6 +547,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--sft-grad-clip", type=float, default=None)
     run_tiny_parser.add_argument("--base-grad-accum-steps", type=int, default=None)
     run_tiny_parser.add_argument("--sft-grad-accum-steps", type=int, default=None)
+    run_tiny_parser.add_argument("--base-optimizer", choices=OPTIMIZER_TYPES, default=None)
+    run_tiny_parser.add_argument("--sft-optimizer", choices=OPTIMIZER_TYPES, default=None)
+    run_tiny_parser.add_argument("--base-muon-learning-rate", type=float, default=None)
+    run_tiny_parser.add_argument("--sft-muon-learning-rate", type=float, default=None)
+    run_tiny_parser.add_argument("--base-ema-decay", type=float, default=None)
+    run_tiny_parser.add_argument("--sft-ema-decay", type=float, default=None)
     run_tiny_parser.add_argument(
         "--sft-sampling",
         choices=SFT_SAMPLING_MODES,
@@ -1053,6 +1065,9 @@ def run_train_base(args: argparse.Namespace) -> int:
         min_lr_ratio=args.min_lr_ratio,
         grad_clip=args.grad_clip,
         grad_accum_steps=args.grad_accum_steps,
+        optimizer=args.optimizer,
+        muon_learning_rate=args.muon_learning_rate,
+        ema_decay=args.ema_decay,
     )
     report = train_base(config)
     print(f"saved checkpoint: {report['checkpoint']}")
@@ -1085,6 +1100,9 @@ def run_train_sft(args: argparse.Namespace) -> int:
         grad_clip=args.grad_clip,
         sampling=args.sampling,
         grad_accum_steps=args.grad_accum_steps,
+        optimizer=args.optimizer,
+        muon_learning_rate=args.muon_learning_rate,
+        ema_decay=args.ema_decay,
     )
     report = train_sft(config)
     print(f"saved sft checkpoint: {report['checkpoint']}")
@@ -1212,6 +1230,12 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         sft_grad_clip=_resolve_tiny_value(args, defaults, "sft_grad_clip"),
         base_grad_accum_steps=_resolve_tiny_value(args, defaults, "base_grad_accum_steps"),
         sft_grad_accum_steps=_resolve_tiny_value(args, defaults, "sft_grad_accum_steps"),
+        base_optimizer=_resolve_tiny_value(args, defaults, "base_optimizer"),
+        sft_optimizer=_resolve_tiny_value(args, defaults, "sft_optimizer"),
+        base_muon_learning_rate=_resolve_tiny_value(args, defaults, "base_muon_learning_rate"),
+        sft_muon_learning_rate=_resolve_tiny_value(args, defaults, "sft_muon_learning_rate"),
+        base_ema_decay=_resolve_tiny_value(args, defaults, "base_ema_decay"),
+        sft_ema_decay=_resolve_tiny_value(args, defaults, "sft_ema_decay"),
         sft_sampling=_resolve_tiny_value(args, defaults, "sft_sampling"),
         allow_default_tuning_data=args.allow_default_tuning_data,
     ))
