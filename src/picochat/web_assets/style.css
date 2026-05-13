@@ -227,7 +227,8 @@ h2 {
 }
 
 .home-active .mode-toggle,
-.guide-active .mode-toggle {
+.guide-active .mode-toggle,
+.scale-active .mode-toggle {
   display: none;
 }
 
@@ -245,13 +246,15 @@ h2 {
 }
 
 .home-view,
-.guided-builder {
+.guided-builder,
+.scale-view {
   padding: 12px;
 }
 
 .home-hero,
 .home-choice,
 .home-signal-grid > div,
+.scale-card,
 .guide-shell,
 .guide-card,
 .guide-action-card,
@@ -288,7 +291,7 @@ h2 {
 .home-choice-grid {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-bottom: 12px;
 }
 
@@ -345,6 +348,35 @@ h2 {
   display: grid;
   gap: 6px;
   padding: 12px;
+}
+
+.scale-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.scale-card {
+  align-content: start;
+  display: grid;
+  gap: 12px;
+}
+
+.scale-controls {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.scale-controls button,
+.scale-controls .checkbox-line {
+  align-self: end;
+}
+
+.scale-note {
+  color: var(--muted);
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 .guide-shell {
@@ -2799,6 +2831,8 @@ th {
   .two-col,
   .home-choice-grid,
   .home-signal-grid,
+  .scale-grid,
+  .scale-controls,
   .guide-shell,
   .guide-source-grid,
   .guide-inline-grid,

@@ -39,6 +39,7 @@ class HFImportConfig:
     streaming: bool = True
     report_path: str | None = None
     documents_dir: str | None = None
+    data_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,7 @@ class HFImportReport:
     rows_skipped: int
     characters_written: int
     rows: tuple[HFImportRow, ...]
+    data_files: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -138,6 +140,7 @@ def import_hf_dataset(config: HFImportConfig, loader: DatasetLoader | None = Non
         out_path=str(out_path),
         report_path=str(report_path),
         documents_dir=str(documents_dir),
+        data_files=tuple(config.data_files),
         rows_seen=len(rows),
         rows_written=len(documents),
         rows_skipped=len(rows) - len(documents),
@@ -160,6 +163,7 @@ def hf_import_markdown(report: HFImportReport) -> str:
         f"- Split: `{report.split}`",
         f"- Text column: `{report.text_column}`",
         f"- Streaming: `{report.streaming}`",
+        f"- Data files: `{', '.join(report.data_files)}`" if report.data_files else "- Data files: none",
         f"- Rows inspected: {report.rows_seen}",
         f"- Rows written: {report.rows_written}",
         f"- Rows skipped: {report.rows_skipped}",
@@ -207,8 +211,11 @@ def _load_dataset(config: HFImportConfig, loader: DatasetLoader | None) -> Itera
     args = [config.dataset]
     if config.config_name:
         args.append(config.config_name)
+    kwargs = {"split": config.split, "streaming": config.streaming}
+    if config.data_files:
+        kwargs["data_files"] = list(config.data_files)
     try:
-        return loader(*args, split=config.split, streaming=config.streaming)
+        return loader(*args, **kwargs)
     except Exception as error:
         split_error = _split_error_from_exception(config, error)
         if split_error:

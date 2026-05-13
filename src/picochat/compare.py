@@ -31,6 +31,9 @@ class CompareRow:
     memorization_status: str
     num_parameters: int
     context_size: int
+    device: str
+    base_effective_batch_size: int | None
+    sft_effective_batch_size: int | None
     truncated_examples: int
     skipped_long_examples: int
 
@@ -78,6 +81,9 @@ def load_compare_row(run_dir: str | Path) -> CompareRow:
         memorization_status=str(base.get("memorization", {}).get("status") or "unknown"),
         num_parameters=int(base["num_parameters"]),
         context_size=int(config["context_size"]),
+        device=str(config.get("device") or "unknown"),
+        base_effective_batch_size=_optional_int(base.get("effective_batch_size")),
+        sft_effective_batch_size=_optional_int(sft.get("effective_batch_size")),
         truncated_examples=int(sft["truncated_examples"]),
         skipped_long_examples=int(sft.get("skipped_long_examples", 0)),
     )
@@ -91,11 +97,13 @@ def compare_runs(run_dirs: list[str | Path]) -> dict:
     best = max(rows, key=lambda row: (row.pass_rate, -row.sft_val_loss))
     best_base_bpb = _best_optional_bpb(rows, "base_val_bpb")
     best_sft_bpb = _best_optional_bpb(rows, "sft_val_bpb")
+    closed_book = best_base_bpb or min(rows, key=lambda row: row.base_val_loss)
     decision = _comparison_decision(rows, best, best_base_bpb, best_sft_bpb)
     return {
         "rows": [row.to_dict() for row in rows],
         "best_run": best.run,
         "best_eval_run": best.run,
+        "best_closed_book_run": closed_book.run,
         "best_base_bpb_run": best_base_bpb.run if best_base_bpb else None,
         "best_sft_bpb_run": best_sft_bpb.run if best_sft_bpb else None,
         "decision": decision,
@@ -124,6 +132,9 @@ def comparison_table(comparison: dict) -> str:
             row["memorization_status"],
             _short_int(row["num_parameters"]),
             str(row["context_size"]),
+            row["device"],
+            _format_optional_int(row["base_effective_batch_size"]),
+            _format_optional_int(row["sft_effective_batch_size"]),
             str(row["truncated_examples"]),
             str(row["skipped_long_examples"]),
         ]
@@ -147,6 +158,9 @@ def comparison_table(comparison: dict) -> str:
         "Mem",
         "Params",
         "Ctx",
+        "Device",
+        "Base Eff B",
+        "SFT Eff B",
         "Trunc",
         "Skip",
     ]
@@ -163,6 +177,7 @@ def comparison_table(comparison: dict) -> str:
     lines.append(f"\nBest eval run: {comparison['best_eval_run']}")
     if comparison.get("best_base_bpb_run"):
         lines.append(f"Best base BPB run: {comparison['best_base_bpb_run']}")
+    lines.append(f"Best closed-book run: {comparison['best_closed_book_run']}")
     if comparison.get("best_sft_bpb_run"):
         lines.append(f"Best SFT BPB run: {comparison['best_sft_bpb_run']}")
     decision = comparison.get("decision") or {}
@@ -184,6 +199,8 @@ def comparison_markdown(comparison: dict) -> str:
         f"Best base BPB run: `{comparison.get('best_base_bpb_run') or 'n/a'}`",
         "",
         f"Best SFT BPB run: `{comparison.get('best_sft_bpb_run') or 'n/a'}`",
+        "",
+        f"Best closed-book run: `{comparison.get('best_closed_book_run') or 'n/a'}`",
         "",
     ]
     decision = comparison.get("decision") or {}
@@ -215,8 +232,8 @@ def comparison_markdown(comparison: dict) -> str:
                 lines.append(f"- `{issue.get('severity', 'warn')}` {_markdown_text(issue.get('message'))}")
             lines.append("")
     lines.extend([
-        "| Run | Tokenizer | Eval | Pass Rate | Domain Pass | Refusal Pass | Support Match | Prompt Echo | Base Val BPB | SFT Val BPB | Base Val Loss | SFT Val Loss | Best Steps | Stop Reasons | Base Loss Status | SFT Loss Status | Memorization | Params | Context | Truncated Examples | Skipped Too-Long |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: |",
+        "| Run | Tokenizer | Eval | Pass Rate | Domain Pass | Refusal Pass | Support Match | Prompt Echo | Base Val BPB | SFT Val BPB | Base Val Loss | SFT Val Loss | Best Steps | Stop Reasons | Base Loss Status | SFT Loss Status | Memorization | Params | Context | Device | Base Eff B | SFT Eff B | Truncated Examples | Skipped Too-Long |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: |",
     ])
     for row in comparison["rows"]:
         lines.append(
@@ -230,7 +247,9 @@ def comparison_markdown(comparison: dict) -> str:
             f"{row['sft_val_loss']:.4f} | {_format_best_steps(row)} | "
             f"{_format_stop_reasons(row)} | `{row['base_loss_status']}` | "
             f"`{row['sft_loss_status']}` | `{row['memorization_status']}` | "
-            f"{row['num_parameters']:,} | {row['context_size']} | {row['truncated_examples']} | "
+            f"{row['num_parameters']:,} | {row['context_size']} | `{row['device']}` | "
+            f"{_format_optional_int(row['base_effective_batch_size'])} | "
+            f"{_format_optional_int(row['sft_effective_batch_size'])} | {row['truncated_examples']} | "
             f"{row.get('skipped_long_examples', 0)} |"
         )
     lines.append("")
@@ -418,6 +437,15 @@ def _optional_float(value: object) -> float | None:
         return None
 
 
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _best_step(stage: dict) -> int | None:
     checkpoint = stage.get("best_checkpoint") or {}
     step = checkpoint.get("step")
@@ -442,6 +470,10 @@ def _format_optional_float(value: float | None) -> str:
     if value is None:
         return "--"
     return f"{value:.4f}"
+
+
+def _format_optional_int(value: int | None) -> str:
+    return "--" if value is None else str(value)
 
 
 def _format_optional_percent(value: float | None) -> str:

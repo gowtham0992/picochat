@@ -12,6 +12,7 @@ from picochat.web import (
     generate_run_text,
     hf_import_plan,
     init_dataset_pack_plan,
+    import_run_plan,
     inspect_tuning_plan,
     load_pack_editor_plan,
     load_run_detail,
@@ -1030,6 +1031,29 @@ def test_archive_run_plan_refuses_nested_run_name(tmp_path):
         archive_run_plan(tmp_path / "runs", {"run_name": "archive-2026-05-11/tiny-a"})
 
 
+def test_import_run_plan_copies_external_completed_run(tmp_path):
+    source = write_run(tmp_path / "colab" / "runs", "gpu-run")
+
+    report = import_run_plan(tmp_path / "runs", {
+        "source_path": str(source),
+        "run_name": "gpu-run-imported",
+    })
+
+    destination = Path(report["destination"])
+    assert report["imported"] is True
+    assert destination.parent == tmp_path / "runs"
+    assert (destination / "summary.json").exists()
+    assert report["runs"][0]["name"] == "gpu-run-imported"
+
+
+def test_import_run_plan_rejects_folder_without_summary(tmp_path):
+    source = tmp_path / "not-a-run"
+    source.mkdir()
+
+    with pytest.raises(ValueError, match="summary.json"):
+        import_run_plan(tmp_path / "runs", {"source_path": str(source)})
+
+
 def test_start_run_plan_blocks_unready_dataset_pack(tmp_path):
     pack_path = tmp_path / "dataset_pack.json"
     pack_path.write_text(json.dumps({
@@ -1103,6 +1127,9 @@ def test_cancel_run_plan_terminates_active_job(tmp_path, monkeypatch):
         "n_embd": 32,
         "n_head": 4,
         "n_layer": 1,
+        "norm_type": "rmsnorm",
+        "position_encoding": "rope",
+        "activation": "relu2",
     })
 
     cancelled = cancel_run_plan(tmp_path / "runs", {"job_id": started["job"]["id"]})
@@ -1110,6 +1137,9 @@ def test_cancel_run_plan_terminates_active_job(tmp_path, monkeypatch):
     assert fake_processes[0].terminated is True
     assert cancelled["job"]["state"] == "failed"
     assert cancelled["job"]["can_cancel"] is False
+    assert "--norm-type rmsnorm" in started["job"]["command"]
+    assert "--position-encoding rope" in started["job"]["command"]
+    assert "--activation relu2" in started["job"]["command"]
 
 
 def test_run_presets_are_exposed_for_web_launcher():

@@ -68,3 +68,36 @@ def test_generate_stops_when_eos_is_generated():
 def test_invalid_head_count_rejected():
     with pytest.raises(ValueError):
         TinyGPT(GPTConfig(vocab_size=20, context_size=8, n_embd=18, n_head=4, n_layer=1))
+
+
+def test_model_supports_rmsnorm_and_rope():
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        norm_type="rmsnorm",
+        position_encoding="rope",
+        activation="relu2",
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    logits, loss = model(x, x)
+
+    assert logits.shape == (2, config.context_size, config.vocab_size)
+    assert loss is not None
+    assert model.position_embedding is None
+
+
+def test_rope_requires_even_head_dimension():
+    with pytest.raises(ValueError, match="RoPE"):
+        TinyGPT(GPTConfig(
+            vocab_size=20,
+            context_size=8,
+            n_embd=15,
+            n_head=3,
+            n_layer=1,
+            position_encoding="rope",
+        ))

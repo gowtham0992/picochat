@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from picochat.data import (
     DEFAULT_CHAT_INPUT,
@@ -23,6 +24,7 @@ from picochat.sft_starter import generate_sft_starter
 from picochat.run import TinyRunConfig, run_tiny
 from picochat.compare import compare_runs, comparison_table, write_comparison_report
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
+from picochat.device import DEVICE_CHOICES
 from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.optim import LR_DECAYS
@@ -31,6 +33,8 @@ from picochat.web import WebConfig, serve_web
 
 
 SOURCE_PLAN_PREVIEW_LIMIT = 25
+CLIMBMIX_DATASET = "karpathy/climbmix-400b-shuffle"
+CLIMBMIX_MAX_SHARD = 6542
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="runs/pico-demo",
         help="Output run directory for the demo artifacts.",
     )
-    demo_parser.add_argument("--device", default="cpu")
+    demo_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
 
     data_parser = subparsers.add_parser("data", help="Dataset commands.")
     data_subparsers = data_parser.add_subparsers(dest="data_command")
@@ -227,6 +231,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Download/load the split normally instead of streaming rows.",
     )
 
+    data_climbmix_import = data_subparsers.add_parser(
+        "climbmix-import",
+        help="Import a bounded nanochat-compatible ClimbMix shard sample into a Picochat dataset pack.",
+    )
+    data_climbmix_import.add_argument(
+        "--out-dir",
+        required=True,
+        help="Output folder for corpus.txt, row documents, import report, and dataset_pack.json.",
+    )
+    data_climbmix_import.add_argument(
+        "--shards",
+        type=int,
+        default=1,
+        help="Number of shuffled ClimbMix shards to read starting at shard_00000.parquet.",
+    )
+    data_climbmix_import.add_argument("--max-rows", type=int, default=1000, help="Maximum rows/documents to inspect.")
+    data_climbmix_import.add_argument("--min-chars", type=int, default=20, help="Minimum document length.")
+    data_climbmix_import.add_argument("--force", action="store_true", help="Overwrite existing import/pack artifacts.")
+    data_climbmix_import.add_argument(
+        "--no-streaming",
+        action="store_true",
+        help="Download/load the selected shard files normally instead of streaming rows.",
+    )
+
     tok_parser = subparsers.add_parser("tok", help="Tokenizer commands.")
     tok_subparsers = tok_parser.add_subparsers(dest="tok_command")
 
@@ -295,8 +323,11 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--n-head", type=int, default=4)
     train_base_parser.add_argument("--n-layer", type=int, default=2)
     train_base_parser.add_argument("--dropout", type=float, default=0.0)
+    train_base_parser.add_argument("--norm-type", choices=("layernorm", "rmsnorm"), default="layernorm")
+    train_base_parser.add_argument("--position-encoding", choices=("learned", "rope"), default="learned")
+    train_base_parser.add_argument("--activation", choices=("gelu", "relu2"), default="gelu")
     train_base_parser.add_argument("--seed", type=int, default=42)
-    train_base_parser.add_argument("--device", default="cpu")
+    train_base_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
     train_base_parser.add_argument("--log-every", type=int, default=20)
     train_base_parser.add_argument("--val-fraction", type=float, default=0.1)
     train_base_parser.add_argument("--eval-batches", type=int, default=10)
@@ -308,6 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--lr-decay", choices=LR_DECAYS, default="none")
     train_base_parser.add_argument("--min-lr-ratio", type=float, default=1.0)
     train_base_parser.add_argument("--grad-clip", type=float, default=0.0)
+    train_base_parser.add_argument("--grad-accum-steps", type=int, default=1)
     train_base_parser.add_argument(
         "--canary-count",
         type=int,
@@ -335,7 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_parser.add_argument("--max-steps", type=int, default=100)
     train_sft_parser.add_argument("--learning-rate", type=float, default=1e-4)
     train_sft_parser.add_argument("--seed", type=int, default=42)
-    train_sft_parser.add_argument("--device", default="cpu")
+    train_sft_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
     train_sft_parser.add_argument("--log-every", type=int, default=10)
     train_sft_parser.add_argument("--val-fraction", type=float, default=0.2)
     train_sft_parser.add_argument("--eval-batches", type=int, default=10)
@@ -348,6 +380,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_parser.add_argument("--lr-decay", choices=LR_DECAYS, default="none")
     train_sft_parser.add_argument("--min-lr-ratio", type=float, default=1.0)
     train_sft_parser.add_argument("--grad-clip", type=float, default=0.0)
+    train_sft_parser.add_argument("--grad-accum-steps", type=int, default=1)
     train_sft_parser.add_argument(
         "--sampling",
         choices=SFT_SAMPLING_MODES,
@@ -365,7 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument("--top-p", type=float, default=1.0)
     generate_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     generate_parser.add_argument("--seed", type=int, default=42)
-    generate_parser.add_argument("--device", default="cpu")
+    generate_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
 
     chat_parser = subparsers.add_parser("chat", help="Interactive terminal chat.")
     chat_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
@@ -376,7 +409,7 @@ def build_parser() -> argparse.ArgumentParser:
     chat_parser.add_argument("--top-p", type=float, default=1.0)
     chat_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     chat_parser.add_argument("--seed", type=int, default=42)
-    chat_parser.add_argument("--device", default="cpu")
+    chat_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
 
     eval_parser = subparsers.add_parser("eval", help="Evaluation commands.")
     eval_subparsers = eval_parser.add_subparsers(dest="eval_command")
@@ -391,7 +424,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_chat_parser.add_argument("--top-p", type=float, default=1.0)
     eval_chat_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     eval_chat_parser.add_argument("--seed", type=int, default=42)
-    eval_chat_parser.add_argument("--device", default="cpu")
+    eval_chat_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
     eval_chat_parser.add_argument("--case-sensitive", action="store_true")
     eval_chat_parser.add_argument("--support-corpus", default=None, help="Optional corpus text file for support-overlap diagnostics.")
     eval_chat_parser.add_argument("--corpus-support-threshold", type=float, default=0.25)
@@ -416,6 +449,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--n-head", type=int, default=None)
     run_tiny_parser.add_argument("--n-layer", type=int, default=None)
     run_tiny_parser.add_argument("--dropout", type=float, default=None)
+    run_tiny_parser.add_argument("--norm-type", choices=("layernorm", "rmsnorm"), default=None)
+    run_tiny_parser.add_argument("--position-encoding", choices=("learned", "rope"), default=None)
+    run_tiny_parser.add_argument("--activation", choices=("gelu", "relu2"), default=None)
     run_tiny_parser.add_argument("--base-steps", type=int, default=None)
     run_tiny_parser.add_argument("--sft-steps", type=int, default=None)
     run_tiny_parser.add_argument("--base-batch-size", type=int, default=None)
@@ -429,7 +465,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--sft-max-minutes", type=float, default=None)
     run_tiny_parser.add_argument("--canary-count", type=int, default=None)
     run_tiny_parser.add_argument("--seed", type=int, default=42)
-    run_tiny_parser.add_argument("--device", default="cpu")
+    run_tiny_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
     run_tiny_parser.add_argument("--eval-max-new-tokens", type=int, default=None)
     run_tiny_parser.add_argument(
         "--tokenizer-type",
@@ -457,6 +493,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--sft-min-lr-ratio", type=float, default=None)
     run_tiny_parser.add_argument("--base-grad-clip", type=float, default=None)
     run_tiny_parser.add_argument("--sft-grad-clip", type=float, default=None)
+    run_tiny_parser.add_argument("--base-grad-accum-steps", type=int, default=None)
+    run_tiny_parser.add_argument("--sft-grad-accum-steps", type=int, default=None)
     run_tiny_parser.add_argument(
         "--sft-sampling",
         choices=SFT_SAMPLING_MODES,
@@ -755,6 +793,52 @@ def hf_import_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def climbmix_import_data(args: argparse.Namespace) -> int:
+    if args.shards < 1 or args.shards > CLIMBMIX_MAX_SHARD + 1:
+        raise SystemExit(f"--shards must be between 1 and {CLIMBMIX_MAX_SHARD + 1}")
+    out_dir = Path(args.out_dir)
+    if out_dir.exists() and any(out_dir.iterdir()) and not args.force:
+        raise SystemExit(f"output folder already exists: {out_dir}; use --force to overwrite import artifacts")
+
+    data_files = tuple(f"shard_{index:05d}.parquet" for index in range(args.shards))
+    corpus_path = out_dir / "corpus.txt"
+    documents_dir = out_dir / "documents"
+    report = import_hf_dataset(HFImportConfig(
+        dataset=CLIMBMIX_DATASET,
+        split="train",
+        text_column="text",
+        out_path=str(corpus_path),
+        report_path=str(out_dir / "hf_import_report.json"),
+        documents_dir=str(documents_dir),
+        max_rows=args.max_rows,
+        min_chars=args.min_chars,
+        streaming=not args.no_streaming,
+        data_files=data_files,
+    ))
+    pack_report = init_dataset_pack(
+        out_dir=str(out_dir),
+        corpus_path=str(documents_dir),
+        name=f"ClimbMix sample ({args.shards} shard{'s' if args.shards != 1 else ''})",
+        description=(
+            "Nanochat-compatible public ClimbMix data sample from "
+            "karpathy/climbmix-400b-shuffle, repackaged from nvidia/Nemotron-ClimbMix."
+        ),
+        force=args.force,
+    )
+    print(f"imported dataset: {report.dataset}")
+    print(f"source: nvidia/Nemotron-ClimbMix via {CLIMBMIX_DATASET}")
+    print(f"shards: {', '.join(data_files)}")
+    print(f"rows_seen: {report.rows_seen}")
+    print(f"rows_written: {report.rows_written}")
+    print(f"characters_written: {report.characters_written}")
+    print(f"dataset_pack: {pack_report.dataset_pack}")
+    print(f"documents_dir: {report.documents_dir}")
+    print(f"report: {report.report_path}")
+    print("\nnext:")
+    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {pack_report.dataset_pack}")
+    return 0
+
+
 def honesty_data(args: argparse.Namespace) -> int:
     corpus = args.corpus
     chat_input = args.chat_input
@@ -857,6 +941,9 @@ def run_train_base(args: argparse.Namespace) -> int:
         n_head=args.n_head,
         n_layer=args.n_layer,
         dropout=args.dropout,
+        norm_type=args.norm_type,
+        position_encoding=args.position_encoding,
+        activation=args.activation,
         seed=args.seed,
         device=args.device,
         log_every=args.log_every,
@@ -873,6 +960,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         lr_decay=args.lr_decay,
         min_lr_ratio=args.min_lr_ratio,
         grad_clip=args.grad_clip,
+        grad_accum_steps=args.grad_accum_steps,
     )
     report = train_base(config)
     print(f"saved checkpoint: {report['checkpoint']}")
@@ -904,6 +992,7 @@ def run_train_sft(args: argparse.Namespace) -> int:
         min_lr_ratio=args.min_lr_ratio,
         grad_clip=args.grad_clip,
         sampling=args.sampling,
+        grad_accum_steps=args.grad_accum_steps,
     )
     report = train_sft(config)
     print(f"saved sft checkpoint: {report['checkpoint']}")
@@ -997,6 +1086,9 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         n_head=_resolve_tiny_value(args, defaults, "n_head"),
         n_layer=_resolve_tiny_value(args, defaults, "n_layer"),
         dropout=_resolve_tiny_value(args, defaults, "dropout"),
+        norm_type=_resolve_tiny_value(args, defaults, "norm_type"),
+        position_encoding=_resolve_tiny_value(args, defaults, "position_encoding"),
+        activation=_resolve_tiny_value(args, defaults, "activation"),
         base_steps=_resolve_tiny_value(args, defaults, "base_steps"),
         sft_steps=_resolve_tiny_value(args, defaults, "sft_steps"),
         base_batch_size=_resolve_tiny_value(args, defaults, "base_batch_size"),
@@ -1026,6 +1118,8 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         sft_min_lr_ratio=_resolve_tiny_value(args, defaults, "sft_min_lr_ratio"),
         base_grad_clip=_resolve_tiny_value(args, defaults, "base_grad_clip"),
         sft_grad_clip=_resolve_tiny_value(args, defaults, "sft_grad_clip"),
+        base_grad_accum_steps=_resolve_tiny_value(args, defaults, "base_grad_accum_steps"),
+        sft_grad_accum_steps=_resolve_tiny_value(args, defaults, "sft_grad_accum_steps"),
         sft_sampling=_resolve_tiny_value(args, defaults, "sft_sampling"),
     ))
     print(
@@ -1099,6 +1193,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "hf-import":
         return hf_import_data(args)
+
+    if args.command == "data" and args.data_command == "climbmix-import":
+        return climbmix_import_data(args)
 
     if args.command == "data" and args.data_command == "honesty":
         return honesty_data(args)

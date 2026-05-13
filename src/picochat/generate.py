@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 
 from picochat.checkpoint import load_checkpoint
+from picochat.device import resolve_device
 from picochat.tokenizer import load_tokenizer
 
 
@@ -34,7 +35,7 @@ def generate_text(config: GenerateConfig) -> str:
 def generate_text_with_trace(config: GenerateConfig) -> dict:
     """Generate text and return token-level sampling details."""
     tokenizer = load_tokenizer(config.tokenizer_path)
-    device = torch.device(config.device)
+    device = resolve_device(config.device)
     model, _ = load_checkpoint(config.checkpoint_path, map_location=device)
     model.to(device)
     model.eval()

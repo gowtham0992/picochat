@@ -74,6 +74,33 @@ def test_import_hf_dataset_respects_max_rows(tmp_path):
     assert report.rows_written == 2
 
 
+def test_import_hf_dataset_passes_data_files_to_loader(tmp_path):
+    calls = []
+
+    def fake_loader(*args, **kwargs):
+        calls.append((args, kwargs))
+        return [{"text": "row one is long enough"}]
+
+    report = import_hf_dataset(
+        HFImportConfig(
+            dataset="karpathy/climbmix-400b-shuffle",
+            out_path=str(tmp_path / "corpus.txt"),
+            data_files=("shard_00000.parquet",),
+            min_chars=1,
+        ),
+        loader=fake_loader,
+    )
+
+    assert calls == [
+        (("karpathy/climbmix-400b-shuffle",), {
+            "split": "train",
+            "streaming": True,
+            "data_files": ["shard_00000.parquet"],
+        })
+    ]
+    assert report.data_files == ("shard_00000.parquet",)
+
+
 def test_import_hf_dataset_clears_stale_row_files(tmp_path):
     def fake_loader(*_args, **_kwargs):
         return [{"text": "fresh row is long enough"}]

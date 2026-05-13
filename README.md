@@ -163,6 +163,17 @@ Longer runs add guardrails instead of blind optimism:
   SFT uses group-aware validation when examples provide a `group` field
 - base and SFT reports record learning-rate schedule, warmup, gradient clipping,
   and per-checkpoint LR/gradient-norm traces when those controls are enabled
+- training supports `--device auto|cpu|mps|cuda`; `auto` picks CUDA first, then
+  Apple MPS, then CPU, while reports record both requested and resolved device
+- base and SFT support gradient accumulation; reports show micro batch,
+  accumulation steps, effective batch size, and effective tokens per optimizer
+  update so Mac/Colab/GPU recipes can be compared honestly
+- base models can choose `--norm-type layernorm|rmsnorm` and
+  `--position-encoding learned|rope`, plus `--activation gelu|relu2`;
+  existing checkpoints remain readable, while newer pilot scales can use more
+  modern Transformer defaults
+- document-level splits pack each held-out source with its own BOS/EOS boundary
+  instead of smearing all documents into one anonymous stream
 - chat eval reports include support-match rate so a failed run can show whether
   the model matched some prompt constraints or ignored them entirely
 - chat eval reports also track prompt echo, so generated `User:`/`Assistant:`
@@ -238,6 +249,67 @@ The corpus checklist also looks for duplicate full documents, not only
 duplicate lines. Full-document duplicates are dangerous because they can make
 validation, generation samples, and eval-adjacent behavior look stronger than
 the model really is.
+
+## Nanochat-Compatible ClimbMix Track
+
+Picochat can import a bounded sample of the same public ClimbMix shard track
+used by nanochat. The source data is `nvidia/Nemotron-ClimbMix`; nanochat uses
+the repackaged shuffled shard dataset `karpathy/climbmix-400b-shuffle`.
+
+This is still training from scratch: Picochat trains its own tokenizer and
+randomly initialized model. It does not use nanochat weights or checkpoints.
+
+Install the optional Hugging Face loader:
+
+```bash
+pip install -e ".[hf]"
+```
+
+Import a small local pilot pack:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data climbmix-import \
+  --out-dir runs/climbmix-1shard-1k \
+  --shards 1 \
+  --max-rows 1000
+```
+
+Preview it:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data preview \
+  --dataset-pack runs/climbmix-1shard-1k/dataset_pack.json
+```
+
+Run a Mac/GPU-aware pilot after the SFT/eval starter files are ready:
+
+```bash
+PYTHONPATH=src python -m picochat.cli run tiny \
+  --out-dir runs/climbmix-pilot-v1 \
+  --dataset-pack runs/climbmix-1shard-1k/dataset_pack.json \
+  --scale climbmix-pilot \
+  --device auto
+```
+
+The `climbmix-pilot` scale uses BPE, RMSNorm, RoPE, ReLU2, cosine LR decay,
+gradient clipping, and gradient accumulation. It is meant as a closed-book
+baseline track, not retrieval.
+
+Use more shards only after the pilot improves BPB without memorization or
+honesty regressions.
+
+The web workbench also has a **Scale Up** view. It generates:
+
+- a local Mac MPS command for the selected dataset pack
+- a Colab setup command
+- a Colab ClimbMix import command
+- a Colab CUDA training command
+- a zip/download return command
+- an import-back action that copies a completed run folder into `runs/` so it
+  can be compared, inspected, and chatted with locally
+
+This keeps GPU experiments inside the same artifact trail instead of becoming
+one-off notebook results.
 
 Before a serious run, check that the eval is not accidentally copied from the
 SFT file or base corpus:

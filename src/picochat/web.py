@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlparse
 from picochat.compare import compare_runs
 from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus_sources
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack, update_dataset_pack_tuning_paths
+from picochat.device import DEVICE_CHOICES
 from picochat.eval_starter import generate_eval_starter
 from picochat.generate import GenerateConfig, generate_text_with_trace
 from picochat.hf_import import HFImportConfig, HFSplitError, import_hf_dataset
@@ -34,11 +35,12 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
 _RUN_JOBS: dict[str, dict] = {}
 _RUN_JOBS_LOCK = threading.Lock()
+CLIMBMIX_DATASET = "karpathy/climbmix-400b-shuffle"
 RUN_PRESETS = {
     "smoke": {
         "label": "Smoke",
         "description": "Fast CPU sanity check for UI and data wiring.",
-        "context_size": 64,
+        "context_size": 128,
         "base_steps": 40,
         "sft_steps": 60,
         "base_batch_size": 4,
@@ -48,6 +50,9 @@ RUN_PRESETS = {
         "n_embd": 32,
         "n_head": 4,
         "n_layer": 1,
+        "norm_type": "layernorm",
+        "position_encoding": "learned",
+        "activation": "gelu",
         "tokenizer_type": "char",
         "tokenizer_vocab_size": None,
         "tokenizer_min_freq": 1,
@@ -59,6 +64,9 @@ RUN_PRESETS = {
         "sft_min_lr_ratio": 1.0,
         "base_grad_clip": 0.0,
         "sft_grad_clip": 0.0,
+        "base_grad_accum_steps": 1,
+        "sft_grad_accum_steps": 1,
+        "device": "cpu",
         "sft_sampling": "uniform",
         "base_early_stop_patience": 4,
         "sft_early_stop_patience": 4,
@@ -77,6 +85,9 @@ RUN_PRESETS = {
         "n_embd": 64,
         "n_head": 4,
         "n_layer": 2,
+        "norm_type": "layernorm",
+        "position_encoding": "learned",
+        "activation": "gelu",
         "tokenizer_type": "char",
         "tokenizer_vocab_size": None,
         "tokenizer_min_freq": 1,
@@ -88,6 +99,9 @@ RUN_PRESETS = {
         "sft_min_lr_ratio": 1.0,
         "base_grad_clip": 0.0,
         "sft_grad_clip": 0.0,
+        "base_grad_accum_steps": 1,
+        "sft_grad_accum_steps": 1,
+        "device": "cpu",
         "sft_sampling": "uniform",
         "base_early_stop_patience": 3,
         "sft_early_stop_patience": 4,
@@ -106,6 +120,9 @@ RUN_PRESETS = {
         "n_embd": 96,
         "n_head": 4,
         "n_layer": 3,
+        "norm_type": "layernorm",
+        "position_encoding": "learned",
+        "activation": "gelu",
         "tokenizer_type": "bpe",
         "tokenizer_vocab_size": 512,
         "tokenizer_min_freq": 2,
@@ -117,6 +134,9 @@ RUN_PRESETS = {
         "sft_min_lr_ratio": 0.1,
         "base_grad_clip": 1.0,
         "sft_grad_clip": 1.0,
+        "base_grad_accum_steps": 2,
+        "sft_grad_accum_steps": 1,
+        "device": "auto",
         "sft_sampling": "category_balanced",
         "base_early_stop_patience": 3,
         "sft_early_stop_patience": 4,
@@ -124,6 +144,8 @@ RUN_PRESETS = {
     },
     "small": RUN_SCALES["small"].to_dict(),
     "medium": RUN_SCALES["medium"].to_dict(),
+    "mps-local": {**RUN_SCALES["mps-local"].to_dict(), "device": "auto"},
+    "climbmix-pilot": {**RUN_SCALES["climbmix-pilot"].to_dict(), "device": "auto"},
 }
 
 
@@ -352,10 +374,14 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
         raise ValueError("dataset or dataset_url is required")
 
     dataset = _normalize_hf_dataset_id(dataset_input)
+    source_dataset = dataset
+    if dataset.lower() == "nvidia/nemotron-climbmix":
+        dataset = CLIMBMIX_DATASET
     config_name = _optional_string(payload.get("config_name"))
     split = _optional_string(payload.get("split")) or "train"
     text_column = _optional_string(payload.get("text_column")) or "text"
     max_rows = _bounded_int(payload.get("max_rows", 1000), 1, 100000)
+    shard_count = _bounded_int(payload.get("shards", 1), 1, 6543)
     min_chars = _bounded_int(payload.get("min_chars", 20), 1, 10000)
     streaming = payload.get("streaming", True)
     force = payload.get("force", False)
@@ -372,6 +398,7 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
     corpus_path = out_dir / "corpus.txt"
     documents_dir = out_dir / "documents"
     report_path = out_dir / "hf_import_report.json"
+    data_files = tuple(f"shard_{index:05d}.parquet" for index in range(shard_count)) if dataset == CLIMBMIX_DATASET else ()
     import_report = import_hf_dataset(HFImportConfig(
         dataset=dataset,
         config_name=config_name,
@@ -383,6 +410,7 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
         max_rows=max_rows,
         min_chars=min_chars,
         streaming=streaming,
+        data_files=data_files,
     ))
     pack_report = init_dataset_pack(
         out_dir=out_dir,
@@ -395,39 +423,62 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
         dataset_pack=pack_report.dataset_pack,
         preview_chars=700,
     )
-    command_parts = [
-        "PYTHONPATH=src",
-        "python",
-        "-m",
-        "picochat.cli",
-        "data",
-        "hf-import",
-        "--dataset",
-        dataset,
-        "--split",
-        split,
-        "--text-column",
-        text_column,
-        "--out",
-        str(corpus_path),
-        "--documents-dir",
-        str(documents_dir),
-        "--max-rows",
-        str(max_rows),
-        "--min-chars",
-        str(min_chars),
-    ]
-    if config_name:
-        command_parts.extend(["--config", config_name])
-    if not streaming:
-        command_parts.append("--no-streaming")
+    if data_files:
+        command_parts = [
+            "PYTHONPATH=src",
+            "python",
+            "-m",
+            "picochat.cli",
+            "data",
+            "climbmix-import",
+            "--out-dir",
+            str(out_dir),
+            "--shards",
+            str(shard_count),
+            "--max-rows",
+            str(max_rows),
+            "--min-chars",
+            str(min_chars),
+        ]
+        if not streaming:
+            command_parts.append("--no-streaming")
+    else:
+        command_parts = [
+            "PYTHONPATH=src",
+            "python",
+            "-m",
+            "picochat.cli",
+            "data",
+            "hf-import",
+            "--dataset",
+            dataset,
+            "--split",
+            split,
+            "--text-column",
+            text_column,
+            "--out",
+            str(corpus_path),
+            "--documents-dir",
+            str(documents_dir),
+            "--max-rows",
+            str(max_rows),
+            "--min-chars",
+            str(min_chars),
+        ]
+        if config_name:
+            command_parts.extend(["--config", config_name])
+        if not streaming:
+            command_parts.append("--no-streaming")
     return {
         "dataset_input": dataset_input,
         "dataset": dataset,
+        "source_dataset": source_dataset,
         "config_name": config_name,
         "split": split,
         "text_column": text_column,
         "streaming": streaming,
+        "shards": shard_count if data_files else None,
+        "data_files": list(data_files),
         "force": force,
         "out_dir": str(out_dir),
         "corpus": import_report.out_path,
@@ -691,6 +742,17 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     n_layer = _bounded_int(payload.get("n_layer", preset["n_layer"]), 1, 12)
     if n_embd % n_head != 0:
         raise ValueError("n_embd must be divisible by n_head")
+    norm_type = str(payload.get("norm_type", preset.get("norm_type", "layernorm")))
+    if norm_type not in {"layernorm", "rmsnorm"}:
+        raise ValueError("norm_type must be layernorm or rmsnorm")
+    position_encoding = str(payload.get("position_encoding", preset.get("position_encoding", "learned")))
+    if position_encoding not in {"learned", "rope"}:
+        raise ValueError("position_encoding must be learned or rope")
+    if position_encoding == "rope" and (n_embd // n_head) % 2 != 0:
+        raise ValueError("RoPE requires an even attention head dimension")
+    activation = str(payload.get("activation", preset.get("activation", "gelu")))
+    if activation not in {"gelu", "relu2"}:
+        raise ValueError("activation must be gelu or relu2")
     tokenizer_type = str(payload.get("tokenizer_type", preset.get("tokenizer_type", "char")))
     if tokenizer_type not in TOKENIZER_TYPES:
         raise ValueError(f"tokenizer_type must be one of {', '.join(TOKENIZER_TYPES)}")
@@ -712,6 +774,16 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     sft_min_lr_ratio = _bounded_float(payload.get("sft_min_lr_ratio", preset.get("sft_min_lr_ratio", 1.0)), 0.0, 1.0)
     base_grad_clip = _bounded_float(payload.get("base_grad_clip", preset.get("base_grad_clip", 0.0)), 0.0, 100.0)
     sft_grad_clip = _bounded_float(payload.get("sft_grad_clip", preset.get("sft_grad_clip", 0.0)), 0.0, 100.0)
+    base_grad_accum_steps = _bounded_int(
+        payload.get("base_grad_accum_steps", preset.get("base_grad_accum_steps", 1)),
+        1,
+        128,
+    )
+    sft_grad_accum_steps = _bounded_int(
+        payload.get("sft_grad_accum_steps", preset.get("sft_grad_accum_steps", 1)),
+        1,
+        128,
+    )
     base_early_stop_patience = _bounded_int(
         payload.get("base_early_stop_patience", preset.get("base_early_stop_patience", 3)),
         0,
@@ -725,6 +797,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     sft_sampling = str(payload.get("sft_sampling", preset.get("sft_sampling", "uniform")))
     if sft_sampling not in SFT_SAMPLING_MODES:
         raise ValueError(f"sft_sampling must be one of {', '.join(SFT_SAMPLING_MODES)}")
+    device = str(payload.get("device", preset.get("device", "cpu"))).strip().lower()
+    if device not in DEVICE_CHOICES:
+        raise ValueError(f"device must be one of {', '.join(DEVICE_CHOICES)}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "web_run.log"
@@ -746,6 +821,12 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(n_head),
         "--n-layer",
         str(n_layer),
+        "--norm-type",
+        norm_type,
+        "--position-encoding",
+        position_encoding,
+        "--activation",
+        activation,
         "--base-steps",
         str(base_steps),
         "--sft-steps",
@@ -782,6 +863,10 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(base_grad_clip),
         "--sft-grad-clip",
         str(sft_grad_clip),
+        "--base-grad-accum-steps",
+        str(base_grad_accum_steps),
+        "--sft-grad-accum-steps",
+        str(sft_grad_accum_steps),
         "--base-early-stop-patience",
         str(base_early_stop_patience),
         "--sft-early-stop-patience",
@@ -793,7 +878,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         "--min-score",
         str(min_quality_score),
         "--device",
-        "cpu",
+        device,
     ]
     if preset_name in RUN_SCALES:
         command.extend(["--scale", preset_name])
@@ -829,6 +914,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "context_size": context_size,
             "base_steps": base_steps,
             "sft_steps": sft_steps,
+            "norm_type": norm_type,
+            "position_encoding": position_encoding,
+            "activation": activation,
             "tokenizer_type": tokenizer_type,
             "tokenizer_vocab_size": tokenizer_vocab_size,
             "base_learning_rate": base_learning_rate,
@@ -837,9 +925,12 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "sft_lr_decay": sft_lr_decay,
             "base_grad_clip": base_grad_clip,
             "sft_grad_clip": sft_grad_clip,
+            "base_grad_accum_steps": base_grad_accum_steps,
+            "sft_grad_accum_steps": sft_grad_accum_steps,
             "base_early_stop_patience": base_early_stop_patience,
             "sft_early_stop_patience": sft_early_stop_patience,
             "sft_sampling": sft_sampling,
+            "device": device,
         },
         "launch_readiness": launch_preview.readiness.to_dict(),
         "launch_tuning": {
@@ -945,6 +1036,46 @@ def archive_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     }
 
 
+def import_run_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Copy a completed external run folder into the active run bank."""
+    source = _optional_string(payload.get("source_path"))
+    if not source:
+        raise ValueError("source_path is required")
+    source_path = Path(source).expanduser().resolve()
+    if not source_path.exists():
+        raise FileNotFoundError(f"missing imported run folder: {source_path}")
+    if not source_path.is_dir():
+        raise ValueError("source_path must be a run directory")
+    if not (source_path / "summary.json").exists():
+        raise ValueError("imported run must contain summary.json")
+
+    root = Path(runs_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    run_name = _slug(_optional_string(payload.get("run_name")) or source_path.name)
+    destination = _safe_child(root, run_name)
+    if destination.resolve() == source_path:
+        return {
+            "imported": False,
+            "run_name": run_name,
+            "source": str(source_path),
+            "destination": str(destination),
+            "message": "Run is already in the active run bank.",
+            "runs": discover_runs(root),
+        }
+    if destination.exists():
+        raise FileExistsError(f"run output already exists: {destination}")
+
+    shutil.copytree(source_path, destination)
+    return {
+        "imported": True,
+        "run_name": run_name,
+        "source": str(source_path),
+        "destination": str(destination),
+        "message": "Imported run is now available for compare, reports, and chat.",
+        "runs": discover_runs(root),
+    }
+
+
 def run_presets_plan() -> dict:
     return {"presets": RUN_PRESETS}
 
@@ -1038,6 +1169,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(cancel_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/run/archive":
                     self._send_json(archive_run_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/run/import":
+                    self._send_json(import_run_plan(config.runs_dir, self._read_json_body()))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:

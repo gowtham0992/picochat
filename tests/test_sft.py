@@ -179,3 +179,45 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert "Loss Diagnostics" in report_text
     assert "Best validation checkpoint" in report_text
     assert "SFT sampling" in report_text
+
+
+def test_train_sft_reports_gradient_accumulation(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "base"
+    out_dir = tmp_path / "sft"
+    rows = [
+        {"user": "one", "assistant": "first"},
+        {"user": "two", "assistant": "second"},
+        {"user": "three", "assistant": "third"},
+    ]
+    write_jsonl(input_path, rows)
+    tokenizer = CharTokenizer.train(["User: one\nAssistant: first\nUser: two\nAssistant: second\nUser: three\nAssistant: third"])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=48,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    report = train_sft(SFTConfig(
+        input_path=str(input_path),
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=str(checkpoint_path),
+        out_dir=str(out_dir),
+        batch_size=1,
+        grad_accum_steps=2,
+        max_steps=2,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+    ))
+
+    assert report["config"]["grad_accum_steps"] == 2
+    assert report["config"]["effective_batch_size"] == 2
+    assert report["coverage"]["examples_per_step_estimate"] == 2
+    assert report["coverage"]["actual_example_updates"] == 4
+    assert report["losses"][-1]["effective_batch_size"] == 2

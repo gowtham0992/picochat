@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Picochat Workbench</title>
-    <link rel="stylesheet" href="/assets/style.css?v=20260511-tuning-paths">
+    <link rel="stylesheet" href="/assets/style.css?v=20260512-scale-up">
   </head>
   <body>
     <div class="desktop-grain" aria-hidden="true"></div>
@@ -19,6 +19,7 @@
             <button id="home-view-button" class="active" type="button" data-app-view="home">HOME</button>
             <button id="guide-view-button" type="button" data-app-view="guide">GUIDE ME</button>
             <button id="workbench-view-button" type="button" data-app-view="workbench">WORKBENCH</button>
+            <button id="scale-view-button" type="button" data-app-view="scale">SCALE UP</button>
           </div>
           <div class="mode-toggle" aria-label="Workbench mode">
             <button id="learn-mode-button" class="active" type="button">BEGINNER</button>
@@ -48,6 +49,11 @@
             <span>02</span>
             <strong>I know what I'm doing</strong>
             <p>Open the full research workbench with run bank, raw commands, launch settings, reports, and comparison tools.</p>
+          </button>
+          <button class="home-choice" type="button" data-app-view="scale">
+            <span>03</span>
+            <strong>Use GPU / Colab</strong>
+            <p>Prepare a Mac GPU, Colab, or remote GPU run, then import completed artifacts back into the run bank.</p>
           </button>
         </div>
         <div class="home-signal-grid">
@@ -83,6 +89,90 @@
               <button id="guide-workbench-button" type="button">OPEN WORKBENCH</button>
             </div>
           </section>
+        </div>
+      </section>
+
+      <section id="scale-view" class="app-view scale-view" aria-label="Picochat GPU and Colab workflow">
+        <div class="home-hero">
+          <p class="kicker">SCALE UP / GPU HANDOFF</p>
+          <h2>Run bigger experiments without losing the audit trail.</h2>
+          <p>Use this when the local smoke path works and you want Mac MPS, Colab CUDA, or a remote GPU. Bring the finished run folder back here so compare, reports, and chat still work.</p>
+        </div>
+        <div class="scale-grid">
+          <div class="terminal-card scale-card">
+            <label>RUN SOURCE</label>
+            <div class="scale-controls">
+              <div>
+                <label for="scale-dataset-pack">DATASET PACK</label>
+                <input id="scale-dataset-pack" type="text" spellcheck="false" placeholder="runs/climbmix-1shard-1k/dataset_pack.json">
+              </div>
+              <div>
+                <label for="scale-run-name">RUN NAME</label>
+                <input id="scale-run-name" type="text" spellcheck="false" placeholder="climbmix-pilot-v1">
+              </div>
+              <div>
+                <label for="scale-preset">PRESET</label>
+                <select id="scale-preset">
+                  <option value="climbmix-pilot">CLIMBMIX PILOT</option>
+                  <option value="mps-local">MPS LOCAL</option>
+                  <option value="medium">MEDIUM</option>
+                  <option value="small">SMALL</option>
+                </select>
+              </div>
+              <div>
+                <label for="scale-device">DEVICE</label>
+                <select id="scale-device">
+                  <option value="auto">AUTO</option>
+                  <option value="mps">MPS</option>
+                  <option value="cuda">CUDA</option>
+                  <option value="cpu">CPU</option>
+                </select>
+              </div>
+              <div>
+                <label for="scale-climbmix-shards">CLIMBMIX SHARDS</label>
+                <input id="scale-climbmix-shards" type="number" min="1" max="6543" value="1">
+              </div>
+              <div>
+                <label for="scale-max-rows">MAX ROWS</label>
+                <input id="scale-max-rows" type="number" min="1" max="1000000" value="1000">
+              </div>
+              <button id="scale-use-launcher-button" type="button">USE LAUNCHER SETTINGS</button>
+              <button id="scale-refresh-button" type="button">REFRESH COMMANDS</button>
+            </div>
+            <div id="scale-readiness" class="readiness-summary caution">
+              <strong>GPU PLAN WAITING</strong>
+              <span>Choose a dataset pack and run name.</span>
+            </div>
+          </div>
+          <div class="terminal-card scale-card">
+            <label>LOCAL MAC GPU</label>
+            <p class="scale-note">Use this first if MPS is available. It keeps artifacts local and proves the bigger preset before spending remote compute.</p>
+            <div id="scale-mps-command" class="command-tape source-command"></div>
+          </div>
+          <div class="terminal-card scale-card">
+            <label>COLAB / NVIDIA CUDA</label>
+            <p class="scale-note">For ClimbMix, let Colab import the same public shard sample directly. That avoids uploading local corpus files.</p>
+            <div id="scale-colab-setup-command" class="command-tape source-command"></div>
+            <div id="scale-colab-import-command" class="command-tape source-command"></div>
+            <div id="scale-colab-run-command" class="command-tape source-command"></div>
+            <div id="scale-colab-return-command" class="command-tape source-command"></div>
+          </div>
+          <div class="terminal-card scale-card">
+            <label>IMPORT BACK TO WORKBENCH</label>
+            <p class="scale-note">After Colab or a remote machine finishes, copy or unzip the run folder onto this Mac, then import it into the active run bank.</p>
+            <div class="scale-controls">
+              <div>
+                <label for="scale-import-source">COMPLETED RUN FOLDER</label>
+                <input id="scale-import-source" type="text" spellcheck="false" placeholder="/Users/g/Downloads/climbmix-pilot-v1">
+              </div>
+              <div>
+                <label for="scale-import-name">RUN BANK NAME</label>
+                <input id="scale-import-name" type="text" spellcheck="false" placeholder="climbmix-pilot-v1">
+              </div>
+              <button id="scale-import-button" type="button">IMPORT COMPLETED RUN</button>
+            </div>
+            <div id="scale-import-status" class="notice">NO GPU RUN IMPORTED.</div>
+          </div>
         </div>
       </section>
 
@@ -277,6 +367,10 @@
                   <input id="hf-max-rows" type="number" min="1" max="100000" value="1000">
                 </div>
                 <div>
+                  <label for="hf-shards">CLIMBMIX SHARDS</label>
+                  <input id="hf-shards" type="number" min="1" max="6543" value="1">
+                </div>
+                <div>
                   <label for="hf-min-chars">MIN CHARS</label>
                   <input id="hf-min-chars" type="number" min="1" max="10000" value="20">
                 </div>
@@ -285,6 +379,7 @@
                   FORCE
                 </label>
                 <button id="hf-import-button" type="button">IMPORT HF DATASET</button>
+                <button id="hf-climbmix-button" type="button">USE NVIDIA CLIMBMIX</button>
               </div>
               <div id="hf-import-status" class="notice">NO HUGGING FACE DATASET IMPORTED.</div>
               <div id="hf-import-result" class="hf-import-result"></div>
@@ -482,6 +577,27 @@
                       <input id="launch-n-layer" type="number" min="1" max="12" value="1">
                     </div>
                     <div>
+                      <label for="launch-norm-type">NORM</label>
+                      <select id="launch-norm-type">
+                        <option value="layernorm">LAYERNORM</option>
+                        <option value="rmsnorm">RMSNORM</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label for="launch-position-encoding">POSITION</label>
+                      <select id="launch-position-encoding">
+                        <option value="learned">LEARNED</option>
+                        <option value="rope">ROPE</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label for="launch-activation">ACTIVATION</label>
+                      <select id="launch-activation">
+                        <option value="gelu">GELU</option>
+                        <option value="relu2">RELU2</option>
+                      </select>
+                    </div>
+                    <div>
                       <label for="launch-base-batch-size">BASE BATCH</label>
                       <input id="launch-base-batch-size" type="number" min="1" max="64" value="4">
                     </div>
@@ -528,6 +644,23 @@
                     <div>
                       <label for="launch-sft-grad-clip">SFT CLIP</label>
                       <input id="launch-sft-grad-clip" type="number" min="0" max="100" step="0.1" value="0">
+                    </div>
+                    <div>
+                      <label for="launch-base-grad-accum-steps">BASE ACCUM</label>
+                      <input id="launch-base-grad-accum-steps" type="number" min="1" max="128" value="1">
+                    </div>
+                    <div>
+                      <label for="launch-sft-grad-accum-steps">SFT ACCUM</label>
+                      <input id="launch-sft-grad-accum-steps" type="number" min="1" max="128" value="1">
+                    </div>
+                    <div>
+                      <label for="launch-device">DEVICE</label>
+                      <select id="launch-device">
+                        <option value="cpu">CPU</option>
+                        <option value="auto">AUTO</option>
+                        <option value="mps">MPS</option>
+                        <option value="cuda">CUDA</option>
+                      </select>
                     </div>
                     <div>
                       <label for="launch-base-early-stop-patience">BASE PATIENCE</label>

@@ -41,6 +41,8 @@ const STARTER_ROW_TARGETS = {
   sft: 300,
   eval: 80,
 };
+const APP_VIEWS = ["home", "guide", "workbench", "scale"];
+const PICOCHAT_REPO_URL = "https://github.com/gowtham0992/picochat.git";
 
 const LAUNCH_CONTROL_IDS = [
   "launch-pack-path",
@@ -54,6 +56,9 @@ const LAUNCH_CONTROL_IDS = [
   "launch-n-embd",
   "launch-n-head",
   "launch-n-layer",
+  "launch-norm-type",
+  "launch-position-encoding",
+  "launch-activation",
   "launch-base-batch-size",
   "launch-sft-batch-size",
   "launch-base-learning-rate",
@@ -64,6 +69,9 @@ const LAUNCH_CONTROL_IDS = [
   "launch-sft-lr-warmup-steps",
   "launch-base-grad-clip",
   "launch-sft-grad-clip",
+  "launch-base-grad-accum-steps",
+  "launch-sft-grad-accum-steps",
+  "launch-device",
   "launch-base-early-stop-patience",
   "launch-sft-early-stop-patience",
   "launch-sft-sampling",
@@ -309,6 +317,7 @@ async function boot() {
   await loadRunPresets();
   await loadRuns();
   await loadRunJobs();
+  renderScalePlan();
   renderGuide();
 }
 
@@ -433,6 +442,25 @@ function bindControls() {
   $("hf-dataset-input").addEventListener("input", seedHfOutDirFromDataset);
   $("hf-import-button").addEventListener("click", () => {
     importHfDataset().catch((error) => renderHfImportError(error));
+  });
+  $("hf-climbmix-button")?.addEventListener("click", fillClimbMixImport);
+  [
+    "scale-dataset-pack",
+    "scale-run-name",
+    "scale-preset",
+    "scale-device",
+    "scale-climbmix-shards",
+    "scale-max-rows",
+    "scale-import-source",
+    "scale-import-name",
+  ].forEach((id) => {
+    $(id)?.addEventListener("input", renderScalePlan);
+    $(id)?.addEventListener("change", renderScalePlan);
+  });
+  $("scale-use-launcher-button")?.addEventListener("click", seedScaleFromLauncher);
+  $("scale-refresh-button")?.addEventListener("click", renderScalePlan);
+  $("scale-import-button")?.addEventListener("click", () => {
+    importCompletedRun().catch((error) => renderScaleImportError(error));
   });
   $("init-pack-button").addEventListener("click", () => {
     initDatasetPack().catch((error) => renderDatasetPackInitError(error));
@@ -701,7 +729,7 @@ function readInitialViewMode() {
 function readInitialAppView() {
   try {
     const value = localStorage.getItem("picochat:app-view");
-    return ["home", "guide", "workbench"].includes(value) ? value : "home";
+    return APP_VIEWS.includes(value) ? value : "home";
   } catch {
     return "home";
   }
@@ -718,11 +746,12 @@ function readInitialTheme() {
 }
 
 function setAppView(view, options = {}) {
-  const nextView = ["home", "guide", "workbench"].includes(view) ? view : "home";
+  const nextView = APP_VIEWS.includes(view) ? view : "home";
   state.activeView = nextView;
   document.body.classList.toggle("home-active", nextView === "home");
   document.body.classList.toggle("guide-active", nextView === "guide");
   document.body.classList.toggle("workbench-active", nextView === "workbench");
+  document.body.classList.toggle("scale-active", nextView === "scale");
   document.querySelectorAll(".app-view").forEach((node) => {
     node.classList.toggle("active", node.id === `${nextView}-view`);
   });
@@ -738,6 +767,7 @@ function setAppView(view, options = {}) {
   }
   if (options.render !== false) {
     renderGuide();
+    renderScalePlan();
     renderStatus();
   }
 }
@@ -1019,6 +1049,10 @@ function guideChooseDatasetContent() {
               <label for="guide-hf-max-rows">MAX ROWS</label>
               <input id="guide-hf-max-rows" type="number" min="1" max="100000" value="${escapeHtml($("hf-max-rows")?.value || "1000")}">
             </div>
+            <div>
+              <label for="guide-hf-shards">CLIMBMIX SHARDS</label>
+              <input id="guide-hf-shards" type="number" min="1" max="6543" value="${escapeHtml($("hf-shards")?.value || "1")}">
+            </div>
           </div>
           <label for="guide-hf-out-dir">LOCAL OUT FOLDER</label>
           <input id="guide-hf-out-dir" type="text" spellcheck="false" value="${escapeHtml($("hf-out-dir")?.value || "")}" placeholder="runs/hf-my-dataset-1000">
@@ -1275,6 +1309,7 @@ function syncGuideInputs(event) {
     "guide-hf-split": "hf-split",
     "guide-hf-text-column": "hf-text-column",
     "guide-hf-max-rows": "hf-max-rows",
+    "guide-hf-shards": "hf-shards",
     "guide-local-path": "flight-input-path",
     "guide-pack-path": "flight-pack-path",
     "guide-sft-max-items": "flight-sft-max-items",
@@ -1430,12 +1465,17 @@ function resetGuidedWorkflow() {
     "editor-chat-path",
     "editor-eval-path",
     "launch-pack-path",
+    "scale-dataset-pack",
+    "scale-run-name",
+    "scale-import-source",
+    "scale-import-name",
   ].forEach((id) => {
     if ($(id)) $(id).value = "";
   });
   $("hf-split").value = "train";
   $("hf-text-column").value = "text";
   $("hf-max-rows").value = "1000";
+  if ($("hf-shards")) $("hf-shards").value = "1";
   $("hf-min-chars").value = "20";
   $("flight-sft-max-items").value = String(STARTER_ROW_TARGETS.sft);
   $("flight-eval-max-items").value = String(STARTER_ROW_TARGETS.eval);
@@ -1451,6 +1491,25 @@ function resetGuidedWorkflow() {
   renderPackEditor(null);
   renderRunJob(null);
   renderLaunchReadiness();
+  renderScalePlan();
+}
+
+function fillClimbMixImport() {
+  $("hf-dataset-input").value = "karpathy/climbmix-400b-shuffle";
+  $("hf-out-dir").value = "runs/climbmix-1shard-1k";
+  $("hf-config-name").value = "";
+  $("hf-split").value = "train";
+  $("hf-text-column").value = "text";
+  $("hf-max-rows").value = "1000";
+  if ($("hf-shards")) $("hf-shards").value = "1";
+  $("hf-min-chars").value = "20";
+  if ($("scale-dataset-pack")) $("scale-dataset-pack").value = "runs/climbmix-1shard-1k/dataset_pack.json";
+  if ($("scale-run-name")) $("scale-run-name").value = "climbmix-pilot-v1";
+  if ($("scale-preset")) $("scale-preset").value = "climbmix-pilot";
+  if ($("scale-device")) $("scale-device").value = "auto";
+  renderScalePlan();
+  renderGuide();
+  flashStatus("CLIMBMIX READY TO IMPORT. | Click IMPORT HF DATASET when ready.");
 }
 
 function syncGuideInputValues() {
@@ -1461,6 +1520,7 @@ function syncGuideInputValues() {
     "guide-hf-split",
     "guide-hf-text-column",
     "guide-hf-max-rows",
+    "guide-hf-shards",
     "guide-local-path",
     "guide-pack-path",
     "guide-sft-max-items",
@@ -1737,8 +1797,12 @@ function pipelineStages() {
         "--n-embd", config.n_embd ?? 64,
         "--n-head", config.n_head ?? 4,
         "--n-layer", config.n_layer ?? 2,
+        "--norm-type", config.norm_type || "layernorm",
+        "--position-encoding", config.position_encoding || "learned",
+        "--activation", config.activation || "gelu",
         "--max-steps", config.base_steps ?? 300,
         "--batch-size", config.base_batch_size ?? 8,
+        "--grad-accum-steps", config.base_grad_accum_steps ?? 1,
         "--learning-rate", config.base_learning_rate ?? "3e-4",
         "--early-stop-patience", config.base_early_stop_patience ?? 3,
         "--canary-count", config.canary_count ?? 1,
@@ -1778,6 +1842,7 @@ function pipelineStages() {
         "--out-dir", `${outDir}/sft`,
         "--max-steps", config.sft_steps ?? 600,
         "--batch-size", config.sft_batch_size ?? 7,
+        "--grad-accum-steps", config.sft_grad_accum_steps ?? 1,
         "--learning-rate", config.sft_learning_rate ?? "1e-3",
         "--early-stop-patience", config.sft_early_stop_patience ?? 4,
         "--sampling", config.sft_sampling || detail?.sft_report?.dataset?.sampling || "uniform",
@@ -2609,6 +2674,7 @@ async function importHfDataset() {
   const split = $("hf-split").value.trim() || "train";
   const textColumn = $("hf-text-column").value.trim() || "text";
   const maxRows = Number($("hf-max-rows").value || 1000);
+  const shards = Number($("hf-shards")?.value || 1);
   const minChars = Number($("hf-min-chars").value || 20);
   const force = $("hf-force").checked;
   if (!dataset) throw new Error("enter a Hugging Face dataset URL or id");
@@ -2644,6 +2710,7 @@ async function importHfDataset() {
       split,
       text_column: textColumn,
       max_rows: maxRows,
+      shards,
       min_chars: minChars,
       streaming: true,
       force,
@@ -2662,6 +2729,7 @@ async function importHfDataset() {
     renderDatasetFlightPlan(report.preview);
     renderCorpusSourcePreview(report.preview);
     renderTuningInspection(state.tuningInspection);
+    renderScalePlan();
     renderStartHere();
   } finally {
     $("hf-import-button").disabled = false;
@@ -3158,6 +3226,9 @@ function applyLaunchPreset(quiet = false) {
   $("launch-n-embd").value = values.n_embd;
   $("launch-n-head").value = values.n_head;
   $("launch-n-layer").value = values.n_layer;
+  $("launch-norm-type").value = values.norm_type || "layernorm";
+  $("launch-position-encoding").value = values.position_encoding || "learned";
+  $("launch-activation").value = values.activation || "gelu";
   $("launch-base-steps").value = values.base_steps;
   $("launch-sft-steps").value = values.sft_steps;
   $("launch-base-batch-size").value = values.base_batch_size;
@@ -3170,6 +3241,9 @@ function applyLaunchPreset(quiet = false) {
   $("launch-sft-lr-warmup-steps").value = values.sft_lr_warmup_steps;
   $("launch-base-grad-clip").value = values.base_grad_clip;
   $("launch-sft-grad-clip").value = values.sft_grad_clip;
+  $("launch-base-grad-accum-steps").value = values.base_grad_accum_steps || 1;
+  $("launch-sft-grad-accum-steps").value = values.sft_grad_accum_steps || 1;
+  $("launch-device").value = values.device || "cpu";
   $("launch-base-early-stop-patience").value = values.base_early_stop_patience;
   $("launch-sft-early-stop-patience").value = values.sft_early_stop_patience;
   $("launch-sft-sampling").value = values.sft_sampling || "uniform";
@@ -3220,6 +3294,9 @@ function launchConfig() {
     n_embd: launchNumber("launch-n-embd"),
     n_head: launchNumber("launch-n-head"),
     n_layer: launchNumber("launch-n-layer"),
+    norm_type: $("launch-norm-type").value,
+    position_encoding: $("launch-position-encoding").value,
+    activation: $("launch-activation").value,
     base_steps: launchNumber("launch-base-steps"),
     sft_steps: launchNumber("launch-sft-steps"),
     base_batch_size: launchNumber("launch-base-batch-size"),
@@ -3232,6 +3309,9 @@ function launchConfig() {
     sft_lr_warmup_steps: launchNumber("launch-sft-lr-warmup-steps"),
     base_grad_clip: launchNumber("launch-base-grad-clip"),
     sft_grad_clip: launchNumber("launch-sft-grad-clip"),
+    base_grad_accum_steps: boundedNumberInput("launch-base-grad-accum-steps", 1, 1, 128),
+    sft_grad_accum_steps: boundedNumberInput("launch-sft-grad-accum-steps", 1, 1, 128),
+    device: $("launch-device").value,
     base_early_stop_patience: launchNumber("launch-base-early-stop-patience"),
     sft_early_stop_patience: launchNumber("launch-sft-early-stop-patience"),
     sft_sampling: $("launch-sft-sampling").value,
@@ -3254,8 +3334,12 @@ function launchReadiness(config = launchConfig()) {
   if (config.n_head > 0 && config.n_embd % config.n_head !== 0) {
     blockers.push(`N EMBED ${config.n_embd} must divide evenly by HEADS ${config.n_head}.`);
   }
+  if (config.position_encoding === "rope" && config.n_head > 0 && Math.floor(config.n_embd / config.n_head) % 2 !== 0) {
+    blockers.push("RoPE requires an even attention head dimension.");
+  }
   if (config.base_steps < 1 || config.sft_steps < 1) blockers.push("Base and SFT steps must be at least 1.");
   if (config.base_batch_size < 1 || config.sft_batch_size < 1) blockers.push("Batch sizes must be at least 1.");
+  if (config.base_grad_accum_steps < 1 || config.sft_grad_accum_steps < 1) blockers.push("Gradient accumulation must be at least 1.");
   if (config.base_learning_rate <= 0 || config.sft_learning_rate <= 0) blockers.push("Learning rates must be above zero.");
   if (config.eval_max_new_tokens < 1) blockers.push("Eval tokens must be at least 1.");
   if (config.tokenizer_type === "bpe" && !config.tokenizer_vocab_size) {
@@ -3272,8 +3356,11 @@ function launchReadiness(config = launchConfig()) {
   if (config.sft_lr_warmup_steps > config.sft_steps) cautions.push("SFT warmup is longer than SFT training.");
   if (config.sft_steps > config.base_steps * 2) cautions.push("SFT is much longer than base; watch eval leakage and overfitting.");
   notes.push(`${config.n_layer}L x ${config.n_embd} embd / ${config.n_head} heads`);
+  notes.push(`${config.norm_type} / ${config.position_encoding} / ${config.activation}`);
   notes.push(`${String(config.tokenizer_type).toUpperCase()} tokenizer${config.tokenizer_vocab_size ? ` vocab ${config.tokenizer_vocab_size}` : ""}`);
   notes.push(`base ${config.base_steps} / sft ${config.sft_steps}`);
+  notes.push(`effective batch ${config.base_batch_size * config.base_grad_accum_steps} / ${config.sft_batch_size * config.sft_grad_accum_steps}`);
+  notes.push(`device ${String(config.device || "cpu").toUpperCase()}`);
   notes.push(`LR ${config.base_learning_rate} -> ${config.sft_learning_rate}`);
   notes.push(`SFT ${config.sft_sampling.replace("_", " ")}`);
   const status = blockers.length ? "blocked" : cautions.length ? "caution" : "ready";
@@ -3315,6 +3402,12 @@ function launchPreviewCommand(config = launchConfig()) {
     config.n_head,
     "--n-layer",
     config.n_layer,
+    "--norm-type",
+    config.norm_type,
+    "--position-encoding",
+    config.position_encoding,
+    "--activation",
+    config.activation,
     "--base-steps",
     config.base_steps,
     "--sft-steps",
@@ -3345,6 +3438,10 @@ function launchPreviewCommand(config = launchConfig()) {
     config.base_grad_clip,
     "--sft-grad-clip",
     config.sft_grad_clip,
+    "--base-grad-accum-steps",
+    config.base_grad_accum_steps,
+    "--sft-grad-accum-steps",
+    config.sft_grad_accum_steps,
     "--base-early-stop-patience",
     config.base_early_stop_patience,
     "--sft-early-stop-patience",
@@ -3356,7 +3453,7 @@ function launchPreviewCommand(config = launchConfig()) {
     "--min-score",
     config.min_quality_score,
     "--device",
-    "cpu",
+    config.device || "cpu",
   ];
   if (state.runPresets[config.preset]) parts.push("--scale", config.preset);
   if (config.tokenizer_vocab_size) parts.push("--tokenizer-vocab-size", config.tokenizer_vocab_size);
@@ -3433,6 +3530,9 @@ function runStartPayload(config) {
     n_embd: config.n_embd,
     n_head: config.n_head,
     n_layer: config.n_layer,
+    norm_type: config.norm_type,
+    position_encoding: config.position_encoding,
+    activation: config.activation,
     base_steps: config.base_steps,
     sft_steps: config.sft_steps,
     base_batch_size: config.base_batch_size,
@@ -3445,6 +3545,8 @@ function runStartPayload(config) {
     sft_lr_warmup_steps: config.sft_lr_warmup_steps,
     base_grad_clip: config.base_grad_clip,
     sft_grad_clip: config.sft_grad_clip,
+    base_grad_accum_steps: config.base_grad_accum_steps,
+    sft_grad_accum_steps: config.sft_grad_accum_steps,
     base_early_stop_patience: config.base_early_stop_patience,
     sft_early_stop_patience: config.sft_early_stop_patience,
     sft_sampling: config.sft_sampling,
@@ -3453,7 +3555,163 @@ function runStartPayload(config) {
     tokenizer_type: config.tokenizer_type,
     tokenizer_vocab_size: config.tokenizer_vocab_size,
     min_quality_score: config.min_quality_score,
+    device: config.device,
   };
+}
+
+function seedScaleFromLauncher() {
+  const config = launchConfig();
+  if ($("scale-dataset-pack")) $("scale-dataset-pack").value = config.dataset_pack || "";
+  if ($("scale-run-name")) $("scale-run-name").value = config.run_name || suggestedRunName(config.dataset_pack || "climbmix");
+  if ($("scale-preset")) $("scale-preset").value = state.runPresets[config.preset] ? config.preset : "climbmix-pilot";
+  if ($("scale-device")) $("scale-device").value = config.device === "cpu" ? "auto" : config.device || "auto";
+  renderScalePlan();
+  flashStatus("SCALE PLAN SEEDED. | Commands now mirror the launcher where possible.");
+}
+
+function scaleConfig() {
+  const datasetPack = $("scale-dataset-pack")?.value.trim() || state.hfImport?.dataset_pack || $("launch-pack-path")?.value.trim() || "";
+  const runName = $("scale-run-name")?.value.trim() || $("launch-run-name")?.value.trim() || suggestedRunName(datasetPack || "climbmix");
+  return {
+    dataset_pack: datasetPack,
+    run_name: runName,
+    preset: $("scale-preset")?.value || "climbmix-pilot",
+    device: $("scale-device")?.value || "auto",
+    shards: boundedScaleNumber("scale-climbmix-shards", 1, 1, 6543),
+    max_rows: boundedScaleNumber("scale-max-rows", 1000, 1, 1000000),
+  };
+}
+
+function boundedScaleNumber(id, fallback, min, max) {
+  const node = $(id);
+  if (!node) return fallback;
+  const raw = Number(node.value);
+  const value = Number.isFinite(raw) ? Math.round(raw) : fallback;
+  const bounded = Math.min(max, Math.max(min, value));
+  if (String(node.value) !== String(bounded)) node.value = String(bounded);
+  return bounded;
+}
+
+function renderScalePlan() {
+  if (!$("scale-readiness")) return;
+  const config = scaleConfig();
+  if ($("scale-dataset-pack") && !$("scale-dataset-pack").value && config.dataset_pack) {
+    $("scale-dataset-pack").value = config.dataset_pack;
+  }
+  if ($("scale-run-name") && !$("scale-run-name").value && config.run_name) {
+    $("scale-run-name").value = config.run_name;
+  }
+  if ($("scale-import-name") && !$("scale-import-name").value && config.run_name) {
+    $("scale-import-name").value = config.run_name;
+  }
+  const blockers = [];
+  if (!config.dataset_pack) blockers.push("Choose or import a dataset pack first.");
+  if (!config.run_name) blockers.push("Name the GPU run.");
+  const status = blockers.length ? "blocked" : "ready";
+  $("scale-readiness").className = `readiness-summary ${status}`;
+  $("scale-readiness").innerHTML = `
+    <strong>${status === "ready" ? "GPU PLAN READY" : "GPU PLAN BLOCKED"}</strong>
+    <span>${escapeHtml(blockers.join(" | ") || `${config.preset} | ${config.device.toUpperCase()} | ${config.dataset_pack}`)}</span>
+  `;
+
+  const mpsCommand = shellCommand([
+    "PYTHONPATH=src",
+    "python",
+    "-m",
+    "picochat.cli",
+    "run",
+    "tiny",
+    "--out-dir",
+    `runs/${config.run_name}`,
+    "--dataset-pack",
+    config.dataset_pack || "<dataset-pack>",
+    "--scale",
+    config.preset,
+    "--device",
+    config.device === "cuda" ? "auto" : config.device,
+  ]);
+  const colabSetup = [
+    `!git clone ${PICOCHAT_REPO_URL}`,
+    "%cd picochat",
+    `!pip install -e ".[hf]"`,
+  ].join("\n");
+  const colabImport = `!${shellCommand([
+    "PYTHONPATH=src",
+    "python",
+    "-m",
+    "picochat.cli",
+    "data",
+    "climbmix-import",
+    "--out-dir",
+    "runs/climbmix-colab",
+    "--shards",
+    config.shards,
+    "--max-rows",
+    config.max_rows,
+    "--force",
+  ])}`;
+  const colabRun = `!${shellCommand([
+    "PYTHONPATH=src",
+    "python",
+    "-m",
+    "picochat.cli",
+    "run",
+    "tiny",
+    "--out-dir",
+    `runs/${config.run_name}`,
+    "--dataset-pack",
+    "runs/climbmix-colab/dataset_pack.json",
+    "--scale",
+    config.preset,
+    "--device",
+    "cuda",
+  ])}`;
+  const colabReturn = [
+    `!zip -r /content/${config.run_name}.zip runs/${config.run_name}`,
+    `# Download ${config.run_name}.zip from Colab, unzip it on this Mac, then paste the unzipped run folder below.`,
+  ].join("\n");
+  renderScaleCommand("scale-mps-command", "MPS / LOCAL COMMAND", mpsCommand);
+  renderScaleCommand("scale-colab-setup-command", "COLAB SETUP", colabSetup);
+  renderScaleCommand("scale-colab-import-command", "COLAB CLIMBMIX IMPORT", colabImport);
+  renderScaleCommand("scale-colab-run-command", "COLAB TRAIN", colabRun);
+  renderScaleCommand("scale-colab-return-command", "COLAB RETURN", colabReturn);
+}
+
+function renderScaleCommand(id, label, command) {
+  const target = $(id);
+  if (!target) return;
+  target.innerHTML = `
+    <div class="command-head">
+      <label>${escapeHtml(label)}</label>
+      ${copyCommandButton(command)}
+    </div>
+    <code>${escapeHtml(command || "NO COMMAND AVAILABLE.")}</code>
+  `;
+}
+
+async function importCompletedRun() {
+  const sourcePath = $("scale-import-source")?.value.trim();
+  const runName = $("scale-import-name")?.value.trim() || $("scale-run-name")?.value.trim();
+  if (!sourcePath) throw new Error("paste the completed run folder path first");
+  $("scale-import-button").disabled = true;
+  $("scale-import-status").innerHTML = 'IMPORTING RUN<span class="cursor"></span>';
+  try {
+    const report = await postJson("/api/run/import", {
+      source_path: sourcePath,
+      run_name: runName || null,
+    });
+    $("scale-import-status").textContent = `${report.imported ? "IMPORTED" : "ALREADY PRESENT"} | ${report.run_name} | ${report.message}`;
+    state.selectedRun = report.run_name || state.selectedRun;
+    await loadRuns();
+    renderScalePlan();
+  } finally {
+    $("scale-import-button").disabled = false;
+  }
+}
+
+function renderScaleImportError(error) {
+  $("scale-import-button").disabled = false;
+  $("scale-import-status").textContent = `IMPORT FAULT: ${error.message}`;
 }
 
 async function refreshRunJob() {
@@ -5320,6 +5578,9 @@ function importantConfigChanges(before, after) {
     ["n_embd", "Embedding"],
     ["n_layer", "Layers"],
     ["n_head", "Heads"],
+    ["norm_type", "Norm"],
+    ["position_encoding", "Position"],
+    ["activation", "Activation"],
     ["base_steps", "Base steps"],
     ["sft_steps", "SFT steps"],
     ["base_learning_rate", "Base LR"],
@@ -5344,6 +5605,7 @@ function changeTeachingNote(key) {
   if (key.includes("tokenizer")) return "Changes compression and model vocabulary.";
   if (key === "context_size") return "Changes how much text the model sees at once.";
   if (["n_embd", "n_layer", "n_head"].includes(key)) return "Changes model capacity and compute cost.";
+  if (["norm_type", "position_encoding", "activation"].includes(key)) return "Changes the Transformer architecture.";
   if (key.includes("steps")) return "Changes optimization time.";
   if (key.includes("learning_rate") || key.includes("lr_")) return "Changes optimizer behavior.";
   if (key.includes("data") || key.includes("input") || key.includes("corpus")) return "Changes what behavior/data the run can learn.";

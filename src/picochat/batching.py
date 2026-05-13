@@ -218,14 +218,17 @@ def _document_token_split(
         return None
     train_docs = [documents[index] for index in indices[:num_train]]
     val_docs = [documents[index] for index in indices[num_train: num_train + num_val]]
-    train_text = "\n\n".join(_slice_document(corpus_text, document) for document in train_docs)
-    val_text = "\n\n".join(_slice_document(corpus_text, document) for document in val_docs)
+    train_doc_texts = [_slice_document(corpus_text, document) for document in train_docs]
+    val_doc_texts = [_slice_document(corpus_text, document) for document in val_docs]
+    train_text = "\n\n".join(train_doc_texts)
+    val_text = "\n\n".join(val_doc_texts)
     canary_block = _canary_block(canary_values)
     if canary_block:
+        train_doc_texts.append(canary_block)
         train_text = f"{train_text}\n\n{canary_block}" if train_text else canary_block
 
-    train_tokens = tokenizer.encode(train_text, add_bos=True, add_eos=True)
-    val_tokens = tokenizer.encode(val_text, add_bos=True, add_eos=True)
+    train_tokens = _encode_documents(train_doc_texts, tokenizer)
+    val_tokens = _encode_documents(val_doc_texts, tokenizer)
     if len(train_tokens) <= context_size or len(val_tokens) <= context_size:
         return None
 
@@ -239,6 +242,8 @@ def _document_token_split(
         "num_sequences": len(train_dataset) + len(val_dataset),
         "split_mode": "document",
         "split_reason": "held_out_complete_documents",
+        "packing": "bos_eos_per_document",
+        "document_boundary_tokens": True,
         "train_sequences": len(train_dataset),
         "val_sequences": len(val_dataset),
         "train_tokens": len(train_tokens),
@@ -285,6 +290,15 @@ def _slice_document(corpus_text: str, document: dict[str, Any]) -> str:
     start = max(0, int(document["char_start"]))
     end = max(start, int(document["char_end"]))
     return corpus_text[start:end].strip()
+
+
+def _encode_documents(documents: list[str], tokenizer) -> list[int]:
+    tokens: list[int] = []
+    for document in documents:
+        text = document.strip()
+        if text:
+            tokens.extend(tokenizer.encode(text, add_bos=True, add_eos=True))
+    return tokens
 
 
 def _canary_block(canary_values: tuple[str, ...]) -> str:

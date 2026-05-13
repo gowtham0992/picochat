@@ -51,6 +51,37 @@ def test_train_base_writes_artifacts(tmp_path):
     assert report["dataset"]["val_sequences"] > 0
 
 
+def test_train_base_reports_gradient_accumulation(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    out_dir = tmp_path / "run"
+    text = "accumulation teaches stable updates\n" * 20
+    corpus_path.write_text(text, encoding="utf-8")
+    CharTokenizer.train([text]).save(tokenizer_path)
+
+    report = train_base(TrainConfig(
+        corpus_path=str(corpus_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir),
+        context_size=8,
+        batch_size=2,
+        grad_accum_steps=3,
+        max_steps=2,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+    ))
+
+    assert report["config"]["grad_accum_steps"] == 3
+    assert report["config"]["effective_batch_size"] == 6
+    assert report["coverage"]["tokens_per_step_estimate"] == 48
+    assert report["coverage"]["actual_training_tokens"] == 96
+    assert report["losses"][-1]["effective_batch_size"] == 6
+
+
 def test_train_base_uses_document_split_when_manifest_is_available(tmp_path):
     import json
 

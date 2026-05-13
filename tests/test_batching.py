@@ -93,10 +93,16 @@ def test_load_token_split_can_hold_out_complete_documents(tmp_path):
     )
 
     assert split.stats["split_mode"] == "document"
+    assert split.stats["packing"] == "bos_eos_per_document"
     assert split.stats["train_documents"] == 2
     assert split.stats["val_documents"] == 1
     assert split.val_text.strip()
     assert split.val_text not in split.train_text
+    train_tokens = split.train_dataset.tokens.tolist()
+    val_tokens = split.val_dataset.tokens.tolist()
+    tokenizer = CharTokenizer.load(tokenizer_path)
+    assert train_tokens.count(tokenizer.bos_id) == 2
+    assert val_tokens.count(tokenizer.bos_id) == 1
 
 
 def test_load_token_split_places_canaries_only_in_train_text(tmp_path):

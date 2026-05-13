@@ -18,9 +18,34 @@ class GPTConfig:
     n_head: int = 4
     n_layer: int = 2
     dropout: float = 0.0
+    norm_type: str = "layernorm"
+    position_encoding: str = "learned"
+    activation: str = "gelu"
+    rope_base: float = 10000.0
 
-    def to_dict(self) -> dict[str, int | float]:
+    def to_dict(self) -> dict[str, int | float | str]:
         return asdict(self)
+
+
+class RMSNorm(nn.Module):
+    """Root-mean-square normalization used by many modern small LMs."""
+
+    def __init__(self, size: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(size))
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        scale = torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        return self.weight * x * scale
+
+
+def make_norm(norm_type: str, size: int) -> nn.Module:
+    if norm_type == "layernorm":
+        return nn.LayerNorm(size)
+    if norm_type == "rmsnorm":
+        return RMSNorm(size)
+    raise ValueError("norm_type must be 'layernorm' or 'rmsnorm'")
 
 
 class CausalSelfAttention(nn.Module):
@@ -32,6 +57,12 @@ class CausalSelfAttention(nn.Module):
             raise ValueError("n_embd must be divisible by n_head")
         self.n_head = config.n_head
         self.head_dim = config.n_embd // config.n_head
+        self.position_encoding = config.position_encoding
+        self.rope_base = config.rope_base
+        if self.position_encoding not in {"learned", "rope"}:
+            raise ValueError("position_encoding must be 'learned' or 'rope'")
+        if self.position_encoding == "rope" and self.head_dim % 2 != 0:
+            raise ValueError("RoPE requires an even attention head dimension")
         self.qkv = nn.Linear(config.n_embd, 3 * config.n_embd)
         self.proj = nn.Linear(config.n_embd, config.n_embd)
         self.dropout = nn.Dropout(config.dropout)
@@ -43,6 +74,8 @@ class CausalSelfAttention(nn.Module):
         q = q.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
         k = k.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
+        if self.position_encoding == "rope":
+            q, k = apply_rope(q, k, base=self.rope_base)
 
         scores = q @ k.transpose(-2, -1)
         scores = scores / math.sqrt(self.head_dim)
@@ -60,23 +93,28 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(config.n_embd, 4 * config.n_embd),
-            nn.GELU(),
-            nn.Linear(4 * config.n_embd, config.n_embd),
-            nn.Dropout(config.dropout),
-        )
+        if config.activation not in {"gelu", "relu2"}:
+            raise ValueError("activation must be 'gelu' or 'relu2'")
+        self.fc = nn.Linear(config.n_embd, 4 * config.n_embd)
+        self.proj = nn.Linear(4 * config.n_embd, config.n_embd)
+        self.dropout = nn.Dropout(config.dropout)
+        self.activation = config.activation
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        x = self.fc(x)
+        if self.activation == "relu2":
+            x = F.relu(x).square()
+        else:
+            x = F.gelu(x)
+        return self.dropout(self.proj(x))
 
 
 class Block(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
-        self.ln_1 = nn.LayerNorm(config.n_embd)
+        self.ln_1 = make_norm(config.norm_type, config.n_embd)
         self.attn = CausalSelfAttention(config)
-        self.ln_2 = nn.LayerNorm(config.n_embd)
+        self.ln_2 = make_norm(config.norm_type, config.n_embd)
         self.mlp = MLP(config)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -90,11 +128,17 @@ class TinyGPT(nn.Module):
 
     def __init__(self, config: GPTConfig):
         super().__init__()
+        if config.position_encoding not in {"learned", "rope"}:
+            raise ValueError("position_encoding must be 'learned' or 'rope'")
         self.config = config
         self.token_embedding = nn.Embedding(config.vocab_size, config.n_embd)
-        self.position_embedding = nn.Embedding(config.context_size, config.n_embd)
+        self.position_embedding = (
+            nn.Embedding(config.context_size, config.n_embd)
+            if config.position_encoding == "learned"
+            else None
+        )
         self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layer))
-        self.ln_f = nn.LayerNorm(config.n_embd)
+        self.ln_f = make_norm(config.norm_type, config.n_embd)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
 
     def forward(
@@ -108,8 +152,10 @@ class TinyGPT(nn.Module):
                 f"Sequence length {seq_len} exceeds context size {self.config.context_size}"
             )
 
-        positions = torch.arange(seq_len, device=input_ids.device)
-        x = self.token_embedding(input_ids) + self.position_embedding(positions)
+        x = self.token_embedding(input_ids)
+        if self.position_embedding is not None:
+            positions = torch.arange(seq_len, device=input_ids.device)
+            x = x + self.position_embedding(positions)
         for block in self.blocks:
             x = block(x)
         x = self.ln_f(x)
@@ -192,6 +238,37 @@ def _apply_repetition_penalty(
             token_logits / penalty,
         )
     return adjusted
+
+
+def apply_rope(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    base: float = 10000.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply rotary position embeddings to query and key tensors."""
+    seq_len = q.size(-2)
+    head_dim = q.size(-1)
+    if head_dim % 2 != 0:
+        raise ValueError("RoPE requires an even head dimension")
+    half_dim = head_dim // 2
+    positions = torch.arange(seq_len, device=q.device, dtype=torch.float32)
+    inv_freq = base ** (
+        -torch.arange(0, half_dim, device=q.device, dtype=torch.float32) / half_dim
+    )
+    angles = positions[:, None] * inv_freq[None, :]
+    cos = angles.cos().to(dtype=q.dtype)[None, None, :, :]
+    sin = angles.sin().to(dtype=q.dtype)[None, None, :, :]
+    return _rotate_rope(q, cos, sin), _rotate_rope(k, cos, sin)
+
+
+def _rotate_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    x_even = x[..., 0::2]
+    x_odd = x[..., 1::2]
+    rotated = torch.stack(
+        (x_even * cos - x_odd * sin, x_even * sin + x_odd * cos),
+        dim=-1,
+    )
+    return rotated.flatten(-2)
 
 
 def _apply_top_p(logits: torch.Tensor, top_p: float) -> torch.Tensor:

@@ -17,6 +17,7 @@ def validate_optim_controls(
     lr_decay: str,
     min_lr_ratio: float,
     grad_clip: float,
+    grad_accum_steps: int = 1,
 ) -> None:
     if max_steps < 1:
         raise ValueError("max_steps must be at least 1")
@@ -28,6 +29,8 @@ def validate_optim_controls(
         raise ValueError("min_lr_ratio must be between 0 and 1")
     if grad_clip < 0:
         raise ValueError("grad_clip must be non-negative")
+    if grad_accum_steps < 1:
+        raise ValueError("grad_accum_steps must be at least 1")
 
 
 def learning_rate_for_step(

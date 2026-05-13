@@ -29,6 +29,9 @@ class TinyRunConfig:
     n_head: int = 4
     n_layer: int = 2
     dropout: float = 0.0
+    norm_type: str = "layernorm"
+    position_encoding: str = "learned"
+    activation: str = "gelu"
     base_steps: int = 300
     sft_steps: int = 600
     base_batch_size: int = 8
@@ -58,6 +61,8 @@ class TinyRunConfig:
     sft_min_lr_ratio: float = 1.0
     base_grad_clip: float = 0.0
     sft_grad_clip: float = 0.0
+    base_grad_accum_steps: int = 1
+    sft_grad_accum_steps: int = 1
     sft_sampling: str = "uniform"
 
 
@@ -127,6 +132,9 @@ def run_tiny(config: TinyRunConfig) -> dict:
         n_head=config.n_head,
         n_layer=config.n_layer,
         dropout=config.dropout,
+        norm_type=config.norm_type,
+        position_encoding=config.position_encoding,
+        activation=config.activation,
         seed=config.seed,
         device=config.device,
         log_every=max(1, config.base_steps // 6),
@@ -141,6 +149,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         lr_decay=config.base_lr_decay,
         min_lr_ratio=config.base_min_lr_ratio,
         grad_clip=config.base_grad_clip,
+        grad_accum_steps=config.base_grad_accum_steps,
     ))
     base_eval_checkpoint = base_report.get("best_checkpoint", {}).get(
         "path",
@@ -168,6 +177,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         min_lr_ratio=config.sft_min_lr_ratio,
         grad_clip=config.sft_grad_clip,
         sampling=config.sft_sampling,
+        grad_accum_steps=config.sft_grad_accum_steps,
     ))
     sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",
@@ -188,6 +198,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
 
     effective_config = {
         **config.__dict__,
+        "requested_device": config.device,
+        "device": base_report.get("config", {}).get("device", config.device),
         "corpus_input": corpus_build.input_path,
         "corpus_recipe": corpus_build.recipe_path,
         "dataset_pack": corpus_build.dataset_pack,
@@ -226,6 +238,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "loss_diagnostics": base_report.get("loss_diagnostics", {}),
             "memorization": base_report.get("memorization", {}),
             "coverage": base_report.get("coverage", {}),
+            "effective_batch_size": base_report.get("config", {}).get("effective_batch_size"),
+            "effective_tokens_per_step": base_report.get("config", {}).get("effective_tokens_per_step"),
             "stop_reason": base_report.get("stop_reason"),
         },
         "sft": {
@@ -239,6 +253,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "best_checkpoint": sft_report.get("best_checkpoint", {}),
             "eval_checkpoint": sft_eval_checkpoint,
             "coverage": sft_report.get("coverage", {}),
+            "effective_batch_size": sft_report.get("config", {}).get("effective_batch_size"),
+            "effective_tokens_per_step": sft_report.get("config", {}).get("effective_tokens_per_step"),
             "stop_reason": sft_report.get("stop_reason"),
         },
         "eval": eval_report["summary"],

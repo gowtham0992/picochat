@@ -12,6 +12,7 @@ import torch
 
 from picochat.chat import render_chat_prompt
 from picochat.checkpoint import load_checkpoint, save_checkpoint
+from picochat.device import resolve_device
 from picochat.optim import learning_rate_for_step, maybe_clip_grad_norm, set_optimizer_lr, validate_optim_controls
 from picochat.report import loss_diagnostics, sft_report_markdown
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
@@ -74,6 +75,7 @@ class SFTConfig:
     min_lr_ratio: float = 1.0
     grad_clip: float = 0.0
     sampling: str = "uniform"
+    grad_accum_steps: int = 1
 
 
 class ChatSFTDataset(torch.utils.data.Dataset):
@@ -382,13 +384,15 @@ def train_sft(config: SFTConfig) -> dict:
         lr_decay=config.lr_decay,
         min_lr_ratio=config.min_lr_ratio,
         grad_clip=config.grad_clip,
+        grad_accum_steps=config.grad_accum_steps,
     )
     torch.manual_seed(config.seed)
     out_dir = Path(config.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     tokenizer = load_tokenizer(config.tokenizer_path)
-    model, metadata = load_checkpoint(config.checkpoint_path, map_location=config.device)
+    device = resolve_device(config.device)
+    model, metadata = load_checkpoint(config.checkpoint_path, map_location=device)
     if model.config.vocab_size != len(tokenizer):
         raise ValueError("tokenizer vocabulary size does not match checkpoint")
 
@@ -411,10 +415,11 @@ def train_sft(config: SFTConfig) -> dict:
     val_loader = make_chat_dataloader(val_dataset, config.batch_size, shuffle=False, seed=config.seed)
     data_iter = iter(train_loader)
 
-    device = torch.device(config.device)
     model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
     token_bytes = torch.tensor(token_byte_lengths(tokenizer), dtype=torch.long, device=device)
+    effective_batch_size = config.batch_size * config.grad_accum_steps
+    effective_tokens_per_step = effective_batch_size * model.config.context_size
 
     losses: list[dict[str, float | int]] = []
     start = time.time()
@@ -428,17 +433,6 @@ def train_sft(config: SFTConfig) -> dict:
 
     model.train()
     for step in range(1, config.max_steps + 1):
-        try:
-            x, y = next(data_iter)
-        except StopIteration:
-            data_iter = iter(train_loader)
-            x, y = next(data_iter)
-
-        x = x.to(device)
-        y = y.to(device)
-        _, loss = model(x, y)
-        assert loss is not None
-
         learning_rate = learning_rate_for_step(
             base_learning_rate=config.learning_rate,
             step=step,
@@ -449,11 +443,24 @@ def train_sft(config: SFTConfig) -> dict:
         )
         set_optimizer_lr(optimizer, learning_rate)
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
+        micro_losses: list[float] = []
+        for _ in range(config.grad_accum_steps):
+            try:
+                x, y = next(data_iter)
+            except StopIteration:
+                data_iter = iter(train_loader)
+                x, y = next(data_iter)
+
+            x = x.to(device)
+            y = y.to(device)
+            _, loss = model(x, y)
+            assert loss is not None
+            micro_losses.append(float(loss.item()))
+            (loss / config.grad_accum_steps).backward()
         grad_norm = maybe_clip_grad_norm(model, config.grad_clip)
         optimizer.step()
 
-        last_loss = float(loss.item())
+        last_loss = sum(micro_losses) / len(micro_losses)
         final_step = step
         if step == 1 or step % config.log_every == 0 or step == config.max_steps:
             train_metrics = evaluate_metrics(
@@ -481,6 +488,9 @@ def train_sft(config: SFTConfig) -> dict:
                 "val_bpb": val_metrics["bpb"],
                 "learning_rate": learning_rate,
                 "grad_norm": grad_norm,
+                "grad_accum_steps": config.grad_accum_steps,
+                "effective_batch_size": effective_batch_size,
+                "effective_tokens_per_step": effective_tokens_per_step,
                 "elapsed_sec": elapsed,
             })
             if val_loss < best_loss - config.early_stop_min_delta:
@@ -572,7 +582,13 @@ def train_sft(config: SFTConfig) -> dict:
     sample = tokenizer.decode(generated[0].tolist())
 
     report = {
-        "config": config.__dict__,
+        "config": {
+            **config.__dict__,
+            "requested_device": config.device,
+            "device": device.type,
+            "effective_batch_size": effective_batch_size,
+            "effective_tokens_per_step": effective_tokens_per_step,
+        },
         "base_checkpoint": {
             "path": config.checkpoint_path,
             "step": metadata.get("step"),
@@ -609,12 +625,15 @@ def train_sft(config: SFTConfig) -> dict:
 
 
 def _coverage_report(train_examples: int, total_examples: int, config: SFTConfig, actual_steps: int) -> dict:
-    examples_seen = actual_steps * config.batch_size
+    examples_per_step = config.batch_size * config.grad_accum_steps
+    examples_seen = actual_steps * examples_per_step
     return {
         "actual_steps": actual_steps,
         "planned_steps": config.max_steps,
-        "examples_per_step_estimate": config.batch_size,
-        "planned_example_updates": config.max_steps * config.batch_size,
+        "micro_batch_size": config.batch_size,
+        "grad_accum_steps": config.grad_accum_steps,
+        "examples_per_step_estimate": examples_per_step,
+        "planned_example_updates": config.max_steps * examples_per_step,
         "actual_example_updates": examples_seen,
         "train_examples": train_examples,
         "total_examples": total_examples,

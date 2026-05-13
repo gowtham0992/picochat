@@ -12,6 +12,7 @@ import torch.nn.functional as F
 
 from picochat.batching import load_token_split, make_dataloader
 from picochat.checkpoint import save_checkpoint
+from picochat.device import resolve_device
 from picochat.memorization import memorization_diagnostics
 from picochat.model import GPTConfig, TinyGPT
 from picochat.optim import learning_rate_for_step, maybe_clip_grad_norm, set_optimizer_lr, validate_optim_controls
@@ -32,6 +33,9 @@ class TrainConfig:
     n_head: int = 4
     n_layer: int = 2
     dropout: float = 0.0
+    norm_type: str = "layernorm"
+    position_encoding: str = "learned"
+    activation: str = "gelu"
     seed: int = 42
     device: str = "cpu"
     log_every: int = 20
@@ -48,6 +52,7 @@ class TrainConfig:
     lr_decay: str = "none"
     min_lr_ratio: float = 1.0
     grad_clip: float = 0.0
+    grad_accum_steps: int = 1
 
 
 @torch.no_grad()
@@ -113,6 +118,7 @@ def train_base(config: TrainConfig) -> dict:
         lr_decay=config.lr_decay,
         min_lr_ratio=config.min_lr_ratio,
         grad_clip=config.grad_clip,
+        grad_accum_steps=config.grad_accum_steps,
     )
     torch.manual_seed(config.seed)
     out_dir = Path(config.out_dir)
@@ -135,7 +141,7 @@ def train_base(config: TrainConfig) -> dict:
     val_loader = make_dataloader(split.val_dataset, batch_size=config.batch_size, shuffle=False, seed=config.seed)
     data_iter = iter(train_loader)
 
-    device = torch.device(config.device)
+    device = resolve_device(config.device)
     token_bytes = torch.tensor(token_byte_lengths(tokenizer), dtype=torch.long, device=device)
     model_config = GPTConfig(
         vocab_size=len(tokenizer),
@@ -144,9 +150,14 @@ def train_base(config: TrainConfig) -> dict:
         n_head=config.n_head,
         n_layer=config.n_layer,
         dropout=config.dropout,
+        norm_type=config.norm_type,
+        position_encoding=config.position_encoding,
+        activation=config.activation,
     )
     model = TinyGPT(model_config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+    effective_batch_size = config.batch_size * config.grad_accum_steps
+    effective_tokens_per_step = effective_batch_size * config.context_size
 
     losses: list[dict[str, float | int]] = []
     start = time.time()
@@ -160,17 +171,6 @@ def train_base(config: TrainConfig) -> dict:
 
     model.train()
     for step in range(1, config.max_steps + 1):
-        try:
-            x, y = next(data_iter)
-        except StopIteration:
-            data_iter = iter(train_loader)
-            x, y = next(data_iter)
-
-        x = x.to(device)
-        y = y.to(device)
-        _, loss = model(x, y)
-        assert loss is not None
-
         learning_rate = learning_rate_for_step(
             base_learning_rate=config.learning_rate,
             step=step,
@@ -181,11 +181,24 @@ def train_base(config: TrainConfig) -> dict:
         )
         set_optimizer_lr(optimizer, learning_rate)
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
+        micro_losses: list[float] = []
+        for _ in range(config.grad_accum_steps):
+            try:
+                x, y = next(data_iter)
+            except StopIteration:
+                data_iter = iter(train_loader)
+                x, y = next(data_iter)
+
+            x = x.to(device)
+            y = y.to(device)
+            _, loss = model(x, y)
+            assert loss is not None
+            micro_losses.append(float(loss.item()))
+            (loss / config.grad_accum_steps).backward()
         grad_norm = maybe_clip_grad_norm(model, config.grad_clip)
         optimizer.step()
 
-        last_loss = float(loss.item())
+        last_loss = sum(micro_losses) / len(micro_losses)
         final_step = step
         if step == 1 or step % config.log_every == 0 or step == config.max_steps:
             train_metrics = evaluate_metrics(
@@ -216,6 +229,9 @@ def train_base(config: TrainConfig) -> dict:
                 "val_bpb": val_bpb,
                 "learning_rate": learning_rate,
                 "grad_norm": grad_norm,
+                "grad_accum_steps": config.grad_accum_steps,
+                "effective_batch_size": effective_batch_size,
+                "effective_tokens_per_step": effective_tokens_per_step,
                 "elapsed_sec": elapsed,
             })
             metric = val_bpb if val_bpb is not None else val_loss
@@ -304,7 +320,13 @@ def train_base(config: TrainConfig) -> dict:
     memorization_text = f"{sample}\n{canary_probe}" if canary_probe else sample
 
     report = {
-        "config": config.__dict__,
+        "config": {
+            **config.__dict__,
+            "requested_device": config.device,
+            "device": device.type,
+            "effective_batch_size": effective_batch_size,
+            "effective_tokens_per_step": effective_tokens_per_step,
+        },
         "dataset": {
             **split.stats,
         },
@@ -363,13 +385,15 @@ def _generate_sample(
 
 
 def _coverage_report(dataset_stats: dict, config: TrainConfig, actual_steps: int) -> dict:
-    tokens_per_step = config.batch_size * config.context_size
+    tokens_per_step = config.batch_size * config.grad_accum_steps * config.context_size
     tokens_seen = actual_steps * tokens_per_step
     train_tokens = dataset_stats.get("train_tokens") or dataset_stats.get("num_tokens")
     total_tokens = dataset_stats.get("num_tokens")
     return {
         "actual_steps": actual_steps,
         "planned_steps": config.max_steps,
+        "micro_batch_size": config.batch_size,
+        "grad_accum_steps": config.grad_accum_steps,
         "tokens_per_step_estimate": tokens_per_step,
         "planned_training_tokens": config.max_steps * tokens_per_step,
         "actual_training_tokens": tokens_seen,

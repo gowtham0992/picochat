@@ -11,6 +11,7 @@ import torch
 
 from picochat.chat import extract_assistant_reply, render_chat_prompt
 from picochat.checkpoint import load_checkpoint
+from picochat.device import resolve_device
 from picochat.report import chat_eval_report_markdown
 from picochat.tokenizer import Tokenizer, load_tokenizer
 
@@ -285,11 +286,11 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     tokenizer = load_tokenizer(config.tokenizer_path)
-    model, metadata = load_checkpoint(config.checkpoint_path, map_location=config.device)
+    device = resolve_device(config.device)
+    model, metadata = load_checkpoint(config.checkpoint_path, map_location=device)
     if model.config.vocab_size != len(tokenizer):
         raise ValueError("tokenizer vocabulary size does not match checkpoint")
 
-    device = torch.device(config.device)
     model = model.to(device)
     model.eval()
     support_corpus_text = _read_optional_text(config.support_corpus_path)
@@ -346,7 +347,11 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     level_breakdown = _breakdown(rows, "level", "heldout")
     analysis = analyze_eval_failures(rows, category_breakdown, split_breakdown, level_breakdown)
     report = {
-        "config": config.__dict__,
+        "config": {
+            **config.__dict__,
+            "requested_device": config.device,
+            "device": device.type,
+        },
         "checkpoint": {
             "path": config.checkpoint_path,
             "step": metadata.get("step"),
