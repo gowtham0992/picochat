@@ -134,6 +134,38 @@ def test_cli_data_build_from_recipe(tmp_path, capsys):
     assert "built corpus" in output
 
 
+def test_cli_data_skills_corpus(tmp_path, capsys):
+    base_path = tmp_path / "base.txt"
+    out_path = tmp_path / "skills.txt"
+    recipe_path = tmp_path / "skills_recipe.json"
+    base_path.write_text("base text", encoding="utf-8")
+
+    exit_code = main([
+        "data",
+        "skills-corpus",
+        "--out",
+        str(out_path),
+        "--math-rows",
+        "3",
+        "--spelling-rows",
+        "3",
+        "--choice-rows",
+        "2",
+        "--base-corpus",
+        str(base_path),
+        "--recipe-out",
+        str(recipe_path),
+    ])
+
+    assert exit_code == 0
+    assert out_path.exists()
+    assert recipe_path.exists()
+    output = capsys.readouterr().out
+    assert "skills corpus:" in output
+    assert "skills_math" in output
+    assert "recipe:" in output
+
+
 def test_cli_data_benchmark_pack(tmp_path, capsys):
     import json
 

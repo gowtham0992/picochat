@@ -38,6 +38,7 @@ from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table,
 from picochat.optim import LR_DECAYS, OPTIMIZER_TYPES
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep
+from picochat.skills_corpus import generate_skills_corpus
 from picochat.web import WebConfig, serve_web
 
 
@@ -263,6 +264,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-promote",
         action="store_true",
         help="Write files but do not point dataset_pack.json at them.",
+    )
+
+    data_skills_corpus = data_subparsers.add_parser(
+        "skills-corpus",
+        help="Generate arithmetic/spelling/choice drills for base pretraining.",
+    )
+    data_skills_corpus.add_argument("--out", required=True, help="Output micro-skills corpus text path.")
+    data_skills_corpus.add_argument("--math-rows", type=int, default=50_000)
+    data_skills_corpus.add_argument("--spelling-rows", type=int, default=50_000)
+    data_skills_corpus.add_argument("--choice-rows", type=int, default=10_000)
+    data_skills_corpus.add_argument("--seed", type=int, default=42)
+    data_skills_corpus.add_argument("--force", action="store_true", help="Overwrite existing skills corpus files.")
+    data_skills_corpus.add_argument(
+        "--base-corpus",
+        default=None,
+        help="Optional base corpus or documents folder to include in a generated recipe.",
+    )
+    data_skills_corpus.add_argument(
+        "--recipe-out",
+        default=None,
+        help="Optional corpus recipe path that mixes --base-corpus with the skills corpus.",
     )
 
     data_hf_import = data_subparsers.add_parser(
@@ -960,6 +982,31 @@ def benchmark_pack_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def skills_corpus_data(args: argparse.Namespace) -> int:
+    report = generate_skills_corpus(
+        args.out,
+        math_rows=args.math_rows,
+        spelling_rows=args.spelling_rows,
+        choice_rows=args.choice_rows,
+        seed=args.seed,
+        force=args.force,
+        base_corpus=args.base_corpus,
+        recipe_out=args.recipe_out,
+    )
+    print(f"skills corpus: {report.output_path}")
+    print(f"rows: {report.total_rows}")
+    print(f"characters: {report.characters_written}")
+    print("categories:")
+    for name, count in report.categories.items():
+        print(f"- {name}: {count}")
+    print(f"report: {report.report_path}")
+    if report.recipe_path:
+        print(f"recipe: {report.recipe_path}")
+        print("\nnext:")
+        print(f"PYTHONPATH=src python -m picochat.cli data preview --recipe {report.recipe_path}")
+    return 0
+
+
 def hf_import_data(args: argparse.Namespace) -> int:
     report = import_hf_dataset(HFImportConfig(
         dataset=args.dataset,
@@ -1527,6 +1574,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "benchmark-pack":
         return benchmark_pack_data(args)
+
+    if args.command == "data" and args.data_command == "skills-corpus":
+        return skills_corpus_data(args)
 
     if args.command == "data" and args.data_command == "hf-import":
         return hf_import_data(args)
