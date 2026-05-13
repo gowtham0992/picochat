@@ -27,7 +27,7 @@ from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 from picochat.train import evaluate_metrics
 
 
-SFT_SAMPLING_MODES = ("uniform", "category_balanced")
+SFT_SAMPLING_MODES = ("uniform", "category_sqrt", "category_balanced")
 
 
 @dataclass(frozen=True)
@@ -353,6 +353,19 @@ def make_chat_dataloader(
             sampler=sampler,
             drop_last=False,
         )
+    if sampling == "category_sqrt":
+        sampler = torch.utils.data.WeightedRandomSampler(
+            weights=category_sqrt_weights(dataset),
+            num_samples=len(dataset),
+            replacement=True,
+            generator=generator,
+        )
+        return torch.utils.data.DataLoader(
+            dataset,
+            batch_size=batch_size,
+            sampler=sampler,
+            drop_last=False,
+        )
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -369,6 +382,18 @@ def category_balanced_weights(dataset) -> torch.Tensor:
         raise ValueError("cannot sample from an empty chat dataset")
     counts = Counter(categories)
     return torch.tensor([1.0 / counts[category] for category in categories], dtype=torch.double)
+
+
+def category_sqrt_weights(dataset) -> torch.Tensor:
+    """Return per-row weights that softly boost rare SFT categories."""
+    categories = [_category_key(dataset, index) for index in range(len(dataset))]
+    if not categories:
+        raise ValueError("cannot sample from an empty chat dataset")
+    counts = Counter(categories)
+    return torch.tensor(
+        [1.0 / (counts[category] ** 0.5) for category in categories],
+        dtype=torch.double,
+    )
 
 
 def category_counts(dataset) -> dict[str, int]:

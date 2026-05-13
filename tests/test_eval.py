@@ -10,6 +10,7 @@ from picochat.eval import (
     load_chat_eval_items,
     run_chat_eval,
     score_reply,
+    write_sft_fit_eval,
 )
 from picochat.model import GPTConfig, TinyGPT
 from picochat.tokenizer import CharTokenizer
@@ -59,6 +60,35 @@ def test_load_chat_eval_items_supports_choice_eval_fields(tmp_path):
 
     assert items[0].choice_labels == ("A", "B")
     assert items[0].correct_choice == "B"
+
+
+def test_write_sft_fit_eval_converts_chat_rows(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    output_path = tmp_path / "fit.jsonl"
+    write_jsonl(input_path, [
+        {
+            "user": "What is Picochat?",
+            "assistant": "Picochat is a tiny local model.",
+            "category": "identity",
+        },
+        {
+            "user": "What is the secret key?",
+            "assistant": "I do not know from the provided material.",
+            "category": "refusal",
+            "answerable": False,
+        },
+    ])
+
+    report = write_sft_fit_eval(input_path, output_path)
+    items = load_chat_eval_items(output_path)
+
+    assert report["num_rows"] == 2
+    assert report["category_counts"] == {"identity": 1, "refusal": 1}
+    assert items[0].split == "sft_train"
+    assert items[0].level == "identity"
+    assert items[0].must_include == ("Picochat is a tiny local model.",)
+    assert items[0].max_words == 14
+    assert items[1].answerable is False
 
 
 def test_choice_continuation_candidates_cover_sft_and_bare_styles():

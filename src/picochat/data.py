@@ -557,7 +557,7 @@ def suggest_training_command(
         "--canary-count",
         3,
         "--sft-sampling",
-        "category_balanced",
+        "category_sqrt",
         "--split-mode",
         "document",
         *(["--min-score", min_quality_score] if min_quality_score else []),

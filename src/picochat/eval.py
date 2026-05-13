@@ -61,6 +61,79 @@ class _ChoiceCandidate:
     token_ids: tuple[int, ...]
 
 
+def write_sft_fit_eval(
+    input_path: str | Path,
+    output_path: str | Path,
+    max_rows: int | None = None,
+) -> dict:
+    """Convert chat SFT JSONL into an exact-fit eval file.
+
+    This is a diagnostic, not a leaderboard. A model should score high here
+    before its held-out eval score is interpreted as a generalization signal.
+    """
+    if max_rows is not None and max_rows <= 0:
+        raise ValueError("max_rows must be positive when provided")
+
+    rows: list[dict] = []
+    category_counts: dict[str, int] = {}
+    for line_number, line in enumerate(Path(input_path).read_text(encoding="utf-8").splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        record = json.loads(line)
+        user = record.get("user")
+        assistant = record.get("assistant")
+        if not isinstance(user, str) or not isinstance(assistant, str):
+            raise ValueError(f"line {line_number} must contain string user and assistant fields")
+        answer = assistant.strip()
+        if not answer:
+            continue
+
+        category = record.get("category", "chat")
+        if not isinstance(category, str):
+            raise ValueError(f"line {line_number} category field must be a string when present")
+        answerable = record.get("answerable", True)
+        if not isinstance(answerable, bool):
+            raise ValueError(f"line {line_number} answerable field must be a boolean when present")
+
+        category_counts[category] = category_counts.get(category, 0) + 1
+        rows.append({
+            "user": user,
+            "answerable": answerable,
+            "category": category,
+            "split": "sft_train",
+            "level": category,
+            "reference_answer": answer,
+            "must_include": [answer],
+            "max_words": _sft_fit_max_words(answer),
+        })
+        if max_rows is not None and len(rows) >= max_rows:
+            break
+
+    if not rows:
+        raise ValueError("no usable SFT rows found for fit eval")
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "input_path": str(input_path),
+        "output_path": str(output),
+        "num_rows": len(rows),
+        "category_counts": dict(sorted(category_counts.items())),
+    }
+
+
+def _sft_fit_max_words(answer: str) -> int:
+    word_count = len(_word_tokens(answer))
+    if word_count <= 1:
+        return 8
+    return min(80, max(12, word_count + 8))
+
+
 def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
     """Load transparent chat eval items from JSONL."""
     items: list[ChatEvalItem] = []

@@ -4844,7 +4844,7 @@ function applyBenchmarkSftDefaults(report = state.datasetFlightPlan) {
   $("launch-sft-steps").value = String(BENCHMARK_SFT_DEFAULTS.sftSteps);
   $("launch-sft-learning-rate").value = String(BENCHMARK_SFT_DEFAULTS.sftLearningRate);
   $("launch-sft-early-stop-patience").value = String(BENCHMARK_SFT_DEFAULTS.sftPatience);
-  $("launch-sft-sampling").value = "category_balanced";
+  $("launch-sft-sampling").value = "category_sqrt";
   return true;
 }
 

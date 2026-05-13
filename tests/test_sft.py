@@ -8,6 +8,7 @@ from picochat.sft import (
     SFTConfig,
     category_balanced_weights,
     category_counts,
+    category_sqrt_weights,
     load_chat_examples,
     split_chat_dataset,
     train_sft,
@@ -115,6 +116,29 @@ def test_category_balanced_weights_boost_rare_categories():
     assert category_counts(dataset) == {"refusal": 1, "story": 2}
     assert weights[2] == weights[0] * 2
     assert dataset.stats().category_counts == {"refusal": 1, "story": 2}
+
+
+def test_category_sqrt_weights_softly_boost_rare_categories():
+    tokenizer = CharTokenizer.train([
+        "User: a\nAssistant: one\n"
+        "User: b\nAssistant: two\n"
+        "User: c\nAssistant: three\n"
+    ])
+    dataset = ChatSFTDataset(
+        [
+            ChatExample(user="a", assistant="one", category="story"),
+            ChatExample(user="b", assistant="two", category="story"),
+            ChatExample(user="c", assistant="three", category="refusal"),
+        ],
+        tokenizer=tokenizer,
+        context_size=32,
+    )
+
+    balanced = category_balanced_weights(dataset).tolist()
+    sqrt_weights = category_sqrt_weights(dataset).tolist()
+
+    assert sqrt_weights[2] > sqrt_weights[0]
+    assert sqrt_weights[2] / sqrt_weights[0] < balanced[2] / balanced[0]
 
 
 def test_train_sft_writes_artifacts(tmp_path):

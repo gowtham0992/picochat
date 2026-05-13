@@ -18,7 +18,7 @@ from picochat.train import TrainConfig, train_base
 from picochat.sft import SFTConfig, SFT_SAMPLING_MODES, train_sft
 from picochat.generate import GenerateConfig, generate_text
 from picochat.chat import ChatConfig, chat_loop
-from picochat.eval import ChatEvalConfig, run_chat_eval
+from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
 from picochat.eval_starter import generate_eval_starter
 from picochat.sft_starter import generate_sft_starter
 from picochat.benchmark_pack import (
@@ -437,7 +437,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--sampling",
         choices=SFT_SAMPLING_MODES,
         default="uniform",
-        help="SFT row sampling strategy. category_balanced gives rare categories equal training probability.",
+        help=(
+            "SFT row sampling strategy. category_sqrt softly boosts rare categories; "
+            "category_balanced gives rare categories equal training probability."
+        ),
     )
 
     generate_parser = subparsers.add_parser("generate", help="Generate from a checkpoint.")
@@ -480,6 +483,26 @@ def build_parser() -> argparse.ArgumentParser:
     eval_chat_parser.add_argument("--case-sensitive", action="store_true")
     eval_chat_parser.add_argument("--support-corpus", default=None, help="Optional corpus text file for support-overlap diagnostics.")
     eval_chat_parser.add_argument("--corpus-support-threshold", type=float, default=0.25)
+
+    eval_sft_fit_parser = eval_subparsers.add_parser(
+        "sft-fit",
+        help="Run an exact-fit diagnostic on chat SFT rows.",
+    )
+    eval_sft_fit_parser.add_argument("--input", required=True, help="Path to chat SFT JSONL.")
+    eval_sft_fit_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
+    eval_sft_fit_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
+    eval_sft_fit_parser.add_argument("--out-dir", required=True, help="Output eval directory.")
+    eval_sft_fit_parser.add_argument("--max-rows", type=int, default=0, help="Optional row limit for quick diagnostics.")
+    eval_sft_fit_parser.add_argument("--max-new-tokens", type=int, default=80)
+    eval_sft_fit_parser.add_argument("--temperature", type=float, default=0.0)
+    eval_sft_fit_parser.add_argument("--top-k", type=int, default=0)
+    eval_sft_fit_parser.add_argument("--top-p", type=float, default=1.0)
+    eval_sft_fit_parser.add_argument("--repetition-penalty", type=float, default=1.0)
+    eval_sft_fit_parser.add_argument("--seed", type=int, default=42)
+    eval_sft_fit_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    eval_sft_fit_parser.add_argument("--case-sensitive", action="store_true")
+    eval_sft_fit_parser.add_argument("--support-corpus", default=None, help="Optional corpus text file for support-overlap diagnostics.")
+    eval_sft_fit_parser.add_argument("--corpus-support-threshold", type=float, default=0.25)
 
     run_parser = subparsers.add_parser("run", help="End-to-end experiment runners.")
     run_subparsers = run_parser.add_subparsers(dest="run_command")
@@ -557,7 +580,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--sft-sampling",
         choices=SFT_SAMPLING_MODES,
         default=None,
-        help="SFT row sampling strategy. category_balanced gives rare categories equal training probability.",
+        help=(
+            "SFT row sampling strategy. category_sqrt softly boosts rare categories; "
+            "category_balanced gives rare categories equal training probability."
+        ),
     )
     run_tiny_parser.add_argument(
         "--min-score",
@@ -1170,6 +1196,41 @@ def run_eval_chat(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_eval_sft_fit(args: argparse.Namespace) -> int:
+    out_dir = Path(args.out_dir)
+    fit_input = out_dir / "sft_fit_eval.jsonl"
+    fit_report = write_sft_fit_eval(
+        args.input,
+        fit_input,
+        max_rows=None if args.max_rows <= 0 else args.max_rows,
+    )
+    top_k = None if args.top_k <= 0 else args.top_k
+    report = run_chat_eval(ChatEvalConfig(
+        input_path=str(fit_input),
+        checkpoint_path=args.checkpoint,
+        tokenizer_path=args.tokenizer,
+        out_dir=args.out_dir,
+        max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
+        top_k=top_k,
+        top_p=args.top_p,
+        repetition_penalty=args.repetition_penalty,
+        seed=args.seed,
+        device=args.device,
+        case_sensitive=args.case_sensitive,
+        support_corpus_path=args.support_corpus,
+        corpus_support_threshold=args.corpus_support_threshold,
+    ))
+    summary = report["summary"]
+    print(
+        f"sft fit eval: {summary['num_passed']}/{summary['num_examples']} passed "
+        f"({summary['pass_rate'] * 100:.2f}%)"
+    )
+    print(f"converted SFT rows: {fit_report['output_path']}")
+    print(f"saved fit report: {args.out_dir}")
+    return 0
+
+
 def _resolve_tiny_value(args: argparse.Namespace, defaults: TinyRunConfig, field: str):
     value = getattr(args, field)
     if value is not None:
@@ -1350,6 +1411,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "eval" and args.eval_command == "chat":
         return run_eval_chat(args)
+
+    if args.command == "eval" and args.eval_command == "sft-fit":
+        return run_eval_sft_fit(args)
 
     if args.command == "run" and args.run_command == "tiny":
         return run_tiny_command(args)

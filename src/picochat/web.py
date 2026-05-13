@@ -161,7 +161,7 @@ RUN_PRESETS = {
         "base_ema_decay": 0.0,
         "sft_ema_decay": 0.0,
         "device": "auto",
-        "sft_sampling": "category_balanced",
+        "sft_sampling": "category_sqrt",
         "base_early_stop_patience": 3,
         "sft_early_stop_patience": 4,
         "eval_max_new_tokens": 120,
