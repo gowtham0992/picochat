@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 
 import pytest
 
@@ -84,6 +85,38 @@ def test_behavior_profile_excludes_broad_long_form_chat_rows(tmp_path):
     assert any(row["category"].startswith("bench_choice") for row in chat_rows)
     assert any(row["category"] == "bench_math" for row in chat_rows)
     assert any(row["category"] == "identity" for row in chat_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
+def test_weak_skills_profile_overweights_math_and_spelling(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=200,
+        eval_rows=80,
+        profile="weak_skills",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    chat_categories = Counter(row["category"] for row in chat_rows)
+    eval_categories = Counter(row["category"] for row in eval_rows)
+
+    assert report.profile == "weak_skills"
+    assert report.source_status == "weak_skills"
+    assert chat_categories["bench_math"] >= 80
+    assert chat_categories["bench_spelling"] >= 60
+    assert eval_categories["bench_math"] >= 32
+    assert eval_categories["bench_spelling"] >= 24
+    assert "smoltalk" not in chat_categories
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
 
 

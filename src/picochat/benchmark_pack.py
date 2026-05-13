@@ -24,8 +24,24 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 DEFAULT_BENCHMARK_SFT_ROWS = 300
 DEFAULT_BENCHMARK_EVAL_ROWS = 80
 BENCHMARK_SOURCES = ("offline", "auto", "hf")
-BENCHMARK_PROFILES = ("full", "behavior")
+BENCHMARK_PROFILES = ("full", "behavior", "weak_skills")
 SFT_CHAR_BUDGET = 900
+BEHAVIOR_PROFILE_WEIGHTS = {
+    "behavior": (
+        ("choice", 0.25),
+        ("math", 0.25),
+        ("spelling", 0.20),
+        ("identity", 0.20),
+        ("refusal", 0.10),
+    ),
+    "weak_skills": (
+        ("math", 0.45),
+        ("spelling", 0.35),
+        ("choice", 0.12),
+        ("identity", 0.05),
+        ("refusal", 0.03),
+    ),
+}
 
 
 class BenchmarkSourceError(RuntimeError):
@@ -182,8 +198,8 @@ def build_benchmark_eval_rows(count: int, seed: int = 42, source: str = "offline
 def _build_benchmark_sft_result(count: int, seed: int, source: str, profile: str) -> _RowBuildResult:
     source = _normalize_source(source)
     profile = _normalize_profile(profile)
-    if profile == "behavior":
-        return _behavior_profile_result(count, seed=seed, split="train", eval_rows=False)
+    if profile in BEHAVIOR_PROFILE_WEIGHTS:
+        return _behavior_profile_result(count, seed=seed, split="train", eval_rows=False, profile=profile)
     if source == "offline":
         return _offline_result(count, seed=seed, split="train", eval_rows=False)
     try:
@@ -209,8 +225,8 @@ def _build_benchmark_sft_result(count: int, seed: int, source: str, profile: str
 def _build_benchmark_eval_result(count: int, seed: int, source: str, profile: str) -> _RowBuildResult:
     source = _normalize_source(source)
     profile = _normalize_profile(profile)
-    if profile == "behavior":
-        return _behavior_profile_result(count, seed=seed, split="heldout", eval_rows=True)
+    if profile in BEHAVIOR_PROFILE_WEIGHTS:
+        return _behavior_profile_result(count, seed=seed, split="heldout", eval_rows=True, profile=profile)
     if source == "offline":
         return _offline_result(count, seed=seed, split="heldout", eval_rows=True)
     try:
@@ -259,14 +275,14 @@ def _normalize_profile(profile: str) -> str:
     return normalized
 
 
-def _behavior_profile_result(count: int, seed: int, split: str, eval_rows: bool) -> _RowBuildResult:
-    quotas = _quotas(count, (
-        ("choice", 0.25),
-        ("math", 0.25),
-        ("spelling", 0.20),
-        ("identity", 0.20),
-        ("refusal", 0.10),
-    ))
+def _behavior_profile_result(
+    count: int,
+    seed: int,
+    split: str,
+    eval_rows: bool,
+    profile: str,
+) -> _RowBuildResult:
+    quotas = _quotas(count, BEHAVIOR_PROFILE_WEIGHTS[profile])
     rows = _build_local_behavior_rows(
         choice=quotas["choice"],
         math=quotas["math"],
@@ -280,13 +296,23 @@ def _behavior_profile_result(count: int, seed: int, split: str, eval_rows: bool)
     return _RowBuildResult(
         rows=rows[:count],
         source_mode="offline",
-        source_status="behavior",
-        source_datasets={"picochat_behavior": len(rows[:count])},
+        source_status=profile,
+        source_datasets={f"picochat_{profile}": len(rows[:count])},
         fallback_reason=None,
-        source_notes=(
-            "Behavior profile was used: long open-ended chat rows are excluded.",
-            "Use this first when SFT exact-fit is low; add broad instruction rows only after behavior fit improves.",
-        ),
+        source_notes=_behavior_profile_notes(profile),
+    )
+
+
+def _behavior_profile_notes(profile: str) -> tuple[str, ...]:
+    if profile == "weak_skills":
+        return (
+            "Weak-skills profile was used: math and spelling are deliberately over-sampled.",
+            "Use this after behavior-first SFT fit is near or above 70% but held-out math/spelling remain weak.",
+            "Long open-ended chat rows are excluded so the sweep tests narrow trainability before broad style.",
+        )
+    return (
+        "Behavior profile was used: long open-ended chat rows are excluded.",
+        "Use this first when SFT exact-fit is low; add broad instruction rows only after behavior fit improves.",
     )
 
 

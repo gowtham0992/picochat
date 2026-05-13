@@ -252,7 +252,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--profile",
         choices=BENCHMARK_PROFILES,
         default="full",
-        help="Curriculum profile. behavior excludes broad long-form chat rows for first-stage SFT fit.",
+        help=(
+            "Curriculum profile. behavior excludes broad long-form chat rows for first-stage SFT fit; "
+            "weak_skills over-samples math and spelling after behavior fit is healthy."
+        ),
     )
     data_benchmark_pack.add_argument("--seed", type=int, default=42)
     data_benchmark_pack.add_argument("--force", action="store_true", help="Overwrite existing benchmark pack files.")

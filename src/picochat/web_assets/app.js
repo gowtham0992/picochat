@@ -1167,6 +1167,7 @@ function guideCreateSftContent() {
             <label for="guide-benchmark-profile">CURATED PROFILE</label>
             <select id="guide-benchmark-profile">
               <option value="behavior" ${curriculumProfile === "behavior" ? "selected" : ""}>BEHAVIOR FIRST</option>
+              <option value="weak_skills" ${curriculumProfile === "weak_skills" ? "selected" : ""}>WEAK SKILLS</option>
               <option value="full" ${curriculumProfile === "full" ? "selected" : ""}>FULL MIX</option>
             </select>
           </div>
@@ -1216,6 +1217,7 @@ function guideCreateEvalContent() {
             <label for="guide-benchmark-profile">CURATED PROFILE</label>
             <select id="guide-benchmark-profile">
               <option value="behavior" ${curriculumProfile === "behavior" ? "selected" : ""}>BEHAVIOR FIRST</option>
+              <option value="weak_skills" ${curriculumProfile === "weak_skills" ? "selected" : ""}>WEAK SKILLS</option>
               <option value="full" ${curriculumProfile === "full" ? "selected" : ""}>FULL MIX</option>
             </select>
           </div>
