@@ -24,6 +24,7 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 DEFAULT_BENCHMARK_SFT_ROWS = 300
 DEFAULT_BENCHMARK_EVAL_ROWS = 80
 BENCHMARK_SOURCES = ("offline", "auto", "hf")
+BENCHMARK_PROFILES = ("full", "behavior")
 SFT_CHAR_BUDGET = 900
 
 
@@ -49,6 +50,7 @@ class BenchmarkTuningPackReport:
     source_status: str
     source_datasets: dict[str, int]
     fallback_reason: str | None
+    profile: str
     contamination: dict[str, Any]
     source_notes: tuple[str, ...]
 
@@ -77,6 +79,7 @@ def generate_benchmark_tuning_pack(
     eval_rows: int = DEFAULT_BENCHMARK_EVAL_ROWS,
     seed: int = 42,
     source: str = "offline",
+    profile: str = "full",
     force: bool = False,
     promote_to_pack: bool = True,
 ) -> BenchmarkTuningPackReport:
@@ -86,6 +89,7 @@ def generate_benchmark_tuning_pack(
     if eval_rows < 16:
         raise ValueError("eval_rows must be at least 16")
     source = _normalize_source(source)
+    profile = _normalize_profile(profile)
 
     pack = load_dataset_pack(dataset_pack)
     pack_dir = Path(pack.path).parent
@@ -98,8 +102,8 @@ def generate_benchmark_tuning_pack(
         names = ", ".join(str(path) for path in existing)
         raise FileExistsError(f"Refusing to overwrite existing benchmark tuning file(s): {names}")
 
-    chat_result = _build_benchmark_sft_result(sft_rows, seed=seed, source=source)
-    eval_result = _build_benchmark_eval_result(eval_rows, seed=seed + 100_000, source=source)
+    chat_result = _build_benchmark_sft_result(sft_rows, seed=seed, source=source, profile=profile)
+    eval_result = _build_benchmark_eval_result(eval_rows, seed=seed + 100_000, source=source, profile=profile)
     chat_rows = chat_result.rows
     eval_items = eval_result.rows
     _assert_no_prompt_overlap(chat_rows, eval_items)
@@ -144,11 +148,13 @@ def generate_benchmark_tuning_pack(
             Counter(chat_result.source_datasets) + Counter(eval_result.source_datasets)
         ).items())),
         fallback_reason=chat_result.fallback_reason or eval_result.fallback_reason,
+        profile=profile,
         contamination=contamination,
         source_notes=(
             "ClimbMix or the selected corpus remains the base pretraining data.",
             "This pack adds a nanochat-style curated SFT/eval curriculum.",
             f"Curriculum source mode: {source}.",
+            f"Curriculum profile: {profile}.",
             "Eval prompts are generated from a held-out stream and are not copied into SFT.",
             "Synthetic behavior rows use separate train/eval templates and held-out word pools.",
             "Behavior curriculum now intentionally over-samples identity, short math, spelling, and choice-format drills because these are the first fragile closed-book skills.",
@@ -165,16 +171,19 @@ def generate_benchmark_tuning_pack(
 
 def build_benchmark_sft_rows(count: int, seed: int = 42, source: str = "offline") -> list[dict[str, Any]]:
     """Build deterministic SFT rows from separate train-only task streams."""
-    return _build_benchmark_sft_result(count, seed=seed, source=source).rows
+    return _build_benchmark_sft_result(count, seed=seed, source=source, profile="full").rows
 
 
 def build_benchmark_eval_rows(count: int, seed: int = 42, source: str = "offline") -> list[dict[str, Any]]:
     """Build deterministic held-out transparent eval rows."""
-    return _build_benchmark_eval_result(count, seed=seed, source=source).rows
+    return _build_benchmark_eval_result(count, seed=seed, source=source, profile="full").rows
 
 
-def _build_benchmark_sft_result(count: int, seed: int, source: str) -> _RowBuildResult:
+def _build_benchmark_sft_result(count: int, seed: int, source: str, profile: str) -> _RowBuildResult:
     source = _normalize_source(source)
+    profile = _normalize_profile(profile)
+    if profile == "behavior":
+        return _behavior_profile_result(count, seed=seed, split="train", eval_rows=False)
     if source == "offline":
         return _offline_result(count, seed=seed, split="train", eval_rows=False)
     try:
@@ -197,8 +206,11 @@ def _build_benchmark_sft_result(count: int, seed: int, source: str) -> _RowBuild
     return result
 
 
-def _build_benchmark_eval_result(count: int, seed: int, source: str) -> _RowBuildResult:
+def _build_benchmark_eval_result(count: int, seed: int, source: str, profile: str) -> _RowBuildResult:
     source = _normalize_source(source)
+    profile = _normalize_profile(profile)
+    if profile == "behavior":
+        return _behavior_profile_result(count, seed=seed, split="heldout", eval_rows=True)
     if source == "offline":
         return _offline_result(count, seed=seed, split="heldout", eval_rows=True)
     try:
@@ -238,6 +250,44 @@ def _normalize_source(source: str) -> str:
     if normalized not in BENCHMARK_SOURCES:
         raise ValueError(f"source must be one of {', '.join(BENCHMARK_SOURCES)}")
     return normalized
+
+
+def _normalize_profile(profile: str) -> str:
+    normalized = str(profile or "full").strip().lower()
+    if normalized not in BENCHMARK_PROFILES:
+        raise ValueError(f"profile must be one of {', '.join(BENCHMARK_PROFILES)}")
+    return normalized
+
+
+def _behavior_profile_result(count: int, seed: int, split: str, eval_rows: bool) -> _RowBuildResult:
+    quotas = _quotas(count, (
+        ("choice", 0.25),
+        ("math", 0.25),
+        ("spelling", 0.20),
+        ("identity", 0.20),
+        ("refusal", 0.10),
+    ))
+    rows = _build_local_behavior_rows(
+        choice=quotas["choice"],
+        math=quotas["math"],
+        spelling=quotas["spelling"],
+        identity=quotas["identity"],
+        refusal=quotas["refusal"],
+        seed=seed,
+        split=split,
+        eval_rows=eval_rows,
+    )
+    return _RowBuildResult(
+        rows=rows[:count],
+        source_mode="offline",
+        source_status="behavior",
+        source_datasets={"picochat_behavior": len(rows[:count])},
+        fallback_reason=None,
+        source_notes=(
+            "Behavior profile was used: long open-ended chat rows are excluded.",
+            "Use this first when SFT exact-fit is low; add broad instruction rows only after behavior fit improves.",
+        ),
+    )
 
 
 def _build_hf_sft_result(count: int, seed: int) -> _RowBuildResult:
@@ -1269,6 +1319,8 @@ Promoted to pack: `{report.promoted_to_pack}`
 Source mode: `{report.source_mode}`
 
 Source status: `{report.source_status}`
+
+Profile: `{report.profile}`
 
 ## Why This Exists
 

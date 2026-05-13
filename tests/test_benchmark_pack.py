@@ -39,6 +39,7 @@ def test_generate_benchmark_tuning_pack_promotes_heldout_files(tmp_path):
     assert report.sft_rows == 64
     assert report.eval_rows == 24
     assert report.source_status == "offline"
+    assert report.profile == "full"
     assert report.contamination["status"] == "ready"
     assert report.promoted_to_pack is True
     promoted = load_dataset_pack(pack)
@@ -54,6 +55,36 @@ def test_generate_benchmark_tuning_pack_promotes_heldout_files(tmp_path):
     assert any(row.get("correct_choice") for row in eval_rows)
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
     assert max(len(row["user"]) + len(row["assistant"]) for row in chat_rows) <= benchmark_pack.SFT_CHAR_BUDGET
+
+
+def test_behavior_profile_excludes_broad_long_form_chat_rows(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=100,
+        eval_rows=40,
+        profile="behavior",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    chat_categories = {row["category"] for row in chat_rows}
+
+    assert report.profile == "behavior"
+    assert report.source_status == "behavior"
+    assert "smoltalk" not in chat_categories
+    assert any(row["category"].startswith("bench_choice") for row in chat_rows)
+    assert any(row["category"] == "bench_math" for row in chat_rows)
+    assert any(row["category"] == "identity" for row in chat_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
 
 
 def test_offline_behavior_curriculum_has_unique_skill_coverage():

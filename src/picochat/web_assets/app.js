@@ -1139,6 +1139,7 @@ function guideCreateSftContent() {
   const chatRows = currentChatRowCount();
   const requestedRows = boundedNumberInput("flight-sft-max-items", STARTER_ROW_TARGETS.sft, 8, 2000);
   const curriculumSource = $("flight-benchmark-source")?.value || "offline";
+  const curriculumProfile = $("flight-benchmark-profile")?.value || "behavior";
   return `
     <div class="guide-page">
       <div class="guide-page-head">
@@ -1162,6 +1163,13 @@ function guideCreateSftContent() {
               <option value="hf" ${curriculumSource === "hf" ? "selected" : ""}>HF REQUIRED</option>
             </select>
           </div>
+          <div>
+            <label for="guide-benchmark-profile">CURATED PROFILE</label>
+            <select id="guide-benchmark-profile">
+              <option value="behavior" ${curriculumProfile === "behavior" ? "selected" : ""}>BEHAVIOR FIRST</option>
+              <option value="full" ${curriculumProfile === "full" ? "selected" : ""}>FULL MIX</option>
+            </select>
+          </div>
         </div>
         <label class="checkbox-line guide-starter-overwrite" for="guide-starter-force">
           <input id="guide-starter-force" type="checkbox" ${$("flight-starter-force")?.checked ? "checked" : ""}>
@@ -1180,6 +1188,7 @@ function guideCreateEvalContent() {
   const evalRows = currentEvalRowCount();
   const requestedRows = boundedNumberInput("flight-eval-max-items", STARTER_ROW_TARGETS.eval, 4, 500);
   const curriculumSource = $("flight-benchmark-source")?.value || "offline";
+  const curriculumProfile = $("flight-benchmark-profile")?.value || "behavior";
   return `
     <div class="guide-page">
       <div class="guide-page-head">
@@ -1201,6 +1210,13 @@ function guideCreateEvalContent() {
               <option value="offline" ${curriculumSource === "offline" ? "selected" : ""}>OFFLINE SAFE</option>
               <option value="auto" ${curriculumSource === "auto" ? "selected" : ""}>HF AUTO</option>
               <option value="hf" ${curriculumSource === "hf" ? "selected" : ""}>HF REQUIRED</option>
+            </select>
+          </div>
+          <div>
+            <label for="guide-benchmark-profile">CURATED PROFILE</label>
+            <select id="guide-benchmark-profile">
+              <option value="behavior" ${curriculumProfile === "behavior" ? "selected" : ""}>BEHAVIOR FIRST</option>
+              <option value="full" ${curriculumProfile === "full" ? "selected" : ""}>FULL MIX</option>
             </select>
           </div>
         </div>
@@ -1361,6 +1377,7 @@ function syncGuideInputs(event) {
     "guide-sft-max-items": "flight-sft-max-items",
     "guide-eval-max-items": "flight-eval-max-items",
     "guide-benchmark-source": "flight-benchmark-source",
+    "guide-benchmark-profile": "flight-benchmark-profile",
     "guide-starter-force": "flight-starter-force",
   };
   const destination = map[target.id];
@@ -1532,6 +1549,7 @@ function resetGuidedWorkflow() {
   $("flight-sft-max-items").value = String(STARTER_ROW_TARGETS.sft);
   $("flight-eval-max-items").value = String(STARTER_ROW_TARGETS.eval);
   if ($("flight-benchmark-source")) $("flight-benchmark-source").value = "offline";
+  if ($("flight-benchmark-profile")) $("flight-benchmark-profile").value = "behavior";
   $("flight-starter-force").checked = false;
   $("flight-min-score").value = "0";
   $("launch-run-name").value = "";
@@ -4689,6 +4707,7 @@ async function createBenchmarkTuningPack() {
   const maxSftRows = boundedNumberInput("flight-sft-max-items", STARTER_ROW_TARGETS.sft, 32, 2000);
   const maxEvalRows = boundedNumberInput("flight-eval-max-items", STARTER_ROW_TARGETS.eval, 16, 500);
   const source = $("flight-benchmark-source")?.value || "offline";
+  const profile = $("flight-benchmark-profile")?.value || "behavior";
   const chatOut = benchmarkOutputPath(packPath, "chat_benchmark.jsonl");
   const evalOut = benchmarkOutputPath(packPath, "eval_benchmark.jsonl");
   $("flight-benchmark-button").disabled = true;
@@ -4702,6 +4721,7 @@ async function createBenchmarkTuningPack() {
       sft_rows: maxSftRows,
       eval_rows: maxEvalRows,
       source,
+      profile,
       seed: state.detail?.summary?.config?.seed ?? 42,
       force: Boolean($("flight-starter-force")?.checked),
       promote_to_pack: true,
@@ -4743,6 +4763,7 @@ function renderBenchmarkTuningPack(report) {
     <div class="flight-eval-grid">
       <div><strong>${fmtInt(report.sft_rows)}</strong><span>chat rows</span></div>
       <div><strong>${fmtInt(report.eval_rows)}</strong><span>eval rows</span></div>
+      <div><strong>${escapeHtml(report.profile || "full")}</strong><span>profile</span></div>
       <div><strong>${escapeHtml(report.source_status || report.source_mode || "offline")}</strong><span>source</span></div>
       <div><strong>${escapeHtml(report.contamination?.status || "unknown")}</strong><span>contamination</span></div>
       <div><strong>${escapeHtml(shortPath(report.chat_output_path))}</strong><span>SFT jsonl</span></div>

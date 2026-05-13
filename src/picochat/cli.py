@@ -22,6 +22,7 @@ from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
 from picochat.eval_starter import generate_eval_starter
 from picochat.sft_starter import generate_sft_starter
 from picochat.benchmark_pack import (
+    BENCHMARK_PROFILES,
     BENCHMARK_SOURCES,
     DEFAULT_BENCHMARK_EVAL_ROWS,
     DEFAULT_BENCHMARK_SFT_ROWS,
@@ -246,6 +247,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=BENCHMARK_SOURCES,
         default="offline",
         help="Curriculum source: offline deterministic rows, auto HF with offline fallback, or HF-required.",
+    )
+    data_benchmark_pack.add_argument(
+        "--profile",
+        choices=BENCHMARK_PROFILES,
+        default="full",
+        help="Curriculum profile. behavior excludes broad long-form chat rows for first-stage SFT fit.",
     )
     data_benchmark_pack.add_argument("--seed", type=int, default=42)
     data_benchmark_pack.add_argument("--force", action="store_true", help="Overwrite existing benchmark pack files.")
@@ -923,6 +930,7 @@ def benchmark_pack_data(args: argparse.Namespace) -> int:
         eval_rows=args.eval_rows,
         seed=args.seed,
         source=args.source,
+        profile=args.profile,
         force=args.force,
         promote_to_pack=not args.no_promote,
     )
@@ -932,6 +940,7 @@ def benchmark_pack_data(args: argparse.Namespace) -> int:
     print(f"eval_rows: {report.eval_rows}")
     print(f"source: {report.source_mode}")
     print(f"source_status: {report.source_status}")
+    print(f"profile: {report.profile}")
     if report.fallback_reason:
         print(f"fallback_reason: {report.fallback_reason}")
     print(f"contamination: {report.contamination['status']}")

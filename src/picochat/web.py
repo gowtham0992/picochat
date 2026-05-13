@@ -25,6 +25,7 @@ from picochat.dataset_pack import init_dataset_pack, load_dataset_pack, update_d
 from picochat.device import DEVICE_CHOICES
 from picochat.eval_starter import generate_eval_starter
 from picochat.benchmark_pack import (
+    BENCHMARK_PROFILES,
     BENCHMARK_SOURCES,
     DEFAULT_BENCHMARK_EVAL_ROWS,
     DEFAULT_BENCHMARK_SFT_ROWS,
@@ -716,6 +717,9 @@ def benchmark_tuning_pack_plan(payload: dict) -> dict:
     source = _optional_string(payload.get("source")) or "offline"
     if source not in BENCHMARK_SOURCES:
         raise ValueError(f"source must be one of {', '.join(BENCHMARK_SOURCES)}")
+    profile = _optional_string(payload.get("profile")) or "full"
+    if profile not in BENCHMARK_PROFILES:
+        raise ValueError(f"profile must be one of {', '.join(BENCHMARK_PROFILES)}")
     force = payload.get("force", False)
     if not isinstance(force, bool):
         raise ValueError("force must be true or false")
@@ -731,6 +735,7 @@ def benchmark_tuning_pack_plan(payload: dict) -> dict:
         eval_rows=eval_rows,
         seed=seed,
         source=source,
+        profile=profile,
         force=force,
         promote_to_pack=promote_to_pack,
     )
@@ -749,6 +754,8 @@ def benchmark_tuning_pack_plan(payload: dict) -> dict:
         str(eval_rows),
         "--source",
         source,
+        "--profile",
+        profile,
         "--seed",
         str(seed),
     ]
