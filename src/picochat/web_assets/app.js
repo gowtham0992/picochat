@@ -1116,6 +1116,7 @@ function guideCheckCorpusContent() {
 function guideCreateSftContent() {
   const chatRows = currentChatRowCount();
   const requestedRows = boundedNumberInput("flight-sft-max-items", STARTER_ROW_TARGETS.sft, 8, 2000);
+  const curriculumSource = $("flight-benchmark-source")?.value || "offline";
   return `
     <div class="guide-page">
       <div class="guide-page-head">
@@ -1130,6 +1131,14 @@ function guideCreateSftContent() {
           <div>
             <label for="guide-sft-max-items">ROWS TO GENERATE</label>
             <input id="guide-sft-max-items" type="number" min="8" max="2000" value="${escapeHtml(String(requestedRows))}">
+          </div>
+          <div>
+            <label for="guide-benchmark-source">CURATED SOURCE</label>
+            <select id="guide-benchmark-source">
+              <option value="offline" ${curriculumSource === "offline" ? "selected" : ""}>OFFLINE SAFE</option>
+              <option value="auto" ${curriculumSource === "auto" ? "selected" : ""}>HF AUTO</option>
+              <option value="hf" ${curriculumSource === "hf" ? "selected" : ""}>HF REQUIRED</option>
+            </select>
           </div>
         </div>
         <label class="checkbox-line guide-starter-overwrite" for="guide-starter-force">
@@ -1148,6 +1157,7 @@ function guideCreateSftContent() {
 function guideCreateEvalContent() {
   const evalRows = currentEvalRowCount();
   const requestedRows = boundedNumberInput("flight-eval-max-items", STARTER_ROW_TARGETS.eval, 4, 500);
+  const curriculumSource = $("flight-benchmark-source")?.value || "offline";
   return `
     <div class="guide-page">
       <div class="guide-page-head">
@@ -1162,6 +1172,14 @@ function guideCreateEvalContent() {
           <div>
             <label for="guide-eval-max-items">ROWS TO GENERATE</label>
             <input id="guide-eval-max-items" type="number" min="4" max="500" value="${escapeHtml(String(requestedRows))}">
+          </div>
+          <div>
+            <label for="guide-benchmark-source">CURATED SOURCE</label>
+            <select id="guide-benchmark-source">
+              <option value="offline" ${curriculumSource === "offline" ? "selected" : ""}>OFFLINE SAFE</option>
+              <option value="auto" ${curriculumSource === "auto" ? "selected" : ""}>HF AUTO</option>
+              <option value="hf" ${curriculumSource === "hf" ? "selected" : ""}>HF REQUIRED</option>
+            </select>
           </div>
         </div>
         <label class="checkbox-line guide-starter-overwrite" for="guide-starter-force">
@@ -1320,6 +1338,7 @@ function syncGuideInputs(event) {
     "guide-pack-path": "flight-pack-path",
     "guide-sft-max-items": "flight-sft-max-items",
     "guide-eval-max-items": "flight-eval-max-items",
+    "guide-benchmark-source": "flight-benchmark-source",
     "guide-starter-force": "flight-starter-force",
   };
   const destination = map[target.id];
@@ -1490,6 +1509,7 @@ function resetGuidedWorkflow() {
   $("hf-min-chars").value = "20";
   $("flight-sft-max-items").value = String(STARTER_ROW_TARGETS.sft);
   $("flight-eval-max-items").value = String(STARTER_ROW_TARGETS.eval);
+  if ($("flight-benchmark-source")) $("flight-benchmark-source").value = "offline";
   $("flight-starter-force").checked = false;
   $("flight-min-score").value = "0";
   $("launch-run-name").value = "";
