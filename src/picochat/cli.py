@@ -423,6 +423,12 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--muon-learning-rate", type=float, default=0.02)
     train_base_parser.add_argument("--ema-decay", type=float, default=0.0)
     train_base_parser.add_argument(
+        "--logit-softcap",
+        type=float,
+        default=0.0,
+        help="Optional tanh softcap applied to logits during training and generation. 0 disables it.",
+    )
+    train_base_parser.add_argument(
         "--canary-count",
         type=int,
         default=0,
@@ -654,6 +660,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--sft-muon-learning-rate", type=float, default=None)
     run_tiny_parser.add_argument("--base-ema-decay", type=float, default=None)
     run_tiny_parser.add_argument("--sft-ema-decay", type=float, default=None)
+    run_tiny_parser.add_argument(
+        "--logit-softcap",
+        type=float,
+        default=None,
+        help="Optional tanh softcap applied to model logits. 0 disables it.",
+    )
     run_tiny_parser.add_argument(
         "--sft-sampling",
         choices=SFT_SAMPLING_MODES,
@@ -1208,6 +1220,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         optimizer=args.optimizer,
         muon_learning_rate=args.muon_learning_rate,
         ema_decay=args.ema_decay,
+        logit_softcap=args.logit_softcap,
     )
     report = train_base(config)
     print(f"saved checkpoint: {report['checkpoint']}")
@@ -1492,6 +1505,7 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         sft_sampling=_resolve_tiny_value(args, defaults, "sft_sampling"),
         sft_fit_max_rows=_resolve_tiny_value(args, defaults, "sft_fit_max_rows"),
         allow_default_tuning_data=args.allow_default_tuning_data,
+        logit_softcap=_resolve_tiny_value(args, defaults, "logit_softcap"),
     ))
     print(
         f"tiny run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "

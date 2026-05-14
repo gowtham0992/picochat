@@ -22,6 +22,7 @@ class GPTConfig:
     position_encoding: str = "learned"
     activation: str = "gelu"
     rope_base: float = 10000.0
+    logit_softcap: float = 0.0
 
     def to_dict(self) -> dict[str, int | float | str]:
         return asdict(self)
@@ -130,6 +131,8 @@ class TinyGPT(nn.Module):
         super().__init__()
         if config.position_encoding not in {"learned", "rope"}:
             raise ValueError("position_encoding must be 'learned' or 'rope'")
+        if config.logit_softcap < 0:
+            raise ValueError("logit_softcap must be non-negative")
         self.config = config
         self.token_embedding = nn.Embedding(config.vocab_size, config.n_embd)
         self.position_embedding = (
@@ -160,6 +163,8 @@ class TinyGPT(nn.Module):
             x = block(x)
         x = self.ln_f(x)
         logits = self.lm_head(x)
+        if self.config.logit_softcap > 0:
+            logits = torch.tanh(logits / self.config.logit_softcap) * self.config.logit_softcap
 
         loss = None
         if targets is not None:

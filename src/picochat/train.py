@@ -64,6 +64,7 @@ class TrainConfig:
     optimizer: str = "adamw"
     muon_learning_rate: float = 0.02
     ema_decay: float = 0.0
+    logit_softcap: float = 0.0
 
 
 @torch.no_grad()
@@ -167,6 +168,7 @@ def train_base(config: TrainConfig) -> dict:
         norm_type=config.norm_type,
         position_encoding=config.position_encoding,
         activation=config.activation,
+        logit_softcap=config.logit_softcap,
     )
     model = TinyGPT(model_config).to(device)
     optimizer = create_optimizer(
@@ -475,7 +477,7 @@ def _coverage_report(dataset_stats: dict, config: TrainConfig, actual_steps: int
     tokens_seen = actual_steps * tokens_per_step
     train_tokens = dataset_stats.get("train_tokens") or dataset_stats.get("num_tokens")
     total_tokens = dataset_stats.get("num_tokens")
-    return {
+    report = {
         "actual_steps": actual_steps,
         "planned_steps": config.max_steps,
         "micro_batch_size": config.batch_size,
@@ -488,6 +490,11 @@ def _coverage_report(dataset_stats: dict, config: TrainConfig, actual_steps: int
         "estimated_train_epochs": _safe_ratio(tokens_seen, train_tokens),
         "estimated_dataset_passes": _safe_ratio(tokens_seen, total_tokens),
     }
+    report["warnings"] = _coverage_warnings(
+        train_epochs=report["estimated_train_epochs"],
+        dataset_passes=report["estimated_dataset_passes"],
+    )
+    return report
 
 
 def _safe_ratio(numerator: int | float, denominator) -> float | None:
@@ -498,6 +505,31 @@ def _safe_ratio(numerator: int | float, denominator) -> float | None:
     if denominator <= 0:
         return None
     return float(numerator) / denominator
+
+
+def _coverage_warnings(
+    *,
+    train_epochs: float | None,
+    dataset_passes: float | None,
+) -> list[str]:
+    warnings: list[str] = []
+    if train_epochs is not None:
+        if train_epochs >= 20:
+            warnings.append(
+                "High base exposure: planned tokens are >=20 train-set passes. "
+                "Prefer more corpus or a shorter run unless validation BPB is still improving."
+            )
+        elif train_epochs >= 8:
+            warnings.append(
+                "Moderate base exposure: planned tokens are >=8 train-set passes. "
+                "Inspect memorization and validation BPB before scaling further."
+            )
+    if dataset_passes is not None and dataset_passes >= 10:
+        warnings.append(
+            "The full corpus is recycled many times. Treat any score gain as suspect "
+            "unless held-out document validation improves."
+        )
+    return warnings
 
 
 def _format_optional(value: float | None) -> str:

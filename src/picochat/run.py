@@ -77,6 +77,7 @@ class TinyRunConfig:
     sft_sampling: str = "uniform"
     sft_fit_max_rows: int = 500
     allow_default_tuning_data: bool = False
+    logit_softcap: float = 0.0
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -167,6 +168,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         optimizer=config.base_optimizer,
         muon_learning_rate=config.base_muon_learning_rate,
         ema_decay=config.base_ema_decay,
+        logit_softcap=config.logit_softcap,
     ))
     base_eval_checkpoint = base_report.get("best_checkpoint", {}).get(
         "path",

@@ -122,6 +122,7 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Norm: `{model_config.get('norm_type', 'layernorm')}`")
     lines.append(f"- Position encoding: `{model_config.get('position_encoding', 'learned')}`")
     lines.append(f"- Activation: `{model_config.get('activation', 'gelu')}`")
+    lines.append(f"- Logit softcap: {model_config.get('logit_softcap', 0.0) or 'disabled'}")
     lines.append("")
 
     lines.append("## Training")
@@ -183,6 +184,8 @@ def training_report_markdown(report: dict) -> str:
         lines.append(f"- Estimated training tokens: {coverage.get('actual_training_tokens')}")
         lines.append(f"- Estimated train epochs: {format_optional_float(coverage.get('estimated_train_epochs'))}")
         lines.append(f"- Estimated dataset passes: {format_optional_float(coverage.get('estimated_dataset_passes'))}")
+        for warning in coverage.get("warnings", []):
+            lines.append(f"- Warning: {warning}")
         lines.append("")
 
     lines.append("## Loss Diagnostics")
@@ -321,6 +324,7 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Norm: `{model_config.get('norm_type', 'layernorm')}`")
     lines.append(f"- Position encoding: `{model_config.get('position_encoding', 'learned')}`")
     lines.append(f"- Activation: `{model_config.get('activation', 'gelu')}`")
+    lines.append(f"- Logit softcap: {model_config.get('logit_softcap', 0.0) or 'disabled'}")
     lines.append("")
 
     lines.append("## Training")
@@ -381,6 +385,8 @@ def sft_report_markdown(report: dict) -> str:
         lines.append(f"- Estimated chat example updates: {coverage.get('actual_example_updates')}")
         lines.append(f"- Estimated train epochs: {format_optional_float(coverage.get('estimated_train_epochs'))}")
         lines.append(f"- Estimated dataset passes: {format_optional_float(coverage.get('estimated_dataset_passes'))}")
+        for warning in coverage.get("warnings", []):
+            lines.append(f"- Warning: {warning}")
         lines.append("")
 
     lines.append("## Loss Diagnostics")
@@ -729,6 +735,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Norm: `{config.get('norm_type', 'layernorm')}`")
     lines.append(f"- Position encoding: `{config.get('position_encoding', 'learned')}`")
     lines.append(f"- Activation: `{config.get('activation', 'gelu')}`")
+    lines.append(f"- Logit softcap: {config.get('logit_softcap', 0.0) or 'disabled'}")
     lines.append(f"- Base steps: {config['base_steps']}")
     lines.append(f"- SFT steps: {config['sft_steps']}")
     lines.append(f"- Tokenizer type: `{tokenizer.get('tokenizer_type', 'unknown')}`")
@@ -776,9 +783,13 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     if base_coverage:
         lines.append(f"- Base stop reason: `{base.get('stop_reason', 'unknown')}`")
         lines.append(f"- Base estimated train epochs: {format_optional_float(base_coverage.get('estimated_train_epochs'))}")
+        for warning in base_coverage.get("warnings", []):
+            lines.append(f"- Base coverage warning: {warning}")
     if sft_coverage:
         lines.append(f"- SFT stop reason: `{sft.get('stop_reason', 'unknown')}`")
         lines.append(f"- SFT estimated train epochs: {format_optional_float(sft_coverage.get('estimated_train_epochs'))}")
+        for warning in sft_coverage.get("warnings", []):
+            lines.append(f"- SFT coverage warning: {warning}")
     if base_diagnostics:
         lines.append(f"- Base loss status: `{base_diagnostics.get('status', 'unknown')}`")
         lines.append(f"- Base final train/val gap: {format_optional_float(base_diagnostics.get('final_gap'))}")

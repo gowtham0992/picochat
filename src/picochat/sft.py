@@ -735,7 +735,7 @@ def train_sft(config: SFTConfig) -> dict:
 def _coverage_report(train_examples: int, total_examples: int, config: SFTConfig, actual_steps: int) -> dict:
     examples_per_step = config.batch_size * config.grad_accum_steps
     examples_seen = actual_steps * examples_per_step
-    return {
+    report = {
         "actual_steps": actual_steps,
         "planned_steps": config.max_steps,
         "micro_batch_size": config.batch_size,
@@ -748,6 +748,21 @@ def _coverage_report(train_examples: int, total_examples: int, config: SFTConfig
         "estimated_train_epochs": _safe_ratio(examples_seen, train_examples),
         "estimated_dataset_passes": _safe_ratio(examples_seen, total_examples),
     }
+    train_epochs = report["estimated_train_epochs"]
+    warnings: list[str] = []
+    if train_epochs is not None:
+        if train_epochs >= 80:
+            warnings.append(
+                "Very high SFT exposure: examples are replayed >=80 times. "
+                "Expect memorization unless held-out eval and SFT fit both improve."
+            )
+        elif train_epochs >= 30:
+            warnings.append(
+                "High SFT exposure: examples are replayed >=30 times. "
+                "Prefer more behavior rows before increasing steps further."
+            )
+    report["warnings"] = warnings
+    return report
 
 
 def _safe_ratio(numerator: int | float, denominator: int | float) -> float | None:
