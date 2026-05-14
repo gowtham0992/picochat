@@ -286,6 +286,8 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Examples: {dataset['num_examples']}")
     lines.append(f"- Context size: {dataset['context_size']}")
     lines.append(f"- Supervised answer tokens: {dataset['supervised_tokens']}")
+    if dataset.get("masked_prompt_tokens") is not None:
+        lines.append(f"- Masked prompt tokens: {dataset['masked_prompt_tokens']}")
     lines.append(f"- Truncated examples: {dataset.get('truncated_examples', 0)}")
     lines.append(f"- Skipped too-long examples: {dataset.get('skipped_long_examples', 0)}")
     lines.append(f"- Train examples: {dataset['train_examples']}")
@@ -756,7 +758,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- SFT grad accumulation: {config.get('sft_grad_accum_steps', 1)}")
     lines.append(f"- Base early stop patience: {config.get('base_early_stop_patience', 0)}")
     lines.append(f"- SFT early stop patience: {config.get('sft_early_stop_patience', 0)}")
-    lines.append(f"- SFT fit diagnostic max rows: {config.get('sft_fit_max_rows', 500)}")
+    lines.append(f"- SFT fit diagnostic max rows: {config.get('sft_fit_max_rows', 1000)}")
     lines.append(f"- Train-only canaries: {config.get('canary_count', 0)}")
     lines.append(f"- Device: `{config['device']}`")
     if config.get("dataset_pack"):

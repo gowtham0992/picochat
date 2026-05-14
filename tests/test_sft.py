@@ -45,6 +45,10 @@ def test_chat_sft_dataset_masks_prompt_tokens():
     assert -100 in labels
     assert any(token_id != -100 for token_id in labels)
     assert dataset.stats().supervised_tokens > 0
+    assert dataset.stats().masked_prompt_tokens > 0
+
+    unmasked_labels = [token_id for token_id in labels if token_id != -100]
+    assert unmasked_labels[0] == tokenizer.encode("hello", add_eos=True)[0]
 
 
 def test_chat_sft_dataset_skips_rows_that_do_not_fit_context():

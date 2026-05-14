@@ -2,7 +2,14 @@ import json
 
 import pytest
 
-from picochat.run import TinyRunConfig, run_tiny
+from picochat.run import TinyRunConfig, _validation_log_every, run_tiny
+
+
+def test_validation_log_every_keeps_long_runs_observable():
+    assert _validation_log_every(1) == 1
+    assert _validation_log_every(24) == 1
+    assert _validation_log_every(240) == 10
+    assert _validation_log_every(30000) == 1250
 
 
 def test_run_tiny_writes_full_experiment_artifacts(tmp_path):

@@ -75,7 +75,7 @@ class TinyRunConfig:
     base_ema_decay: float = 0.0
     sft_ema_decay: float = 0.0
     sft_sampling: str = "uniform"
-    sft_fit_max_rows: int = 500
+    sft_fit_max_rows: int = 1000
     allow_default_tuning_data: bool = False
     logit_softcap: float = 0.0
 
@@ -152,7 +152,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         activation=config.activation,
         seed=config.seed,
         device=config.device,
-        log_every=max(1, config.base_steps // 6),
+        log_every=_validation_log_every(config.base_steps),
         sample_tokens=160,
         split_mode=config.split_mode,
         corpus_manifest_path=corpus_build.manifest_path,
@@ -186,7 +186,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         learning_rate=config.sft_learning_rate,
         seed=config.seed,
         device=config.device,
-        log_every=max(1, config.sft_steps // 6),
+        log_every=_validation_log_every(config.sft_steps),
         sample_tokens=160,
         early_stop_patience=config.sft_early_stop_patience,
         early_stop_min_delta=config.early_stop_min_delta,
@@ -325,6 +325,13 @@ def run_tiny(config: TinyRunConfig) -> dict:
     )
     print(f"summary: {out_dir / 'summary.md'}")
     return summary
+
+
+def _validation_log_every(max_steps: int, target_points: int = 24) -> int:
+    """Choose enough validation points to catch long-run regressions."""
+    if max_steps <= 1:
+        return 1
+    return max(1, max_steps // target_points)
 
 
 def _validate_tuning_data_source(

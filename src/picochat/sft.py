@@ -43,6 +43,7 @@ class ChatDatasetStats:
     num_examples: int
     context_size: int
     supervised_tokens: int
+    masked_prompt_tokens: int
     truncated_examples: int
     skipped_long_examples: int
     num_groups: int
@@ -106,12 +107,13 @@ class ChatSFTDataset(torch.utils.data.Dataset):
         self.groups: list[str | None] = []
         self.categories: list[str] = []
         supervised_tokens = 0
+        masked_prompt_tokens = 0
         skipped_long_examples = 0
 
         for example in examples:
             prompt = render_chat_prompt([], example.user)
             prompt_ids = tokenizer.encode(prompt, add_bos=True)
-            answer_ids = tokenizer.encode(f" {example.assistant}", add_eos=True)
+            answer_ids = tokenizer.encode(example.assistant, add_eos=True)
             max_ids = context_size + 1
 
             if len(prompt_ids) + len(answer_ids) > max_ids:
@@ -124,8 +126,8 @@ class ChatSFTDataset(torch.utils.data.Dataset):
 
             x = full_ids[:-1]
             labels = full_ids[1:]
-            prompt_label_count = max(0, len(prompt_ids) - 1)
-            labels[:prompt_label_count] = [-100] * min(prompt_label_count, len(labels))
+            mask_label_count = max(0, len(prompt_ids) - 1)
+            labels[:mask_label_count] = [-100] * min(mask_label_count, len(labels))
 
             supervised = sum(1 for token_id in labels if token_id != -100)
             if supervised == 0:
@@ -142,6 +144,7 @@ class ChatSFTDataset(torch.utils.data.Dataset):
             self.groups.append(example.group)
             self.categories.append(example.category)
             supervised_tokens += supervised
+            masked_prompt_tokens += min(mask_label_count, len(labels))
 
         if not self.rows:
             raise ValueError(
@@ -154,6 +157,7 @@ class ChatSFTDataset(torch.utils.data.Dataset):
             num_examples=len(self.rows),
             context_size=context_size,
             supervised_tokens=supervised_tokens,
+            masked_prompt_tokens=masked_prompt_tokens,
             truncated_examples=0,
             skipped_long_examples=skipped_long_examples,
             num_groups=len(explicit_groups),
@@ -760,6 +764,11 @@ def _coverage_report(train_examples: int, total_examples: int, config: SFTConfig
             warnings.append(
                 "High SFT exposure: examples are replayed >=30 times. "
                 "Prefer more behavior rows before increasing steps further."
+            )
+        elif train_epochs >= 10:
+            warnings.append(
+                "Moderate SFT exposure: examples are replayed >=10 times. "
+                "Watch SFT fit and held-out eval before increasing steps."
             )
     report["warnings"] = warnings
     return report
