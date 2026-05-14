@@ -90,6 +90,37 @@ def test_behavior_profile_excludes_broad_long_form_chat_rows(tmp_path):
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
 
 
+def test_behavior_profile_supports_medium_curriculum_size(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=1000,
+        eval_rows=200,
+        profile="behavior",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    chat_categories = Counter(row["category"] for row in chat_rows)
+    eval_categories = Counter(row["category"] for row in eval_rows)
+
+    assert report.sft_rows == 1000
+    assert report.eval_rows == 200
+    assert chat_categories["refusal"] == 100
+    assert eval_categories["refusal"] == 20
+    assert len({row["user"] for row in chat_rows}) == len(chat_rows)
+    assert len({row["user"] for row in eval_rows}) == len(eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
 def test_weak_skills_profile_overweights_math_and_spelling(tmp_path):
     pack = write_pack(tmp_path)
 
