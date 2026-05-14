@@ -11,6 +11,15 @@ from typing import Any
 
 
 TEXT_EXTENSIONS = {".txt", ".text", ".md", ".jsonl", ".csv", ".py"}
+GENERIC_REFUSAL_SUPPORT_PHRASES = {
+    "i do not know",
+    "not enough information",
+    "cannot answer",
+    "provided material",
+    "do not know from the provided material",
+    "cannot answer from the provided material",
+    "not enough information in the provided material",
+}
 
 
 @dataclass(frozen=True)
@@ -384,6 +393,8 @@ def _prompt_similarity(left: str, right: str) -> float:
 
 
 def _is_specific_support_phrase(phrase: str) -> bool:
+    if phrase in GENERIC_REFUSAL_SUPPORT_PHRASES:
+        return False
     if len(phrase) < 18:
         return False
     return len(phrase.split()) >= 3

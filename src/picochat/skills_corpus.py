@@ -130,10 +130,10 @@ def _math_example(index: int, rng: random.Random) -> dict[str, str]:
         question = f"{x} * {y}"
         answer = str(x * y)
     elif kind == 3:
-        question = f"Nora had {a + c} stickers. She gave away {c}. How many stickers remain?"
+        question = f"Start with {a + c}. Remove {c}. What number remains?"
         answer = str(a)
     else:
-        question = f"A box has {a} blue marbles and {b} green marbles. How many marbles are in the box?"
+        question = f"Combine {a} objects and {b} objects. What is the total count?"
         answer = str(a + b)
     templates = (
         "Arithmetic drill\nQuestion: {question}\nAnswer: {answer}",

@@ -31,6 +31,9 @@ def test_generate_skills_corpus_writes_train_only_drills_and_recipe(tmp_path):
     }
     assert "Arithmetic drill" in text or "Math fact" in text
     assert "Character drill" in text or "Spelling fact" in text
+    assert "Nora had" not in text
+    assert "blue marbles" not in text
+    assert "How many marbles are in the box" not in text
     assert all(word not in text for word in HELDOUT_WORDS)
     assert recipe_payload["sources"][0]["label"] == "base"
     assert recipe_payload["sources"][1]["label"] == "micro_skills"

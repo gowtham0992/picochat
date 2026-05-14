@@ -85,6 +85,8 @@ def test_behavior_profile_excludes_broad_long_form_chat_rows(tmp_path):
     assert any(row["category"].startswith("bench_choice") for row in chat_rows)
     assert any(row["category"] == "bench_math" for row in chat_rows)
     assert any(row["category"] == "identity" for row in chat_rows)
+    assert len({row["user"] for row in chat_rows}) == len(chat_rows)
+    assert len({row["user"] for row in eval_rows}) == len(eval_rows)
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
 
 
@@ -117,6 +119,8 @@ def test_weak_skills_profile_overweights_math_and_spelling(tmp_path):
     assert eval_categories["bench_math"] >= 32
     assert eval_categories["bench_spelling"] >= 24
     assert "smoltalk" not in chat_categories
+    assert len({row["user"] for row in chat_rows}) == len(chat_rows)
+    assert len({row["user"] for row in eval_rows}) == len(eval_rows)
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
 
 
@@ -131,6 +135,8 @@ def test_offline_behavior_curriculum_has_unique_skill_coverage():
     assert sum(row["category"] == "bench_spelling" for row in eval_rows) >= 8
     assert sum(row["category"] == "identity" for row in eval_rows) >= 4
     assert any(row.get("correct_choice") for row in eval_rows)
+    assert len({row["user"] for row in chat_rows}) == len(chat_rows)
+    assert len({row["user"] for row in eval_rows}) == len(eval_rows)
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
 
 
