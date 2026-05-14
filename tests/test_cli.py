@@ -134,6 +134,38 @@ def test_cli_data_build_from_recipe(tmp_path, capsys):
     assert "built corpus" in output
 
 
+def test_cli_run_tiny_preflight_only(tmp_path, capsys):
+    import json
+
+    corpus = tmp_path / "corpus.txt"
+    chat = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack = tmp_path / "dataset_pack.json"
+    corpus.write_text("Picochat trains tiny local models.\n" * 20, encoding="utf-8")
+    chat.write_text(json.dumps({"user": "hi", "assistant": "hello"}) + "\n", encoding="utf-8")
+    eval_path.write_text(json.dumps({"user": "hi", "must_include": ["hello"]}) + "\n", encoding="utf-8")
+    pack.write_text(json.dumps({
+        "corpus": "corpus.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    exit_code = main([
+        "run",
+        "tiny",
+        "--out-dir",
+        str(tmp_path / "run"),
+        "--dataset-pack",
+        str(pack),
+        "--preflight-only",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Picochat Run Preflight" in output
+    assert "assistant_only_masking" in output
+
+
 def test_cli_data_skills_corpus(tmp_path, capsys):
     base_path = tmp_path / "base.txt"
     out_path = tmp_path / "skills.txt"

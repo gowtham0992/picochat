@@ -51,6 +51,8 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert (out_dir / "corpus.txt").exists()
     assert (out_dir / "corpus_manifest.json").exists()
     assert (out_dir / "corpus_report.md").exists()
+    assert (out_dir / "preflight.json").exists()
+    assert (out_dir / "preflight.md").exists()
     assert (out_dir / "tokenizer.json").exists()
     assert (out_dir / "base" / "checkpoint" / "model.pt").exists()
     assert (out_dir / "base" / "best_checkpoint" / "model.pt").exists()
@@ -67,6 +69,8 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert summary["config"]["tokenizer_type"] == "char"
     assert summary["tokenizer"]["tokenizer_type"] == "char"
     assert "corpus_manifest" in summary["artifacts"]
+    assert "preflight_report" in summary["artifacts"]
+    assert summary["preflight"]["status"] in {"ready", "warn"}
     assert "honesty_report" in summary["artifacts"]
     assert summary["honesty"]["status"] == "blocked"
     assert summary["honesty"]["exact_prompt_leaks"] == 1
@@ -81,6 +85,7 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert summary["config"]["dataset_pack"] == str(pack_path)
     assert summary["config"]["chat_input"] == str(chat_path)
     assert summary["config"]["eval_input"] == str(eval_path)
+    assert summary["long_run_gate"]["status"] in {"approved", "warn", "blocked"}
 
 
 def test_run_tiny_blocks_leaky_eval_by_default(tmp_path):
@@ -117,6 +122,48 @@ def test_run_tiny_blocks_leaky_eval_by_default(tmp_path):
         ))
 
     assert (out_dir / "honesty" / "honesty_report.json").exists()
+    assert not (out_dir / "tokenizer.json").exists()
+
+
+def test_run_tiny_blocks_unsafe_long_run_before_training(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    out_dir = tmp_path / "run"
+    corpus_path.write_text("A clean training document about local models.\n" * 200, encoding="utf-8")
+    chat_path.write_text(
+        json.dumps({"user": "What is this?", "assistant": "This is a local model test."}) + "\n",
+        encoding="utf-8",
+    )
+    eval_path.write_text(
+        json.dumps({"user": "Say local model.", "must_include": ["local model"]}) + "\n",
+        encoding="utf-8",
+    )
+    pack_path.write_text(json.dumps({
+        "corpus": "corpus.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="run preflight blocked"):
+        run_tiny(TinyRunConfig(
+            out_dir=str(out_dir),
+            dataset_pack=str(pack_path),
+            tokenizer_type="bpe",
+            tokenizer_vocab_size=1024,
+            context_size=64,
+            n_embd=128,
+            n_head=4,
+            n_layer=4,
+            base_steps=5000,
+            sft_steps=1000,
+            base_batch_size=8,
+            sft_batch_size=8,
+        ))
+
+    assert (out_dir / "preflight.json").exists()
+    assert not (out_dir / "honesty").exists()
     assert not (out_dir / "tokenizer.json").exists()
 
 

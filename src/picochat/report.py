@@ -634,6 +634,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     artifacts = summary["artifacts"]
     tokenizer = summary.get("tokenizer", {})
     honesty = summary.get("honesty", {})
+    preflight = summary.get("preflight", {})
+    long_run_gate = summary.get("long_run_gate", {})
     base_diagnostics = base.get("loss_diagnostics", {})
     sft_diagnostics = sft.get("loss_diagnostics", {})
     base_memorization = base.get("memorization", {})
@@ -672,6 +674,39 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.append(f"- Missing support rate: {format_float(eval_summary.get('missing_support_rate', 0.0) * 100)}%")
         lines.append(f"- Support match rate: {format_float(eval_summary.get('support_match_rate', 0.0) * 100)}%")
     lines.append("")
+
+    if preflight:
+        budget = preflight.get("budget", {})
+        blocking = preflight.get("blocking_checks", [])
+        warnings = preflight.get("warning_checks", [])
+        lines.append("## Long-Run Preflight")
+        lines.append("")
+        lines.append(f"- Status: `{preflight.get('status', 'unknown')}`")
+        lines.append(f"- Summary: {preflight.get('summary', 'No preflight summary recorded.')}")
+        lines.append(f"- Estimated parameters: {int(budget.get('estimated_parameters', 0)):,}")
+        lines.append(f"- Estimated corpus tokens: {int(budget.get('estimated_corpus_tokens', 0)):,}")
+        lines.append(f"- Base planned tokens: {int(budget.get('base_planned_tokens', 0)):,}")
+        lines.append(f"- Base estimated epochs: {format_optional_float(budget.get('estimated_base_epochs'))}")
+        lines.append(f"- SFT estimated example epochs: {format_optional_float(budget.get('estimated_sft_example_epochs'))}")
+        lines.append(f"- Long run: {'yes' if budget.get('long_run') else 'no'} ({budget.get('long_run_reason', '--')})")
+        if blocking:
+            lines.append("- Blocking checks:")
+            lines.extend(f"  - `{item.get('name')}`: {item.get('message')}" for item in blocking[:8])
+        if warnings:
+            lines.append("- Warning checks:")
+            lines.extend(f"  - `{item.get('name')}`: {item.get('message')}" for item in warnings[:8])
+        lines.append("")
+
+    if long_run_gate:
+        lines.append("## Approved Long-Run Gate")
+        lines.append("")
+        lines.append(f"- Status: `{long_run_gate.get('status', 'unknown')}`")
+        lines.append(f"- Summary: {long_run_gate.get('summary', 'No long-run gate summary recorded.')}")
+        lines.append(f"- SFT fit rate: {format_float(float(long_run_gate.get('sft_fit_rate', 0.0)) * 100)}%")
+        lines.append(f"- Required SFT fit rate: {format_float(float(long_run_gate.get('sft_fit_threshold', 0.70)) * 100)}%")
+        for issue in long_run_gate.get("issues", [])[:8]:
+            lines.append(f"- {issue.get('severity', 'warn').upper()} `{issue.get('name')}`: {issue.get('message')}")
+        lines.append("")
 
     if honesty:
         lines.append("## Data Honesty")
@@ -808,6 +843,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     if artifacts.get("dataset_pack"):
         lines.append(f"- Dataset pack: `{artifacts['dataset_pack']}`")
     lines.append(f"- Corpus: `{artifacts['corpus']}`")
+    if artifacts.get("preflight_report"):
+        lines.append(f"- Run preflight: `{artifacts['preflight_report']}`")
     if artifacts.get("honesty_report"):
         lines.append(f"- Data honesty report: `{artifacts['honesty_report']}`")
     lines.append(f"- Tokenizer: `{artifacts['tokenizer']}`")

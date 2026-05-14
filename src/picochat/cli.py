@@ -29,6 +29,7 @@ from picochat.benchmark_pack import (
     generate_benchmark_tuning_pack,
 )
 from picochat.run import TinyRunConfig, run_tiny
+from picochat.run_preflight import assess_run_preflight, preflight_markdown
 from picochat.compare import compare_runs, comparison_table, write_comparison_report
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.device import DEVICE_CHOICES
@@ -708,6 +709,19 @@ def build_parser() -> argparse.ArgumentParser:
             "Allow a custom corpus run to keep Picochat's demo chat/eval files. "
             "Use only for diagnostic wiring checks."
         ),
+    )
+    run_tiny_parser.add_argument(
+        "--allow-unsafe-long-run",
+        action="store_true",
+        help=(
+            "Bypass long-run preflight blocking checks. Use only for diagnostic runs; "
+            "the run summary will still record the failed checklist."
+        ),
+    )
+    run_tiny_parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="Inspect the long-run checklist and exit without training.",
     )
 
     compare_parser = subparsers.add_parser("compare", help="Compare completed run summaries.")
@@ -1448,8 +1462,31 @@ def _resolve_tiny_value(args: argparse.Namespace, defaults: TinyRunConfig, field
 
 
 def run_tiny_command(args: argparse.Namespace) -> int:
+    config = _tiny_config_from_args(args)
+    if args.preflight_only:
+        preview = preview_corpus_sources(
+            None if config.dataset_pack else config.corpus_input,
+            None if config.dataset_pack else config.corpus_recipe,
+            chat_input=None if config.dataset_pack else config.chat_input,
+            eval_input=None if config.dataset_pack else config.eval_input,
+            dataset_pack=config.dataset_pack,
+            preview_chars=0,
+            min_quality_score=config.min_quality_score,
+        )
+        report = assess_run_preflight(config, preview)
+        print(preflight_markdown(report))
+        return 1 if report.status == "blocked" else 0
+    summary = run_tiny(config)
+    print(
+        f"tiny run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "
+        f"passed ({summary['eval']['pass_rate'] * 100:.2f}%)"
+    )
+    return 0
+
+
+def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
     defaults = TinyRunConfig(out_dir=args.out_dir)
-    summary = run_tiny(TinyRunConfig(
+    return TinyRunConfig(
         out_dir=args.out_dir,
         scale=args.scale,
         dataset_pack=args.dataset_pack,
@@ -1506,12 +1543,8 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         sft_fit_max_rows=_resolve_tiny_value(args, defaults, "sft_fit_max_rows"),
         allow_default_tuning_data=args.allow_default_tuning_data,
         logit_softcap=_resolve_tiny_value(args, defaults, "logit_softcap"),
-    ))
-    print(
-        f"tiny run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "
-        f"passed ({summary['eval']['pass_rate'] * 100:.2f}%)"
+        allow_unsafe_long_run=args.allow_unsafe_long_run,
     )
-    return 0
 
 
 def run_demo(args: argparse.Namespace) -> int:

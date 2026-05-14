@@ -15,6 +15,7 @@ from picochat.data import (
 from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.report import tiny_run_summary_markdown
+from picochat.run_preflight import assess_run_preflight, preflight_markdown
 from picochat.sft import SFTConfig, SFT_SAMPLING_MODES, train_sft
 from picochat.tokenizer import TOKENIZER_TYPES, train_tokenizer
 from picochat.train import TrainConfig, train_base
@@ -78,6 +79,7 @@ class TinyRunConfig:
     sft_fit_max_rows: int = 1000
     allow_default_tuning_data: bool = False
     logit_softcap: float = 0.0
+    allow_unsafe_long_run: bool = False
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -102,6 +104,19 @@ def run_tiny(config: TinyRunConfig) -> dict:
     chat_input = corpus_build.training_command.chat_input
     eval_input = corpus_build.training_command.eval_input
     _validate_tuning_data_source(config, chat_input=chat_input, eval_input=eval_input)
+
+    preflight_report = assess_run_preflight(config, corpus_build)
+    preflight_json_path = out_dir / "preflight.json"
+    preflight_markdown_path = out_dir / "preflight.md"
+    preflight_json_path.write_text(json.dumps(preflight_report.to_dict(), indent=2), encoding="utf-8")
+    preflight_markdown_path.write_text(preflight_markdown(preflight_report), encoding="utf-8")
+    print(f"preflight: {preflight_report.status} | {preflight_report.summary}")
+    if preflight_report.status == "blocked" and not config.allow_unsafe_long_run:
+        raise ValueError(
+            "run preflight blocked this plan; inspect "
+            f"{preflight_markdown_path} or rerun with --allow-unsafe-long-run "
+            "for a diagnostic-only run"
+        )
 
     if config.tokenizer_type not in TOKENIZER_TYPES:
         raise ValueError(f"Unsupported tokenizer type: {config.tokenizer_type}")
@@ -235,6 +250,12 @@ def run_tiny(config: TinyRunConfig) -> dict:
         device=config.device,
         support_corpus_path=str(corpus_path),
     ))
+    long_run_gate = _long_run_gate(
+        preflight_report=preflight_report.to_dict(),
+        sft_fit_summary=sft_fit_report["summary"],
+        eval_summary=eval_report["summary"],
+        honesty=honesty_report.to_dict(),
+    )
 
     effective_config = {
         **config.__dict__,
@@ -253,6 +274,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "corpus": str(corpus_path),
             "corpus_manifest": corpus_build.manifest_path,
             "corpus_report": corpus_build.report_path,
+            "preflight_json": str(preflight_json_path),
+            "preflight_report": str(preflight_markdown_path),
             "honesty_json": honesty_json_path,
             "honesty_report": honesty_markdown_path,
             "tokenizer": str(tokenizer_path),
@@ -268,6 +291,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "eval_report": str(out_dir / "eval" / "report.md"),
         },
         "corpus": corpus_build.stats.to_dict(),
+        "preflight": preflight_report.to_dict(),
         "honesty": honesty_report.to_dict(),
         "tokenizer": tokenizer.stats().__dict__,
         "base": {
@@ -315,6 +339,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         "sft_fit_analysis": sft_fit_report.get("analysis", {}),
         "eval": eval_report["summary"],
         "eval_analysis": eval_report.get("analysis", {}),
+        "long_run_gate": long_run_gate,
     }
 
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -332,6 +357,67 @@ def _validation_log_every(max_steps: int, target_points: int = 24) -> int:
     if max_steps <= 1:
         return 1
     return max(1, max_steps // target_points)
+
+
+def _long_run_gate(
+    *,
+    preflight_report: dict,
+    sft_fit_summary: dict,
+    eval_summary: dict,
+    honesty: dict,
+) -> dict:
+    """Decide whether this completed run should be used as a long-run recipe."""
+    issues: list[dict[str, str]] = []
+    budget = preflight_report.get("budget", {})
+    long_run = bool(budget.get("long_run"))
+    if preflight_report.get("status") == "blocked":
+        issues.append({
+            "name": "preflight",
+            "severity": "block",
+            "message": "The run was launched despite blocked preflight checks.",
+        })
+    if honesty.get("status") == "blocked":
+        issues.append({
+            "name": "data_honesty",
+            "severity": "block",
+            "message": "Data honesty found leakage or tuning contamination.",
+        })
+    sft_fit_rate = float(sft_fit_summary.get("pass_rate") or 0.0)
+    if sft_fit_rate < 0.70:
+        issues.append({
+            "name": "sft_fit",
+            "severity": "block" if long_run else "warn",
+            "message": "SFT fit is below 70%; fix behavior data before scaling this recipe.",
+        })
+    if float(eval_summary.get("prompt_echo_rate") or 0.0) > 0.05:
+        issues.append({
+            "name": "prompt_echo",
+            "severity": "block",
+            "message": "Eval found prompt echoing; this is not a trustworthy long-run recipe.",
+        })
+    if float(eval_summary.get("unsupported_claim_rate") or 0.0) > 0.05:
+        issues.append({
+            "name": "unsupported_claims",
+            "severity": "warn",
+            "message": "Unsupported claim rate is above 5%; inspect failed replies before scaling.",
+        })
+
+    status = "blocked" if any(item["severity"] == "block" for item in issues) else "warn" if issues else "approved"
+    summary = (
+        "Approved long-run recipe."
+        if status == "approved"
+        else "Do not use this as the approved long-run recipe yet."
+        if status == "blocked"
+        else "Promising, but inspect warnings before using this recipe."
+    )
+    return {
+        "status": status,
+        "summary": summary,
+        "long_run": long_run,
+        "sft_fit_threshold": 0.70,
+        "sft_fit_rate": sft_fit_rate,
+        "issues": issues,
+    }
 
 
 def _validate_tuning_data_source(

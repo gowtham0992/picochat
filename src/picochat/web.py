@@ -34,6 +34,8 @@ from picochat.benchmark_pack import (
 from picochat.generate import GenerateConfig, generate_text_with_trace
 from picochat.hf_import import HFImportConfig, HFSplitError, import_hf_dataset
 from picochat.optim import LR_DECAYS, OPTIMIZER_TYPES
+from picochat.run import TinyRunConfig
+from picochat.run_preflight import assess_run_preflight
 from picochat.scales import RUN_SCALES
 from picochat.sft_starter import generate_sft_starter
 from picochat.sft import SFT_SAMPLING_MODES
@@ -920,6 +922,62 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     device = str(payload.get("device", preset.get("device", "cpu"))).strip().lower()
     if device not in DEVICE_CHOICES:
         raise ValueError(f"device must be one of {', '.join(DEVICE_CHOICES)}")
+    allow_unsafe_long_run = bool(payload.get("allow_unsafe_long_run", False))
+
+    preflight_config = TinyRunConfig(
+        out_dir=str(out_dir),
+        scale=preset_name,
+        dataset_pack=dataset_pack,
+        context_size=context_size,
+        n_embd=n_embd,
+        n_head=n_head,
+        n_layer=n_layer,
+        norm_type=norm_type,
+        position_encoding=position_encoding,
+        activation=activation,
+        base_steps=base_steps,
+        sft_steps=sft_steps,
+        base_batch_size=base_batch_size,
+        sft_batch_size=sft_batch_size,
+        base_learning_rate=base_learning_rate,
+        sft_learning_rate=sft_learning_rate,
+        seed=seed,
+        device=device,
+        eval_max_new_tokens=eval_max_new_tokens,
+        min_quality_score=min_quality_score,
+        split_mode="document",
+        tokenizer_type=tokenizer_type,
+        tokenizer_vocab_size=tokenizer_vocab_size,
+        tokenizer_min_freq=tokenizer_min_freq,
+        base_early_stop_patience=base_early_stop_patience,
+        sft_early_stop_patience=sft_early_stop_patience,
+        base_lr_warmup_steps=base_lr_warmup_steps,
+        sft_lr_warmup_steps=sft_lr_warmup_steps,
+        base_lr_decay=base_lr_decay,
+        sft_lr_decay=sft_lr_decay,
+        base_min_lr_ratio=base_min_lr_ratio,
+        sft_min_lr_ratio=sft_min_lr_ratio,
+        base_grad_clip=base_grad_clip,
+        sft_grad_clip=sft_grad_clip,
+        base_grad_accum_steps=base_grad_accum_steps,
+        sft_grad_accum_steps=sft_grad_accum_steps,
+        base_optimizer=base_optimizer,
+        sft_optimizer=sft_optimizer,
+        base_muon_learning_rate=base_muon_learning_rate,
+        sft_muon_learning_rate=sft_muon_learning_rate,
+        base_ema_decay=base_ema_decay,
+        sft_ema_decay=sft_ema_decay,
+        sft_sampling=sft_sampling,
+        allow_unsafe_long_run=allow_unsafe_long_run,
+    )
+    launch_preflight = assess_run_preflight(preflight_config, launch_preview)
+    if launch_preflight.status == "blocked" and not allow_unsafe_long_run:
+        blocking = ", ".join(check.name for check in launch_preflight.checks if check.status == "block")
+        raise ValueError(
+            "long-run preflight blocked this launch. "
+            f"Blocking checks: {blocking}. "
+            "Use a smoke run, add more data/tuning rows, reduce exposure, or explicitly allow unsafe diagnostic runs."
+        )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "web_run.log"
@@ -1016,6 +1074,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         command.extend(["--scale", preset_name])
     if tokenizer_vocab_size is not None:
         command.extend(["--tokenizer-vocab-size", str(tokenizer_vocab_size)])
+    if allow_unsafe_long_run:
+        command.append("--allow-unsafe-long-run")
     log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
     log_file = log_path.open("a", encoding="utf-8")
     try:
@@ -1069,12 +1129,14 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "sft_early_stop_patience": sft_early_stop_patience,
             "sft_sampling": sft_sampling,
             "device": device,
+            "allow_unsafe_long_run": allow_unsafe_long_run,
         },
         "launch_readiness": launch_preview.readiness.to_dict(),
         "launch_tuning": {
             "chat": launch_preview.chat_data.to_dict(),
             "eval": launch_preview.eval_data.to_dict(),
         },
+        "launch_preflight": launch_preflight.to_dict(),
     }
     with _RUN_JOBS_LOCK:
         _RUN_JOBS[job_id] = job
@@ -1654,6 +1716,7 @@ def _run_job_status(job: dict) -> dict:
         "launch_config": job.get("launch_config"),
         "launch_readiness": job.get("launch_readiness"),
         "launch_tuning": job.get("launch_tuning"),
+        "launch_preflight": job.get("launch_preflight"),
     }
 
 
@@ -1707,6 +1770,7 @@ def _discover_run_jobs(runs_dir: str | Path, limit: int = 20) -> list[dict]:
             "min_quality_score": None,
             "launch_readiness": None,
             "launch_tuning": None,
+            "launch_preflight": _preflight_from_run_dir(run_dir),
         })
     return sorted(jobs, key=lambda item: item["updated_at"])[-limit:]
 
@@ -1748,6 +1812,21 @@ def _dataset_pack_from_summary(summary_path: Path) -> str | None:
         return _read_json(summary_path).get("config", {}).get("dataset_pack")
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _preflight_from_run_dir(run_dir: Path) -> dict | None:
+    for path in (run_dir / "summary.json", run_dir / "preflight.json"):
+        if not path.exists():
+            continue
+        try:
+            payload = _read_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if path.name == "summary.json":
+            preflight = payload.get("preflight")
+            return preflight if isinstance(preflight, dict) else None
+        return payload if isinstance(payload, dict) else None
+    return None
 
 
 def _command_from_log(log_path: Path) -> str:

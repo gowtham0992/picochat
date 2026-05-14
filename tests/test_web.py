@@ -916,6 +916,8 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert job["run_name"] == "ui-run"
     assert job["preset"] == "smoke"
     assert job["min_quality_score"] == 0
+    assert job["launch_preflight"]["status"] in {"ready", "warn"}
+    assert job["launch_preflight"]["budget"]["estimated_parameters"] > 0
     assert "--dataset-pack" in captured["command"]
     assert "--min-score" in captured["command"]
     assert "--tokenizer-type" in captured["command"]
@@ -1135,6 +1137,40 @@ def test_start_run_plan_blocks_unready_dataset_pack(tmp_path):
             "dataset_pack": str(pack_path),
             "run_name": "bad-run",
         })
+
+
+def test_start_run_plan_blocks_unsafe_long_run(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    source_path.write_text("lesson text about local models\n" * 200, encoding="utf-8")
+    chat_path.write_text(json.dumps({"user": "hi", "assistant": "hello"}), encoding="utf-8")
+    eval_path.write_text(json.dumps({"user": "hi", "must_include": ["hello"]}), encoding="utf-8")
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="long-run preflight blocked"):
+        start_run_plan(tmp_path / "runs", {
+            "dataset_pack": str(pack_path),
+            "run_name": "unsafe-run",
+            "preset": "small-local",
+            "tokenizer_type": "bpe",
+            "tokenizer_vocab_size": 1024,
+            "context_size": 512,
+            "n_embd": 192,
+            "n_head": 6,
+            "n_layer": 6,
+            "base_steps": 5000,
+            "sft_steps": 1000,
+            "base_batch_size": 8,
+            "sft_batch_size": 8,
+        })
+
+    assert not (tmp_path / "runs" / "unsafe-run").exists()
 
 
 def test_cancel_run_plan_terminates_active_job(tmp_path, monkeypatch):

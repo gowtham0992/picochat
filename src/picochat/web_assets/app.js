@@ -3934,6 +3934,7 @@ function renderRunJob(job) {
       <span>PRESET ${escapeHtml(job.preset || "--")}</span>
       <span>MIN SCORE ${escapeHtml(job.min_quality_score ?? "--")}</span>
     </div>
+    ${renderLaunchPreflight(job.launch_preflight)}
     <code>${escapeHtml(job.command || "")}</code>
   `;
   $("run-launch-log").textContent = job.log_tail || "WAITING FOR LOG OUTPUT.";
@@ -3946,6 +3947,33 @@ function renderRunJob(job) {
       loadRuns().catch(() => {});
     }
   }
+}
+
+function renderLaunchPreflight(preflight) {
+  if (!preflight) return "";
+  const budget = preflight.budget || {};
+  const blockers = preflight.blocking_checks || [];
+  const warnings = preflight.warning_checks || [];
+  const visibleChecks = blockers.length ? blockers : warnings.slice(0, 4);
+  return `
+    <div class="readiness-summary ${escapeHtml(preflight.status || "unknown")}">
+      <strong>LONG-RUN PREFLIGHT ${escapeHtml(String(preflight.status || "--").toUpperCase())}</strong>
+      <span>${escapeHtml(preflight.summary || "")}</span>
+    </div>
+    <div class="command-meta">
+      <span>PARAMS ${fmtInt(budget.estimated_parameters)}</span>
+      <span>BASE EPOCHS ${fmtLoss(budget.estimated_base_epochs)}</span>
+      <span>SFT EPOCHS ${fmtLoss(budget.estimated_sft_example_epochs)}</span>
+      <span>${budget.long_run ? "LONG RUN" : "LOCAL RUN"}</span>
+    </div>
+    ${visibleChecks.map((check) => `
+      <div class="readiness-row ${escapeHtml(check.status)}">
+        <strong>${escapeHtml(check.name)}</strong>
+        <span>${escapeHtml(check.metric)} / ${escapeHtml(check.threshold)}</span>
+        <p>${escapeHtml(check.message)}</p>
+      </div>
+    `).join("")}
+  `;
 }
 
 function renderRunProgress(progress, state) {
