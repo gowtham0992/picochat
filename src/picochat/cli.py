@@ -511,6 +511,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Target tokens per disk shard when --dataset-mode sharded is used.",
     )
     train_base_parser.add_argument(
+        "--shard-cache-size",
+        type=int,
+        default=2,
+        help="Number of token shards to keep hot in memory when --dataset-mode sharded is used.",
+    )
+    train_base_parser.add_argument(
         "--corpus-manifest",
         default=None,
         help="Path to corpus_manifest.json for document-level holdout.",
@@ -1504,6 +1510,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         corpus_manifest_path=args.corpus_manifest,
         dataset_mode=args.dataset_mode,
         shard_token_size=args.shard_token_size,
+        shard_cache_size=args.shard_cache_size,
         early_stop_patience=args.early_stop_patience,
         early_stop_min_delta=args.early_stop_min_delta,
         max_minutes=args.max_minutes,

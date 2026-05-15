@@ -1,8 +1,10 @@
 import json
 
 import pytest
+import torch
 
 from picochat.batching import (
+    ShardedTokenWindowDataset,
     TokenWindowDataset,
     load_sharded_token_split,
     load_token_dataset,
@@ -66,6 +68,37 @@ def test_load_sharded_token_split_uses_disk_shards(tmp_path):
     assert (cache_dir / "token_shards_manifest.json").exists()
     assert x.shape == (8,)
     assert y.shape == (8,)
+
+
+def test_sharded_token_dataset_keeps_lru_shard_cache(tmp_path, monkeypatch):
+    shard_rows = []
+    for index in range(3):
+        path = tmp_path / f"tokens-{index}.pt"
+        torch.save(torch.arange(index * 10, index * 10 + 10), path)
+        shard_rows.append({"index": index, "path": str(path), "num_tokens": 10})
+    real_load = torch.load
+    load_counts = {row["path"]: 0 for row in shard_rows}
+
+    def counting_load(path, *args, **kwargs):
+        load_counts[str(path)] += 1
+        return real_load(path, *args, **kwargs)
+
+    monkeypatch.setattr(torch, "load", counting_load)
+    dataset = ShardedTokenWindowDataset(
+        shard_rows,
+        context_size=2,
+        max_cached_shards=2,
+    )
+
+    dataset[0]
+    dataset[8]
+    dataset[0]
+    dataset[16]
+    dataset[8]
+
+    assert load_counts[shard_rows[0]["path"]] == 1
+    assert load_counts[shard_rows[1]["path"]] == 2
+    assert load_counts[shard_rows[2]["path"]] == 1
 
 
 def test_make_dataloader_batches_examples():

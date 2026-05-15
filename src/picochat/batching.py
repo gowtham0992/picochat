@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 import bisect
 import json
@@ -63,9 +64,16 @@ class TokenWindowDataset(torch.utils.data.Dataset):
 class ShardedTokenWindowDataset(torch.utils.data.Dataset):
     """Fixed-size token windows over token shards stored on disk."""
 
-    def __init__(self, shards: list[dict[str, Any]], context_size: int):
+    def __init__(
+        self,
+        shards: list[dict[str, Any]],
+        context_size: int,
+        max_cached_shards: int = 2,
+    ):
         if context_size < 2:
             raise ValueError("context_size must be at least 2")
+        if max_cached_shards < 1:
+            raise ValueError("max_cached_shards must be at least 1")
         usable_shards = [
             shard for shard in shards
             if int(shard.get("num_tokens", 0)) > context_size
@@ -80,8 +88,8 @@ class ShardedTokenWindowDataset(torch.utils.data.Dataset):
         for length in lengths:
             total += length
             self._prefix_lengths.append(total)
-        self._cached_shard_index: int | None = None
-        self._cached_tokens: torch.Tensor | None = None
+        self.max_cached_shards = max_cached_shards
+        self._shard_cache: OrderedDict[int, torch.Tensor] = OrderedDict()
 
     def __len__(self) -> int:
         return self._prefix_lengths[-1]
@@ -104,14 +112,17 @@ class ShardedTokenWindowDataset(torch.utils.data.Dataset):
         )
 
     def _load_shard(self, shard_index: int) -> torch.Tensor:
-        if self._cached_shard_index == shard_index and self._cached_tokens is not None:
-            return self._cached_tokens
+        if shard_index in self._shard_cache:
+            tokens = self._shard_cache.pop(shard_index)
+            self._shard_cache[shard_index] = tokens
+            return tokens
         tokens = torch.load(self.shards[shard_index]["path"], map_location="cpu")
         if not isinstance(tokens, torch.Tensor):
             tokens = torch.tensor(tokens, dtype=torch.long)
-        self._cached_shard_index = shard_index
-        self._cached_tokens = tokens.long()
-        return self._cached_tokens
+        self._shard_cache[shard_index] = tokens.long()
+        while len(self._shard_cache) > self.max_cached_shards:
+            self._shard_cache.popitem(last=False)
+        return self._shard_cache[shard_index]
 
 
 class ResumableBatcher:
@@ -308,6 +319,7 @@ def load_sharded_token_split(
     val_fraction: float = 0.1,
     seed: int = 42,
     shard_token_size: int = 1_000_000,
+    shard_cache_size: int = 2,
 ) -> TokenSplitBundle:
     """Build token shards and return train/validation sharded window datasets."""
     if not 0.0 < val_fraction < 1.0:
@@ -330,8 +342,16 @@ def load_sharded_token_split(
         raise ValueError("sharded split needs at least one train shard")
     train_shards = [shards[index] for index in indices[:num_train]]
     val_shards = [shards[index] for index in indices[num_train: num_train + num_val]]
-    train_dataset = ShardedTokenWindowDataset(train_shards, context_size=context_size)
-    val_dataset = ShardedTokenWindowDataset(val_shards, context_size=context_size)
+    train_dataset = ShardedTokenWindowDataset(
+        train_shards,
+        context_size=context_size,
+        max_cached_shards=shard_cache_size,
+    )
+    val_dataset = ShardedTokenWindowDataset(
+        val_shards,
+        context_size=context_size,
+        max_cached_shards=shard_cache_size,
+    )
     stats = {
         "num_tokens": train_dataset.stats().num_tokens + val_dataset.stats().num_tokens,
         "source_num_tokens": manifest["num_tokens"],
@@ -353,6 +373,7 @@ def load_sharded_token_split(
         "train_shards": len(train_shards),
         "val_shards": len(val_shards),
         "shard_token_size": shard_token_size,
+        "shard_cache_size": shard_cache_size,
         "shards_manifest": str(Path(cache_dir) / "token_shards_manifest.json"),
         "canary_values": [],
         "canaries_enabled": False,

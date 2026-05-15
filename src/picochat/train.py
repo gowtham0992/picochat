@@ -79,6 +79,7 @@ class TrainConfig:
     corpus_manifest_path: str | None = None
     dataset_mode: str = "memory"
     shard_token_size: int = 1_000_000
+    shard_cache_size: int = 2
     early_stop_patience: int = 0
     early_stop_min_delta: float = 0.0
     max_minutes: float | None = None
@@ -202,6 +203,7 @@ def train_base(config: TrainConfig) -> dict:
             val_fraction=config.val_fraction,
             seed=config.seed,
             shard_token_size=config.shard_token_size,
+            shard_cache_size=config.shard_cache_size,
         )
     else:
         split = load_token_split(
@@ -250,6 +252,7 @@ def train_base(config: TrainConfig) -> dict:
         "seed": config.seed,
         "context_size": config.context_size,
         "shard_token_size": config.shard_token_size if config.dataset_mode == "sharded" else None,
+        "shard_cache_size": config.shard_cache_size if config.dataset_mode == "sharded" else None,
     })
     resume_state = None
     resume_metadata = None

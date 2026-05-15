@@ -238,10 +238,12 @@ def test_train_base_can_use_sharded_dataset_mode(tmp_path):
         sample_tokens=4,
         dataset_mode="sharded",
         shard_token_size=64,
+        shard_cache_size=3,
     ))
 
     assert report["dataset"]["split_mode"] == "sharded"
     assert report["dataset"]["num_shards"] > 1
+    assert report["dataset"]["shard_cache_size"] == 3
     assert (out_dir / "token_shards" / "token_shards_manifest.json").exists()
     assert report["coverage"]["actual_steps"] == 1
 
