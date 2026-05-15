@@ -8,6 +8,7 @@ before it spends hours recycling the same tiny corpus.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import math
 from typing import Any
 
 from picochat.data import CorpusBuildReport, CorpusPreviewReport, CorpusStats
@@ -17,6 +18,8 @@ LONG_RUN_BASE_STEPS = 5_000
 LONG_RUN_PARAMETER_COUNT = 1_000_000
 MIN_LONG_RUN_SFT_ROWS = 300
 MIN_LONG_RUN_EVAL_ROWS = 80
+DEFAULT_TARGET_PARAM_DATA_RATIO = 20.0
+BASE_LR_REFERENCE_EFFECTIVE_BATCH = 8
 
 
 @dataclass(frozen=True)
@@ -36,13 +39,24 @@ class RunBudgetPlan:
     estimated_parameters: int
     estimated_corpus_tokens: int
     corpus_token_note: str
+    corpus_tokens_per_parameter: float | None
     base_effective_batch_size: int
     sft_effective_batch_size: int
     base_effective_tokens_per_step: int
     base_planned_tokens: int
+    target_param_data_ratio: float
+    target_training_tokens: int
+    target_training_epochs: float | None
+    recommended_base_steps: int
+    recommended_base_tokens: int
+    recommended_base_epochs: float | None
+    planned_to_target_ratio: float | None
     sft_planned_example_updates: int
     estimated_base_epochs: float | None
     estimated_sft_example_epochs: float | None
+    base_lr_reference_effective_batch: int
+    base_lr_sqrt_scale: float
+    sft_lr_sqrt_scale: float
     long_run: bool
     long_run_reason: str
 
@@ -113,9 +127,15 @@ def preflight_markdown(report: RunPreflightReport) -> str:
     lines.extend([
         f"- Estimated parameters: {budget.estimated_parameters:,}",
         f"- Estimated corpus tokens: {budget.estimated_corpus_tokens:,}",
+        f"- Corpus tokens / parameter: {_format_optional_float(budget.corpus_tokens_per_parameter)}",
         f"- Corpus token estimate: {budget.corpus_token_note}",
         f"- Base effective batch: {budget.base_effective_batch_size}",
         f"- Base planned tokens: {budget.base_planned_tokens:,}",
+        f"- Target token/parameter ratio: {budget.target_param_data_ratio:.2f}",
+        f"- Target training tokens: {budget.target_training_tokens:,}",
+        f"- Recommended base steps: {budget.recommended_base_steps:,}",
+        f"- Recommended base epochs: {_format_optional_float(budget.recommended_base_epochs)}",
+        f"- Planned / target tokens: {_format_optional_float(budget.planned_to_target_ratio)}",
         f"- Base estimated epochs: {_format_optional_float(budget.estimated_base_epochs)}",
         f"- SFT effective batch: {budget.sft_effective_batch_size}",
         f"- SFT planned example updates: {budget.sft_planned_example_updates:,}",
@@ -151,8 +171,21 @@ def estimate_run_budget(config: Any, stats: CorpusStats, sft_examples: int) -> R
     base_tokens_per_step = base_effective_batch * context_size
     base_planned_tokens = base_steps * base_tokens_per_step
     base_epochs = _safe_ratio(base_planned_tokens, corpus_tokens)
+    target_ratio = max(
+        1.0,
+        float(_value(config, "target_param_data_ratio", DEFAULT_TARGET_PARAM_DATA_RATIO) or DEFAULT_TARGET_PARAM_DATA_RATIO),
+    )
+    target_training_tokens = max(1, int(round(estimated_parameters * target_ratio)))
+    recommended_steps = max(1, math.ceil(target_training_tokens / max(1, base_tokens_per_step)))
+    recommended_tokens = recommended_steps * base_tokens_per_step
+    recommended_epochs = _safe_ratio(recommended_tokens, corpus_tokens)
+    target_epochs = _safe_ratio(target_training_tokens, corpus_tokens)
+    planned_to_target = _safe_ratio(base_planned_tokens, target_training_tokens)
+    corpus_tokens_per_parameter = _safe_ratio(corpus_tokens, estimated_parameters)
     sft_example_updates = sft_steps * sft_effective_batch
     sft_epochs = _safe_ratio(sft_example_updates, sft_examples)
+    base_lr_scale = math.sqrt(base_effective_batch / BASE_LR_REFERENCE_EFFECTIVE_BATCH)
+    sft_lr_scale = math.sqrt(sft_effective_batch / BASE_LR_REFERENCE_EFFECTIVE_BATCH)
     long_run = base_steps >= LONG_RUN_BASE_STEPS or estimated_parameters >= LONG_RUN_PARAMETER_COUNT
     if base_steps >= LONG_RUN_BASE_STEPS and estimated_parameters >= LONG_RUN_PARAMETER_COUNT:
         long_reason = f">={LONG_RUN_BASE_STEPS} base steps and >={LONG_RUN_PARAMETER_COUNT:,} params"
@@ -166,13 +199,24 @@ def estimate_run_budget(config: Any, stats: CorpusStats, sft_examples: int) -> R
         estimated_parameters=estimated_parameters,
         estimated_corpus_tokens=corpus_tokens,
         corpus_token_note=token_note,
+        corpus_tokens_per_parameter=corpus_tokens_per_parameter,
         base_effective_batch_size=base_effective_batch,
         sft_effective_batch_size=sft_effective_batch,
         base_effective_tokens_per_step=base_tokens_per_step,
         base_planned_tokens=base_planned_tokens,
+        target_param_data_ratio=target_ratio,
+        target_training_tokens=target_training_tokens,
+        target_training_epochs=target_epochs,
+        recommended_base_steps=recommended_steps,
+        recommended_base_tokens=recommended_tokens,
+        recommended_base_epochs=recommended_epochs,
+        planned_to_target_ratio=planned_to_target,
         sft_planned_example_updates=sft_example_updates,
         estimated_base_epochs=base_epochs,
         estimated_sft_example_epochs=sft_epochs,
+        base_lr_reference_effective_batch=BASE_LR_REFERENCE_EFFECTIVE_BATCH,
+        base_lr_sqrt_scale=base_lr_scale,
+        sft_lr_sqrt_scale=sft_lr_scale,
         long_run=long_run,
         long_run_reason=long_reason,
     )
@@ -294,6 +338,24 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
         status = "warn"
     checks = [
         _check(
+            "compute_optimal_horizon",
+            _horizon_status(budget),
+            _format_optional_float(budget.planned_to_target_ratio),
+            "0.50-1.50 planned/target preferred; block >3.00",
+            (
+                f"Target is {budget.target_training_tokens:,} tokens "
+                f"({budget.target_param_data_ratio:.1f} tokens/parameter); "
+                f"recommended base steps: {budget.recommended_base_steps:,}."
+            ),
+        ),
+        _check(
+            "corpus_model_fit",
+            _corpus_model_status(budget),
+            _format_optional_float(budget.target_training_epochs),
+            "<= 12 target epochs preferred; block >30",
+            "If target training needs many corpus passes, add data or shrink the model before a long run.",
+        ),
+        _check(
             "base_exposure",
             status,
             _format_optional_float(epochs),
@@ -315,6 +377,17 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
         checks.append(_check("base_lr", "warn", str(base_lr), "<= 0.003", "High LR can destabilize tiny transformers."))
     else:
         checks.append(_check("base_lr", "pass", str(base_lr), "0 < lr <= 0.003", "Base LR is in a plausible local range."))
+    checks.append(_check(
+        "lr_batch_scaling",
+        "warn" if budget.long_run and budget.base_effective_batch_size != BASE_LR_REFERENCE_EFFECTIVE_BATCH else "pass",
+        f"{budget.base_lr_sqrt_scale:.2f}x",
+        f"sqrt(effective_batch/{BASE_LR_REFERENCE_EFFECTIVE_BATCH})",
+        (
+            "If this LR was tuned at effective batch "
+            f"{BASE_LR_REFERENCE_EFFECTIVE_BATCH}, sqrt-scaled base LR would be "
+            f"{base_lr * budget.base_lr_sqrt_scale:.6g}."
+        ),
+    ))
     if stats.num_documents > 1:
         checks.append(_check(
             "document_boundaries",
@@ -385,6 +458,24 @@ def _sft_checks(config: Any, corpus: CorpusBuildReport | CorpusPreviewReport, bu
         "positive; usually <= base LR for long run",
         "SFT should steer behavior without erasing the base model.",
     ))
+    checks.append(_check(
+        "sft_lr_batch_scaling",
+        "warn" if budget.long_run and budget.sft_effective_batch_size != BASE_LR_REFERENCE_EFFECTIVE_BATCH else "pass",
+        f"{budget.sft_lr_sqrt_scale:.2f}x",
+        f"sqrt(effective_batch/{BASE_LR_REFERENCE_EFFECTIVE_BATCH})",
+        (
+            "If this SFT LR was tuned at effective batch "
+            f"{BASE_LR_REFERENCE_EFFECTIVE_BATCH}, sqrt-scaled SFT LR would be "
+            f"{sft_lr * budget.sft_lr_sqrt_scale:.6g}."
+        ),
+    ))
+    checks.append(_check(
+        "post_run_sft_fit_gate",
+        "pass",
+        ">=70% required after training",
+        "block long-run recipe if failed",
+        "Picochat will mark completed long runs unapproved when SFT fit is below 70%.",
+    ))
     return checks
 
 
@@ -448,9 +539,9 @@ def _closed_book_checks() -> list[RunPreflightCheck]:
         ),
         _check(
             "random_baseline",
-            "warn",
-            "not recorded pre-run",
-            "record after eval",
+            "pass",
+            "post-run interpretation",
+            "compare after eval",
             "For choice-heavy evals, compare against random choice accuracy before claiming intelligence.",
         ),
     ]
@@ -476,6 +567,28 @@ def _estimate_parameters(vocab_size: int, n_embd: int, n_layer: int) -> int:
     blocks = n_layer * (12 * n_embd * n_embd + 4 * n_embd)
     final_norm = 2 * n_embd
     return int(embeddings_and_head + blocks + final_norm)
+
+
+def _horizon_status(budget: RunBudgetPlan) -> str:
+    ratio = budget.planned_to_target_ratio
+    if ratio is None:
+        return "block"
+    if budget.long_run and ratio > 3.0:
+        return "block"
+    if ratio < 0.50 or ratio > 1.50:
+        return "warn"
+    return "pass"
+
+
+def _corpus_model_status(budget: RunBudgetPlan) -> str:
+    target_epochs = budget.target_training_epochs
+    if target_epochs is None:
+        return "block"
+    if budget.long_run and target_epochs > 30:
+        return "block"
+    if target_epochs > 12:
+        return "warn"
+    return "pass"
 
 
 def _estimate_corpus_tokens(stats: CorpusStats, tokenizer_type: str, vocab_size: int) -> tuple[int, str]:

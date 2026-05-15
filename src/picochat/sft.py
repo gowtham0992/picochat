@@ -22,7 +22,7 @@ from picochat.optim import (
     using_ema_weights,
     validate_optim_controls,
 )
-from picochat.report import loss_diagnostics, sft_report_markdown
+from picochat.report import loss_diagnostics, optimization_stability, sft_report_markdown
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 from picochat.train import evaluate_metrics
 
@@ -724,6 +724,7 @@ def train_sft(config: SFTConfig) -> dict:
         },
         "losses": losses,
         "loss_diagnostics": loss_diagnostics(losses),
+        "optimization_stability": optimization_stability(losses, config.grad_clip),
         "sample": sample,
         "checkpoint": str(checkpoint_dir),
         "ema_checkpoint": str(ema_checkpoint_dir) if ema is not None else None,

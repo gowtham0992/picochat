@@ -2234,13 +2234,17 @@ textarea.guide-target-focus {
 }
 
 .readiness-summary.caution strong,
+.readiness-summary.warn strong,
 .readiness-row.warn strong,
 .readiness-row.warn span {
   color: var(--accent);
 }
 
 .readiness-summary.blocked strong,
+.readiness-summary.block strong,
 .readiness-row.fail strong,
+.readiness-row.block strong,
+.readiness-row.block span,
 .readiness-row.fail span {
   color: var(--red);
 }

@@ -3327,6 +3327,7 @@ function applyLaunchPreset(quiet = false) {
   $("launch-sft-early-stop-patience").value = values.sft_early_stop_patience;
   $("launch-sft-sampling").value = values.sft_sampling || "uniform";
   $("launch-eval-max-new-tokens").value = values.eval_max_new_tokens;
+  $("launch-target-param-data-ratio").value = values.target_param_data_ratio || 20;
   if (values.tokenizer_type) $("launch-tokenizer-type").value = values.tokenizer_type;
   $("launch-tokenizer-vocab-size").value = values.tokenizer_vocab_size || "";
   if (!quiet) {
@@ -3401,6 +3402,7 @@ function launchConfig() {
     sft_early_stop_patience: launchNumber("launch-sft-early-stop-patience"),
     sft_sampling: $("launch-sft-sampling").value,
     eval_max_new_tokens: launchNumber("launch-eval-max-new-tokens"),
+    target_param_data_ratio: launchNumber("launch-target-param-data-ratio"),
     seed: launchNumber("launch-seed"),
     tokenizer_type: $("launch-tokenizer-type").value,
     tokenizer_vocab_size: tokenizerVocab ? Number(tokenizerVocab) : null,
@@ -3434,6 +3436,7 @@ function launchReadiness(config = launchConfig()) {
     blockers.push("EMA decay must be at least 0 and below 1.");
   }
   if (config.eval_max_new_tokens < 1) blockers.push("Eval tokens must be at least 1.");
+  if (config.target_param_data_ratio < 1) blockers.push("Tokens / param target must be at least 1.");
   if (config.tokenizer_type === "bpe" && !config.tokenizer_vocab_size) {
     cautions.push("BPE vocab is empty, so the backend default will decide tokenizer size.");
   }
@@ -3462,6 +3465,7 @@ function launchReadiness(config = launchConfig()) {
   notes.push(`optimizer ${config.base_optimizer}/${config.sft_optimizer}`);
   if (config.base_ema_decay > 0 || config.sft_ema_decay > 0) notes.push(`EMA ${config.base_ema_decay}/${config.sft_ema_decay}`);
   notes.push(`effective batch ${config.base_batch_size * config.base_grad_accum_steps} / ${config.sft_batch_size * config.sft_grad_accum_steps}`);
+  notes.push(`target ${config.target_param_data_ratio} tok/param`);
   notes.push(`device ${String(config.device || "cpu").toUpperCase()}`);
   notes.push(`LR ${config.base_learning_rate} -> ${config.sft_learning_rate}`);
   notes.push(`SFT ${config.sft_sampling.replace("_", " ")}`);
@@ -3562,6 +3566,8 @@ function launchPreviewCommand(config = launchConfig()) {
     config.sft_early_stop_patience,
     "--sft-sampling",
     config.sft_sampling,
+    "--target-param-data-ratio",
+    config.target_param_data_ratio,
     "--split-mode",
     "document",
     "--min-score",
@@ -3670,6 +3676,7 @@ function runStartPayload(config) {
     base_early_stop_patience: config.base_early_stop_patience,
     sft_early_stop_patience: config.sft_early_stop_patience,
     sft_sampling: config.sft_sampling,
+    target_param_data_ratio: config.target_param_data_ratio,
     eval_max_new_tokens: config.eval_max_new_tokens,
     seed: config.seed,
     tokenizer_type: config.tokenizer_type,
@@ -3962,6 +3969,9 @@ function renderLaunchPreflight(preflight) {
     </div>
     <div class="command-meta">
       <span>PARAMS ${fmtInt(budget.estimated_parameters)}</span>
+      <span>TARGET ${fmtInt(budget.target_training_tokens)} TOK</span>
+      <span>PLAN/TARGET ${fmtLoss(budget.planned_to_target_ratio)}</span>
+      <span>REC ${fmtInt(budget.recommended_base_steps)} STEPS</span>
       <span>BASE EPOCHS ${fmtLoss(budget.estimated_base_epochs)}</span>
       <span>SFT EPOCHS ${fmtLoss(budget.estimated_sft_example_epochs)}</span>
       <span>${budget.long_run ? "LONG RUN" : "LOCAL RUN"}</span>

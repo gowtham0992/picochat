@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 
 def format_float(value: float) -> str:
     return f"{value:.4f}"
@@ -70,6 +72,46 @@ def loss_diagnostics(losses: list[dict]) -> dict:
             best_step=best.get("step"),
             final_step=final.get("step"),
         ),
+    }
+
+
+def optimization_stability(losses: list[dict], grad_clip: float | int | None = None) -> dict:
+    """Summarize optimizer stability signals from the recorded training trace."""
+    grad_norms = [
+        float(item["grad_norm"])
+        for item in losses
+        if item.get("grad_norm") is not None and math.isfinite(float(item["grad_norm"]))
+    ]
+    train_losses = [
+        float(item["train_loss"])
+        for item in losses
+        if item.get("train_loss") is not None and math.isfinite(float(item["train_loss"]))
+    ]
+    warnings: list[str] = []
+    if not grad_norms:
+        warnings.append("No finite gradient norm samples were recorded.")
+    else:
+        max_grad = max(grad_norms)
+        final_grad = grad_norms[-1]
+        if max_grad > 100:
+            warnings.append("Gradient norm exceeded 100; inspect LR, clipping, and batch size.")
+        if grad_clip and grad_clip > 0 and max_grad > float(grad_clip) * 10:
+            warnings.append("Pre-clip gradient norm was much larger than the clip threshold.")
+        if final_grad > max_grad * 0.90 and len(grad_norms) >= 3:
+            warnings.append("Final gradient norm is near the run maximum; watch for late instability.")
+    loss_spikes = 0
+    for prev, current in zip(train_losses, train_losses[1:]):
+        if prev > 0 and current > prev * 1.5:
+            loss_spikes += 1
+    if loss_spikes:
+        warnings.append(f"Train loss spiked {loss_spikes} time(s) between checkpoints.")
+    status = "warn" if warnings else "stable"
+    return {
+        "status": status,
+        "max_grad_norm": max(grad_norms) if grad_norms else None,
+        "final_grad_norm": grad_norms[-1] if grad_norms else None,
+        "loss_spikes": loss_spikes,
+        "warnings": warnings,
     }
 
 
@@ -173,6 +215,17 @@ def training_report_markdown(report: dict) -> str:
             f"{format_float(item['elapsed_sec'])} |"
         )
         lines.append(row)
+    lines.append("")
+
+    stability = report.get("optimization_stability") or optimization_stability(losses, config.get("grad_clip", 0.0))
+    lines.append("## Optimization Stability")
+    lines.append("")
+    lines.append(f"- Status: `{stability.get('status', 'unknown')}`")
+    lines.append(f"- Max grad norm: {format_optional_float(stability.get('max_grad_norm'))}")
+    lines.append(f"- Final grad norm: {format_optional_float(stability.get('final_grad_norm'))}")
+    lines.append(f"- Loss spikes between checkpoints: {stability.get('loss_spikes', 0)}")
+    for warning in stability.get("warnings", []):
+        lines.append(f"- Warning: {warning}")
     lines.append("")
 
     if report.get("coverage"):
@@ -376,6 +429,17 @@ def sft_report_markdown(report: dict) -> str:
             f"{format_float(item['elapsed_sec'])} |"
         )
         lines.append(row)
+    lines.append("")
+
+    stability = report.get("optimization_stability") or optimization_stability(losses, config.get("grad_clip", 0.0))
+    lines.append("## Optimization Stability")
+    lines.append("")
+    lines.append(f"- Status: `{stability.get('status', 'unknown')}`")
+    lines.append(f"- Max grad norm: {format_optional_float(stability.get('max_grad_norm'))}")
+    lines.append(f"- Final grad norm: {format_optional_float(stability.get('final_grad_norm'))}")
+    lines.append(f"- Loss spikes between checkpoints: {stability.get('loss_spikes', 0)}")
+    for warning in stability.get("warnings", []):
+        lines.append(f"- Warning: {warning}")
     lines.append("")
 
     if report.get("coverage"):
@@ -653,6 +717,10 @@ def tiny_run_summary_markdown(summary: dict) -> str:
 
     lines.append("## Result")
     lines.append("")
+    if base.get("final_val_bpb") is not None:
+        lines.append(f"- Primary base metric: {format_optional_float(base.get('final_val_bpb'))} validation BPB")
+    if sft.get("final_val_bpb") is not None:
+        lines.append(f"- Primary SFT metric: {format_optional_float(sft.get('final_val_bpb'))} validation BPB")
     lines.append(f"- Eval passed: {eval_summary['num_passed']} / {eval_summary['num_examples']}")
     lines.append(f"- Eval pass rate: {format_float(eval_summary['pass_rate'] * 100)}%")
     if sft_fit_summary:
@@ -685,7 +753,13 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.append(f"- Summary: {preflight.get('summary', 'No preflight summary recorded.')}")
         lines.append(f"- Estimated parameters: {int(budget.get('estimated_parameters', 0)):,}")
         lines.append(f"- Estimated corpus tokens: {int(budget.get('estimated_corpus_tokens', 0)):,}")
+        lines.append(f"- Corpus tokens / parameter: {format_optional_float(budget.get('corpus_tokens_per_parameter'))}")
         lines.append(f"- Base planned tokens: {int(budget.get('base_planned_tokens', 0)):,}")
+        lines.append(f"- Target token/parameter ratio: {format_optional_float(budget.get('target_param_data_ratio'))}")
+        lines.append(f"- Target training tokens: {int(budget.get('target_training_tokens', 0)):,}")
+        lines.append(f"- Recommended base steps: {int(budget.get('recommended_base_steps', 0)):,}")
+        lines.append(f"- Planned / target tokens: {format_optional_float(budget.get('planned_to_target_ratio'))}")
+        lines.append(f"- Recommended base epochs: {format_optional_float(budget.get('recommended_base_epochs'))}")
         lines.append(f"- Base estimated epochs: {format_optional_float(budget.get('estimated_base_epochs'))}")
         lines.append(f"- SFT estimated example epochs: {format_optional_float(budget.get('estimated_sft_example_epochs'))}")
         lines.append(f"- Long run: {'yes' if budget.get('long_run') else 'no'} ({budget.get('long_run_reason', '--')})")

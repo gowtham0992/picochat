@@ -662,6 +662,15 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--base-ema-decay", type=float, default=None)
     run_tiny_parser.add_argument("--sft-ema-decay", type=float, default=None)
     run_tiny_parser.add_argument(
+        "--target-param-data-ratio",
+        type=float,
+        default=None,
+        help=(
+            "Training-budget target in tokens per model parameter. "
+            "Used by long-run preflight to recommend base steps."
+        ),
+    )
+    run_tiny_parser.add_argument(
         "--logit-softcap",
         type=float,
         default=None,
@@ -1544,6 +1553,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         allow_default_tuning_data=args.allow_default_tuning_data,
         logit_softcap=_resolve_tiny_value(args, defaults, "logit_softcap"),
         allow_unsafe_long_run=args.allow_unsafe_long_run,
+        target_param_data_ratio=_resolve_tiny_value(args, defaults, "target_param_data_ratio"),
     )
 
 

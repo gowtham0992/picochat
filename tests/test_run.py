@@ -71,6 +71,9 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert "corpus_manifest" in summary["artifacts"]
     assert "preflight_report" in summary["artifacts"]
     assert summary["preflight"]["status"] in {"ready", "warn"}
+    assert summary["preflight"]["budget"]["target_param_data_ratio"] == 20.0
+    assert summary["preflight"]["budget"]["recommended_base_steps"] >= 1
+    assert summary["preflight"]["budget"]["planned_to_target_ratio"] is not None
     assert "honesty_report" in summary["artifacts"]
     assert summary["honesty"]["status"] == "blocked"
     assert summary["honesty"]["exact_prompt_leaks"] == 1

@@ -163,6 +163,7 @@ def test_cli_run_tiny_preflight_only(tmp_path, capsys):
     assert exit_code == 0
     output = capsys.readouterr().out
     assert "Picochat Run Preflight" in output
+    assert "Recommended base steps" in output
     assert "assistant_only_masking" in output
 
 

@@ -80,6 +80,7 @@ class TinyRunConfig:
     allow_default_tuning_data: bool = False
     logit_softcap: float = 0.0
     allow_unsafe_long_run: bool = False
+    target_param_data_ratio: float = 20.0
 
 
 def run_tiny(config: TinyRunConfig) -> dict:

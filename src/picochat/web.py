@@ -919,6 +919,11 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     sft_sampling = str(payload.get("sft_sampling", preset.get("sft_sampling", "uniform")))
     if sft_sampling not in SFT_SAMPLING_MODES:
         raise ValueError(f"sft_sampling must be one of {', '.join(SFT_SAMPLING_MODES)}")
+    target_param_data_ratio = _bounded_float(
+        payload.get("target_param_data_ratio", preset.get("target_param_data_ratio", 20.0)),
+        1.0,
+        200.0,
+    )
     device = str(payload.get("device", preset.get("device", "cpu"))).strip().lower()
     if device not in DEVICE_CHOICES:
         raise ValueError(f"device must be one of {', '.join(DEVICE_CHOICES)}")
@@ -969,6 +974,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         sft_ema_decay=sft_ema_decay,
         sft_sampling=sft_sampling,
         allow_unsafe_long_run=allow_unsafe_long_run,
+        target_param_data_ratio=target_param_data_ratio,
     )
     launch_preflight = assess_run_preflight(preflight_config, launch_preview)
     if launch_preflight.status == "blocked" and not allow_unsafe_long_run:
@@ -1063,6 +1069,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(sft_early_stop_patience),
         "--sft-sampling",
         sft_sampling,
+        "--target-param-data-ratio",
+        str(target_param_data_ratio),
         "--split-mode",
         "document",
         "--min-score",
@@ -1128,6 +1136,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "base_early_stop_patience": base_early_stop_patience,
             "sft_early_stop_patience": sft_early_stop_patience,
             "sft_sampling": sft_sampling,
+            "target_param_data_ratio": target_param_data_ratio,
             "device": device,
             "allow_unsafe_long_run": allow_unsafe_long_run,
         },

@@ -918,6 +918,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert job["min_quality_score"] == 0
     assert job["launch_preflight"]["status"] in {"ready", "warn"}
     assert job["launch_preflight"]["budget"]["estimated_parameters"] > 0
+    assert job["launch_preflight"]["budget"]["recommended_base_steps"] >= 1
     assert "--dataset-pack" in captured["command"]
     assert "--min-score" in captured["command"]
     assert "--tokenizer-type" in captured["command"]
@@ -928,6 +929,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert "--base-early-stop-patience" in captured["command"]
     assert "--sft-early-stop-patience" in captured["command"]
     assert "--sft-sampling" in captured["command"]
+    assert "--target-param-data-ratio" in captured["command"]
     assert "bpe" in captured["command"]
     assert "0.0002" in captured["command"]
     assert "0.0004" in captured["command"]

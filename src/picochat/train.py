@@ -24,7 +24,7 @@ from picochat.optim import (
     using_ema_weights,
     validate_optim_controls,
 )
-from picochat.report import loss_diagnostics, training_report_markdown
+from picochat.report import loss_diagnostics, optimization_stability, training_report_markdown
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 
 
@@ -424,6 +424,7 @@ def train_base(config: TrainConfig) -> dict:
         },
         "losses": losses,
         "loss_diagnostics": loss_diagnostics(losses),
+        "optimization_stability": optimization_stability(losses, config.grad_clip),
         "memorization": memorization_diagnostics(memorization_text, split.train_text, split.val_text),
         "sample": sample,
         "canary_probe": canary_probe,
