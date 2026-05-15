@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import random
 import re
 
 import torch
@@ -53,6 +54,8 @@ class ChatEvalConfig:
     case_sensitive: bool = False
     support_corpus_path: str | None = None
     corpus_support_threshold: float = 0.25
+    ci_bootstrap_samples: int = 1000
+    ci_confidence: float = 0.95
 
 
 @dataclass(frozen=True)
@@ -453,9 +456,30 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     unanswerable_pass_rate = _filtered_pass_rate(rows, lambda row: not bool(row.get("answerable", True)))
     domain_pass_rate = _filtered_pass_rate(rows, lambda row: str(row.get("category", "")).startswith("domain_"))
     refusal_pass_rate = _filtered_pass_rate(rows, lambda row: "refusal" in str(row.get("category", "")) or not bool(row.get("answerable", True)))
-    category_breakdown = _breakdown(rows, "category", "answerable")
-    split_breakdown = _breakdown(rows, "split", "default")
-    level_breakdown = _breakdown(rows, "level", "heldout")
+    category_breakdown = _breakdown(
+        rows,
+        "category",
+        "answerable",
+        bootstrap_samples=config.ci_bootstrap_samples,
+        confidence=config.ci_confidence,
+        seed=config.seed + 101,
+    )
+    split_breakdown = _breakdown(
+        rows,
+        "split",
+        "default",
+        bootstrap_samples=config.ci_bootstrap_samples,
+        confidence=config.ci_confidence,
+        seed=config.seed + 202,
+    )
+    level_breakdown = _breakdown(
+        rows,
+        "level",
+        "heldout",
+        bootstrap_samples=config.ci_bootstrap_samples,
+        confidence=config.ci_confidence,
+        seed=config.seed + 303,
+    )
     choice_rows = [row for row in rows if row.get("correct_choice")]
     choice_correct = sum(
         1 for row in choice_rows
@@ -479,12 +503,50 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "num_passed": passed,
             "num_failed": len(rows) - passed,
             "pass_rate": passed / len(rows),
+            "pass_rate_ci": _bootstrap_rate_ci(
+                [bool(row.get("passed")) for row in rows],
+                samples=config.ci_bootstrap_samples,
+                confidence=config.ci_confidence,
+                seed=config.seed,
+            ),
             "num_answerable": answerable,
             "num_unanswerable": len(rows) - answerable,
             "answerable_pass_rate": answerable_pass_rate,
+            "answerable_pass_rate_ci": _bootstrap_rate_ci(
+                [bool(row.get("passed")) for row in rows if bool(row.get("answerable", True))],
+                samples=config.ci_bootstrap_samples,
+                confidence=config.ci_confidence,
+                seed=config.seed + 11,
+            ),
             "unanswerable_pass_rate": unanswerable_pass_rate,
+            "unanswerable_pass_rate_ci": _bootstrap_rate_ci(
+                [bool(row.get("passed")) for row in rows if not bool(row.get("answerable", True))],
+                samples=config.ci_bootstrap_samples,
+                confidence=config.ci_confidence,
+                seed=config.seed + 12,
+            ),
             "domain_pass_rate": domain_pass_rate,
+            "domain_pass_rate_ci": _bootstrap_rate_ci(
+                [
+                    bool(row.get("passed"))
+                    for row in rows
+                    if str(row.get("category", "")).startswith("domain_")
+                ],
+                samples=config.ci_bootstrap_samples,
+                confidence=config.ci_confidence,
+                seed=config.seed + 13,
+            ),
             "refusal_pass_rate": refusal_pass_rate,
+            "refusal_pass_rate_ci": _bootstrap_rate_ci(
+                [
+                    bool(row.get("passed"))
+                    for row in rows
+                    if "refusal" in str(row.get("category", "")) or not bool(row.get("answerable", True))
+                ],
+                samples=config.ci_bootstrap_samples,
+                confidence=config.ci_confidence,
+                seed=config.seed + 14,
+            ),
             "unsupported_claims": unsupported_claims,
             "unsupported_claim_rate": unsupported_claims / len(rows),
             "prompt_echoes": prompt_echoes,
@@ -512,8 +574,23 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "choice_examples": len(choice_rows),
             "choice_correct": choice_correct,
             "choice_accuracy": _safe_rate(choice_correct, len(choice_rows)) if choice_rows else None,
+            "choice_accuracy_ci": _bootstrap_rate_ci(
+                [
+                    row.get("choice_predicted") == row.get("correct_choice")
+                    for row in choice_rows
+                ],
+                samples=config.ci_bootstrap_samples,
+                confidence=config.ci_confidence,
+                seed=config.seed + 15,
+            ),
             "choice_passed": choice_passed,
             "choice_pass_rate": _safe_rate(choice_passed, len(choice_rows)) if choice_rows else None,
+            "choice_pass_rate_ci": _bootstrap_rate_ci(
+                [bool(row.get("passed")) for row in choice_rows],
+                samples=config.ci_bootstrap_samples,
+                confidence=config.ci_confidence,
+                seed=config.seed + 16,
+            ),
             "choice_scoring": (
                 "normalized_logprob_best_of_whitespace_and_eos_variants"
                 if choice_rows else None
@@ -596,7 +673,15 @@ def _filtered_pass_rate(rows: list[dict], predicate) -> float | None:
     return sum(1 for row in selected if row.get("passed")) / len(selected)
 
 
-def _breakdown(rows: list[dict], field: str, default: str) -> dict[str, dict]:
+def _breakdown(
+    rows: list[dict],
+    field: str,
+    default: str,
+    *,
+    bootstrap_samples: int = 1000,
+    confidence: float = 0.95,
+    seed: int = 42,
+) -> dict[str, dict]:
     buckets: dict[str, dict] = {}
     for row in rows:
         value = row.get(field) or default
@@ -629,11 +714,13 @@ def _breakdown(rows: list[dict], field: str, default: str) -> dict[str, dict]:
                 "_entity_match_rate_values": [],
                 "_corpus_support_rate_values": [],
                 "_repetition_ngram_rate_values": [],
+                "_pass_values": [],
             },
         )
         bucket["num_examples"] += 1
         bucket["num_passed"] += int(row["passed"])
         bucket["num_failed"] += int(not row["passed"])
+        bucket["_pass_values"].append(bool(row["passed"]))
         bucket["num_answerable"] += int(row.get("answerable", True))
         bucket["num_unanswerable"] += int(not row.get("answerable", True))
         bucket["unsupported_claims"] += int(bool(row.get("found_forbidden")))
@@ -650,9 +737,15 @@ def _breakdown(rows: list[dict], field: str, default: str) -> dict[str, dict]:
         _append_metric(bucket, "_corpus_support_rate_values", row.get("corpus_support_rate"))
         _append_metric(bucket, "_repetition_ngram_rate_values", row.get("repetition_ngram_rate"))
 
-    for bucket in buckets.values():
+    for bucket_index, bucket in enumerate(buckets.values()):
         total = bucket["num_examples"]
         bucket["pass_rate"] = bucket["num_passed"] / total
+        bucket["pass_rate_ci"] = _bootstrap_rate_ci(
+            bucket.pop("_pass_values"),
+            samples=bootstrap_samples,
+            confidence=confidence,
+            seed=seed + bucket_index,
+        )
         bucket["unsupported_claim_rate"] = bucket["unsupported_claims"] / total
         bucket["prompt_echo_rate"] = bucket["prompt_echoes"] / total
         bucket["missing_support_rate"] = bucket["missing_support"] / total
@@ -669,6 +762,41 @@ def _breakdown(rows: list[dict], field: str, default: str) -> dict[str, dict]:
         bucket["average_corpus_support_rate"] = _average_values(bucket.pop("_corpus_support_rate_values"))
         bucket["average_repetition_ngram_rate"] = _average_values(bucket.pop("_repetition_ngram_rate_values"))
     return dict(sorted(buckets.items()))
+
+
+def _bootstrap_rate_ci(
+    values: list[bool],
+    *,
+    samples: int = 1000,
+    confidence: float = 0.95,
+    seed: int = 42,
+) -> dict | None:
+    """Return a deterministic bootstrap CI for a Bernoulli rate."""
+    if not values:
+        return None
+    if samples < 1:
+        return None
+    if not 0 < confidence < 1:
+        raise ValueError("ci_confidence must be in (0, 1)")
+    numeric = [1 if value else 0 for value in values]
+    size = len(numeric)
+    generator = random.Random(seed)
+    rates = []
+    for _ in range(samples):
+        passed = sum(numeric[generator.randrange(size)] for _ in range(size))
+        rates.append(passed / size)
+    rates.sort()
+    alpha = 1.0 - confidence
+    lower_index = max(0, min(samples - 1, int((alpha / 2) * (samples - 1))))
+    upper_index = max(0, min(samples - 1, int((1.0 - alpha / 2) * (samples - 1))))
+    return {
+        "low": rates[lower_index],
+        "high": rates[upper_index],
+        "confidence": confidence,
+        "method": "bootstrap",
+        "samples": samples,
+        "n": size,
+    }
 
 
 def _failure_reasons(row: dict) -> list[str]:

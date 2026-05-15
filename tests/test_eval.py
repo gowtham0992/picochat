@@ -304,10 +304,13 @@ def test_run_chat_eval_writes_artifacts(tmp_path):
     assert report["summary"]["num_examples"] == 1
     assert report["summary"]["num_passed"] == 1
     assert report["summary"]["unsupported_claim_rate"] == 0.0
+    assert report["summary"]["pass_rate_ci"]["method"] == "bootstrap"
+    assert report["summary"]["pass_rate_ci"]["n"] == 1
     assert report["summary"]["prompt_echo_rate"] == 0.0
     assert report["summary"]["support_match_rate"] == 1.0
     assert report["summary"]["category_breakdown"]["answerable"]["num_examples"] == 1
     assert report["summary"]["category_breakdown"]["answerable"]["num_passed"] == 1
+    assert report["summary"]["category_breakdown"]["answerable"]["pass_rate_ci"]["method"] == "bootstrap"
     assert report["summary"]["split_breakdown"]["default"]["num_examples"] == 1
     assert report["examples"][0]["answerable"] is True
     assert report["examples"][0]["category"] == "answerable"

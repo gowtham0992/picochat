@@ -597,15 +597,23 @@ def chat_eval_report_markdown(report: dict) -> str:
     lines.append(f"- Passed: {summary['num_passed']}")
     lines.append(f"- Failed: {summary['num_failed']}")
     lines.append(f"- Pass rate: {format_float(summary['pass_rate'] * 100)}%")
+    if summary.get("pass_rate_ci"):
+        lines.append(f"- Pass rate 95% CI: {_format_ci(summary.get('pass_rate_ci'))}")
     if "unsupported_claim_rate" in summary:
         lines.append(f"- Answerable examples: {summary.get('num_answerable', 0)}")
         lines.append(f"- Unanswerable examples: {summary.get('num_unanswerable', 0)}")
         if summary.get("answerable_pass_rate") is not None:
-            lines.append(f"- Answerable pass rate: {_format_percent_or_dash(summary.get('answerable_pass_rate'))}")
+            ci = _format_ci(summary.get("answerable_pass_rate_ci"))
+            suffix = f" ({ci})" if ci != "--" else ""
+            lines.append(f"- Answerable pass rate: {_format_percent_or_dash(summary.get('answerable_pass_rate'))}{suffix}")
         if summary.get("domain_pass_rate") is not None:
-            lines.append(f"- Domain answer pass rate: {_format_percent_or_dash(summary.get('domain_pass_rate'))}")
+            ci = _format_ci(summary.get("domain_pass_rate_ci"))
+            suffix = f" ({ci})" if ci != "--" else ""
+            lines.append(f"- Domain answer pass rate: {_format_percent_or_dash(summary.get('domain_pass_rate'))}{suffix}")
         if summary.get("refusal_pass_rate") is not None:
-            lines.append(f"- Refusal/boundary pass rate: {_format_percent_or_dash(summary.get('refusal_pass_rate'))}")
+            ci = _format_ci(summary.get("refusal_pass_rate_ci"))
+            suffix = f" ({ci})" if ci != "--" else ""
+            lines.append(f"- Refusal/boundary pass rate: {_format_percent_or_dash(summary.get('refusal_pass_rate'))}{suffix}")
         lines.append(f"- Unsupported claim rate: {format_float(summary['unsupported_claim_rate'] * 100)}%")
         lines.append(f"- Prompt echo rate: {format_float(summary.get('prompt_echo_rate', 0.0) * 100)}%")
         lines.append(f"- Missing support rate: {format_float(summary.get('missing_support_rate', 0.0) * 100)}%")
@@ -628,8 +636,12 @@ def chat_eval_report_markdown(report: dict) -> str:
             lines.append(f"- Avg corpus support rate: {format_float(summary['average_corpus_support_rate'] * 100)}%")
         if summary.get("choice_examples"):
             lines.append(f"- Choice-likelihood examples: {summary.get('choice_examples', 0)}")
-            lines.append(f"- Choice accuracy: {_format_percent_or_dash(summary.get('choice_accuracy'))}")
-            lines.append(f"- Choice pass rate: {_format_percent_or_dash(summary.get('choice_pass_rate'))}")
+            ci = _format_ci(summary.get("choice_accuracy_ci"))
+            suffix = f" ({ci})" if ci != "--" else ""
+            lines.append(f"- Choice accuracy: {_format_percent_or_dash(summary.get('choice_accuracy'))}{suffix}")
+            ci = _format_ci(summary.get("choice_pass_rate_ci"))
+            suffix = f" ({ci})" if ci != "--" else ""
+            lines.append(f"- Choice pass rate: {_format_percent_or_dash(summary.get('choice_pass_rate'))}{suffix}")
             lines.append(f"- Choice scorer: `{summary.get('choice_scoring')}`")
     lines.append("")
 
@@ -776,6 +788,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.append(f"- Primary SFT metric: {format_optional_float(sft.get('final_val_bpb'))} validation BPB")
     lines.append(f"- Eval passed: {eval_summary['num_passed']} / {eval_summary['num_examples']}")
     lines.append(f"- Eval pass rate: {format_float(eval_summary['pass_rate'] * 100)}%")
+    if eval_summary.get("pass_rate_ci"):
+        lines.append(f"- Eval pass rate 95% CI: {_format_ci(eval_summary.get('pass_rate_ci'))}")
     if sft_fit_summary:
         lines.append(
             f"- SFT fit passed: {sft_fit_summary.get('num_passed', 0)} / "
@@ -784,6 +798,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.append(
             f"- SFT fit rate: {format_float(float(sft_fit_summary.get('pass_rate', 0.0)) * 100)}%"
         )
+        if sft_fit_summary.get("pass_rate_ci"):
+            lines.append(f"- SFT fit rate 95% CI: {_format_ci(sft_fit_summary.get('pass_rate_ci'))}")
     lines.append(f"- Failed examples: {eval_summary['num_failed']}")
     if "unsupported_claim_rate" in eval_summary:
         lines.append(f"- Unsupported claim rate: {format_float(eval_summary['unsupported_claim_rate'] * 100)}%")
@@ -1028,12 +1044,13 @@ def _level_breakdown_table(level_breakdown: dict) -> list[str]:
 
 def _breakdown_table(breakdown: dict, label: str) -> list[str]:
     lines = [
-        f"| {label} | Passed | Pass Rate | Support Match | Ref F1 | Corpus Support | Missing Support | Prompt Echo | Unsupported |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        f"| {label} | Passed | Pass Rate | 95% CI | Support Match | Ref F1 | Corpus Support | Missing Support | Prompt Echo | Unsupported |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for name, row in sorted(breakdown.items()):
         passed = f"{row.get('num_passed', 0)} / {row.get('num_examples', 0)}"
         pass_rate = format_float(row.get("pass_rate", 0.0) * 100)
+        pass_ci = _format_ci(row.get("pass_rate_ci"))
         support = format_float(row.get("support_match_rate", 0.0) * 100)
         ref_f1 = _format_percent_or_dash(row.get("average_reference_token_f1"))
         corpus_support = _format_percent_or_dash(row.get("average_corpus_support_rate"))
@@ -1041,7 +1058,7 @@ def _breakdown_table(breakdown: dict, label: str) -> list[str]:
         prompt_echo = f"{row.get('prompt_echoes', 0)} / {row.get('num_examples', 0)}"
         unsupported = f"{row.get('unsupported_claims', 0)} / {row.get('num_examples', 0)}"
         lines.append(
-            f"| `{name}` | {passed} | {pass_rate}% | {support}% | "
+            f"| `{name}` | {passed} | {pass_rate}% | {pass_ci} | {support}% | "
             f"{ref_f1} | {corpus_support} | {missing} | {prompt_echo} | {unsupported} |"
         )
     return lines
@@ -1193,6 +1210,17 @@ def _format_percent_or_dash(value: object) -> str:
     if number is None:
         return "--"
     return f"{format_float(number * 100)}%"
+
+
+def _format_ci(value: object) -> str:
+    if not isinstance(value, dict):
+        return "--"
+    low = _number(value.get("low"))
+    high = _number(value.get("high"))
+    if low is None or high is None:
+        return "--"
+    confidence = _number(value.get("confidence")) or 0.95
+    return f"{format_float(confidence * 100)}% CI {format_float(low * 100)}%-{format_float(high * 100)}%"
 
 
 def _phrase_list(phrases: list[str]) -> str:

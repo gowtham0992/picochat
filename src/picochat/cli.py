@@ -765,6 +765,13 @@ def build_parser() -> argparse.ArgumentParser:
     eval_chat_parser.add_argument("--case-sensitive", action="store_true")
     eval_chat_parser.add_argument("--support-corpus", default=None, help="Optional corpus text file for support-overlap diagnostics.")
     eval_chat_parser.add_argument("--corpus-support-threshold", type=float, default=0.25)
+    eval_chat_parser.add_argument(
+        "--ci-bootstrap-samples",
+        type=int,
+        default=1000,
+        help="Bootstrap samples for eval pass-rate confidence intervals. Use 0 to disable.",
+    )
+    eval_chat_parser.add_argument("--ci-confidence", type=float, default=0.95)
 
     eval_sft_fit_parser = eval_subparsers.add_parser(
         "sft-fit",
@@ -785,6 +792,13 @@ def build_parser() -> argparse.ArgumentParser:
     eval_sft_fit_parser.add_argument("--case-sensitive", action="store_true")
     eval_sft_fit_parser.add_argument("--support-corpus", default=None, help="Optional corpus text file for support-overlap diagnostics.")
     eval_sft_fit_parser.add_argument("--corpus-support-threshold", type=float, default=0.25)
+    eval_sft_fit_parser.add_argument(
+        "--ci-bootstrap-samples",
+        type=int,
+        default=1000,
+        help="Bootstrap samples for SFT-fit pass-rate confidence intervals. Use 0 to disable.",
+    )
+    eval_sft_fit_parser.add_argument("--ci-confidence", type=float, default=0.95)
 
     run_parser = subparsers.add_parser("run", help="End-to-end experiment runners.")
     run_subparsers = run_parser.add_subparsers(dest="run_command")
@@ -1796,6 +1810,8 @@ def run_eval_chat(args: argparse.Namespace) -> int:
         case_sensitive=args.case_sensitive,
         support_corpus_path=args.support_corpus,
         corpus_support_threshold=args.corpus_support_threshold,
+        ci_bootstrap_samples=args.ci_bootstrap_samples,
+        ci_confidence=args.ci_confidence,
     ))
     summary = report["summary"]
     print(
@@ -1830,6 +1846,8 @@ def run_eval_sft_fit(args: argparse.Namespace) -> int:
         case_sensitive=args.case_sensitive,
         support_corpus_path=args.support_corpus,
         corpus_support_threshold=args.corpus_support_threshold,
+        ci_bootstrap_samples=args.ci_bootstrap_samples,
+        ci_confidence=args.ci_confidence,
     ))
     summary = report["summary"]
     print(

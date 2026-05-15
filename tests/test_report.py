@@ -138,6 +138,14 @@ def test_chat_eval_report_markdown_contains_key_sections():
             "num_passed": 0,
             "num_failed": 1,
             "pass_rate": 0.0,
+            "pass_rate_ci": {
+                "low": 0.0,
+                "high": 0.25,
+                "confidence": 0.95,
+                "method": "bootstrap",
+                "samples": 1000,
+                "n": 4,
+            },
             "num_answerable": 1,
             "num_unanswerable": 0,
             "unsupported_claims": 1,
@@ -162,6 +170,11 @@ def test_chat_eval_report_markdown_contains_key_sections():
                     "num_passed": 0,
                     "num_failed": 1,
                     "pass_rate": 0.0,
+                    "pass_rate_ci": {
+                        "low": 0.0,
+                        "high": 0.25,
+                        "confidence": 0.95,
+                    },
                     "num_answerable": 1,
                     "num_unanswerable": 0,
                     "unsupported_claims": 1,
@@ -304,6 +317,7 @@ def test_chat_eval_report_markdown_contains_key_sections():
     assert "# Picochat Chat Eval Report" in markdown
     assert "## Summary" in markdown
     assert "FAIL" in markdown
+    assert "Pass rate 95% CI" in markdown
     assert "## Honesty Metrics" in markdown
     assert "## Category Breakdown" in markdown
     assert "## Split Breakdown" in markdown
