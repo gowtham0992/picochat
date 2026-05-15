@@ -46,6 +46,75 @@ class TuningSliceReport:
         }
 
 
+@dataclass(frozen=True)
+class TuningStageDefinition:
+    name: str
+    include_categories: tuple[str, ...]
+    exclude_categories: tuple[str, ...] = ()
+    description: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "include_categories": list(self.include_categories),
+            "exclude_categories": list(self.exclude_categories),
+            "description": self.description,
+        }
+
+
+@dataclass(frozen=True)
+class StagedTuningPackReport:
+    source_dataset_pack: str
+    out_dir: str
+    report_path: str
+    json_report_path: str
+    stages: tuple[TuningSliceReport, ...]
+    created: tuple[str, ...]
+    overwritten: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_dataset_pack": self.source_dataset_pack,
+            "out_dir": self.out_dir,
+            "report_path": self.report_path,
+            "json_report_path": self.json_report_path,
+            "stages": [stage.to_dict() for stage in self.stages],
+            "created": list(self.created),
+            "overwritten": list(self.overwritten),
+        }
+
+
+DEFAULT_TUNING_STAGES: tuple[TuningStageDefinition, ...] = (
+    TuningStageDefinition(
+        name="behavior",
+        include_categories=("identity", "refusal"),
+        description="Chat identity and refusal/boundary behavior.",
+    ),
+    TuningStageDefinition(
+        name="choice",
+        include_categories=("bench_choice_*",),
+        description="Multiple-choice answer format and held-out transfer.",
+    ),
+    TuningStageDefinition(
+        name="math",
+        include_categories=("bench_math_*",),
+        description="Arithmetic and word-problem skills. Treat poor transfer as a capability/data signal.",
+    ),
+    TuningStageDefinition(
+        name="spelling",
+        include_categories=("bench_spelling_*",),
+        description="Character and spelling-transform skills. Usually belongs in skills training, not behavior SFT.",
+    ),
+    TuningStageDefinition(
+        name="skills",
+        include_categories=("bench_math_*", "bench_spelling_*"),
+        description="Combined math and spelling skill track.",
+    ),
+)
+DEFAULT_TUNING_STAGE_NAMES = tuple(stage.name for stage in DEFAULT_TUNING_STAGES)
+_TUNING_STAGE_BY_NAME = {stage.name: stage for stage in DEFAULT_TUNING_STAGES}
+
+
 def slice_tuning_pack(
     dataset_pack: str | Path,
     out_dir: str | Path,
@@ -132,6 +201,62 @@ def slice_tuning_pack(
     return report
 
 
+def stage_tuning_pack(
+    dataset_pack: str | Path,
+    out_dir: str | Path,
+    *,
+    stages: tuple[str, ...] = DEFAULT_TUNING_STAGE_NAMES,
+    force: bool = False,
+) -> StagedTuningPackReport:
+    """Create standard staged tuning packs from one source dataset pack."""
+    stage_names = _normalize_stage_names(stages)
+    if not stage_names:
+        raise ValueError("at least one stage is required")
+    unknown = [name for name in stage_names if name not in _TUNING_STAGE_BY_NAME]
+    if unknown:
+        raise ValueError(f"unknown tuning stage(s): {', '.join(unknown)}")
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_path = out_dir / "staged_tuning_pack.md"
+    json_report_path = out_dir / "staged_tuning_pack.json"
+    top_targets = (report_path, json_report_path)
+    existing = tuple(str(path) for path in top_targets if path.exists())
+    if existing and not force:
+        raise FileExistsError(f"Refusing to overwrite existing staged tuning report(s): {', '.join(existing)}")
+
+    stage_reports: list[TuningSliceReport] = []
+    for stage_name in stage_names:
+        definition = _TUNING_STAGE_BY_NAME[stage_name]
+        stage_reports.append(
+            slice_tuning_pack(
+                dataset_pack,
+                out_dir / definition.name,
+                include_categories=definition.include_categories,
+                exclude_categories=definition.exclude_categories,
+                name=f"{Path(str(dataset_pack)).stem} {definition.name} stage",
+                description=(
+                    f"{definition.description} Derived from {dataset_pack}. "
+                    "Corpus is unchanged; rows stay in their original chat/eval split."
+                ),
+                force=force,
+            ),
+        )
+
+    report = StagedTuningPackReport(
+        source_dataset_pack=str(dataset_pack),
+        out_dir=str(out_dir),
+        report_path=str(report_path),
+        json_report_path=str(json_report_path),
+        stages=tuple(stage_reports),
+        created=tuple(str(path) for path in top_targets if str(path) not in existing),
+        overwritten=tuple(str(path) for path in top_targets if str(path) in existing),
+    )
+    json_report_path.write_text(json.dumps(report.to_dict(), indent=2) + "\n", encoding="utf-8")
+    report_path.write_text(staged_tuning_pack_markdown(report), encoding="utf-8")
+    return report
+
+
 def tuning_slice_markdown(report: TuningSliceReport) -> str:
     """Render a compact human-readable tuning-slice report."""
     lines = [
@@ -168,11 +293,56 @@ def tuning_slice_markdown(report: TuningSliceReport) -> str:
     return "\n".join(lines)
 
 
+def staged_tuning_pack_markdown(report: StagedTuningPackReport) -> str:
+    """Render a staged tuning-pack plan."""
+    lines = [
+        "# Picochat Staged Tuning Pack",
+        "",
+        "This plan creates separate dataset packs for independent SFT/capability tracks. "
+        "Each stage preserves the source corpus and keeps chat rows separate from eval rows.",
+        "",
+        f"- Source dataset pack: `{report.source_dataset_pack}`",
+        f"- Output directory: `{report.out_dir}`",
+        "",
+        "## Stages",
+        "",
+        "| Stage | Chat Rows | Eval Rows | SFT Status | Eval Status | Dataset Pack |",
+        "| --- | ---: | ---: | --- | --- | --- |",
+    ]
+    for stage in report.stages:
+        lines.append(
+            f"| `{Path(stage.out_dir).name}` | {stage.chat_rows_out} / {stage.chat_rows_in} | "
+            f"{stage.eval_rows_out} / {stage.eval_rows_in} | `{stage.sft_status}` | "
+            f"`{stage.eval_status}` | `{stage.dataset_pack}` |"
+        )
+    lines.extend([
+        "",
+        "## Recommended Interpretation",
+        "",
+        "- Behavior is the first chat-readiness gate: identity/refusal should fit before broader SFT.",
+        "- Choice transfer near random means the base lacks benchmark knowledge; do not fix that with more SFT.",
+        "- Math/spelling failures are skills/capability signals and should move to skills pretraining or adapters.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def parse_category_patterns(value: str | None) -> tuple[str, ...]:
     """Parse a comma-separated category pattern list."""
     if not value:
         return ()
     return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
+def parse_stage_names(value: str | None) -> tuple[str, ...]:
+    """Parse a comma-separated stage name list."""
+    if not value:
+        return DEFAULT_TUNING_STAGE_NAMES
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
+def _normalize_stage_names(stage_names: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(name.strip() for name in stage_names if name and name.strip())
 
 
 def _normalize_patterns(patterns: tuple[str, ...]) -> tuple[str, ...]:

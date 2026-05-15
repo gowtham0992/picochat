@@ -60,7 +60,13 @@ from picochat.sanity import PreH100SanityConfig, run_preh100_sanity
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep
 from picochat.skills_corpus import generate_skills_corpus
-from picochat.tuning_slice import parse_category_patterns, slice_tuning_pack
+from picochat.tuning_slice import (
+    DEFAULT_TUNING_STAGE_NAMES,
+    parse_category_patterns,
+    parse_stage_names,
+    slice_tuning_pack,
+    stage_tuning_pack,
+)
 from picochat.web import WebConfig, serve_web
 
 
@@ -328,6 +334,28 @@ def build_parser() -> argparse.ArgumentParser:
     data_slice_pack.add_argument("--name", default=None, help="Optional name for the sliced dataset_pack.json.")
     data_slice_pack.add_argument("--description", default=None, help="Optional description for the sliced dataset_pack.json.")
     data_slice_pack.add_argument("--force", action="store_true", help="Overwrite existing slice files.")
+
+    data_stage_pack = data_subparsers.add_parser(
+        "stage-pack",
+        help="Create standard behavior/choice/skill dataset-pack slices for staged SFT.",
+    )
+    data_stage_pack.add_argument(
+        "--dataset-pack",
+        "--pack",
+        dest="dataset_pack",
+        required=True,
+        help="Source dataset pack whose chat/eval rows should be staged.",
+    )
+    data_stage_pack.add_argument("--out-dir", required=True, help="Output folder for staged dataset packs.")
+    data_stage_pack.add_argument(
+        "--stages",
+        default=",".join(DEFAULT_TUNING_STAGE_NAMES),
+        help=(
+            "Comma-separated stage names to create. "
+            f"Available: {', '.join(DEFAULT_TUNING_STAGE_NAMES)}."
+        ),
+    )
+    data_stage_pack.add_argument("--force", action="store_true", help="Overwrite existing staged pack files.")
 
     data_skills_corpus = data_subparsers.add_parser(
         "skills-corpus",
@@ -1511,6 +1539,31 @@ def slice_pack_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def stage_pack_data(args: argparse.Namespace) -> int:
+    report = stage_tuning_pack(
+        args.dataset_pack,
+        args.out_dir,
+        stages=parse_stage_names(args.stages),
+        force=args.force,
+    )
+    print(f"staged tuning pack: {report.out_dir}")
+    print(f"source dataset pack: {report.source_dataset_pack}")
+    print(f"stages: {len(report.stages)}")
+    for stage in report.stages:
+        print(
+            f"- {Path(stage.out_dir).name}: "
+            f"chat {stage.chat_rows_out}/{stage.chat_rows_in}, "
+            f"eval {stage.eval_rows_out}/{stage.eval_rows_in}, "
+            f"sft {stage.sft_status}, eval {stage.eval_status}"
+        )
+        print(f"  dataset_pack: {stage.dataset_pack}")
+    print(f"report: {report.report_path}")
+    print("\nnext:")
+    for stage in report.stages:
+        print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {stage.dataset_pack}")
+    return 0
+
+
 def skills_corpus_data(args: argparse.Namespace) -> int:
     report = generate_skills_corpus(
         args.out,
@@ -2315,6 +2368,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "slice-pack":
         return slice_pack_data(args)
+
+    if args.command == "data" and args.data_command == "stage-pack":
+        return stage_pack_data(args)
 
     if args.command == "data" and args.data_command == "skills-corpus":
         return skills_corpus_data(args)

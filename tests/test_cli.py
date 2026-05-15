@@ -391,6 +391,59 @@ def test_cli_data_slice_pack(tmp_path, capsys):
     assert (tmp_path / "identity-pack" / "tuning_slice.md").exists()
 
 
+def test_cli_data_stage_pack(tmp_path, capsys):
+    import json
+
+    corpus = tmp_path / "corpus.txt"
+    corpus.write_text("Picochat trains tiny local models.\n", encoding="utf-8")
+    chat = tmp_path / "chat.jsonl"
+    chat.write_text(
+        json.dumps({"user": "who", "assistant": "Picochat", "category": "identity"})
+        + "\n"
+        + json.dumps({"user": "unknown", "assistant": "I do not know.", "category": "refusal"})
+        + "\n"
+        + json.dumps({"user": "choice", "assistant": "A", "category": "bench_choice_language"})
+        + "\n",
+        encoding="utf-8",
+    )
+    eval_path = tmp_path / "eval.jsonl"
+    eval_path.write_text(
+        json.dumps({"user": "who", "must_include": ["Picochat"], "category": "identity"})
+        + "\n"
+        + json.dumps({"user": "unknown", "must_include": ["I do not know"], "category": "refusal"})
+        + "\n"
+        + json.dumps({"user": "choice", "must_include": ["A"], "category": "bench_choice_language"})
+        + "\n",
+        encoding="utf-8",
+    )
+    pack = tmp_path / "dataset_pack.json"
+    pack.write_text(json.dumps({
+        "corpus": "corpus.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    exit_code = main([
+        "data",
+        "stage-pack",
+        "--dataset-pack",
+        str(pack),
+        "--out-dir",
+        str(tmp_path / "staged"),
+        "--stages",
+        "behavior,choice",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "staged tuning pack:" in output
+    assert "- behavior: chat 2/3, eval 2/3" in output
+    assert "- choice: chat 1/3, eval 1/3" in output
+    assert (tmp_path / "staged" / "staged_tuning_pack.md").exists()
+    assert (tmp_path / "staged" / "behavior" / "dataset_pack.json").exists()
+    assert (tmp_path / "staged" / "choice" / "dataset_pack.json").exists()
+
+
 def test_cli_data_preview_from_recipe(tmp_path, capsys):
     import json
 

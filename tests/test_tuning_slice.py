@@ -4,7 +4,12 @@ from pathlib import Path
 import pytest
 
 from picochat.dataset_pack import load_dataset_pack
-from picochat.tuning_slice import parse_category_patterns, slice_tuning_pack
+from picochat.tuning_slice import (
+    parse_category_patterns,
+    parse_stage_names,
+    slice_tuning_pack,
+    stage_tuning_pack,
+)
 
 
 def write_jsonl(path, rows):
@@ -97,3 +102,50 @@ def test_slice_tuning_pack_supports_category_globs_and_refuses_empty_slice(tmp_p
 
 def test_parse_category_patterns_trims_empty_parts():
     assert parse_category_patterns(" identity, refusal ,,") == ("identity", "refusal")
+
+
+def test_stage_tuning_pack_creates_independent_stage_packs(tmp_path):
+    corpus = tmp_path / "corpus.txt"
+    chat = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    corpus.write_text("base corpus\n", encoding="utf-8")
+    write_jsonl(chat, [
+        {"user": "who are you?", "assistant": "Picochat", "category": "identity"},
+        {"user": "unknown?", "assistant": "I do not know.", "category": "refusal"},
+        {"user": "language?", "assistant": "A", "category": "bench_choice_language"},
+        {"user": "science?", "assistant": "B", "category": "bench_choice_science"},
+    ])
+    write_jsonl(eval_path, [
+        {"user": "name?", "must_include": ["Picochat"], "category": "identity"},
+        {"user": "secret?", "must_include": ["I do not know"], "category": "refusal", "answerable": False},
+        {"user": "language?", "must_include": ["A"], "category": "bench_choice_language"},
+        {"user": "science?", "must_include": ["B"], "category": "bench_choice_science"},
+    ])
+    pack_path.write_text(json.dumps({
+        "name": "source",
+        "corpus": "corpus.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    report = stage_tuning_pack(
+        pack_path,
+        tmp_path / "stages",
+        stages=("behavior", "choice"),
+    )
+
+    assert [Path(stage.out_dir).name for stage in report.stages] == ["behavior", "choice"]
+    behavior, choice = report.stages
+    assert behavior.chat_categories == {"identity": 1, "refusal": 1}
+    assert choice.chat_categories == {"bench_choice_language": 1, "bench_choice_science": 1}
+    assert (tmp_path / "stages" / "staged_tuning_pack.md").exists()
+    assert (tmp_path / "stages" / "behavior" / "dataset_pack.json").exists()
+    assert (tmp_path / "stages" / "choice" / "dataset_pack.json").exists()
+    staged_report = json.loads((tmp_path / "stages" / "staged_tuning_pack.json").read_text(encoding="utf-8"))
+    assert [stage["out_dir"].split("/")[-1] for stage in staged_report["stages"]] == ["behavior", "choice"]
+
+
+def test_parse_stage_names_trims_empty_parts_and_defaults():
+    assert parse_stage_names(" behavior, choice ,,") == ("behavior", "choice")
+    assert "behavior" in parse_stage_names("")
