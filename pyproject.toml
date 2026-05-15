@@ -19,6 +19,8 @@ docs = [
 ]
 hf = [
     "datasets>=2.20",
+    "safetensors>=0.4",
+    "transformers>=4.40",
 ]
 dev = [
     "pytest>=8.0",

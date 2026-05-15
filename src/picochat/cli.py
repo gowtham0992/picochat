@@ -702,6 +702,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also write a Picochat PyTorch dynamic-int8 serving artifact.",
     )
+    export_hf_parser.add_argument(
+        "--no-safetensors",
+        action="store_true",
+        help="Do not attempt to write model.safetensors.",
+    )
+    export_hf_parser.add_argument(
+        "--no-transformers-adapter",
+        action="store_true",
+        help="Do not write Transformers trust_remote_code adapter files.",
+    )
 
     sanity_parser = subparsers.add_parser("sanity", help="Run local readiness sanity checks.")
     sanity_subparsers = sanity_parser.add_subparsers(dest="sanity_command")
@@ -1728,6 +1738,8 @@ def run_export_hf(args: argparse.Namespace) -> int:
         dataset_summary=args.dataset_summary,
         eval_summary=args.eval_summary,
         dynamic_int8=args.dynamic_int8,
+        safetensors=not args.no_safetensors,
+        transformers_adapter=not args.no_transformers_adapter,
     ))
     print(f"exported: {report['out_dir']}")
     print(f"manifest: {report['manifest']}")

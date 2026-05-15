@@ -26,6 +26,8 @@ class HFExportConfig:
     dataset_summary: str = "Not provided."
     eval_summary: str = "Not provided."
     dynamic_int8: bool = False
+    safetensors: bool = True
+    transformers_adapter: bool = True
 
 
 def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
@@ -36,9 +38,28 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
     tokenizer = load_tokenizer(config.tokenizer_path)
 
     weights_path = out_dir / "pytorch_model.bin"
-    torch.save(model.state_dict(), weights_path)
+    state_dict = model.state_dict()
+    torch.save(state_dict, weights_path)
     tokenizer_path = out_dir / "tokenizer.json"
     shutil.copyfile(config.tokenizer_path, tokenizer_path)
+
+    files: dict[str, str] = {
+        "weights": "pytorch_model.bin",
+        "config": "config.json",
+        "tokenizer": "tokenizer.json",
+        "tokenizer_config": "tokenizer_config.json",
+        "model_card": "README.md",
+        "serving_manifest": "serving_manifest.json",
+        "requirements": "requirements.txt",
+    }
+    safetensors_error = None
+    if config.safetensors:
+        saved_safetensors, safetensors_error = _try_write_safetensors(
+            state_dict,
+            out_dir / "model.safetensors",
+        )
+        if saved_safetensors:
+            files["weights_safetensors"] = "model.safetensors"
 
     quantized_files: dict[str, str] = {}
     if config.dynamic_int8:
@@ -51,12 +72,14 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         quantized_path = out_dir / "pytorch_model.dynamic_int8.bin"
         torch.save(quantized_model.state_dict(), quantized_path)
         quantized_files["dynamic_int8"] = quantized_path.name
+        files.update(quantized_files)
 
     hf_config = {
         "model_type": "picochat",
-        "architectures": ["TinyGPT"],
+        "architectures": ["PicochatForCausalLM" if config.transformers_adapter else "TinyGPT"],
         "vocab_size": model.config.vocab_size,
         "max_position_embeddings": model.config.context_size,
+        "context_size": model.config.context_size,
         "n_embd": model.config.n_embd,
         "n_head": model.config.n_head,
         "n_layer": model.config.n_layer,
@@ -66,6 +89,7 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "activation": model.config.activation,
         "rope_base": model.config.rope_base,
         "logit_softcap": model.config.logit_softcap,
+        "gradient_checkpointing": model.config.gradient_checkpointing,
         "bos_token_id": tokenizer.bos_id,
         "eos_token_id": tokenizer.eos_id,
         "pad_token_id": tokenizer.pad_id,
@@ -74,6 +98,12 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "picochat_tokenizer_type": tokenizer.tokenizer_type,
         "picochat_checkpoint_metadata": metadata,
     }
+    if config.transformers_adapter:
+        hf_config["auto_map"] = {
+            "AutoConfig": "configuration_picochat.PicochatConfig",
+            "AutoModelForCausalLM": "modeling_picochat.PicochatForCausalLM",
+        }
+        files.update(_write_transformers_adapter(out_dir))
     (out_dir / "config.json").write_text(json.dumps(hf_config, indent=2), encoding="utf-8")
 
     tokenizer_config = {
@@ -85,11 +115,17 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "unk_token": "<unk>",
         "picochat_tokenizer_type": tokenizer.tokenizer_type,
         "native_tokenizer_file": "tokenizer.json",
+        "tokenizer_file": "tokenizer.json",
     }
+    if config.transformers_adapter:
+        tokenizer_config["auto_map"] = {
+            "AutoTokenizer": ["tokenization_picochat.PicochatTokenizer", None],
+        }
     (out_dir / "tokenizer_config.json").write_text(
         json.dumps(tokenizer_config, indent=2),
         encoding="utf-8",
     )
+    (out_dir / "requirements.txt").write_text(_requirements_text(config), encoding="utf-8")
 
     manifest = {
         "format": "picochat-hf-style",
@@ -97,18 +133,14 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "base_model": config.base_model,
         "checkpoint_path": str(config.checkpoint_path),
         "tokenizer_path": str(config.tokenizer_path),
-        "files": {
-            "weights": "pytorch_model.bin",
-            "config": "config.json",
-            "tokenizer": "tokenizer.json",
-            "tokenizer_config": "tokenizer_config.json",
-            "model_card": "README.md",
-            "serving_manifest": "serving_manifest.json",
-            **quantized_files,
-        },
+        "files": files,
+        "safetensors": files.get("weights_safetensors") is not None,
+        "safetensors_error": safetensors_error,
+        "transformers_adapter": config.transformers_adapter,
         "limitations": [
             "This is a HF-style release folder for Picochat's custom TinyGPT architecture.",
-            "Generic Transformers/vLLM/TGI loading needs a Picochat adapter or custom model code.",
+            "Transformers loading requires trust_remote_code=True and the Picochat package installed.",
+            "vLLM/TGI/llama.cpp still require native adapters or conversion work.",
         ],
     }
     serving_manifest = {
@@ -128,7 +160,13 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         },
         "artifacts": {
             "fp32_weights": "pytorch_model.bin",
+            "safetensors_weights": files.get("weights_safetensors"),
             "dynamic_int8_weights": quantized_files.get("dynamic_int8"),
+        },
+        "transformers": {
+            "adapter": config.transformers_adapter,
+            "requires_trust_remote_code": config.transformers_adapter,
+            "requires_picochat_package": config.transformers_adapter,
         },
         "limitations": [
             "Dynamic int8 weights are for Picochat/PyTorch CPU serving experiments.",
@@ -155,7 +193,302 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "tokenizer_type": tokenizer.tokenizer_type,
         "vocab_size": len(tokenizer),
         "dynamic_int8": config.dynamic_int8,
+        "safetensors": files.get("weights_safetensors") is not None,
+        "safetensors_error": safetensors_error,
+        "transformers_adapter": config.transformers_adapter,
     }
+
+
+def _try_write_safetensors(state_dict: dict[str, torch.Tensor], path: Path) -> tuple[bool, str | None]:
+    try:
+        from safetensors.torch import save_file
+    except ImportError:
+        return False, "safetensors is not installed; install picochat[hf] or safetensors>=0.4"
+    tensors = {
+        name: tensor.detach().cpu().contiguous()
+        for name, tensor in state_dict.items()
+    }
+    save_file(tensors, str(path), metadata={"format": "pt"})
+    return True, None
+
+
+def _write_transformers_adapter(out_dir: Path) -> dict[str, str]:
+    files = {
+        "configuration_picochat.py": _configuration_adapter_text(),
+        "modeling_picochat.py": _modeling_adapter_text(),
+        "tokenization_picochat.py": _tokenization_adapter_text(),
+    }
+    for filename, text in files.items():
+        (out_dir / filename).write_text(text, encoding="utf-8")
+    return {
+        "transformers_config_adapter": "configuration_picochat.py",
+        "transformers_model_adapter": "modeling_picochat.py",
+        "transformers_tokenizer_adapter": "tokenization_picochat.py",
+    }
+
+
+def _requirements_text(config: HFExportConfig) -> str:
+    requirements = [
+        "torch>=2.2",
+        "transformers>=4.40",
+        "picochat>=0.1.0",
+    ]
+    if config.safetensors:
+        requirements.append("safetensors>=0.4")
+    return "\n".join(requirements) + "\n"
+
+
+def _configuration_adapter_text() -> str:
+    return '''"""Transformers configuration for Picochat exports."""
+
+from __future__ import annotations
+
+from transformers import PretrainedConfig
+
+
+class PicochatConfig(PretrainedConfig):
+    model_type = "picochat"
+
+    def __init__(
+        self,
+        vocab_size=260,
+        context_size=64,
+        max_position_embeddings=None,
+        n_embd=128,
+        n_head=4,
+        n_layer=2,
+        dropout=0.0,
+        norm_type="layernorm",
+        position_encoding="learned",
+        activation="gelu",
+        rope_base=10000.0,
+        logit_softcap=0.0,
+        gradient_checkpointing=False,
+        use_cache=True,
+        bos_token_id=1,
+        eos_token_id=2,
+        pad_token_id=0,
+        unk_token_id=3,
+        **kwargs,
+    ):
+        super().__init__(
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            pad_token_id=pad_token_id,
+            unk_token_id=unk_token_id,
+            **kwargs,
+        )
+        self.vocab_size = vocab_size
+        self.context_size = context_size if context_size is not None else max_position_embeddings
+        self.max_position_embeddings = self.context_size
+        self.n_embd = n_embd
+        self.n_head = n_head
+        self.n_layer = n_layer
+        self.dropout = dropout
+        self.norm_type = norm_type
+        self.position_encoding = position_encoding
+        self.activation = activation
+        self.rope_base = rope_base
+        self.logit_softcap = logit_softcap
+        self.gradient_checkpointing = gradient_checkpointing
+        self.use_cache = use_cache
+
+    def to_picochat_config(self):
+        from picochat.model import GPTConfig
+
+        return GPTConfig(
+            vocab_size=self.vocab_size,
+            context_size=self.context_size,
+            n_embd=self.n_embd,
+            n_head=self.n_head,
+            n_layer=self.n_layer,
+            dropout=self.dropout,
+            norm_type=self.norm_type,
+            position_encoding=self.position_encoding,
+            activation=self.activation,
+            rope_base=self.rope_base,
+            logit_softcap=self.logit_softcap,
+            gradient_checkpointing=self.gradient_checkpointing,
+        )
+'''
+
+
+def _modeling_adapter_text() -> str:
+    return '''"""Transformers model shim for Picochat exports.
+
+This adapter keeps the exported folder small by reusing the installed Picochat
+implementation. Install the release requirements, then load with
+trust_remote_code=True.
+"""
+
+from __future__ import annotations
+
+import torch
+
+from transformers import PreTrainedModel
+from transformers.modeling_outputs import CausalLMOutputWithPast
+
+from picochat.model import TinyGPT
+
+from .configuration_picochat import PicochatConfig
+
+
+class PicochatForCausalLM(PreTrainedModel):
+    config_class = PicochatConfig
+    base_model_prefix = ""
+    supports_gradient_checkpointing = True
+
+    def __init__(self, config: PicochatConfig):
+        super().__init__(config)
+        base = TinyGPT(config.to_picochat_config())
+        self.token_embedding = base.token_embedding
+        self.position_embedding = base.position_embedding
+        self.blocks = base.blocks
+        self.ln_f = base.ln_f
+        self.lm_head = base.lm_head
+
+    def get_input_embeddings(self):
+        return self.token_embedding
+
+    def set_input_embeddings(self, value):
+        self.token_embedding = value
+
+    def get_output_embeddings(self):
+        return self.lm_head
+
+    def set_output_embeddings(self, value):
+        self.lm_head = value
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        labels=None,
+        past_key_values=None,
+        use_cache=None,
+        **kwargs,
+    ):
+        if input_ids is None:
+            raise ValueError("input_ids are required")
+        if attention_mask is not None and bool((attention_mask == 0).any()):
+            raise NotImplementedError("Picochat Transformers adapter does not support padded attention masks yet")
+        if use_cache is None:
+            use_cache = bool(getattr(self.config, "use_cache", True))
+        if labels is not None:
+            use_cache = False
+        output = TinyGPT.forward(
+            self,
+            input_ids,
+            targets=labels,
+            past_kv=past_key_values,
+            use_cache=use_cache,
+        )
+        if use_cache:
+            logits, loss, present = output
+        else:
+            logits, loss = output
+            present = None
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+            past_key_values=present,
+        )
+
+    def prepare_inputs_for_generation(self, input_ids, past_key_values=None, **kwargs):
+        if past_key_values is not None:
+            input_ids = input_ids[:, -1:]
+        return {
+            "input_ids": input_ids,
+            "past_key_values": past_key_values,
+            "use_cache": kwargs.get("use_cache", True),
+        }
+
+    @staticmethod
+    def _reorder_cache(past_key_values, beam_idx):
+        if past_key_values is None:
+            return None
+        return tuple(
+            tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past)
+            for layer_past in past_key_values
+        )
+'''
+
+
+def _tokenization_adapter_text() -> str:
+    return '''"""Transformers tokenizer shim for Picochat tokenizer.json files."""
+
+from __future__ import annotations
+
+import os
+import shutil
+
+from transformers import PreTrainedTokenizer
+
+from picochat.tokenizer import load_tokenizer
+
+
+class PicochatTokenizer(PreTrainedTokenizer):
+    vocab_files_names = {"tokenizer_file": "tokenizer.json"}
+    model_input_names = ["input_ids", "attention_mask"]
+
+    def __init__(self, tokenizer_file=None, **kwargs):
+        if tokenizer_file is None:
+            tokenizer_file = kwargs.pop("vocab_file", None)
+        if tokenizer_file is None:
+            tokenizer_file = kwargs.pop("native_tokenizer_file", None)
+        if tokenizer_file is None:
+            raise ValueError("tokenizer_file is required")
+        self.tokenizer_file = tokenizer_file
+        self.native_tokenizer = load_tokenizer(tokenizer_file)
+        super().__init__(
+            bos_token="<bos>",
+            eos_token="<eos>",
+            pad_token="<pad>",
+            unk_token="<unk>",
+            **kwargs,
+        )
+
+    @property
+    def vocab_size(self):
+        return len(self.native_tokenizer)
+
+    def get_vocab(self):
+        return dict(self.native_tokenizer.token_to_id)
+
+    def _tokenize(self, text, **kwargs):
+        return [
+            self.native_tokenizer.id_to_token[token_id]
+            for token_id in self.native_tokenizer.encode(text)
+        ]
+
+    def _convert_token_to_id(self, token):
+        return self.native_tokenizer.token_to_id.get(token, self.native_tokenizer.unk_id)
+
+    def _convert_id_to_token(self, index):
+        return self.native_tokenizer.id_to_token.get(int(index), "<unk>")
+
+    def convert_tokens_to_string(self, tokens):
+        ids = [self._convert_token_to_id(token) for token in tokens]
+        return self.native_tokenizer.decode(ids, skip_special=True)
+
+    def build_inputs_with_special_tokens(self, token_ids_0, token_ids_1=None):
+        if token_ids_1 is None:
+            return [self.native_tokenizer.bos_id, *token_ids_0, self.native_tokenizer.eos_id]
+        return [
+            self.native_tokenizer.bos_id,
+            *token_ids_0,
+            self.native_tokenizer.eos_id,
+            *token_ids_1,
+            self.native_tokenizer.eos_id,
+        ]
+
+    def save_vocabulary(self, save_directory, filename_prefix=None):
+        os.makedirs(save_directory, exist_ok=True)
+        filename = "tokenizer.json" if filename_prefix is None else f"{filename_prefix}-tokenizer.json"
+        out_path = os.path.join(save_directory, filename)
+        shutil.copyfile(self.tokenizer_file, out_path)
+        return (out_path,)
+'''
 
 
 def _model_card(config: HFExportConfig, model, tokenizer, metadata: dict) -> str:
@@ -199,9 +532,11 @@ def _model_card(config: HFExportConfig, model, tokenizer, metadata: dict) -> str
         "",
         "## Loading Note",
         "",
-        "This folder follows common HuggingFace file names, but Picochat currently uses "
-        "a custom architecture and tokenizer. Standard serving stacks require an adapter "
-        "before they can load it directly.",
+        "This folder includes a Transformers `trust_remote_code` adapter when adapter "
+        "export is enabled. Install `requirements.txt`, then load with "
+        "`AutoModelForCausalLM.from_pretrained(path, trust_remote_code=True)`. The adapter "
+        "depends on the Picochat package so the release uses the same audited model code "
+        "as training.",
         "",
         "## Serving",
         "",
