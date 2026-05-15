@@ -28,7 +28,7 @@ from picochat.benchmark_pack import (
     DEFAULT_BENCHMARK_SFT_ROWS,
     generate_benchmark_tuning_pack,
 )
-from picochat.run import TinyRunConfig, run_tiny
+from picochat.run import TinyRunConfig, run_tiny, run_tiny_multiseed
 from picochat.run_preflight import assess_run_preflight, preflight_markdown
 from picochat.compare import compare_runs, comparison_table, write_comparison_report
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
@@ -836,6 +836,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--sft-max-minutes", type=float, default=None)
     run_tiny_parser.add_argument("--canary-count", type=int, default=None)
     run_tiny_parser.add_argument("--seed", type=int, default=42)
+    run_tiny_parser.add_argument(
+        "--n-seeds",
+        type=int,
+        default=1,
+        help="Run consecutive seeds and write mean/std aggregate reports.",
+    )
     run_tiny_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
     run_tiny_parser.add_argument("--eval-max-new-tokens", type=int, default=None)
     run_tiny_parser.add_argument(
@@ -1872,6 +1878,8 @@ def _resolve_tiny_value(args: argparse.Namespace, defaults: TinyRunConfig, field
 
 def run_tiny_command(args: argparse.Namespace) -> int:
     config = _tiny_config_from_args(args)
+    if args.n_seeds < 1:
+        raise SystemExit("--n-seeds must be at least 1")
     if args.preflight_only:
         preview = preview_corpus_sources(
             None if config.dataset_pack else config.corpus_input,
@@ -1885,6 +1893,17 @@ def run_tiny_command(args: argparse.Namespace) -> int:
         report = assess_run_preflight(config, preview)
         print(preflight_markdown(report))
         return 1 if report.status == "blocked" else 0
+    if args.n_seeds > 1:
+        summary = run_tiny_multiseed(config, args.n_seeds)
+        stats = summary["aggregate"]["eval_pass_rate"]
+        if stats.get("mean") is None:
+            print(f"multi-seed tiny run: n={stats['n']} eval pass unavailable")
+        else:
+            print(
+                f"multi-seed tiny run: n={stats['n']} eval pass "
+                f"mean {stats['mean'] * 100:.2f}% std {stats['std'] * 100:.2f}%"
+            )
+        return 0
     summary = run_tiny(config)
     print(
         f"tiny run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from picochat.run import TinyRunConfig, _validation_log_every, run_tiny
+from picochat.run import TinyRunConfig, _validation_log_every, run_tiny, run_tiny_multiseed
 
 
 def test_validation_log_every_keeps_long_runs_observable():
@@ -10,6 +10,42 @@ def test_validation_log_every_keeps_long_runs_observable():
     assert _validation_log_every(24) == 1
     assert _validation_log_every(240) == 10
     assert _validation_log_every(30000) == 1250
+
+
+def test_run_tiny_multiseed_aggregates_seed_runs(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_run_tiny(config):
+        seen.append((config.seed, config.out_dir))
+        pass_rate = 0.25 if config.seed == 42 else 0.75
+        return {
+            "eval": {
+                "num_passed": int(pass_rate * 4),
+                "num_examples": 4,
+                "pass_rate": pass_rate,
+                "pass_rate_ci": {"low": pass_rate, "high": pass_rate, "confidence": 0.95},
+            },
+            "sft_fit": {"pass_rate": pass_rate / 2},
+            "base": {"final_val_bpb": 2.0 + pass_rate, "final_val_loss": 3.0 + pass_rate},
+            "sft": {"final_val_bpb": 1.0 + pass_rate, "final_val_loss": 2.0 + pass_rate},
+            "long_run_gate": {"status": "blocked"},
+        }
+
+    monkeypatch.setattr("picochat.run.run_tiny", fake_run_tiny)
+
+    out_dir = tmp_path / "multi"
+    summary = run_tiny_multiseed(TinyRunConfig(out_dir=str(out_dir)), n_seeds=2)
+
+    assert seen == [
+        (42, str(out_dir / "seed-42")),
+        (43, str(out_dir / "seed-43")),
+    ]
+    assert summary["type"] == "multi_seed_tiny"
+    assert summary["config"]["seeds"] == [42, 43]
+    assert summary["aggregate"]["eval_pass_rate"]["mean"] == 0.5
+    assert round(summary["aggregate"]["eval_pass_rate"]["std"], 4) == 0.3536
+    assert (out_dir / "summary.json").exists()
+    assert "Picochat Multi-Seed Tiny Run" in (out_dir / "summary.md").read_text(encoding="utf-8")
 
 
 def test_run_tiny_writes_full_experiment_artifacts(tmp_path):

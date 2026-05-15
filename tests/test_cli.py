@@ -40,6 +40,39 @@ def test_cli_sanity_preh100(tmp_path, capsys, monkeypatch):
     assert "precision_backward: pass ok" in output
 
 
+def test_cli_run_tiny_multiseed(tmp_path, capsys, monkeypatch):
+    def fake_run(config, n_seeds):
+        assert config.out_dir == str(tmp_path / "multi")
+        assert config.seed == 7
+        assert n_seeds == 3
+        return {
+            "aggregate": {
+                "eval_pass_rate": {
+                    "n": 3,
+                    "mean": 0.25,
+                    "std": 0.05,
+                },
+            },
+        }
+
+    monkeypatch.setattr("picochat.cli.run_tiny_multiseed", fake_run)
+
+    exit_code = main([
+        "run",
+        "tiny",
+        "--out-dir",
+        str(tmp_path / "multi"),
+        "--n-seeds",
+        "3",
+        "--seed",
+        "7",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "multi-seed tiny run: n=3 eval pass mean 25.00% std 5.00%" in output
+
+
 def test_cli_tokenizer_train(tmp_path, capsys):
     data_path = tmp_path / "data.txt"
     tokenizer_path = tmp_path / "tokenizer.json"

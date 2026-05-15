@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 
@@ -430,6 +430,153 @@ def run_tiny(config: TinyRunConfig) -> dict:
     )
     print(f"summary: {out_dir / 'summary.md'}")
     return summary
+
+
+def run_tiny_multiseed(config: TinyRunConfig, n_seeds: int) -> dict:
+    """Run the tiny pipeline for consecutive seeds and summarize variability."""
+    if n_seeds < 1:
+        raise ValueError("n_seeds must be at least 1")
+    if n_seeds == 1:
+        return run_tiny(config)
+
+    out_dir = Path(config.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    seed_rows = []
+    for offset in range(n_seeds):
+        seed = config.seed + offset
+        seed_out_dir = out_dir / f"seed-{seed}"
+        seed_config = replace(config, out_dir=str(seed_out_dir), seed=seed)
+        print(f"== pico run tiny seed {seed} ({offset + 1}/{n_seeds}) ==")
+        summary = run_tiny(seed_config)
+        seed_rows.append(_multi_seed_row(summary, seed=seed, out_dir=seed_out_dir))
+
+    summary = {
+        "type": "multi_seed_tiny",
+        "config": {
+            **config.__dict__,
+            "n_seeds": n_seeds,
+            "seeds": [row["seed"] for row in seed_rows],
+        },
+        "runs": seed_rows,
+        "aggregate": {
+            "eval_pass_rate": _metric_stats(seed_rows, "eval_pass_rate"),
+            "sft_fit_rate": _metric_stats(seed_rows, "sft_fit_rate"),
+            "base_val_bpb": _metric_stats(seed_rows, "base_val_bpb"),
+            "sft_val_bpb": _metric_stats(seed_rows, "sft_val_bpb"),
+            "base_val_loss": _metric_stats(seed_rows, "base_val_loss"),
+            "sft_val_loss": _metric_stats(seed_rows, "sft_val_loss"),
+        },
+    }
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (out_dir / "summary.md").write_text(_multi_seed_summary_markdown(summary), encoding="utf-8")
+    return summary
+
+
+def _multi_seed_row(summary: dict, *, seed: int, out_dir: Path) -> dict:
+    eval_summary = summary.get("eval", {})
+    sft_fit = summary.get("sft_fit", {})
+    base = summary.get("base", {})
+    sft = summary.get("sft", {})
+    return {
+        "seed": seed,
+        "out_dir": str(out_dir),
+        "eval_score": f"{eval_summary.get('num_passed', 0)}/{eval_summary.get('num_examples', 0)}",
+        "eval_pass_rate": _optional_float(eval_summary.get("pass_rate")),
+        "eval_pass_rate_ci": eval_summary.get("pass_rate_ci"),
+        "sft_fit_rate": _optional_float(sft_fit.get("pass_rate")),
+        "sft_fit_rate_ci": sft_fit.get("pass_rate_ci"),
+        "base_val_bpb": _optional_float(base.get("final_val_bpb")),
+        "sft_val_bpb": _optional_float(sft.get("final_val_bpb")),
+        "base_val_loss": _optional_float(base.get("final_val_loss")),
+        "sft_val_loss": _optional_float(sft.get("final_val_loss")),
+        "long_run_gate": summary.get("long_run_gate", {}).get("status"),
+    }
+
+
+def _metric_stats(rows: list[dict], key: str) -> dict:
+    values = [
+        float(row[key])
+        for row in rows
+        if row.get(key) is not None
+    ]
+    if not values:
+        return {"n": 0, "mean": None, "std": None, "min": None, "max": None}
+    mean = sum(values) / len(values)
+    variance = 0.0
+    if len(values) > 1:
+        variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+    return {
+        "n": len(values),
+        "mean": mean,
+        "std": variance ** 0.5,
+        "min": min(values),
+        "max": max(values),
+    }
+
+
+def _multi_seed_summary_markdown(summary: dict) -> str:
+    aggregate = summary["aggregate"]
+    lines = [
+        "# Picochat Multi-Seed Tiny Run",
+        "",
+        f"Seeds: {', '.join(str(seed) for seed in summary['config']['seeds'])}",
+        "",
+        "## Aggregate",
+        "",
+        "| Metric | Mean | Std | Min | Max | N |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for label, key in [
+        ("Eval pass rate", "eval_pass_rate"),
+        ("SFT fit rate", "sft_fit_rate"),
+        ("Base BPB", "base_val_bpb"),
+        ("SFT BPB", "sft_val_bpb"),
+        ("Base val loss", "base_val_loss"),
+        ("SFT val loss", "sft_val_loss"),
+    ]:
+        stats = aggregate[key]
+        lines.append(
+            f"| {label} | {_format_stat(stats.get('mean'))} | {_format_stat(stats.get('std'))} | "
+            f"{_format_stat(stats.get('min'))} | {_format_stat(stats.get('max'))} | {stats.get('n', 0)} |"
+        )
+
+    lines.extend([
+        "",
+        "## Runs",
+        "",
+        "| Seed | Eval | Eval Pass | SFT Fit | Base BPB | SFT BPB | Gate | Path |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+    ])
+    for row in summary["runs"]:
+        lines.append(
+            f"| {row['seed']} | {row['eval_score']} | {_format_percent(row.get('eval_pass_rate'))} | "
+            f"{_format_percent(row.get('sft_fit_rate'))} | {_format_stat(row.get('base_val_bpb'))} | "
+            f"{_format_stat(row.get('sft_val_bpb'))} | `{row.get('long_run_gate') or '--'}` | "
+            f"`{row['out_dir']}` |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _optional_float(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_stat(value) -> str:
+    if value is None:
+        return "--"
+    return f"{float(value):.4f}"
+
+
+def _format_percent(value) -> str:
+    if value is None:
+        return "--"
+    return f"{float(value) * 100:.2f}%"
 
 
 def _validation_log_every(max_steps: int, target_points: int = 24) -> int:
