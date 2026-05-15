@@ -37,6 +37,46 @@ def test_generate_adds_tokens():
     assert out[:, :3].tolist() == prompt.tolist()
 
 
+def test_generate_with_cache_matches_uncached_greedy():
+    config = GPTConfig(vocab_size=20, context_size=8, n_embd=16, n_head=4, n_layer=2)
+    model = TinyGPT(config)
+    model.eval()
+    prompt = torch.tensor([[1, 2, 3]], dtype=torch.long)
+
+    cached = model.generate(prompt, max_new_tokens=4, temperature=0, use_cache=True)
+    uncached = model.generate(prompt, max_new_tokens=4, temperature=0, use_cache=False)
+
+    assert cached.tolist() == uncached.tolist()
+
+
+def test_forward_returns_kv_cache():
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=2,
+        position_encoding="rope",
+    )
+    model = TinyGPT(config)
+    prompt = torch.tensor([[1, 2, 3]], dtype=torch.long)
+
+    logits, loss, past_kv = model(prompt, use_cache=True)
+    next_logits, next_loss, next_kv = model(
+        torch.tensor([[4]], dtype=torch.long),
+        past_kv=past_kv,
+        use_cache=True,
+    )
+
+    assert logits.shape == (1, 3, config.vocab_size)
+    assert loss is None
+    assert len(past_kv) == config.n_layer
+    assert past_kv[0][0].shape == (1, config.n_head, 3, config.n_embd // config.n_head)
+    assert next_logits.shape == (1, 1, config.vocab_size)
+    assert next_loss is None
+    assert next_kv[0][0].shape[-2] == 4
+
+
 def test_generate_validates_sampling_controls():
     config = GPTConfig(vocab_size=20, context_size=8, n_embd=16, n_head=4, n_layer=1)
     model = TinyGPT(config)

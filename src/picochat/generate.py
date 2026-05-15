@@ -24,6 +24,7 @@ class GenerateConfig:
     repetition_penalty: float = 1.0
     seed: int = 42
     device: str = "cpu"
+    use_kv_cache: bool = True
 
 
 def generate_text(config: GenerateConfig) -> str:
@@ -57,9 +58,20 @@ def generate_text_with_trace(config: GenerateConfig) -> dict:
     if config.repetition_penalty <= 0:
         raise ValueError("repetition_penalty must be positive")
 
-    for _ in range(config.max_new_tokens):
-        context = ids[:, -model.config.context_size:]
-        logits, _ = model(context)
+    use_cache = (
+        config.use_kv_cache
+        and ids.size(1) > 0
+        and ids.size(1) + config.max_new_tokens <= model.config.context_size
+    )
+    past_kv = None
+    logits = None
+    if use_cache and config.max_new_tokens > 0:
+        logits, _, past_kv = model(ids, use_cache=True)
+
+    for step in range(config.max_new_tokens):
+        if not use_cache:
+            context = ids[:, -model.config.context_size:]
+            logits, _ = model(context)
         next_logits = logits[:, -1, :]
         next_logits = _apply_repetition_penalty(
             next_logits,
@@ -95,6 +107,12 @@ def generate_text_with_trace(config: GenerateConfig) -> dict:
         ids = torch.cat([ids, next_id], dim=1)
         if token_id == tokenizer.eos_id:
             break
+        if use_cache and step != config.max_new_tokens - 1:
+            logits, _, past_kv = model(
+                next_id,
+                past_kv=past_kv,
+                use_cache=True,
+            )
 
     output_ids = ids[0].tolist()
     return {
@@ -103,6 +121,7 @@ def generate_text_with_trace(config: GenerateConfig) -> dict:
         "generated_tokens": generated_tokens,
         "prompt_tokens": len(prompt_ids),
         "total_tokens": len(output_ids),
+        "used_kv_cache": use_cache,
     }
 
 

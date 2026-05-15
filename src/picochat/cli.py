@@ -634,6 +634,11 @@ def build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     generate_parser.add_argument("--seed", type=int, default=42)
     generate_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    generate_parser.add_argument(
+        "--no-kv-cache",
+        action="store_true",
+        help="Disable incremental KV-cache decoding during generation.",
+    )
 
     export_parser = subparsers.add_parser("export", help="Export model artifacts.")
     export_subparsers = export_parser.add_subparsers(dest="export_command")
@@ -653,6 +658,11 @@ def build_parser() -> argparse.ArgumentParser:
     export_hf_parser.add_argument("--license", default="unknown", help="License string for the model card.")
     export_hf_parser.add_argument("--dataset-summary", default="Not provided.", help="Training data summary.")
     export_hf_parser.add_argument("--eval-summary", default="Not provided.", help="Evaluation summary.")
+    export_hf_parser.add_argument(
+        "--dynamic-int8",
+        action="store_true",
+        help="Also write a Picochat PyTorch dynamic-int8 serving artifact.",
+    )
 
     chat_parser = subparsers.add_parser("chat", help="Interactive terminal chat.")
     chat_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
@@ -664,6 +674,11 @@ def build_parser() -> argparse.ArgumentParser:
     chat_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     chat_parser.add_argument("--seed", type=int, default=42)
     chat_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    chat_parser.add_argument(
+        "--no-kv-cache",
+        action="store_true",
+        help="Disable incremental KV-cache decoding during chat generation.",
+    )
 
     eval_parser = subparsers.add_parser("eval", help="Evaluation commands.")
     eval_subparsers = eval_parser.add_subparsers(dest="eval_command")
@@ -1596,6 +1611,7 @@ def run_generate(args: argparse.Namespace) -> int:
         repetition_penalty=args.repetition_penalty,
         seed=args.seed,
         device=args.device,
+        use_kv_cache=not args.no_kv_cache,
     ))
     print(text)
     return 0
@@ -1611,6 +1627,7 @@ def run_export_hf(args: argparse.Namespace) -> int:
         license_name=args.license,
         dataset_summary=args.dataset_summary,
         eval_summary=args.eval_summary,
+        dynamic_int8=args.dynamic_int8,
     ))
     print(f"exported: {report['out_dir']}")
     print(f"manifest: {report['manifest']}")
@@ -1630,6 +1647,7 @@ def run_chat(args: argparse.Namespace) -> int:
         repetition_penalty=args.repetition_penalty,
         seed=args.seed,
         device=args.device,
+        use_kv_cache=not args.no_kv_cache,
     ))
 
 

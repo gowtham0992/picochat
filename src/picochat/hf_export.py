@@ -9,6 +9,7 @@ import shutil
 from typing import Any
 
 import torch
+import torch.nn as nn
 
 from picochat.checkpoint import load_checkpoint
 from picochat.tokenizer import load_tokenizer
@@ -24,6 +25,7 @@ class HFExportConfig:
     license_name: str = "unknown"
     dataset_summary: str = "Not provided."
     eval_summary: str = "Not provided."
+    dynamic_int8: bool = False
 
 
 def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
@@ -37,6 +39,18 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
     torch.save(model.state_dict(), weights_path)
     tokenizer_path = out_dir / "tokenizer.json"
     shutil.copyfile(config.tokenizer_path, tokenizer_path)
+
+    quantized_files: dict[str, str] = {}
+    if config.dynamic_int8:
+        _ensure_quantized_engine()
+        quantized_model = torch.ao.quantization.quantize_dynamic(
+            model.eval(),
+            {nn.Linear},
+            dtype=torch.qint8,
+        )
+        quantized_path = out_dir / "pytorch_model.dynamic_int8.bin"
+        torch.save(quantized_model.state_dict(), quantized_path)
+        quantized_files["dynamic_int8"] = quantized_path.name
 
     hf_config = {
         "model_type": "picochat",
@@ -89,14 +103,45 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
             "tokenizer": "tokenizer.json",
             "tokenizer_config": "tokenizer_config.json",
             "model_card": "README.md",
+            "serving_manifest": "serving_manifest.json",
+            **quantized_files,
         },
         "limitations": [
             "This is a HF-style release folder for Picochat's custom TinyGPT architecture.",
             "Generic Transformers/vLLM/TGI loading needs a Picochat adapter or custom model code.",
         ],
     }
+    serving_manifest = {
+        "runtime": "picochat",
+        "architecture": "TinyGPT",
+        "checkpoint_format": "picochat-hf-style",
+        "supports_kv_cache": True,
+        "max_context_tokens": model.config.context_size,
+        "tokenizer": {
+            "type": tokenizer.tokenizer_type,
+            "file": "tokenizer.json",
+            "vocab_size": len(tokenizer),
+        },
+        "entrypoints": {
+            "generate": "pico generate --checkpoint <checkpoint_dir> --tokenizer <tokenizer.json>",
+            "chat": "pico chat --checkpoint <checkpoint_dir> --tokenizer <tokenizer.json>",
+        },
+        "artifacts": {
+            "fp32_weights": "pytorch_model.bin",
+            "dynamic_int8_weights": quantized_files.get("dynamic_int8"),
+        },
+        "limitations": [
+            "Dynamic int8 weights are for Picochat/PyTorch CPU serving experiments.",
+            "Load dynamic int8 by constructing TinyGPT, applying torch dynamic quantization to Linear layers, then loading the quantized state dict.",
+            "This export does not create GGUF, TensorRT-LLM, vLLM, or TGI-native artifacts.",
+        ],
+    }
     (out_dir / "release_manifest.json").write_text(
         json.dumps(manifest, indent=2),
+        encoding="utf-8",
+    )
+    (out_dir / "serving_manifest.json").write_text(
+        json.dumps(serving_manifest, indent=2),
         encoding="utf-8",
     )
     (out_dir / "README.md").write_text(_model_card(config, model, tokenizer, metadata), encoding="utf-8")
@@ -104,10 +149,12 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "out_dir": str(out_dir),
         "files": manifest["files"],
         "manifest": str(out_dir / "release_manifest.json"),
+        "serving_manifest": str(out_dir / "serving_manifest.json"),
         "model_card": str(out_dir / "README.md"),
         "num_parameters": model.num_parameters(),
         "tokenizer_type": tokenizer.tokenizer_type,
         "vocab_size": len(tokenizer),
+        "dynamic_int8": config.dynamic_int8,
     }
 
 
@@ -156,4 +203,23 @@ def _model_card(config: HFExportConfig, model, tokenizer, metadata: dict) -> str
         "a custom architecture and tokenizer. Standard serving stacks require an adapter "
         "before they can load it directly.",
         "",
+        "## Serving",
+        "",
+        "Picochat generation uses KV-cache decoding when the prompt plus requested "
+        "completion fits inside the configured context window. See `serving_manifest.json` "
+        "for runtime artifacts and limitations.",
+        "",
     ])
+
+
+def _ensure_quantized_engine() -> None:
+    if torch.backends.quantized.engine != "none":
+        return
+    supported_engines = [
+        engine
+        for engine in torch.backends.quantized.supported_engines
+        if engine != "none"
+    ]
+    if not supported_engines:
+        raise RuntimeError("PyTorch dynamic quantization is unavailable: no quantized backend engine")
+    torch.backends.quantized.engine = supported_engines[0]

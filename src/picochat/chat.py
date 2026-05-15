@@ -18,6 +18,7 @@ class ChatConfig:
     repetition_penalty: float = 1.0
     seed: int = 42
     device: str = "cpu"
+    use_kv_cache: bool = True
 
 
 def render_chat_prompt(history: list[tuple[str, str]], user_message: str) -> str:
@@ -61,6 +62,7 @@ def generate_reply(
         repetition_penalty=config.repetition_penalty,
         seed=config.seed,
         device=config.device,
+        use_kv_cache=config.use_kv_cache,
     ))
     return extract_assistant_reply(prompt, generated_text)
 
