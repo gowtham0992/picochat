@@ -90,6 +90,7 @@ def run_sft_sweep(config: SFTSweepConfig) -> dict:
         "rows": rows,
         "best_sft_fit": _best_row(rows, "sft_fit_pass_rate"),
         "best_eval": _best_row(rows, "eval_pass_rate"),
+        "best_non_choice_eval": _best_row(rows, "eval_non_choice_pass_rate"),
     }
     (out_dir / "sft_sweep.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (out_dir / "sft_sweep.md").write_text(sft_sweep_markdown(report), encoding="utf-8")
@@ -116,14 +117,16 @@ def sft_sweep_markdown(report: dict) -> str:
         "",
         "## Results",
         "",
-        "| Candidate | LR | Steps | Sampling | Packing | SFT Fit | Eval | SFT Val BPB | Stop | Path |",
-        "| --- | ---: | ---: | --- | --- | ---: | ---: | ---: | --- | --- |",
+        "| Candidate | LR | Steps | Sampling | Packing | SFT Fit | Eval | NonChoice | Choice | Refusal | SFT Val BPB | Stop | Path |",
+        "| --- | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     for row in rows:
         lines.append(
             f"| `{row['candidate']}` | {row['learning_rate']:g} | {row['step_count']} | "
             f"`{row['sampling']}` | `{row.get('packing', 'separate')}` | {_percent(row.get('sft_fit_pass_rate'))} | "
-            f"{_percent(row.get('eval_pass_rate'))} | {_float_or_dash(row.get('sft_final_val_bpb'))} | "
+            f"{_percent(row.get('eval_pass_rate'))} | {_percent(row.get('eval_non_choice_pass_rate'))} | "
+            f"{_percent(row.get('eval_choice_pass_rate'))} | {_percent(row.get('eval_refusal_pass_rate'))} | "
+            f"{_float_or_dash(row.get('sft_final_val_bpb'))} | "
             f"`{row.get('stop_reason', 'unknown')}` | `{row['candidate_dir']}` |"
         )
     lines.extend([
@@ -132,6 +135,10 @@ def sft_sweep_markdown(report: dict) -> str:
         "",
         f"- Best SFT fit: `{_best_name(report.get('best_sft_fit'))}`",
         f"- Best held-out eval: `{_best_name(report.get('best_eval'))}`",
+        f"- Best non-choice held-out eval: `{_best_name(report.get('best_non_choice_eval'))}`",
+        "",
+        "When choice accuracy is saturated, prefer the non-choice winner for transfer diagnosis. "
+        "Aggregate eval can otherwise hide weak math, spelling, identity, or refusal behavior.",
         "",
         "If best SFT fit is below 70%, increase SFT fit with more steps, a simpler "
         "curriculum, or a narrower starter set before blaming the base model.",
@@ -188,10 +195,13 @@ def _run_candidate(
     )
     fit_dir = candidate_dir / "sft_fit"
     fit_input = fit_dir / "sft_fit_eval.jsonl"
+    train_indices = sft_report.get("dataset", {}).get("train_indices")
     fit_dataset = write_sft_fit_eval(
         config.input_path,
         fit_input,
         max_rows=None if config.fit_max_rows <= 0 else config.fit_max_rows,
+        include_indices=train_indices if isinstance(train_indices, list) else None,
+        split_label="sft_train",
     )
     fit_report = run_chat_eval(ChatEvalConfig(
         input_path=str(fit_input),
@@ -232,6 +242,8 @@ def _run_candidate(
         "stop_reason": sft_report.get("stop_reason"),
         "actual_steps": sft_report.get("coverage", {}).get("actual_steps"),
         "sft_fit_examples": fit_dataset["num_rows"],
+        "sft_fit_split": fit_dataset.get("split_label"),
+        "sft_fit_selected_from_indices": fit_dataset.get("selected_from_indices"),
         "sft_fit_pass_rate": fit_report["summary"]["pass_rate"],
         "sft_fit_score": (
             f"{fit_report['summary']['num_passed']}/{fit_report['summary']['num_examples']}"
@@ -240,6 +252,29 @@ def _run_candidate(
         "eval_score": (
             f"{eval_report['summary']['num_passed']}/{eval_report['summary']['num_examples']}"
             if eval_report else None
+        ),
+        "eval_non_choice_examples": (
+            eval_report["summary"].get("non_choice_examples") if eval_report else None
+        ),
+        "eval_non_choice_pass_rate": (
+            eval_report["summary"].get("non_choice_pass_rate") if eval_report else None
+        ),
+        "eval_non_choice_score": (
+            f"{eval_report['summary'].get('non_choice_passed', 0)}/"
+            f"{eval_report['summary'].get('non_choice_examples', 0)}"
+            if eval_report else None
+        ),
+        "eval_choice_pass_rate": (
+            eval_report["summary"].get("choice_pass_rate") if eval_report else None
+        ),
+        "eval_refusal_pass_rate": (
+            eval_report["summary"].get("refusal_pass_rate") if eval_report else None
+        ),
+        "eval_answerable_pass_rate": (
+            eval_report["summary"].get("answerable_pass_rate") if eval_report else None
+        ),
+        "eval_domain_pass_rate": (
+            eval_report["summary"].get("domain_pass_rate") if eval_report else None
         ),
     }
     (candidate_dir / "candidate_summary.json").write_text(

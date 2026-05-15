@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from picochat.run import TinyRunConfig, _validation_log_every, run_tiny, run_tiny_multiseed
+from picochat.run import TinyRunConfig, _long_run_gate, _validation_log_every, run_tiny, run_tiny_multiseed
 
 
 def test_validation_log_every_keeps_long_runs_observable():
@@ -10,6 +10,49 @@ def test_validation_log_every_keeps_long_runs_observable():
     assert _validation_log_every(24) == 1
     assert _validation_log_every(240) == 10
     assert _validation_log_every(30000) == 1250
+
+
+def test_long_run_gate_blocks_choice_inflated_eval():
+    gate = _long_run_gate(
+        preflight_report={"status": "warn", "budget": {"long_run": True}},
+        sft_fit_summary={"pass_rate": 0.76},
+        sft_fit_heldout_summary={"pass_rate": 0.70},
+        eval_summary={
+            "pass_rate": 0.37,
+            "non_choice_examples": 400,
+            "non_choice_pass_rate": 0.24,
+            "choice_pass_rate": 1.0,
+            "refusal_pass_rate": 0.82,
+            "prompt_echo_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+        },
+        honesty={"status": "ready"},
+    )
+
+    assert gate["status"] == "blocked"
+    assert gate["eval_non_choice_rate"] == 0.24
+    assert any(issue["name"] == "eval_non_choice" for issue in gate["issues"])
+
+
+def test_long_run_gate_blocks_weak_refusal_and_sft_heldout():
+    gate = _long_run_gate(
+        preflight_report={"status": "warn", "budget": {"long_run": True}},
+        sft_fit_summary={"pass_rate": 0.80},
+        sft_fit_heldout_summary={"pass_rate": 0.45},
+        eval_summary={
+            "pass_rate": 0.60,
+            "non_choice_examples": 100,
+            "non_choice_pass_rate": 0.55,
+            "refusal_pass_rate": 0.70,
+            "prompt_echo_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+        },
+        honesty={"status": "ready"},
+    )
+
+    assert gate["status"] == "blocked"
+    assert any(issue["name"] == "sft_heldout_fit" for issue in gate["issues"])
+    assert any(issue["name"] == "refusal" for issue in gate["issues"])
 
 
 def test_run_tiny_multiseed_aggregates_seed_runs(tmp_path, monkeypatch):

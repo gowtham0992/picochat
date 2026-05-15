@@ -254,6 +254,7 @@ class TinyGPT(nn.Module):
             loss = F.cross_entropy(
                 logits.view(batch_size * seq_len, -1),
                 targets.view(batch_size * seq_len),
+                ignore_index=-100,
             )
         if use_cache:
             return logits, loss, tuple(presents)

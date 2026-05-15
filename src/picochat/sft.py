@@ -1223,6 +1223,8 @@ def train_sft(config: SFTConfig) -> dict:
             "split_method": split.method,
             "train_groups": split.train_groups,
             "val_groups": split.val_groups,
+            "train_indices": list(split.train.indices),
+            "val_indices": list(split.val.indices),
             "category_counts": dataset.stats().category_counts,
             "train_category_counts": train_category_counts,
             "val_category_counts": val_category_counts,

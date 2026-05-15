@@ -180,6 +180,52 @@ def test_weak_skills_profile_overweights_math_and_spelling(tmp_path):
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
 
 
+def test_weak_skills_choice_labels_are_balanced(tmp_path):
+    pack = write_pack(tmp_path)
+
+    generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=800,
+        eval_rows=200,
+        profile="weak_skills",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    chat_choices = Counter(
+        row["assistant"]
+        for row in chat_rows
+        if row["category"].startswith("bench_choice")
+    )
+    eval_choices = Counter(
+        row["correct_choice"]
+        for row in eval_rows
+        if row["category"].startswith("bench_choice")
+    )
+
+    assert set(chat_choices) == {"A", "B", "C", "D"}
+    assert set(eval_choices) == {"A", "B", "C", "D"}
+    assert max(chat_choices.values()) - min(chat_choices.values()) <= 2
+    assert max(eval_choices.values()) - min(eval_choices.values()) <= 2
+
+
+def test_staged_math_uses_disjoint_train_eval_operand_pools():
+    for stage in benchmark_pack._MATH_STAGE_PAIRS:
+        train_pairs = set(benchmark_pack._math_stage_pair_pool(stage, eval_rows=False))
+        eval_pairs = set(benchmark_pack._math_stage_pair_pool(stage, eval_rows=True))
+
+        assert train_pairs
+        assert eval_pairs
+        assert train_pairs.isdisjoint(eval_pairs)
+
+
 def test_offline_behavior_curriculum_has_unique_skill_coverage():
     chat_rows = benchmark_pack.build_benchmark_sft_rows(160, seed=19, source="offline")
     eval_rows = benchmark_pack.build_benchmark_eval_rows(64, seed=29, source="offline")

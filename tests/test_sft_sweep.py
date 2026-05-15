@@ -63,9 +63,13 @@ def test_run_sft_sweep_writes_candidate_and_summary_artifacts(tmp_path):
     assert (candidate_dir / "eval" / "eval_report.json").exists()
     assert (candidate_dir / "candidate_summary.json").exists()
     assert row["sft_fit_examples"] == 1
+    assert row["sft_fit_split"] == "sft_train"
+    assert row["sft_fit_selected_from_indices"] is True
     assert row["packing"] == "bos_bestfit"
     assert row["eval_score"] is not None
+    assert "eval_non_choice_pass_rate" in row
     assert report["best_sft_fit"]["candidate"] == row["candidate"]
+    assert report["best_non_choice_eval"]["candidate"] == row["candidate"]
 
 
 def test_sft_sweep_candidate_name_preserves_fractional_learning_rate():
@@ -97,14 +101,19 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
             "packing": "bos_bestfit",
             "sft_fit_pass_rate": 0.5,
             "eval_pass_rate": 0.25,
+            "eval_non_choice_pass_rate": 0.20,
+            "eval_choice_pass_rate": 1.0,
+            "eval_refusal_pass_rate": 0.75,
             "sft_final_val_bpb": 1.2,
             "stop_reason": "max_steps",
         }],
         "best_sft_fit": {"candidate": "uniform-lr1em04-steps1"},
         "best_eval": {"candidate": "uniform-lr1em04-steps1"},
+        "best_non_choice_eval": {"candidate": "uniform-lr1em04-steps1"},
     })
 
     assert "# Picochat SFT Sweep" in markdown
     assert "Use SFT fit first" in markdown
     assert "SFT packing: `bos_bestfit`" in markdown
+    assert "Best non-choice held-out eval" in markdown
     assert "uniform-lr1em04-steps1" in markdown

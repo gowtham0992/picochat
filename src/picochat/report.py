@@ -368,6 +368,9 @@ def sft_report_markdown(report: dict) -> str:
         )
     if dataset.get("mixed_category_sequences"):
         lines.append(f"- Mixed-category packed sequences: {dataset.get('mixed_category_sequences')}")
+    packing_warnings = _sft_packing_warnings(dataset, config)
+    for warning in packing_warnings:
+        lines.append(f"- Warning: {warning}")
     lines.append(f"- Context size: {dataset['context_size']}")
     lines.append(f"- Supervised answer tokens: {dataset['supervised_tokens']}")
     if dataset.get("masked_prompt_tokens") is not None:
@@ -555,6 +558,27 @@ def sft_report_markdown(report: dict) -> str:
     )
     lines.append("")
     return "\n".join(lines)
+
+
+def _sft_packing_warnings(dataset: dict, config: dict) -> list[str]:
+    warnings: list[str] = []
+    packing = dataset.get("packing", config.get("packing", "separate"))
+    sampling = dataset.get("sampling", config.get("sampling", "uniform"))
+    mixed_sequences = int(dataset.get("mixed_category_sequences") or 0)
+    packed_sequences = int(dataset.get("packed_sequences", dataset.get("num_sequences", 0)) or 0)
+    average_examples = float(dataset.get("average_examples_per_sequence") or 0.0)
+    if packing == "bos_bestfit" and average_examples > 1.1:
+        warnings.append(
+            "best-fit SFT packing trains with multiple chat examples in one causal context; "
+            "compare against `separate` packing if standalone generation underfits."
+        )
+    if packing == "bos_bestfit" and mixed_sequences and sampling != "uniform":
+        ratio = mixed_sequences / packed_sequences if packed_sequences else 0.0
+        if ratio >= 0.50:
+            warnings.append(
+                "most packed SFT sequences mix categories, so category-aware row sampling is weakened."
+            )
+    return warnings
 
 
 def chat_eval_report_markdown(report: dict) -> str:
@@ -771,6 +795,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     config = summary["config"]
     eval_summary = summary["eval"]
     sft_fit_summary = summary.get("sft_fit") or {}
+    sft_fit_heldout_summary = summary.get("sft_fit_heldout") or {}
     base = summary["base"]
     sft = summary["sft"]
     artifacts = summary["artifacts"]
@@ -827,6 +852,15 @@ def tiny_run_summary_markdown(summary: dict) -> str:
                 f"- SFT fit non-choice rate: {_format_percent_or_dash(sft_fit_summary.get('non_choice_pass_rate'))}"
                 f"{suffix} over {sft_fit_summary.get('non_choice_examples', 0)} example(s)"
             )
+    if sft_fit_heldout_summary:
+        lines.append(
+            f"- SFT heldout fit passed: {sft_fit_heldout_summary.get('num_passed', 0)} / "
+            f"{sft_fit_heldout_summary.get('num_examples', 0)}"
+        )
+        lines.append(
+            f"- SFT heldout fit rate: "
+            f"{format_float(float(sft_fit_heldout_summary.get('pass_rate', 0.0)) * 100)}%"
+        )
     lines.append(f"- Failed examples: {eval_summary['num_failed']}")
     if "unsupported_claim_rate" in eval_summary:
         lines.append(f"- Unsupported claim rate: {format_float(eval_summary['unsupported_claim_rate'] * 100)}%")

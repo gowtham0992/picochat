@@ -984,7 +984,7 @@ def _choice_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> 
         "Answer with A/B/C/D only.\n{question}\nA. {A}\nB. {B}\nC. {C}\nD. {D}",
     )
     template = prompt_templates[((index // len(facts)) + (1 if eval_rows else 0)) % len(prompt_templates)]
-    permutation_index = (index // (len(facts) * len(prompt_templates))) % 24
+    permutation_index = (index * 7 + (11 if eval_rows else 0)) % 24
     options = _choice_options(correct, distractors, permutation_index)
     correct_label = labels[options.index(correct)]
     user = template.format(question=question, A=options[0], B=options[1], C=options[2], D=options[3])
@@ -1086,10 +1086,10 @@ _MATH_EVAL_TEMPLATES = (
 
 
 def _math_stage_row(index: int, stage: str, split: str, eval_rows: bool) -> dict[str, Any]:
-    pairs = _MATH_STAGE_PAIRS[stage]
+    pairs = _math_stage_pair_pool(stage, eval_rows=eval_rows)
     templates = _MATH_EVAL_TEMPLATES if eval_rows else _MATH_TRAIN_TEMPLATES
     template_index = index % len(templates)
-    pair_index = (index // len(templates)) + (23 if eval_rows else 0)
+    pair_index = index // len(templates)
     a, b = pairs[pair_index % len(pairs)]
     kind_name = _MATH_STAGE_CATEGORIES[stage]
 
@@ -1146,6 +1146,16 @@ def _math_stage_row(index: int, stage: str, split: str, eval_rows: bool) -> dict
             "reference_answer": str(answer),
         })
     return row
+
+
+def _math_stage_pair_pool(stage: str, *, eval_rows: bool) -> tuple[tuple[int, int], ...]:
+    pairs = _MATH_STAGE_PAIRS[stage]
+    split_index = max(1, int(len(pairs) * 0.8))
+    if split_index >= len(pairs):
+        split_index = len(pairs) - 1
+    train_pairs = pairs[:split_index]
+    eval_pairs = pairs[split_index:]
+    return eval_pairs if eval_rows else train_pairs
 
 
 def _math_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> dict[str, Any]:

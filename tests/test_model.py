@@ -17,6 +17,19 @@ def test_model_forward_shapes_and_loss():
     assert loss.ndim == 0
 
 
+def test_model_loss_ignores_masked_sft_targets():
+    config = GPTConfig(vocab_size=20, context_size=8, n_embd=16, n_head=4, n_layer=1)
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+    y = torch.full((2, config.context_size), -100, dtype=torch.long)
+    y[:, -1] = torch.randint(0, config.vocab_size, (2,))
+
+    _, loss = model(x, y)
+
+    assert loss is not None
+    assert torch.isfinite(loss)
+
+
 def test_model_rejects_too_long_sequence():
     config = GPTConfig(vocab_size=20, context_size=4, n_embd=16, n_head=4, n_layer=1)
     model = TinyGPT(config)

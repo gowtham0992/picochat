@@ -279,10 +279,15 @@ def run_tiny(config: TinyRunConfig) -> dict:
 
     print("[6/7] run SFT fit diagnostic")
     sft_fit_input = out_dir / "sft_fit" / "sft_fit_eval.jsonl"
+    sft_dataset = sft_report.get("dataset", {})
+    sft_train_indices = sft_dataset.get("train_indices")
+    sft_val_indices = sft_dataset.get("val_indices")
     sft_fit_dataset = write_sft_fit_eval(
         chat_input,
         sft_fit_input,
         max_rows=None if config.sft_fit_max_rows <= 0 else config.sft_fit_max_rows,
+        include_indices=sft_train_indices if isinstance(sft_train_indices, list) else None,
+        split_label="sft_train",
     )
     sft_fit_report = run_chat_eval(ChatEvalConfig(
         input_path=str(sft_fit_input),
@@ -294,6 +299,27 @@ def run_tiny(config: TinyRunConfig) -> dict:
         device=config.device,
         support_corpus_path=str(corpus_path),
     ))
+    sft_fit_heldout_dataset = None
+    sft_fit_heldout_report = None
+    if isinstance(sft_val_indices, list) and sft_val_indices:
+        sft_fit_heldout_input = out_dir / "sft_fit_heldout" / "sft_fit_eval.jsonl"
+        sft_fit_heldout_dataset = write_sft_fit_eval(
+            chat_input,
+            sft_fit_heldout_input,
+            max_rows=None if config.sft_fit_max_rows <= 0 else config.sft_fit_max_rows,
+            include_indices=sft_val_indices,
+            split_label="sft_heldout",
+        )
+        sft_fit_heldout_report = run_chat_eval(ChatEvalConfig(
+            input_path=str(sft_fit_heldout_input),
+            checkpoint_path=sft_eval_checkpoint,
+            tokenizer_path=str(tokenizer_path),
+            out_dir=str(out_dir / "sft_fit_heldout"),
+            max_new_tokens=config.eval_max_new_tokens,
+            seed=config.seed,
+            device=config.device,
+            support_corpus_path=str(corpus_path),
+        ))
 
     print("[7/7] run chat eval")
     eval_report = run_chat_eval(ChatEvalConfig(
@@ -324,6 +350,9 @@ def run_tiny(config: TinyRunConfig) -> dict:
     long_run_gate = _long_run_gate(
         preflight_report=preflight_report.to_dict(),
         sft_fit_summary=sft_fit_report["summary"],
+        sft_fit_heldout_summary=(
+            sft_fit_heldout_report["summary"] if sft_fit_heldout_report is not None else None
+        ),
         eval_summary=eval_report["summary"],
         honesty=honesty_report.to_dict(),
     )
@@ -361,6 +390,11 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "sft_ema_checkpoint": sft_report.get("ema_checkpoint"),
             "sft_eval_checkpoint": sft_eval_checkpoint,
             "sft_fit_report": str(out_dir / "sft_fit" / "report.md"),
+            "sft_fit_heldout_report": (
+                str(out_dir / "sft_fit_heldout" / "report.md")
+                if sft_fit_heldout_report is not None
+                else None
+            ),
             "eval_report": str(out_dir / "eval" / "report.md"),
         },
         "corpus": corpus_build.stats.to_dict(),
@@ -417,6 +451,13 @@ def run_tiny(config: TinyRunConfig) -> dict:
         "sft_fit": sft_fit_report["summary"],
         "sft_fit_dataset": sft_fit_dataset,
         "sft_fit_analysis": sft_fit_report.get("analysis", {}),
+        "sft_fit_heldout": (
+            sft_fit_heldout_report["summary"] if sft_fit_heldout_report is not None else None
+        ),
+        "sft_fit_heldout_dataset": sft_fit_heldout_dataset,
+        "sft_fit_heldout_analysis": (
+            sft_fit_heldout_report.get("analysis", {}) if sft_fit_heldout_report is not None else {}
+        ),
         "eval": eval_report["summary"],
         "eval_analysis": eval_report.get("analysis", {}),
         "long_run_gate": long_run_gate,
@@ -595,6 +636,7 @@ def _long_run_gate(
     *,
     preflight_report: dict,
     sft_fit_summary: dict,
+    sft_fit_heldout_summary: dict | None = None,
     eval_summary: dict,
     honesty: dict,
 ) -> dict:
@@ -615,11 +657,59 @@ def _long_run_gate(
             "message": "Data honesty found leakage or tuning contamination.",
         })
     sft_fit_rate = float(sft_fit_summary.get("pass_rate") or 0.0)
-    if sft_fit_rate < 0.70:
+    sft_fit_threshold = 0.70
+    sft_heldout_fit_threshold = 0.50
+    eval_non_choice_threshold = 0.30
+    refusal_threshold = 0.75
+    if sft_fit_rate < sft_fit_threshold:
         issues.append({
             "name": "sft_fit",
             "severity": "block" if long_run else "warn",
             "message": "SFT fit is below 70%; fix behavior data before scaling this recipe.",
+        })
+    sft_heldout_fit_rate = (
+        float(sft_fit_heldout_summary.get("pass_rate"))
+        if sft_fit_heldout_summary and sft_fit_heldout_summary.get("pass_rate") is not None
+        else None
+    )
+    if sft_heldout_fit_rate is not None and sft_heldout_fit_rate < sft_heldout_fit_threshold:
+        issues.append({
+            "name": "sft_heldout_fit",
+            "severity": "block" if long_run else "warn",
+            "message": (
+                "Held-out SFT fit is below 50%; the chat stage is not transferring "
+                "across its own validation rows."
+            ),
+        })
+    eval_non_choice_examples = int(eval_summary.get("non_choice_examples") or 0)
+    eval_non_choice_rate = (
+        float(eval_summary.get("non_choice_pass_rate"))
+        if eval_summary.get("non_choice_pass_rate") is not None
+        else None
+    )
+    if (
+        eval_non_choice_rate is not None
+        and eval_non_choice_examples >= 20
+        and eval_non_choice_rate < eval_non_choice_threshold
+    ):
+        issues.append({
+            "name": "eval_non_choice",
+            "severity": "block" if long_run else "warn",
+            "message": (
+                "Held-out non-choice eval is below 30%; aggregate pass rate is likely "
+                "being inflated by choice-format items."
+            ),
+        })
+    refusal_rate = (
+        float(eval_summary.get("refusal_pass_rate"))
+        if eval_summary.get("refusal_pass_rate") is not None
+        else None
+    )
+    if refusal_rate is not None and refusal_rate < refusal_threshold:
+        issues.append({
+            "name": "refusal",
+            "severity": "block" if long_run else "warn",
+            "message": "Refusal/boundary pass rate is below 75%; inspect unsupported-request failures.",
         })
     if float(eval_summary.get("prompt_echo_rate") or 0.0) > 0.05:
         issues.append({
@@ -646,8 +736,14 @@ def _long_run_gate(
         "status": status,
         "summary": summary,
         "long_run": long_run,
-        "sft_fit_threshold": 0.70,
+        "sft_fit_threshold": sft_fit_threshold,
         "sft_fit_rate": sft_fit_rate,
+        "sft_heldout_fit_threshold": sft_heldout_fit_threshold,
+        "sft_heldout_fit_rate": sft_heldout_fit_rate,
+        "eval_non_choice_threshold": eval_non_choice_threshold,
+        "eval_non_choice_rate": eval_non_choice_rate,
+        "refusal_threshold": refusal_threshold,
+        "refusal_rate": refusal_rate,
         "issues": issues,
     }
 

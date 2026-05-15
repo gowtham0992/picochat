@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -69,6 +70,8 @@ def write_sft_fit_eval(
     input_path: str | Path,
     output_path: str | Path,
     max_rows: int | None = None,
+    include_indices: Iterable[int] | None = None,
+    split_label: str = "sft_train",
 ) -> dict:
     """Convert chat SFT JSONL into an exact-fit eval file.
 
@@ -78,12 +81,22 @@ def write_sft_fit_eval(
     if max_rows is not None and max_rows <= 0:
         raise ValueError("max_rows must be positive when provided")
 
+    selected_indices = set(include_indices) if include_indices is not None else None
+    if selected_indices is not None and any(index < 0 for index in selected_indices):
+        raise ValueError("include_indices must contain non-negative row indices")
+    if not split_label.strip():
+        raise ValueError("split_label must be non-empty")
+
     rows: list[dict] = []
     category_counts: dict[str, int] = {}
-    for line_number, line in enumerate(Path(input_path).read_text(encoding="utf-8").splitlines(), start=1):
+    selected_count = 0
+    for row_index, line in enumerate(Path(input_path).read_text(encoding="utf-8").splitlines()):
+        if selected_indices is not None and row_index not in selected_indices:
+            continue
         line = line.strip()
         if not line:
             continue
+        line_number = row_index + 1
         record = json.loads(line)
         user = record.get("user")
         assistant = record.get("assistant")
@@ -109,12 +122,13 @@ def write_sft_fit_eval(
             "answerable": answerable,
             "category": category,
             "curriculum_stage": curriculum_stage.strip(),
-            "split": "sft_train",
+            "split": split_label.strip(),
             "level": category,
             "reference_answer": answer,
             "must_include": [answer],
             "max_words": _sft_fit_max_words(answer),
         })
+        selected_count += 1
         if max_rows is not None and len(rows) >= max_rows:
             break
 
@@ -131,6 +145,9 @@ def write_sft_fit_eval(
         "input_path": str(input_path),
         "output_path": str(output),
         "num_rows": len(rows),
+        "selected_rows": selected_count,
+        "selected_from_indices": selected_indices is not None,
+        "split_label": split_label.strip(),
         "category_counts": dict(sorted(category_counts.items())),
     }
 

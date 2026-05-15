@@ -93,6 +93,31 @@ def test_write_sft_fit_eval_converts_chat_rows(tmp_path):
     assert items[1].answerable is False
 
 
+def test_write_sft_fit_eval_can_select_split_indices(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    output_path = tmp_path / "fit.jsonl"
+    write_jsonl(input_path, [
+        {"user": "u0", "assistant": "a0", "category": "alpha"},
+        {"user": "u1", "assistant": "a1", "category": "beta"},
+        {"user": "u2", "assistant": "a2", "category": "alpha"},
+    ])
+
+    report = write_sft_fit_eval(
+        input_path,
+        output_path,
+        include_indices=[0, 2],
+        split_label="sft_heldout",
+    )
+    items = load_chat_eval_items(output_path)
+
+    assert report["num_rows"] == 2
+    assert report["selected_from_indices"] is True
+    assert report["split_label"] == "sft_heldout"
+    assert report["category_counts"] == {"alpha": 2}
+    assert [item.user for item in items] == ["u0", "u2"]
+    assert {item.split for item in items} == {"sft_heldout"}
+
+
 def test_choice_continuation_candidates_cover_sft_and_bare_styles():
     tokenizer = CharTokenizer.train(["Assistant: A B\n"])
 
