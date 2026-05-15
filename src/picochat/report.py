@@ -1018,6 +1018,8 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Tokenizer type: `{tokenizer.get('tokenizer_type', 'unknown')}`")
     if config.get("tokenizer_vocab_size"):
         lines.append(f"- Tokenizer vocab size target: {config.get('tokenizer_vocab_size')}")
+    if config.get("tokenizer_type") == "bpe":
+        lines.append(f"- BPE pretokenizer: `{config.get('bpe_pretokenizer', 'char')}`")
     lines.append(f"- Base LR decay: `{config.get('base_lr_decay', 'none')}`")
     lines.append(f"- SFT LR decay: `{config.get('sft_lr_decay', 'none')}`")
     lines.append(f"- Base optimizer: `{config.get('base_optimizer', 'adamw')}`")

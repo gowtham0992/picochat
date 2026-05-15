@@ -63,6 +63,7 @@ const LAUNCH_CONTROL_IDS = [
   "launch-run-name",
   "launch-preset",
   "launch-tokenizer-type",
+  "launch-bpe-pretokenizer",
   "launch-tokenizer-vocab-size",
   "launch-context-size",
   "launch-base-steps",
@@ -3358,6 +3359,7 @@ function applyLaunchPreset(quiet = false) {
   $("launch-eval-max-new-tokens").value = values.eval_max_new_tokens;
   $("launch-target-param-data-ratio").value = values.target_param_data_ratio || 20;
   if (values.tokenizer_type) $("launch-tokenizer-type").value = values.tokenizer_type;
+  $("launch-bpe-pretokenizer").value = values.bpe_pretokenizer || "regex";
   $("launch-tokenizer-vocab-size").value = values.tokenizer_vocab_size || "";
   if (!quiet) {
     flashStatus(`APPLIED ${String(values.label || preset).toUpperCase()} PRESET. | ${values.description || ""}`);
@@ -3438,6 +3440,7 @@ function launchConfig() {
     target_param_data_ratio: launchNumber("launch-target-param-data-ratio"),
     seed: launchNumber("launch-seed"),
     tokenizer_type: $("launch-tokenizer-type").value,
+    bpe_pretokenizer: $("launch-bpe-pretokenizer").value,
     tokenizer_vocab_size: tokenizerVocab ? Number(tokenizerVocab) : null,
     min_quality_score: launchNumber("launch-min-score"),
   };
@@ -3497,6 +3500,7 @@ function launchReadiness(config = launchConfig()) {
   notes.push(`${config.n_layer}L x ${config.n_embd} embd / ${config.n_head} heads / ${config.n_kv_head} kv`);
   notes.push(`${config.norm_type} / ${config.position_encoding} / ${config.activation}`);
   notes.push(`${String(config.tokenizer_type).toUpperCase()} tokenizer${config.tokenizer_vocab_size ? ` vocab ${config.tokenizer_vocab_size}` : ""}`);
+  if (config.tokenizer_type === "bpe") notes.push(`BPE split ${config.bpe_pretokenizer}`);
   notes.push(`base ${config.base_steps} / sft ${config.sft_steps}`);
   if (usingBenchmarkPack) notes.push("clean benchmark pack active");
   notes.push(`optimizer ${config.base_optimizer}/${config.sft_optimizer}`);
@@ -3572,6 +3576,8 @@ function launchPreviewCommand(config = launchConfig()) {
     config.eval_max_new_tokens,
     "--tokenizer-type",
     config.tokenizer_type,
+    "--bpe-pretokenizer",
+    config.bpe_pretokenizer,
     "--base-lr-warmup-steps",
     config.base_lr_warmup_steps,
     "--sft-lr-warmup-steps",
@@ -3728,6 +3734,7 @@ function runStartPayload(config) {
     eval_max_new_tokens: config.eval_max_new_tokens,
     seed: config.seed,
     tokenizer_type: config.tokenizer_type,
+    bpe_pretokenizer: config.bpe_pretokenizer,
     tokenizer_vocab_size: config.tokenizer_vocab_size,
     min_quality_score: config.min_quality_score,
     device: config.device,
@@ -5427,22 +5434,42 @@ function byteTokenUnits(text) {
 }
 
 function bpeTokenUnits(text, tokenizer) {
-  let units = [...text];
-  for (const pair of tokenizer.merges || []) {
-    if (!Array.isArray(pair) || pair.length !== 2) continue;
-    const [left, right] = pair;
-    const next = [];
-    for (let index = 0; index < units.length; index += 1) {
-      if (index < units.length - 1 && units[index] === left && units[index + 1] === right) {
-        next.push(left + right);
-        index += 1;
-      } else {
-        next.push(units[index]);
+  const output = [];
+  for (const piece of bpePretokenPieces(text, tokenizer)) {
+    let units = [...piece];
+    for (const pair of tokenizer.merges || []) {
+      if (!Array.isArray(pair) || pair.length !== 2) continue;
+      const [left, right] = pair;
+      const next = [];
+      for (let index = 0; index < units.length; index += 1) {
+        if (index < units.length - 1 && units[index] === left && units[index + 1] === right) {
+          next.push(left + right);
+          index += 1;
+        } else {
+          next.push(units[index]);
+        }
       }
+      units = next;
     }
-    units = next;
+    output.push(...units);
   }
-  return units.map((token) => ({ token, label: tokenLabel(token) }));
+  return output.map((token) => ({ token, label: tokenLabel(token) }));
+}
+
+function bpePretokenPieces(text, tokenizer) {
+  if (tokenizer.pretokenizer !== "regex") return text ? [text] : [];
+  const pattern = /'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\d+(?:[.,]\d+)*%?| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/giu;
+  const pieces = [];
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const piece = match[0];
+    const start = match.index ?? cursor;
+    if (start > cursor) pieces.push(...[...text.slice(cursor, start)]);
+    pieces.push(piece);
+    cursor = start + piece.length;
+  }
+  if (cursor < text.length) pieces.push(...[...text.slice(cursor)]);
+  return pieces.filter(Boolean);
 }
 
 function tokenLabel(token) {

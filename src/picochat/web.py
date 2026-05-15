@@ -40,7 +40,7 @@ from picochat.run_preflight import assess_run_preflight
 from picochat.scales import RUN_SCALES
 from picochat.sft_starter import generate_sft_starter
 from picochat.sft import SFT_PACKING_MODES, SFT_SAMPLING_MODES
-from picochat.tokenizer import TOKENIZER_TYPES
+from picochat.tokenizer import BPE_PRETOKENIZERS, DEFAULT_BPE_PRETOKENIZER, TOKENIZER_TYPES
 from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
 _RUN_JOBS: dict[str, dict] = {}
@@ -877,6 +877,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     tokenizer_type = str(payload.get("tokenizer_type", preset.get("tokenizer_type", "char")))
     if tokenizer_type not in TOKENIZER_TYPES:
         raise ValueError(f"tokenizer_type must be one of {', '.join(TOKENIZER_TYPES)}")
+    bpe_pretokenizer = str(payload.get("bpe_pretokenizer", preset.get("bpe_pretokenizer", DEFAULT_BPE_PRETOKENIZER)))
+    if bpe_pretokenizer not in BPE_PRETOKENIZERS:
+        raise ValueError(f"bpe_pretokenizer must be one of {', '.join(BPE_PRETOKENIZERS)}")
     tokenizer_vocab_size = _optional_int(
         payload.get("tokenizer_vocab_size", preset.get("tokenizer_vocab_size")),
         minimum=4,
@@ -975,6 +978,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         tokenizer_type=tokenizer_type,
         tokenizer_vocab_size=tokenizer_vocab_size,
         tokenizer_min_freq=tokenizer_min_freq,
+        bpe_pretokenizer=bpe_pretokenizer,
         base_early_stop_patience=base_early_stop_patience,
         sft_early_stop_patience=sft_early_stop_patience,
         base_lr_warmup_steps=base_lr_warmup_steps,
@@ -1055,6 +1059,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         tokenizer_type,
         "--tokenizer-min-freq",
         str(tokenizer_min_freq),
+        "--bpe-pretokenizer",
+        bpe_pretokenizer,
         "--base-lr-warmup-steps",
         str(base_lr_warmup_steps),
         "--sft-lr-warmup-steps",
@@ -1155,6 +1161,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "qk_norm": qk_norm,
             "tokenizer_type": tokenizer_type,
             "tokenizer_vocab_size": tokenizer_vocab_size,
+            "bpe_pretokenizer": bpe_pretokenizer,
             "base_learning_rate": base_learning_rate,
             "sft_learning_rate": sft_learning_rate,
             "base_lr_decay": base_lr_decay,
@@ -2031,6 +2038,7 @@ def _load_tokenizer_detail(path: Path) -> dict | None:
         "vocab_size": len(token_to_id),
         "token_to_id": {token: int(idx) for token, idx in token_to_id.items()},
         "merges": data.get("merges", []),
+        "pretokenizer": data.get("pretokenizer", "char"),
         "sample_tokens": text_tokens[:32],
     }
 

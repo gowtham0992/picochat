@@ -12,10 +12,17 @@ from collections import Counter
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 
 
 SPECIAL_TOKENS = ("<pad>", "<bos>", "<eos>", "<unk>")
 DEFAULT_BPE_VOCAB_SIZE = 512
+BPE_PRETOKENIZERS = ("char", "regex")
+DEFAULT_BPE_PRETOKENIZER = "regex"
+BPE_REGEX_PATTERN = re.compile(
+    r"'(?:[sdmt]|ll|ve|re)| ?[^\W\d_]+| ?\d+(?:[.,]\d+)*%?| ?[^\s\w]+|\s+(?!\S)|\s+",
+    flags=re.IGNORECASE | re.UNICODE,
+)
 
 
 @dataclass(frozen=True)
@@ -280,15 +287,19 @@ class BPETokenizer:
         self,
         token_to_id: dict[str, int],
         merges: list[tuple[str, str]] | tuple[tuple[str, str], ...],
+        pretokenizer: str = DEFAULT_BPE_PRETOKENIZER,
     ):
         missing = [token for token in SPECIAL_TOKENS if token not in token_to_id]
         if missing:
             raise ValueError(f"Missing required special tokens: {missing}")
+        if pretokenizer not in BPE_PRETOKENIZERS:
+            raise ValueError(f"pretokenizer must be one of {BPE_PRETOKENIZERS}")
         self.token_to_id = dict(token_to_id)
         self.id_to_token = {idx: token for token, idx in self.token_to_id.items()}
         if len(self.id_to_token) != len(self.token_to_id):
             raise ValueError("Token ids must be unique")
         self.merges = tuple((str(left), str(right)) for left, right in merges)
+        self.pretokenizer = pretokenizer
 
     @classmethod
     def train(
@@ -296,10 +307,13 @@ class BPETokenizer:
         texts: list[str],
         vocab_size: int | None = None,
         min_freq: int = 1,
+        pretokenizer: str = DEFAULT_BPE_PRETOKENIZER,
     ) -> "BPETokenizer":
         """Learn a small character-BPE vocabulary from training strings."""
         if min_freq < 1:
             raise ValueError("min_freq must be at least 1")
+        if pretokenizer not in BPE_PRETOKENIZERS:
+            raise ValueError(f"pretokenizer must be one of {BPE_PRETOKENIZERS}")
         target_vocab_size = vocab_size or DEFAULT_BPE_VOCAB_SIZE
         if target_vocab_size < len(SPECIAL_TOKENS) + 1:
             raise ValueError("vocab_size must leave room for special tokens and text tokens")
@@ -310,7 +324,11 @@ class BPETokenizer:
             if not text:
                 continue
             counts.update(text)
-            raw_sequences.append(list(text))
+            raw_sequences.extend(
+                list(piece)
+                for piece in _pretokenize_for_bpe(text, pretokenizer)
+                if piece
+            )
 
         chars = [char for char in counts if char not in SPECIAL_TOKENS]
         chars.sort(key=lambda char: (-counts[char], char))
@@ -346,7 +364,7 @@ class BPETokenizer:
             ]
             sequences = [sequence for sequence in sequences if len(sequence) >= 2]
 
-        return cls(token_to_id, merges)
+        return cls(token_to_id, merges, pretokenizer=pretokenizer)
 
     @property
     def pad_id(self) -> int:
@@ -381,7 +399,9 @@ class BPETokenizer:
         add_bos: bool = False,
         add_eos: bool = False,
     ) -> list[int]:
-        units = _apply_merges(list(text), self.merges)
+        units: list[str] = []
+        for piece in _pretokenize_for_bpe(text, self.pretokenizer):
+            units.extend(_apply_merges(list(piece), self.merges))
         ids: list[int] = []
         if add_bos:
             ids.append(self.bos_id)
@@ -407,6 +427,7 @@ class BPETokenizer:
             "special_tokens": list(SPECIAL_TOKENS),
             "token_to_id": self.token_to_id,
             "merges": [[left, right] for left, right in self.merges],
+            "pretokenizer": self.pretokenizer,
         }
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -429,6 +450,7 @@ class BPETokenizer:
         return cls(
             {token: int(idx) for token, idx in data["token_to_id"].items()},
             merges,
+            pretokenizer=str(data.get("pretokenizer", "char")),
         )
 
 
@@ -455,6 +477,7 @@ def train_tokenizer(
     texts: list[str],
     vocab_size: int | None = None,
     min_freq: int = 1,
+    bpe_pretokenizer: str = DEFAULT_BPE_PRETOKENIZER,
 ) -> Tokenizer:
     """Train or construct a tokenizer by type."""
     if tokenizer_type == "char":
@@ -462,7 +485,12 @@ def train_tokenizer(
     if tokenizer_type == "byte":
         return ByteTokenizer.train(texts, vocab_size=vocab_size, min_freq=min_freq)
     if tokenizer_type == "bpe":
-        return BPETokenizer.train(texts, vocab_size=vocab_size, min_freq=min_freq)
+        return BPETokenizer.train(
+            texts,
+            vocab_size=vocab_size,
+            min_freq=min_freq,
+            pretokenizer=bpe_pretokenizer,
+        )
     raise ValueError(f"Unsupported tokenizer type: {tokenizer_type}")
 
 
@@ -494,6 +522,23 @@ def _apply_merges(sequence: list[str], merges: tuple[tuple[str, str], ...]) -> l
     for merge in merges:
         sequence = _apply_merge_to_sequence(sequence, merge)
     return sequence
+
+
+def _pretokenize_for_bpe(text: str, pretokenizer: str) -> list[str]:
+    if pretokenizer == "char":
+        return [text] if text else []
+    if pretokenizer != "regex":
+        raise ValueError(f"pretokenizer must be one of {BPE_PRETOKENIZERS}")
+    pieces: list[str] = []
+    cursor = 0
+    for match in BPE_REGEX_PATTERN.finditer(text):
+        if match.start() > cursor:
+            pieces.extend(text[cursor:match.start()])
+        pieces.append(match.group(0))
+        cursor = match.end()
+    if cursor < len(text):
+        pieces.extend(text[cursor:])
+    return [piece for piece in pieces if piece]
 
 
 def _apply_merge_to_sequence(sequence: list[str], pair: tuple[str, str]) -> list[str]:

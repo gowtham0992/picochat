@@ -13,7 +13,13 @@ from picochat.data import (
     preview_corpus_sources,
 )
 from picochat.batching import load_token_dataset
-from picochat.tokenizer import TOKENIZER_TYPES, load_tokenizer, train_tokenizer as build_tokenizer
+from picochat.tokenizer import (
+    BPE_PRETOKENIZERS,
+    DEFAULT_BPE_PRETOKENIZER,
+    TOKENIZER_TYPES,
+    load_tokenizer,
+    train_tokenizer as build_tokenizer,
+)
 from picochat.train import TrainConfig, train_base
 from picochat.sft import SFTConfig, SFT_PACKING_MODES, SFT_SAMPLING_MODES, train_sft
 from picochat.generate import GenerateConfig, generate_text
@@ -401,6 +407,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="Minimum character frequency for char, or merge frequency for bpe.",
+    )
+    tok_train.add_argument(
+        "--bpe-pretokenizer",
+        choices=BPE_PRETOKENIZERS,
+        default=DEFAULT_BPE_PRETOKENIZER,
+        help="Pretokenizer used before BPE merges. regex is the stronger long-run default.",
     )
 
     batch_parser = subparsers.add_parser("batch", help="Token batching commands.")
@@ -888,6 +900,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Minimum BPE merge frequency or character frequency.",
+    )
+    run_tiny_parser.add_argument(
+        "--bpe-pretokenizer",
+        choices=BPE_PRETOKENIZERS,
+        default=None,
+        help="Pretokenizer used before BPE merges. regex is the stronger long-run default.",
     )
     run_tiny_parser.add_argument("--base-lr-warmup-steps", type=int, default=None)
     run_tiny_parser.add_argument("--sft-lr-warmup-steps", type=int, default=None)
@@ -1540,6 +1558,7 @@ def train_tokenizer(args: argparse.Namespace) -> int:
         [text],
         vocab_size=args.vocab_size,
         min_freq=args.min_freq,
+        bpe_pretokenizer=args.bpe_pretokenizer,
     )
     tokenizer.save(output_path)
 
@@ -1549,6 +1568,8 @@ def train_tokenizer(args: argparse.Namespace) -> int:
     print(f"vocab_size: {stats.vocab_size}")
     print(f"text_tokens: {stats.num_text_tokens}")
     print(f"special_tokens: {stats.num_special_tokens}")
+    if hasattr(tokenizer, "pretokenizer"):
+        print(f"pretokenizer: {tokenizer.pretokenizer}")
     return 0
 
 
@@ -1987,6 +2008,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         tokenizer_type=_resolve_tiny_value(args, defaults, "tokenizer_type"),
         tokenizer_vocab_size=_resolve_tiny_value(args, defaults, "tokenizer_vocab_size"),
         tokenizer_min_freq=_resolve_tiny_value(args, defaults, "tokenizer_min_freq"),
+        bpe_pretokenizer=_resolve_tiny_value(args, defaults, "bpe_pretokenizer"),
         base_early_stop_patience=_resolve_tiny_value(args, defaults, "base_early_stop_patience"),
         sft_early_stop_patience=_resolve_tiny_value(args, defaults, "sft_early_stop_patience"),
         early_stop_min_delta=_resolve_tiny_value(args, defaults, "early_stop_min_delta"),

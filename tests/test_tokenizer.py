@@ -89,8 +89,20 @@ def test_bpe_tokenizer_learns_merges_and_roundtrips():
     assert ids[-1] == tokenizer.eos_id
     assert tokenizer.decode(ids) == "low lowest"
     assert tokenizer.stats().tokenizer_type == "bpe"
+    assert tokenizer.pretokenizer == "regex"
     assert tokenizer.merges
     assert len(tokenizer.encode("low low")) < len(CharTokenizer.train([text]).encode("low low"))
+
+
+def test_bpe_regex_pretokenizer_prevents_cross_boundary_merges():
+    text = "cat! cat! cat!"
+    regex_tokenizer = BPETokenizer.train([text], vocab_size=64, min_freq=2, pretokenizer="regex")
+    legacy_tokenizer = BPETokenizer.train([text], vocab_size=64, min_freq=2, pretokenizer="char")
+
+    assert regex_tokenizer.decode(regex_tokenizer.encode(text)) == text
+    assert legacy_tokenizer.decode(legacy_tokenizer.encode(text)) == text
+    assert "cat!" not in regex_tokenizer.token_to_id
+    assert "cat!" in legacy_tokenizer.token_to_id
 
 
 def test_bpe_save_load_roundtrip(tmp_path):
@@ -102,13 +114,29 @@ def test_bpe_save_load_roundtrip(tmp_path):
 
     assert isinstance(loaded, BPETokenizer)
     assert loaded.merges == tokenizer.merges
+    assert loaded.pretokenizer == tokenizer.pretokenizer
     assert loaded.decode(loaded.encode("picochat learns")) == "picochat learns"
+
+
+def test_bpe_loads_legacy_tokenizer_as_char_pretokenized(tmp_path):
+    path = tmp_path / "legacy-bpe-tokenizer.json"
+    tokenizer = BPETokenizer.train(["legacy legacy"], vocab_size=32, min_freq=2, pretokenizer="char")
+    tokenizer.save(path)
+    data = path.read_text(encoding="utf-8")
+    path.write_text(data.replace(',\n  "pretokenizer": "char"', ""), encoding="utf-8")
+
+    loaded = load_tokenizer(path)
+
+    assert isinstance(loaded, BPETokenizer)
+    assert loaded.pretokenizer == "char"
+    assert loaded.decode(loaded.encode("legacy")) == "legacy"
 
 
 def test_train_tokenizer_factory_supports_bpe():
     tokenizer = train_tokenizer("bpe", ["tiny tiny stories"], vocab_size=32, min_freq=2)
 
     assert isinstance(tokenizer, BPETokenizer)
+    assert tokenizer.pretokenizer == "regex"
     assert tokenizer.decode(tokenizer.encode("tiny stories")) == "tiny stories"
 
 

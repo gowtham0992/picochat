@@ -17,7 +17,7 @@ from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.report import tiny_run_summary_markdown
 from picochat.run_preflight import assess_run_preflight, preflight_markdown
 from picochat.sft import SFTConfig, SFT_PACKING_MODES, SFT_SAMPLING_MODES, train_sft
-from picochat.tokenizer import TOKENIZER_TYPES, train_tokenizer
+from picochat.tokenizer import DEFAULT_BPE_PRETOKENIZER, TOKENIZER_TYPES, train_tokenizer
 from picochat.train import TrainConfig, train_base
 
 
@@ -55,6 +55,7 @@ class TinyRunConfig:
     tokenizer_type: str = "char"
     tokenizer_vocab_size: int | None = None
     tokenizer_min_freq: int = 1
+    bpe_pretokenizer: str = DEFAULT_BPE_PRETOKENIZER
     base_early_stop_patience: int = 6
     sft_early_stop_patience: int = 6
     early_stop_min_delta: float = 0.0
@@ -179,6 +180,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         [text],
         vocab_size=config.tokenizer_vocab_size,
         min_freq=config.tokenizer_min_freq,
+        bpe_pretokenizer=config.bpe_pretokenizer,
     )
     tokenizer.save(tokenizer_path)
 
