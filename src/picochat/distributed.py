@@ -49,3 +49,11 @@ def is_main_process(metadata: dict[str, Any] | None = None) -> bool:
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         return torch.distributed.get_rank() == 0
     return True
+
+
+def barrier_if_distributed(metadata: dict[str, Any] | None = None) -> None:
+    """Synchronize ranks after rank-sensitive side effects such as checkpoint writes."""
+    if metadata is not None and not bool(metadata.get("enabled", False)):
+        return
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.barrier()

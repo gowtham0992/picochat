@@ -1529,8 +1529,9 @@ def run_train_base(args: argparse.Namespace) -> int:
         loss_spike_min_lr_scale=args.loss_spike_min_lr_scale,
     )
     report = train_base(config)
-    print(f"saved checkpoint: {report['checkpoint']}")
-    print(f"sample: {report['sample']!r}")
+    if report.get("config", {}).get("artifacts_written", True):
+        print(f"saved checkpoint: {report['checkpoint']}")
+        print(f"sample: {report['sample']!r}")
     return 0
 
 
@@ -1577,8 +1578,9 @@ def run_train_sft(args: argparse.Namespace) -> int:
         loss_spike_min_lr_scale=args.loss_spike_min_lr_scale,
     )
     report = train_sft(config)
-    print(f"saved sft checkpoint: {report['checkpoint']}")
-    print(f"sample: {report['sample']!r}")
+    if report.get("config", {}).get("artifacts_written", True):
+        print(f"saved sft checkpoint: {report['checkpoint']}")
+        print(f"sample: {report['sample']!r}")
     return 0
 
 

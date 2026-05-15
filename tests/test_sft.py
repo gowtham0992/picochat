@@ -233,6 +233,7 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert report["dataset"]["supervised_tokens"] > 0
     assert report["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
     assert "val_bpb" in report["losses"][-1]
+    assert report["config"]["artifacts_written"] is True
     assert "learning_rate" in report["losses"][-1]
     assert "grad_norm" in report["losses"][-1]
     assert report["coverage"]["actual_steps"] == 2

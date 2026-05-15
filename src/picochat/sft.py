@@ -15,7 +15,7 @@ from picochat.batching import make_resumable_batcher
 from picochat.chat import render_chat_prompt
 from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
-from picochat.distributed import prepare_ddp_model
+from picochat.distributed import barrier_if_distributed, is_main_process, prepare_ddp_model
 from picochat.optim import (
     ExponentialMovingAverage,
     create_optimizer,
@@ -740,6 +740,7 @@ def train_sft(config: SFTConfig) -> dict:
     model = model.to(device)
     precision_runtime = resolve_precision(config.precision, device)
     ddp_model, ddp_metadata = prepare_ddp_model(model, device, enabled=config.ddp)
+    main_process = is_main_process(ddp_metadata)
     train_model, compile_metadata = maybe_compile_model(
         ddp_model,
         enabled=config.torch_compile,
@@ -876,11 +877,12 @@ def train_sft(config: SFTConfig) -> dict:
                 "spike_ratio": spike_ratio,
                 "lr_scale_after": rollback_lr_scale,
             })
-            print(
-                f"sft loss spike rollback at step {step}: "
-                f"train {last_loss:.4f} vs baseline {loss_spike_baseline:.4f}; "
-                f"lr scale -> {rollback_lr_scale:.3f}"
-            )
+            if main_process:
+                print(
+                    f"sft loss spike rollback at step {step}: "
+                    f"train {last_loss:.4f} vs baseline {loss_spike_baseline:.4f}; "
+                    f"lr scale -> {rollback_lr_scale:.3f}"
+                )
             last_loss = loss_spike_baseline
             continue
         if math.isfinite(last_loss) and last_loss > 0:
@@ -948,23 +950,24 @@ def train_sft(config: SFTConfig) -> dict:
             if checkpoint_val_loss < best_loss - config.early_stop_min_delta:
                 best_loss = checkpoint_val_loss
                 evals_without_improvement = 0
-                with using_ema_weights(model, ema):
-                    save_checkpoint(
-                        best_checkpoint_dir,
-                        model,
-                        step=step,
-                        train_loss=last_loss,
-                        extra_metadata={
-                            "checkpoint_kind": "best_validation",
-                            "weights": checkpoint_weights,
-                            "val_loss": checkpoint_val_loss,
-                            "val_bpb": checkpoint_val_bpb,
-                            "raw_val_loss": val_loss,
-                            "raw_val_bpb": val_metrics["bpb"],
-                            "ema_decay": config.ema_decay if ema is not None else None,
-                            "ema_updates": ema.num_updates if ema is not None else 0,
-                        },
-                    )
+                if main_process:
+                    with using_ema_weights(model, ema):
+                        save_checkpoint(
+                            best_checkpoint_dir,
+                            model,
+                            step=step,
+                            train_loss=last_loss,
+                            extra_metadata={
+                                "checkpoint_kind": "best_validation",
+                                "weights": checkpoint_weights,
+                                "val_loss": checkpoint_val_loss,
+                                "val_bpb": checkpoint_val_bpb,
+                                "raw_val_loss": val_loss,
+                                "raw_val_bpb": val_metrics["bpb"],
+                                "ema_decay": config.ema_decay if ema is not None else None,
+                                "ema_updates": ema.num_updates if ema is not None else 0,
+                            },
+                        )
                 best_checkpoint = {
                     "path": str(best_checkpoint_dir),
                     "step": step,
@@ -977,93 +980,100 @@ def train_sft(config: SFTConfig) -> dict:
                 }
             else:
                 evals_without_improvement += 1
-            print(
-                f"sft step {step:04d}/{config.max_steps:04d} | "
-                f"train {last_loss:.4f} | val {val_loss:.4f} | "
-                f"val_bpb {_format_optional(val_metrics['bpb'])} | {elapsed:.1f}s"
-            )
-            save_checkpoint(
-                out_dir / "resume_checkpoint",
-                model,
-                step=final_step,
-                train_loss=last_loss,
-                extra_metadata={
-                    "checkpoint_kind": "resume",
-                    "weights": "raw",
-                    "best_checkpoint": best_checkpoint,
-                    "resume_source": config.resume_from,
-                },
-                training_state=make_training_state(
+            barrier_if_distributed(ddp_metadata)
+            if main_process:
+                print(
+                    f"sft step {step:04d}/{config.max_steps:04d} | "
+                    f"train {last_loss:.4f} | val {val_loss:.4f} | "
+                    f"val_bpb {_format_optional(val_metrics['bpb'])} | {elapsed:.1f}s"
+                )
+                save_checkpoint(
+                    out_dir / "resume_checkpoint",
+                    model,
                     step=final_step,
-                    losses=losses,
-                    best_metric=best_loss,
-                    best_checkpoint=best_checkpoint,
-                    evals_without_improvement=evals_without_improvement,
-                    stop_reason=stop_reason,
-                    elapsed_sec=elapsed,
-                    optimizer=optimizer,
-                    scaler=scaler,
-                    ema=ema,
-                    batcher=train_batcher,
-                    device=device,
-                    extra_state={
-                        "rollback_events": rollback_events,
-                        "rollback_lr_scale": rollback_lr_scale,
-                        "loss_spike_baseline": loss_spike_baseline,
+                    train_loss=last_loss,
+                    extra_metadata={
+                        "checkpoint_kind": "resume",
+                        "weights": "raw",
+                        "best_checkpoint": best_checkpoint,
+                        "resume_source": config.resume_from,
                     },
-                ),
-            )
+                    training_state=make_training_state(
+                        step=final_step,
+                        losses=losses,
+                        best_metric=best_loss,
+                        best_checkpoint=best_checkpoint,
+                        evals_without_improvement=evals_without_improvement,
+                        stop_reason=stop_reason,
+                        elapsed_sec=elapsed,
+                        optimizer=optimizer,
+                        scaler=scaler,
+                        ema=ema,
+                        batcher=train_batcher,
+                        device=device,
+                        extra_state={
+                            "rollback_events": rollback_events,
+                            "rollback_lr_scale": rollback_lr_scale,
+                            "loss_spike_baseline": loss_spike_baseline,
+                        },
+                    ),
+                )
+            barrier_if_distributed(ddp_metadata)
             if (
                 config.early_stop_patience > 0
                 and evals_without_improvement >= config.early_stop_patience
             ):
                 stop_reason = "early_stop"
-                print(
-                    f"sft early stop: validation did not improve for "
-                    f"{config.early_stop_patience} evals"
-                )
+                if main_process:
+                    print(
+                        f"sft early stop: validation did not improve for "
+                        f"{config.early_stop_patience} evals"
+                    )
                 break
         if config.max_minutes is not None and elapsed_offset + time.time() - start >= config.max_minutes * 60:
             stop_reason = "max_minutes"
-            print(f"sft time stop: reached {config.max_minutes:.2f} minute budget")
+            if main_process:
+                print(f"sft time stop: reached {config.max_minutes:.2f} minute budget")
             break
 
     checkpoint_dir = out_dir / "checkpoint"
     ema_checkpoint_dir = out_dir / "ema_checkpoint"
     elapsed_final = elapsed_offset + time.time() - start
-    save_checkpoint(
-        checkpoint_dir,
-        model,
-        step=final_step,
-        train_loss=last_loss,
-        extra_metadata={
-            "checkpoint_kind": "final",
-            "weights": "raw",
-            "stop_reason": stop_reason,
-            "best_checkpoint": best_checkpoint,
-            "ema_checkpoint": str(ema_checkpoint_dir) if ema is not None else None,
-        },
-        training_state=make_training_state(
+    if main_process:
+        save_checkpoint(
+            checkpoint_dir,
+            model,
             step=final_step,
-            losses=losses,
-            best_metric=best_loss,
-            best_checkpoint=best_checkpoint,
-            evals_without_improvement=evals_without_improvement,
-            stop_reason=stop_reason,
-            elapsed_sec=elapsed_final,
-            optimizer=optimizer,
-            scaler=scaler,
-            ema=ema,
-            batcher=train_batcher,
-            device=device,
-            extra_state={
-                "rollback_events": rollback_events,
-                "rollback_lr_scale": rollback_lr_scale,
-                "loss_spike_baseline": loss_spike_baseline,
+            train_loss=last_loss,
+            extra_metadata={
+                "checkpoint_kind": "final",
+                "weights": "raw",
+                "stop_reason": stop_reason,
+                "best_checkpoint": best_checkpoint,
+                "ema_checkpoint": str(ema_checkpoint_dir) if ema is not None else None,
             },
-        ),
-    )
-    if ema is not None:
+            training_state=make_training_state(
+                step=final_step,
+                losses=losses,
+                best_metric=best_loss,
+                best_checkpoint=best_checkpoint,
+                evals_without_improvement=evals_without_improvement,
+                stop_reason=stop_reason,
+                elapsed_sec=elapsed_final,
+                optimizer=optimizer,
+                scaler=scaler,
+                ema=ema,
+                batcher=train_batcher,
+                device=device,
+                extra_state={
+                    "rollback_events": rollback_events,
+                    "rollback_lr_scale": rollback_lr_scale,
+                    "loss_spike_baseline": loss_spike_baseline,
+                },
+            ),
+        )
+    barrier_if_distributed(ddp_metadata)
+    if ema is not None and main_process:
         with using_ema_weights(model, ema):
             save_checkpoint(
                 ema_checkpoint_dir,
@@ -1080,20 +1090,23 @@ def train_sft(config: SFTConfig) -> dict:
                     "best_checkpoint": best_checkpoint,
                 },
             )
+    barrier_if_distributed(ddp_metadata)
     if best_checkpoint is None:
-        with using_ema_weights(model, ema):
-            save_checkpoint(
-                best_checkpoint_dir,
-                model,
-                step=final_step,
-                train_loss=last_loss,
-                extra_metadata={
-                    "checkpoint_kind": "best_validation_fallback",
-                    "weights": "ema" if ema is not None else "raw",
-                    "ema_decay": config.ema_decay if ema is not None else None,
-                    "ema_updates": ema.num_updates if ema is not None else 0,
-                },
-            )
+        if main_process:
+            with using_ema_weights(model, ema):
+                save_checkpoint(
+                    best_checkpoint_dir,
+                    model,
+                    step=final_step,
+                    train_loss=last_loss,
+                    extra_metadata={
+                        "checkpoint_kind": "best_validation_fallback",
+                        "weights": "ema" if ema is not None else "raw",
+                        "ema_decay": config.ema_decay if ema is not None else None,
+                        "ema_updates": ema.num_updates if ema is not None else 0,
+                    },
+                )
+        barrier_if_distributed(ddp_metadata)
         best_checkpoint = {
             "path": str(best_checkpoint_dir),
             "step": final_step,
@@ -1131,6 +1144,7 @@ def train_sft(config: SFTConfig) -> dict:
             "precision_runtime": precision_runtime.to_dict(),
             "torch_compile_metadata": compile_metadata,
             "ddp_metadata": ddp_metadata,
+            "artifacts_written": main_process,
         },
         "base_checkpoint": {
             "path": config.checkpoint_path,
@@ -1190,9 +1204,11 @@ def train_sft(config: SFTConfig) -> dict:
         "best_checkpoint": best_checkpoint,
         "stop_reason": stop_reason,
     }
-    (out_dir / "sft_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    (out_dir / "report.md").write_text(sft_report_markdown(report), encoding="utf-8")
-    (out_dir / "sample.txt").write_text(sample, encoding="utf-8")
+    if main_process:
+        (out_dir / "sft_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        (out_dir / "report.md").write_text(sft_report_markdown(report), encoding="utf-8")
+        (out_dir / "sample.txt").write_text(sample, encoding="utf-8")
+    barrier_if_distributed(ddp_metadata)
     return report
 
 

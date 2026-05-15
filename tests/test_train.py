@@ -46,6 +46,7 @@ def test_train_base_writes_artifacts(tmp_path):
     assert "grad_norm" in report["losses"][-1]
     assert report["config"]["weight_decay"] == 0.02
     assert report["config"]["weight_decay_decay"] == "cosine_to_zero"
+    assert report["config"]["artifacts_written"] is True
     assert report["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
     assert report["coverage"]["actual_steps"] == 2
     assert report["stop_reason"] == "max_steps"
