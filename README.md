@@ -35,6 +35,10 @@ the whole chat-model pipeline on one machine.
 
 The point is to make each failure visible enough to learn from.
 
+## License
+
+Picochat is released under the MIT License. See [LICENSE](LICENSE).
+
 ## Quick Start
 
 From the repo root:
