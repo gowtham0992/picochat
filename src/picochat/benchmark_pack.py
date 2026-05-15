@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import asdict, dataclass
 import difflib
+import itertools
 import json
 from pathlib import Path
 import random
@@ -295,9 +296,11 @@ def _behavior_profile_result(
     )
     rows = _unique_rows(rows, [], limit=count)
     if len(rows) < count:
-        raise RuntimeError(
-            f"could not generate enough unique {profile} benchmark rows: "
-            f"{len(rows)}/{count}"
+        _raise_insufficient_behavior_rows(
+            rows=rows,
+            requested=count,
+            quotas=quotas,
+            profile=profile,
         )
     return _RowBuildResult(
         rows=rows,
@@ -862,10 +865,7 @@ def _choice_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> 
     facts = _HELDOUT_FACTS if eval_rows else _TRAIN_FACTS
     fact = facts[(index * 7 + (3 if eval_rows else 0)) % len(facts)]
     subject, question, correct, distractors = fact
-    options = [correct, *distractors]
-    rng.shuffle(options)
     labels = ("A", "B", "C", "D")
-    correct_label = labels[options.index(correct)]
     prompt_templates = (
         "{question}\nA. {A}\nB. {B}\nC. {C}\nD. {D}\nRespond only with the letter.",
         "Choose the best answer.\n{question}\nA) {A}\nB) {B}\nC) {C}\nD) {D}\nAnswer with one letter.",
@@ -889,6 +889,9 @@ def _choice_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> 
         "Answer with A/B/C/D only.\n{question}\nA. {A}\nB. {B}\nC. {C}\nD. {D}",
     )
     template = prompt_templates[((index // len(facts)) + (1 if eval_rows else 0)) % len(prompt_templates)]
+    permutation_index = (index // (len(facts) * len(prompt_templates))) % 24
+    options = _choice_options(correct, distractors, permutation_index)
+    correct_label = labels[options.index(correct)]
     user = template.format(question=question, A=options[0], B=options[1], C=options[2], D=options[3])
     row = {
         "user": user,
@@ -908,6 +911,12 @@ def _choice_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> 
             "reference_answer": correct_label,
         })
     return row
+
+
+def _choice_options(correct: str, distractors: tuple[str, ...], permutation_index: int) -> list[str]:
+    options = [correct, *distractors]
+    permutations = list(itertools.permutations(options))
+    return list(permutations[permutation_index % len(permutations)])
 
 
 def _math_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> dict[str, Any]:
@@ -1003,44 +1012,59 @@ def _spelling_row(index: int, rng: random.Random, split: str, eval_rows: bool) -
     modes = ("spaced", "count", "reverse", "first", "last")
     word = words[index % len(words)]
     mode = modes[(index // len(words)) % len(modes)]
-    prompt_style = (index // (len(words) * len(modes))) % 3
 
     def train_prompt(operation: str) -> str:
         templates = (
             f"WORD TASK\nword={word}\noperation={operation}\nanswer only",
             f"Word drill. Word: {word}. Task: {operation}. Reply with only the answer.",
             f"For the word <<{word}>>, {operation}. Give no explanation.",
+            f"Spelling practice item. Input word: {word}. Operation: {operation}. Output just the result.",
+            f"Short word-skill check: {operation} for {word}. No extra words.",
+            f"Text manipulation drill -- word {word}; task {operation}; answer only.",
         )
+        prompt_style = (index // (len(words) * len(modes))) % len(templates)
+        return templates[prompt_style]
+
+    def eval_prompt(operation: str) -> str:
+        templates = (
+            f"Spelling check. Word: {word}. Task: {operation}. Give only the answer.",
+            f"Word skill eval: {operation} for <<{word}>>. No explanation.",
+            f"For the word {word}, {operation}. Return just the result.",
+            f"Evaluate this word task.\nword={word}\ntask={operation}\nanswer only",
+            f"Short spelling benchmark: {operation} on {word}.",
+            f"Text operation request: word {word}; operation {operation}; output only the answer.",
+        )
+        prompt_style = (index // (len(words) * len(modes))) % len(templates)
         return templates[prompt_style]
 
     if mode == "spaced":
         answer = " ".join(word)
         if eval_rows:
-            user = f"Spelling check: output spaced letters for <<{word}>>."
+            user = eval_prompt("write each character separated by one space")
         else:
             user = train_prompt("write each character separated by one space")
     elif mode == "count":
         answer = str(len(word))
         if eval_rows:
-            user = f"Count the characters in this word and give only the number: {word}"
+            user = eval_prompt("count letters")
         else:
             user = train_prompt("count letters")
     elif mode == "reverse":
         answer = word[::-1]
         if eval_rows:
-            user = f"Write this word backward and give only the reversed word: {word}"
+            user = eval_prompt("reverse the letters")
         else:
             user = train_prompt("reverse the letters")
     elif mode == "first":
         answer = word[0]
         if eval_rows:
-            user = f"Give only the first letter of this word: {word}"
+            user = eval_prompt("return the first letter")
         else:
             user = train_prompt("return the first letter")
     else:
         answer = word[-1]
         if eval_rows:
-            user = f"Give only the last letter of this word: {word}"
+            user = eval_prompt("return the last letter")
         else:
             user = train_prompt("return the last letter")
     row = {
@@ -1181,7 +1205,7 @@ def _identity_row(index: int, rng: random.Random, split: str, eval_rows: bool) -
     train_prompts, assistant, eval_prompts, expected = _IDENTITY_ROWS[index % len(_IDENTITY_ROWS)]
     prompt_pool = eval_prompts if eval_rows else train_prompts
     prompt_index = (index // len(_IDENTITY_ROWS)) % len(prompt_pool)
-    variant_index = (index // (len(_IDENTITY_ROWS) * len(prompt_pool))) % 12
+    variant_index = index // (len(_IDENTITY_ROWS) * len(prompt_pool))
     user = _identity_prompt_variant(
         prompt_pool[prompt_index],
         variant_index=variant_index,
@@ -1221,6 +1245,18 @@ def _identity_prompt_variant(prompt: str, *, variant_index: int, eval_rows: bool
         "Local model identity drill: {prompt}",
         "Closed-book behavior note: {prompt}",
         "Assistant behavior target: {prompt}",
+        "Picochat identity target: {prompt}",
+        "Use the local assistant persona: {prompt}",
+        "Factory behavior training item: {prompt}",
+        "Respond as the tiny local model: {prompt}",
+        "One-sentence Picochat behavior: {prompt}",
+        "Teach the expected project answer: {prompt}",
+        "Small-model behavior row: {prompt}",
+        "Use the project facts only: {prompt}",
+        "Picochat self-description practice: {prompt}",
+        "Local workbench behavior prompt: {prompt}",
+        "Closed-book project identity item: {prompt}",
+        "Return the target behavior answer: {prompt}",
     )
     eval_templates = (
         "{prompt}",
@@ -1235,6 +1271,18 @@ def _identity_prompt_variant(prompt: str, *, variant_index: int, eval_rows: bool
         "Behavior check: {prompt}",
         "Keep the answer concise: {prompt}",
         "State this clearly: {prompt}",
+        "What is the correct Picochat response? {prompt}",
+        "Answer using the Picochat project frame: {prompt}",
+        "Give the local-model answer: {prompt}",
+        "Use the experiment context only: {prompt}",
+        "In one concise sentence, {prompt}",
+        "Project behavior eval: {prompt}",
+        "Tiny-model identity check: {prompt}",
+        "Answer from Picochat's stated purpose: {prompt}",
+        "Workbench-aware answer: {prompt}",
+        "Closed-book project check: {prompt}",
+        "Give the expected behavior reply: {prompt}",
+        "State the Picochat answer plainly: {prompt}",
     )
     templates = eval_templates if eval_rows else train_templates
     return templates[variant_index % len(templates)].format(prompt=prompt)
@@ -1375,25 +1423,40 @@ def _assert_no_prompt_overlap(chat_rows: list[dict[str, Any]], eval_rows: list[d
 
 
 def _contamination_report(chat_rows: list[dict[str, Any]], eval_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    train_prompts = [(_norm_prompt(row["user"]), row["user"]) for row in chat_rows]
-    eval_prompts = [(_norm_prompt(row["user"]), row["user"]) for row in eval_rows]
-    train_prompt_set = {prompt for prompt, _ in train_prompts}
+    train_prompts = [
+        (_norm_prompt(row["user"]), row["user"], _behavior_bucket(row.get("category", "")))
+        for row in chat_rows
+    ]
+    eval_prompts = [
+        (_norm_prompt(row["user"]), row["user"], _behavior_bucket(row.get("category", "")))
+        for row in eval_rows
+    ]
+    train_prompt_set = {prompt for prompt, _, _ in train_prompts}
     exact_prompt_overlaps = [
         {"eval_prompt": raw[:240]}
-        for prompt, raw in eval_prompts
+        for prompt, raw, _ in eval_prompts
         if prompt in train_prompt_set
     ]
 
+    train_by_bucket: dict[str, list[tuple[str, str, str]]] = {}
+    for item in train_prompts:
+        train_by_bucket.setdefault(item[2], []).append(item)
+
     near_prompt_overlaps: list[dict[str, Any]] = []
-    for eval_prompt, eval_raw in eval_prompts:
+    for eval_prompt, eval_raw, eval_bucket in eval_prompts:
         if eval_prompt in train_prompt_set:
             continue
         best_ratio = 0.0
         best_jaccard = 0.0
         best_train = ""
-        for train_prompt, train_raw in train_prompts:
-            ratio = difflib.SequenceMatcher(None, eval_prompt, train_prompt).ratio()
+        for train_prompt, train_raw, _ in train_by_bucket.get(eval_bucket, train_prompts):
             jaccard = _token_jaccard(eval_prompt, train_prompt)
+            if jaccard < 0.86 and not _can_reach_similarity(eval_prompt, train_prompt, 0.86):
+                continue
+            matcher = difflib.SequenceMatcher(None, eval_prompt, train_prompt)
+            if max(jaccard, matcher.quick_ratio()) < 0.86:
+                continue
+            ratio = matcher.ratio()
             similarity = max(ratio, jaccard)
             if similarity > max(best_ratio, best_jaccard):
                 best_ratio = ratio
@@ -1443,6 +1506,49 @@ def _contamination_report(chat_rows: list[dict[str, Any]], eval_rows: list[dict[
             "answer_overlaps": answer_overlaps[:5],
         },
     }
+
+
+def _can_reach_similarity(left: str, right: str, threshold: float) -> bool:
+    if not left or not right:
+        return False
+    return (2 * min(len(left), len(right)) / (len(left) + len(right))) >= threshold
+
+
+def _raise_insufficient_behavior_rows(
+    *,
+    rows: list[dict[str, Any]],
+    requested: int,
+    quotas: dict[str, int],
+    profile: str,
+) -> None:
+    counts = Counter(_behavior_bucket(row.get("category", "")) for row in rows)
+    shortfalls = []
+    for name, target in quotas.items():
+        actual = counts.get(name, 0)
+        if actual < target:
+            shortfalls.append(f"{name} {actual}/{target}")
+    shortfall_text = ", ".join(shortfalls) if shortfalls else "unknown category duplication"
+    raise RuntimeError(
+        f"could not generate enough unique {profile} benchmark rows: {len(rows)}/{requested}. "
+        f"Shortfall: {shortfall_text}. "
+        "Lower --sft-rows/--eval-rows, switch --source auto or --source hf for external benchmark rows, "
+        "or add more offline templates/pools for the short category."
+    )
+
+
+def _behavior_bucket(category: Any) -> str:
+    category_text = str(category)
+    if category_text.startswith("bench_choice"):
+        return "choice"
+    if category_text == "bench_math":
+        return "math"
+    if category_text == "bench_spelling":
+        return "spelling"
+    if category_text == "identity":
+        return "identity"
+    if category_text == "refusal":
+        return "refusal"
+    return category_text or "unknown"
 
 
 def _combined_source_status(chat_status: str, eval_status: str) -> str:

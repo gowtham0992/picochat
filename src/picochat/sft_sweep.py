@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
-from picochat.sft import SFTConfig, SFT_SAMPLING_MODES, train_sft
+from picochat.sft import SFTConfig, SFT_PACKING_MODES, SFT_SAMPLING_MODES, train_sft
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,7 @@ class SFTSweepConfig:
     optimizer: str = "adamw"
     muon_learning_rate: float = 0.02
     ema_decay: float = 0.0
+    packing: str = "separate"
 
 
 def run_sft_sweep(config: SFTSweepConfig) -> dict:
@@ -108,16 +109,17 @@ def sft_sweep_markdown(report: dict) -> str:
         f"- Tokenizer: `{config['tokenizer_path']}`",
         f"- Base checkpoint: `{config['checkpoint_path']}`",
         f"- Held-out eval: `{config.get('eval_input_path') or 'not run'}`",
+        f"- SFT packing: `{config.get('packing', 'separate')}`",
         "",
         "## Results",
         "",
-        "| Candidate | LR | Steps | Sampling | SFT Fit | Eval | SFT Val BPB | Stop | Path |",
-        "| --- | ---: | ---: | --- | ---: | ---: | ---: | --- | --- |",
+        "| Candidate | LR | Steps | Sampling | Packing | SFT Fit | Eval | SFT Val BPB | Stop | Path |",
+        "| --- | ---: | ---: | --- | --- | ---: | ---: | ---: | --- | --- |",
     ]
     for row in rows:
         lines.append(
             f"| `{row['candidate']}` | {row['learning_rate']:g} | {row['step_count']} | "
-            f"`{row['sampling']}` | {_percent(row.get('sft_fit_pass_rate'))} | "
+            f"`{row['sampling']}` | `{row.get('packing', 'separate')}` | {_percent(row.get('sft_fit_pass_rate'))} | "
             f"{_percent(row.get('eval_pass_rate'))} | {_float_or_dash(row.get('sft_final_val_bpb'))} | "
             f"`{row.get('stop_reason', 'unknown')}` | `{row['candidate_dir']}` |"
         )
@@ -172,6 +174,7 @@ def _run_candidate(
         optimizer=config.optimizer,
         muon_learning_rate=config.muon_learning_rate,
         ema_decay=config.ema_decay,
+        packing=config.packing,
     ))
     eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",
@@ -216,6 +219,7 @@ def _run_candidate(
         "learning_rate": learning_rate,
         "step_count": step_count,
         "sampling": sampling,
+        "packing": config.packing,
         "sft_final_train_loss": sft_report["losses"][-1]["train_loss"],
         "sft_final_val_loss": sft_report["losses"][-1]["val_loss"],
         "sft_final_val_bpb": sft_report["losses"][-1].get("val_bpb"),
@@ -253,6 +257,8 @@ def _validate_sweep_config(config: SFTSweepConfig) -> None:
     bad_samplings = [value for value in config.samplings if value not in SFT_SAMPLING_MODES]
     if bad_samplings:
         raise ValueError(f"unsupported SFT sampling mode(s): {', '.join(bad_samplings)}")
+    if config.packing not in SFT_PACKING_MODES:
+        raise ValueError(f"unsupported SFT packing mode: {config.packing}")
     if config.fit_max_rows < 0:
         raise ValueError("fit_max_rows must be non-negative")
 

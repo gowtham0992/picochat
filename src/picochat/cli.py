@@ -15,7 +15,7 @@ from picochat.data import (
 from picochat.batching import load_token_dataset
 from picochat.tokenizer import TOKENIZER_TYPES, load_tokenizer, train_tokenizer as build_tokenizer
 from picochat.train import TrainConfig, train_base
-from picochat.sft import SFTConfig, SFT_SAMPLING_MODES, train_sft
+from picochat.sft import SFTConfig, SFT_PACKING_MODES, SFT_SAMPLING_MODES, train_sft
 from picochat.generate import GenerateConfig, generate_text
 from picochat.chat import ChatConfig, chat_loop
 from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
@@ -482,6 +482,14 @@ def build_parser() -> argparse.ArgumentParser:
             "category_balanced gives rare categories equal training probability."
         ),
     )
+    train_sft_parser.add_argument(
+        "--packing",
+        "--sft-packing",
+        dest="packing",
+        choices=SFT_PACKING_MODES,
+        default="separate",
+        help="SFT sequence packing. Keep separate as the verified default; bos_bestfit packs multiple BOS-delimited examples per context.",
+    )
     train_sft_sweep_parser = train_subparsers.add_parser(
         "sft-sweep",
         help="Run a controlled SFT schedule sweep from one base checkpoint.",
@@ -527,6 +535,14 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_sweep_parser.add_argument("--optimizer", choices=OPTIMIZER_TYPES, default="adamw")
     train_sft_sweep_parser.add_argument("--muon-learning-rate", type=float, default=0.02)
     train_sft_sweep_parser.add_argument("--ema-decay", type=float, default=0.0)
+    train_sft_sweep_parser.add_argument(
+        "--packing",
+        "--sft-packing",
+        dest="packing",
+        choices=SFT_PACKING_MODES,
+        default="separate",
+        help="SFT sequence packing used for every sweep candidate.",
+    )
 
     generate_parser = subparsers.add_parser("generate", help="Generate from a checkpoint.")
     generate_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
@@ -683,6 +699,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "SFT row sampling strategy. category_sqrt softly boosts rare categories; "
             "category_balanced gives rare categories equal training probability."
+        ),
+    )
+    run_tiny_parser.add_argument(
+        "--sft-packing",
+        choices=SFT_PACKING_MODES,
+        default=None,
+        help=(
+            "SFT sequence packing. Default separate keeps one chat row per sequence; "
+            "bos_bestfit packs multiple BOS-delimited rows per context."
         ),
     )
     run_tiny_parser.add_argument(
@@ -1279,6 +1304,7 @@ def run_train_sft(args: argparse.Namespace) -> int:
         optimizer=args.optimizer,
         muon_learning_rate=args.muon_learning_rate,
         ema_decay=args.ema_decay,
+        packing=args.packing,
     )
     report = train_sft(config)
     print(f"saved sft checkpoint: {report['checkpoint']}")
@@ -1317,6 +1343,7 @@ def run_train_sft_sweep(args: argparse.Namespace) -> int:
         optimizer=args.optimizer,
         muon_learning_rate=args.muon_learning_rate,
         ema_decay=args.ema_decay,
+        packing=args.packing,
     ))
     print(f"sft sweep report: {Path(args.out_dir) / 'sft_sweep.md'}")
     best_fit = report.get("best_sft_fit") or {}
@@ -1549,6 +1576,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         base_ema_decay=_resolve_tiny_value(args, defaults, "base_ema_decay"),
         sft_ema_decay=_resolve_tiny_value(args, defaults, "sft_ema_decay"),
         sft_sampling=_resolve_tiny_value(args, defaults, "sft_sampling"),
+        sft_packing=_resolve_tiny_value(args, defaults, "sft_packing"),
         sft_fit_max_rows=_resolve_tiny_value(args, defaults, "sft_fit_max_rows"),
         allow_default_tuning_data=args.allow_default_tuning_data,
         logit_softcap=_resolve_tiny_value(args, defaults, "logit_softcap"),

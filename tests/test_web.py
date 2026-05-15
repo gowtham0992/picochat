@@ -906,6 +906,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
         "sft_optimizer": "adamw",
         "base_muon_learning_rate": 0.01,
         "base_ema_decay": 0.5,
+        "sft_packing": "bos_bestfit",
         "preset": "smoke",
         "tokenizer_type": "bpe",
         "min_quality_score": 0,
@@ -929,6 +930,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert "--base-early-stop-patience" in captured["command"]
     assert "--sft-early-stop-patience" in captured["command"]
     assert "--sft-sampling" in captured["command"]
+    assert "--sft-packing" in captured["command"]
     assert "--target-param-data-ratio" in captured["command"]
     assert "bpe" in captured["command"]
     assert "0.0002" in captured["command"]
@@ -938,6 +940,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert status["job"]["launch_config"]["sft_learning_rate"] == 0.0004
     assert status["job"]["launch_config"]["base_optimizer"] == "muon"
     assert status["job"]["launch_config"]["base_ema_decay"] == 0.5
+    assert status["job"]["launch_config"]["sft_packing"] == "bos_bestfit"
     assert status["job"]["launch_config"]["base_early_stop_patience"] == 4
     assert status["job"]["launch_config"]["sft_early_stop_patience"] == 4
     assert captured["kwargs"]["cwd"].name == "picochat"

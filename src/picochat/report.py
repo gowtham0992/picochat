@@ -337,6 +337,18 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Chat data: `{config['input_path']}`")
     lines.append(f"- Tokenizer: `{config['tokenizer_path']}`")
     lines.append(f"- Examples: {dataset['num_examples']}")
+    lines.append(f"- Packing: `{dataset.get('packing', config.get('packing', 'separate'))}`")
+    lines.append(f"- Source examples: {dataset.get('source_examples', dataset['num_examples'])}")
+    lines.append(f"- Packed sequences: {dataset.get('packed_sequences', dataset.get('num_sequences', dataset['num_examples']))}")
+    lines.append(f"- Packing efficiency: {format_float(float(dataset.get('packing_efficiency', 0.0)) * 100)}%")
+    lines.append(f"- Padded tokens: {dataset.get('padded_tokens', 0)}")
+    if dataset.get("average_examples_per_sequence"):
+        lines.append(
+            f"- Average examples/sequence: "
+            f"{format_float(float(dataset.get('average_examples_per_sequence', 0.0)))}"
+        )
+    if dataset.get("mixed_category_sequences"):
+        lines.append(f"- Mixed-category packed sequences: {dataset.get('mixed_category_sequences')}")
     lines.append(f"- Context size: {dataset['context_size']}")
     lines.append(f"- Supervised answer tokens: {dataset['supervised_tokens']}")
     if dataset.get("masked_prompt_tokens") is not None:
@@ -345,6 +357,9 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Skipped too-long examples: {dataset.get('skipped_long_examples', 0)}")
     lines.append(f"- Train examples: {dataset['train_examples']}")
     lines.append(f"- Validation examples: {dataset['val_examples']}")
+    if dataset.get("train_sequences") is not None:
+        lines.append(f"- Train sequences: {dataset.get('train_sequences')}")
+        lines.append(f"- Validation sequences: {dataset.get('val_sequences')}")
     lines.append(f"- SFT sampling: `{dataset.get('sampling', config.get('sampling', 'uniform'))}`")
     if dataset.get("split_method"):
         lines.append(f"- Validation split: `{dataset['split_method']}`")

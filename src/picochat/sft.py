@@ -28,6 +28,7 @@ from picochat.train import evaluate_metrics
 
 
 SFT_SAMPLING_MODES = ("uniform", "category_sqrt", "category_balanced")
+SFT_PACKING_MODES = ("separate", "bos_bestfit")
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,14 @@ class ChatExample:
     user: str
     assistant: str
     category: str = "chat"
+    group: str | None = None
+
+
+@dataclass(frozen=True)
+class TokenizedChatExample:
+    full_ids: list[int]
+    prompt_len: int
+    category: str
     group: str | None = None
 
 
@@ -48,6 +57,15 @@ class ChatDatasetStats:
     skipped_long_examples: int
     num_groups: int
     category_counts: dict[str, int]
+    packing: str = "separate"
+    source_examples: int = 0
+    num_sequences: int = 0
+    packed_sequences: int = 0
+    packed_tokens: int = 0
+    padded_tokens: int = 0
+    packing_efficiency: float = 0.0
+    average_examples_per_sequence: float = 0.0
+    mixed_category_sequences: int = 0
 
 
 @dataclass(frozen=True)
@@ -88,6 +106,7 @@ class SFTConfig:
     optimizer: str = "adamw"
     muon_learning_rate: float = 0.02
     ema_decay: float = 0.0
+    packing: str = "separate"
 
 
 class ChatSFTDataset(torch.utils.data.Dataset):
@@ -103,48 +122,28 @@ class ChatSFTDataset(torch.utils.data.Dataset):
             raise ValueError("context_size must be at least 2")
 
         self.context_size = context_size
+        self.examples, skipped_long_examples = _tokenize_chat_examples(
+            examples,
+            tokenizer=tokenizer,
+            context_size=context_size,
+        )
         self.rows: list[tuple[torch.Tensor, torch.Tensor]] = []
         self.groups: list[str | None] = []
         self.categories: list[str] = []
         supervised_tokens = 0
         masked_prompt_tokens = 0
-        skipped_long_examples = 0
+        padded_tokens = 0
+        packed_tokens = 0
 
-        for example in examples:
-            prompt = render_chat_prompt([], example.user)
-            prompt_ids = tokenizer.encode(prompt, add_bos=True)
-            answer_ids = tokenizer.encode(example.assistant, add_eos=True)
-            max_ids = context_size + 1
-
-            if len(prompt_ids) + len(answer_ids) > max_ids:
-                skipped_long_examples += 1
-                continue
-
-            full_ids = prompt_ids + answer_ids
-            if len(full_ids) < 2:
-                continue
-
-            x = full_ids[:-1]
-            labels = full_ids[1:]
-            mask_label_count = max(0, len(prompt_ids) - 1)
-            labels[:mask_label_count] = [-100] * min(mask_label_count, len(labels))
-
-            supervised = sum(1 for token_id in labels if token_id != -100)
-            if supervised == 0:
-                continue
-
-            pad_count = context_size - len(x)
-            x = x + [tokenizer.pad_id] * pad_count
-            labels = labels + [-100] * pad_count
-
-            self.rows.append((
-                torch.tensor(x, dtype=torch.long),
-                torch.tensor(labels, dtype=torch.long),
-            ))
+        for example in self.examples:
+            x, labels, row_stats = _packed_row([example], tokenizer, context_size)
+            self.rows.append((x, labels))
             self.groups.append(example.group)
             self.categories.append(example.category)
-            supervised_tokens += supervised
-            masked_prompt_tokens += min(mask_label_count, len(labels))
+            supervised_tokens += row_stats["supervised_tokens"]
+            masked_prompt_tokens += row_stats["masked_prompt_tokens"]
+            padded_tokens += row_stats["padded_tokens"]
+            packed_tokens += row_stats["packed_tokens"]
 
         if not self.rows:
             raise ValueError(
@@ -154,7 +153,7 @@ class ChatSFTDataset(torch.utils.data.Dataset):
 
         explicit_groups = {group for group in self.groups if group is not None}
         self._stats = ChatDatasetStats(
-            num_examples=len(self.rows),
+            num_examples=len(self.examples),
             context_size=context_size,
             supervised_tokens=supervised_tokens,
             masked_prompt_tokens=masked_prompt_tokens,
@@ -162,6 +161,215 @@ class ChatSFTDataset(torch.utils.data.Dataset):
             skipped_long_examples=skipped_long_examples,
             num_groups=len(explicit_groups),
             category_counts=dict(sorted(Counter(self.categories).items())),
+            packing="separate",
+            source_examples=len(self.examples),
+            num_sequences=len(self.rows),
+            packed_sequences=len(self.rows),
+            packed_tokens=packed_tokens,
+            padded_tokens=padded_tokens,
+            packing_efficiency=_safe_ratio(packed_tokens, len(self.rows) * context_size) or 0.0,
+            average_examples_per_sequence=1.0,
+        )
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        if index < 0 or index >= len(self.rows):
+            raise IndexError(index)
+        return self.rows[index]
+
+    def stats(self) -> ChatDatasetStats:
+        return self._stats
+
+    def tokenized_example(self, index: int) -> TokenizedChatExample:
+        if index < 0 or index >= len(self.examples):
+            raise IndexError(index)
+        return self.examples[index]
+
+    def group_key(self, index: int) -> str | None:
+        if index < 0 or index >= len(self.groups):
+            raise IndexError(index)
+        return self.groups[index]
+
+    def category_key(self, index: int) -> str:
+        if index < 0 or index >= len(self.categories):
+            raise IndexError(index)
+        return self.categories[index]
+
+
+def _tokenize_chat_examples(
+    examples: list[ChatExample],
+    *,
+    tokenizer: Tokenizer,
+    context_size: int,
+) -> tuple[list[TokenizedChatExample], int]:
+    tokenized: list[TokenizedChatExample] = []
+    skipped_long_examples = 0
+    max_ids = context_size + 1
+    for example in examples:
+        prompt = render_chat_prompt([], example.user)
+        prompt_ids = tokenizer.encode(prompt, add_bos=True)
+        answer_ids = tokenizer.encode(example.assistant, add_eos=True)
+        if len(prompt_ids) + len(answer_ids) > max_ids:
+            skipped_long_examples += 1
+            continue
+        full_ids = prompt_ids + answer_ids
+        if len(full_ids) < 2 or not answer_ids:
+            continue
+        tokenized.append(TokenizedChatExample(
+            full_ids=full_ids,
+            prompt_len=len(prompt_ids),
+            category=example.category,
+            group=example.group,
+        ))
+    return tokenized, skipped_long_examples
+
+
+def _packed_row(
+    examples: list[TokenizedChatExample],
+    tokenizer: Tokenizer,
+    context_size: int,
+) -> tuple[torch.Tensor, torch.Tensor, dict[str, int]]:
+    packed_ids: list[int] = []
+    supervised_target_positions: set[int] = set()
+    masked_prompt_tokens = 0
+
+    for example in examples:
+        start = len(packed_ids)
+        packed_ids.extend(example.full_ids)
+        answer_start = start + example.prompt_len
+        answer_stop = start + len(example.full_ids)
+        supervised_target_positions.update(range(answer_start, answer_stop))
+        masked_prompt_tokens += max(0, example.prompt_len - 1)
+        if start > 0:
+            masked_prompt_tokens += 1
+
+    if len(packed_ids) > context_size + 1:
+        raise ValueError("packed chat sequence exceeds context")
+    if len(packed_ids) < 2:
+        raise ValueError("packed chat sequence must contain at least two tokens")
+
+    x = packed_ids[:-1]
+    labels = [
+        token_id if target_position in supervised_target_positions else -100
+        for target_position, token_id in enumerate(packed_ids[1:], start=1)
+    ]
+    supervised_tokens = sum(1 for token_id in labels if token_id != -100)
+    if supervised_tokens == 0:
+        raise ValueError("packed chat sequence has no assistant tokens")
+
+    pad_count = context_size - len(x)
+    x = x + [tokenizer.pad_id] * pad_count
+    labels = labels + [-100] * pad_count
+    return (
+        torch.tensor(x, dtype=torch.long),
+        torch.tensor(labels, dtype=torch.long),
+        {
+            "supervised_tokens": supervised_tokens,
+            "masked_prompt_tokens": masked_prompt_tokens,
+            "packed_tokens": context_size - pad_count,
+            "padded_tokens": pad_count,
+        },
+    )
+
+
+def _bestfit_pack_examples(
+    examples: list[TokenizedChatExample],
+    *,
+    max_ids: int,
+) -> list[list[TokenizedChatExample]]:
+    packs: list[list[TokenizedChatExample]] = []
+    used_ids: list[int] = []
+    ordered = sorted(
+        enumerate(examples),
+        key=lambda item: (-len(item[1].full_ids), item[0]),
+    )
+    for _, example in ordered:
+        length = len(example.full_ids)
+        best_index = None
+        best_remaining = max_ids + 1
+        for index, used in enumerate(used_ids):
+            remaining = max_ids - used
+            after = remaining - length
+            if after >= 0 and after < best_remaining:
+                best_index = index
+                best_remaining = after
+        if best_index is None:
+            packs.append([example])
+            used_ids.append(length)
+        else:
+            packs[best_index].append(example)
+            used_ids[best_index] += length
+    return packs
+
+
+class PackedChatSFTDataset(torch.utils.data.Dataset):
+    """Best-fit packed chat sequences with assistant-only loss masking."""
+
+    def __init__(
+        self,
+        examples: list[TokenizedChatExample],
+        tokenizer: Tokenizer,
+        context_size: int,
+    ):
+        if context_size < 2:
+            raise ValueError("context_size must be at least 2")
+        if not examples:
+            raise ValueError("cannot pack an empty chat dataset")
+
+        self.context_size = context_size
+        self.examples = list(examples)
+        self.rows: list[tuple[torch.Tensor, torch.Tensor]] = []
+        self.groups: list[str | None] = []
+        self.categories: list[str] = []
+        self.sequence_source_counts: list[int] = []
+
+        supervised_tokens = 0
+        masked_prompt_tokens = 0
+        padded_tokens = 0
+        packed_tokens = 0
+        mixed_category_sequences = 0
+
+        for pack in _bestfit_pack_examples(self.examples, max_ids=context_size + 1):
+            x, labels, row_stats = _packed_row(pack, tokenizer, context_size)
+            categories = [example.category for example in pack]
+            groups = {example.group for example in pack if example.group is not None}
+            mixed_category = len(set(categories)) > 1
+
+            self.rows.append((x, labels))
+            self.groups.append(next(iter(groups)) if len(groups) == 1 else None)
+            self.categories.append(categories[0] if not mixed_category else "mixed")
+            self.sequence_source_counts.append(len(pack))
+
+            supervised_tokens += row_stats["supervised_tokens"]
+            masked_prompt_tokens += row_stats["masked_prompt_tokens"]
+            padded_tokens += row_stats["padded_tokens"]
+            packed_tokens += row_stats["packed_tokens"]
+            mixed_category_sequences += int(mixed_category)
+
+        if not self.rows:
+            raise ValueError("no packed chat sequences were created")
+
+        explicit_groups = {group for group in self.groups if group is not None}
+        self._stats = ChatDatasetStats(
+            num_examples=len(self.examples),
+            context_size=context_size,
+            supervised_tokens=supervised_tokens,
+            masked_prompt_tokens=masked_prompt_tokens,
+            truncated_examples=0,
+            skipped_long_examples=0,
+            num_groups=len(explicit_groups),
+            category_counts=dict(sorted(Counter(example.category for example in self.examples).items())),
+            packing="bos_bestfit",
+            source_examples=len(self.examples),
+            num_sequences=len(self.rows),
+            packed_sequences=len(self.rows),
+            packed_tokens=packed_tokens,
+            padded_tokens=padded_tokens,
+            packing_efficiency=_safe_ratio(packed_tokens, len(self.rows) * context_size) or 0.0,
+            average_examples_per_sequence=_safe_ratio(len(self.examples), len(self.rows)) or 0.0,
+            mixed_category_sequences=mixed_category_sequences,
         )
 
     def __len__(self) -> int:
@@ -418,6 +626,8 @@ def train_sft(config: SFTConfig) -> dict:
     """Fine-tune a base checkpoint on small chat examples."""
     if config.sampling not in SFT_SAMPLING_MODES:
         raise ValueError(f"sampling must be one of: {', '.join(SFT_SAMPLING_MODES)}")
+    if config.packing not in SFT_PACKING_MODES:
+        raise ValueError(f"packing must be one of: {', '.join(SFT_PACKING_MODES)}")
     validate_optim_controls(
         max_steps=config.max_steps,
         lr_warmup_steps=config.lr_warmup_steps,
@@ -439,14 +649,36 @@ def train_sft(config: SFTConfig) -> dict:
     if model.config.vocab_size != len(tokenizer):
         raise ValueError("tokenizer vocabulary size does not match checkpoint")
 
-    dataset = ChatSFTDataset(
+    source_dataset = ChatSFTDataset(
         load_chat_examples(config.input_path),
         tokenizer=tokenizer,
         context_size=model.config.context_size,
     )
-    split = split_chat_dataset(dataset, config.val_fraction, config.seed)
-    train_dataset = split.train
-    val_dataset = split.val
+    split = split_chat_dataset(source_dataset, config.val_fraction, config.seed)
+    train_source_examples = len(split.train)
+    val_source_examples = len(split.val)
+    train_category_counts = category_counts(split.train)
+    val_category_counts = category_counts(split.val)
+    if config.packing == "bos_bestfit":
+        dataset = PackedChatSFTDataset(
+            [source_dataset.tokenized_example(index) for index in range(len(source_dataset))],
+            tokenizer=tokenizer,
+            context_size=model.config.context_size,
+        )
+        train_dataset = PackedChatSFTDataset(
+            [source_dataset.tokenized_example(index) for index in split.train.indices],
+            tokenizer=tokenizer,
+            context_size=model.config.context_size,
+        )
+        val_dataset = PackedChatSFTDataset(
+            [source_dataset.tokenized_example(index) for index in split.val.indices],
+            tokenizer=tokenizer,
+            context_size=model.config.context_size,
+        )
+    else:
+        dataset = source_dataset
+        train_dataset = split.train
+        val_dataset = split.val
     train_loader = make_chat_dataloader(
         train_dataset,
         config.batch_size,
@@ -707,17 +939,42 @@ def train_sft(config: SFTConfig) -> dict:
         },
         "dataset": {
             **dataset.stats().__dict__,
-            "train_examples": len(train_dataset),
-            "val_examples": len(val_dataset),
+            "skipped_long_examples": source_dataset.stats().skipped_long_examples,
+            "truncated_examples": source_dataset.stats().truncated_examples,
+            "num_groups": source_dataset.stats().num_groups,
+            "train_examples": train_source_examples,
+            "val_examples": val_source_examples,
+            "train_source_examples": train_source_examples,
+            "val_source_examples": val_source_examples,
+            "train_sequences": len(train_dataset),
+            "val_sequences": len(val_dataset),
+            "train_packing_efficiency": (
+                train_dataset.stats().packing_efficiency
+                if hasattr(train_dataset, "stats")
+                else None
+            ),
+            "val_packing_efficiency": (
+                val_dataset.stats().packing_efficiency
+                if hasattr(val_dataset, "stats")
+                else None
+            ),
             "split_method": split.method,
             "train_groups": split.train_groups,
             "val_groups": split.val_groups,
             "category_counts": dataset.stats().category_counts,
-            "train_category_counts": category_counts(train_dataset),
-            "val_category_counts": category_counts(val_dataset),
+            "train_category_counts": train_category_counts,
+            "val_category_counts": val_category_counts,
             "sampling": config.sampling,
+            "packing": config.packing,
         },
-        "coverage": _coverage_report(len(train_dataset), len(dataset), config, final_step),
+        "coverage": _coverage_report(
+            train_source_examples=train_source_examples,
+            total_source_examples=dataset.stats().source_examples,
+            train_sequences=len(train_dataset),
+            total_sequences=len(dataset),
+            config=config,
+            actual_steps=final_step,
+        ),
         "model": {
             "config": model.config.to_dict(),
             "num_parameters": model.num_parameters(),
@@ -737,21 +994,38 @@ def train_sft(config: SFTConfig) -> dict:
     return report
 
 
-def _coverage_report(train_examples: int, total_examples: int, config: SFTConfig, actual_steps: int) -> dict:
-    examples_per_step = config.batch_size * config.grad_accum_steps
+def _coverage_report(
+    *,
+    train_source_examples: int,
+    total_source_examples: int,
+    train_sequences: int,
+    total_sequences: int,
+    config: SFTConfig,
+    actual_steps: int,
+) -> dict:
+    sequences_per_step = config.batch_size * config.grad_accum_steps
+    sequence_updates = actual_steps * sequences_per_step
+    examples_per_sequence = _safe_ratio(train_source_examples, train_sequences) or 0.0
+    examples_per_step = sequences_per_step * examples_per_sequence
     examples_seen = actual_steps * examples_per_step
     report = {
         "actual_steps": actual_steps,
         "planned_steps": config.max_steps,
         "micro_batch_size": config.batch_size,
         "grad_accum_steps": config.grad_accum_steps,
+        "sequences_per_step_estimate": sequences_per_step,
+        "planned_sequence_updates": config.max_steps * sequences_per_step,
+        "actual_sequence_updates": sequence_updates,
+        "train_sequences": train_sequences,
+        "total_sequences": total_sequences,
+        "examples_per_sequence_estimate": examples_per_sequence,
         "examples_per_step_estimate": examples_per_step,
         "planned_example_updates": config.max_steps * examples_per_step,
         "actual_example_updates": examples_seen,
-        "train_examples": train_examples,
-        "total_examples": total_examples,
-        "estimated_train_epochs": _safe_ratio(examples_seen, train_examples),
-        "estimated_dataset_passes": _safe_ratio(examples_seen, total_examples),
+        "train_examples": train_source_examples,
+        "total_examples": total_source_examples,
+        "estimated_train_epochs": _safe_ratio(sequence_updates, train_sequences),
+        "estimated_dataset_passes": _safe_ratio(examples_seen, total_source_examples),
     }
     train_epochs = report["estimated_train_epochs"]
     warnings: list[str] = []

@@ -577,12 +577,15 @@ def test_cli_train_sft(tmp_path, capsys):
         "2",
         "--sampling",
         "category_balanced",
+        "--sft-packing",
+        "bos_bestfit",
     ])
 
     assert exit_code == 0
     assert (out_dir / "checkpoint" / "model.pt").exists()
     report = json.loads((out_dir / "sft_report.json").read_text(encoding="utf-8"))
     assert report["dataset"]["sampling"] == "category_balanced"
+    assert report["dataset"]["packing"] == "bos_bestfit"
     assert "saved sft checkpoint" in capsys.readouterr().out
 
 
@@ -670,6 +673,8 @@ def test_cli_run_tiny(tmp_path, capsys):
         "1",
         "--sft-sampling",
         "category_balanced",
+        "--sft-packing",
+        "bos_bestfit",
         "--eval-max-new-tokens",
         "0",
         "--tokenizer-type",
@@ -694,6 +699,7 @@ def test_cli_run_tiny(tmp_path, capsys):
     summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     assert summary["config"]["tokenizer_type"] == "byte"
     assert summary["config"]["sft_sampling"] == "category_balanced"
+    assert summary["config"]["sft_packing"] == "bos_bestfit"
     assert summary["config"]["base_optimizer"] == "muon"
     assert summary["config"]["sft_optimizer"] == "muon"
     assert summary["base"]["best_checkpoint"]["weights"] == "ema"

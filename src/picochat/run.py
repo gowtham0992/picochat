@@ -16,7 +16,7 @@ from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.report import tiny_run_summary_markdown
 from picochat.run_preflight import assess_run_preflight, preflight_markdown
-from picochat.sft import SFTConfig, SFT_SAMPLING_MODES, train_sft
+from picochat.sft import SFTConfig, SFT_PACKING_MODES, SFT_SAMPLING_MODES, train_sft
 from picochat.tokenizer import TOKENIZER_TYPES, train_tokenizer
 from picochat.train import TrainConfig, train_base
 
@@ -76,6 +76,7 @@ class TinyRunConfig:
     base_ema_decay: float = 0.0
     sft_ema_decay: float = 0.0
     sft_sampling: str = "uniform"
+    sft_packing: str = "separate"
     sft_fit_max_rows: int = 1000
     allow_default_tuning_data: bool = False
     logit_softcap: float = 0.0
@@ -123,6 +124,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
         raise ValueError(f"Unsupported tokenizer type: {config.tokenizer_type}")
     if config.sft_sampling not in SFT_SAMPLING_MODES:
         raise ValueError(f"Unsupported SFT sampling mode: {config.sft_sampling}")
+    if config.sft_packing not in SFT_PACKING_MODES:
+        raise ValueError(f"Unsupported SFT packing mode: {config.sft_packing}")
 
     print("[2/7] check data honesty")
     honesty_report = inspect_data_honesty(
@@ -216,6 +219,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         optimizer=config.sft_optimizer,
         muon_learning_rate=config.sft_muon_learning_rate,
         ema_decay=config.sft_ema_decay,
+        packing=config.sft_packing,
     ))
     sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",
@@ -334,6 +338,11 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "effective_batch_size": sft_report.get("config", {}).get("effective_batch_size"),
             "effective_tokens_per_step": sft_report.get("config", {}).get("effective_tokens_per_step"),
             "stop_reason": sft_report.get("stop_reason"),
+            "packing": sft_report.get("config", {}).get("packing"),
+            "packing_efficiency": sft_report.get("dataset", {}).get("packing_efficiency"),
+            "source_examples": sft_report.get("dataset", {}).get("source_examples"),
+            "packed_sequences": sft_report.get("dataset", {}).get("packed_sequences"),
+            "padded_tokens": sft_report.get("dataset", {}).get("padded_tokens"),
         },
         "sft_fit": sft_fit_report["summary"],
         "sft_fit_dataset": sft_fit_dataset,

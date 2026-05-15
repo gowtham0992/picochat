@@ -95,6 +95,7 @@ const LAUNCH_CONTROL_IDS = [
   "launch-base-early-stop-patience",
   "launch-sft-early-stop-patience",
   "launch-sft-sampling",
+  "launch-sft-packing",
   "launch-eval-max-new-tokens",
   "launch-seed",
   "launch-min-score",
@@ -1903,6 +1904,7 @@ function pipelineStages() {
         ["Val BPB", sftLast ? fmtLoss(sftLast.val_bpb) : "--"],
         ["Stop", summary.sft?.stop_reason || detail?.sft_report?.stop_reason || "--"],
         ["Sampling", detail?.sft_report?.dataset?.sampling || config.sft_sampling || "--"],
+        ["Packing", detail?.sft_report?.dataset?.packing || config.sft_packing || "--"],
         ["Truncated", summary.sft?.truncated_examples ?? "--"],
         ["Skipped", summary.sft?.skipped_long_examples ?? detail?.sft_report?.dataset?.skipped_long_examples ?? "--"],
       ],
@@ -1919,6 +1921,7 @@ function pipelineStages() {
         "--learning-rate", config.sft_learning_rate ?? "1e-3",
         "--early-stop-patience", config.sft_early_stop_patience ?? 4,
         "--sampling", config.sft_sampling || detail?.sft_report?.dataset?.sampling || "uniform",
+        "--packing", config.sft_packing || detail?.sft_report?.dataset?.packing || "separate",
         "--seed", config.seed ?? 42,
         "--device", config.device || "cpu",
       ]),
@@ -3326,6 +3329,7 @@ function applyLaunchPreset(quiet = false) {
   $("launch-base-early-stop-patience").value = values.base_early_stop_patience;
   $("launch-sft-early-stop-patience").value = values.sft_early_stop_patience;
   $("launch-sft-sampling").value = values.sft_sampling || "uniform";
+  $("launch-sft-packing").value = values.sft_packing || "separate";
   $("launch-eval-max-new-tokens").value = values.eval_max_new_tokens;
   $("launch-target-param-data-ratio").value = values.target_param_data_ratio || 20;
   if (values.tokenizer_type) $("launch-tokenizer-type").value = values.tokenizer_type;
@@ -3401,6 +3405,7 @@ function launchConfig() {
     base_early_stop_patience: launchNumber("launch-base-early-stop-patience"),
     sft_early_stop_patience: launchNumber("launch-sft-early-stop-patience"),
     sft_sampling: $("launch-sft-sampling").value,
+    sft_packing: $("launch-sft-packing").value,
     eval_max_new_tokens: launchNumber("launch-eval-max-new-tokens"),
     target_param_data_ratio: launchNumber("launch-target-param-data-ratio"),
     seed: launchNumber("launch-seed"),
@@ -3431,6 +3436,7 @@ function launchReadiness(config = launchConfig()) {
   if (!["adamw", "muon"].includes(config.base_optimizer) || !["adamw", "muon"].includes(config.sft_optimizer)) {
     blockers.push("Optimizer must be ADAMW or MUON.");
   }
+  if (!["separate", "bos_bestfit"].includes(config.sft_packing)) blockers.push("SFT packing mode is invalid.");
   if (config.base_muon_learning_rate <= 0 || config.sft_muon_learning_rate <= 0) blockers.push("Muon learning rates must be above zero.");
   if (config.base_ema_decay < 0 || config.base_ema_decay >= 1 || config.sft_ema_decay < 0 || config.sft_ema_decay >= 1) {
     blockers.push("EMA decay must be at least 0 and below 1.");
@@ -3469,6 +3475,7 @@ function launchReadiness(config = launchConfig()) {
   notes.push(`device ${String(config.device || "cpu").toUpperCase()}`);
   notes.push(`LR ${config.base_learning_rate} -> ${config.sft_learning_rate}`);
   notes.push(`SFT ${config.sft_sampling.replace("_", " ")}`);
+  notes.push(`packing ${config.sft_packing.replace("_", " ")}`);
   const status = blockers.length ? "blocked" : cautions.length ? "caution" : "ready";
   const title = status === "ready" ? "LAUNCH CHECK READY" : status === "caution" ? "LAUNCH CHECK CAUTION" : "LAUNCH CHECK BLOCKED";
   return { status, title, notes: [...blockers, ...cautions, ...notes] };
@@ -3566,6 +3573,8 @@ function launchPreviewCommand(config = launchConfig()) {
     config.sft_early_stop_patience,
     "--sft-sampling",
     config.sft_sampling,
+    "--sft-packing",
+    config.sft_packing,
     "--target-param-data-ratio",
     config.target_param_data_ratio,
     "--split-mode",
@@ -3676,6 +3685,7 @@ function runStartPayload(config) {
     base_early_stop_patience: config.base_early_stop_patience,
     sft_early_stop_patience: config.sft_early_stop_patience,
     sft_sampling: config.sft_sampling,
+    sft_packing: config.sft_packing,
     target_param_data_ratio: config.target_param_data_ratio,
     eval_max_new_tokens: config.eval_max_new_tokens,
     seed: config.seed,

@@ -51,6 +51,7 @@ def test_run_sft_sweep_writes_candidate_and_summary_artifacts(tmp_path):
         sample_tokens=4,
         eval_max_new_tokens=0,
         fit_max_rows=1,
+        packing="bos_bestfit",
     ))
 
     row = report["rows"][0]
@@ -62,6 +63,7 @@ def test_run_sft_sweep_writes_candidate_and_summary_artifacts(tmp_path):
     assert (candidate_dir / "eval" / "eval_report.json").exists()
     assert (candidate_dir / "candidate_summary.json").exists()
     assert row["sft_fit_examples"] == 1
+    assert row["packing"] == "bos_bestfit"
     assert row["eval_score"] is not None
     assert report["best_sft_fit"]["candidate"] == row["candidate"]
 
@@ -84,6 +86,7 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
             "tokenizer_path": "tokenizer.json",
             "checkpoint_path": "base",
             "eval_input_path": "eval.jsonl",
+            "packing": "bos_bestfit",
         },
         "rows": [{
             "candidate": "uniform-lr1em04-steps1",
@@ -91,6 +94,7 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
             "learning_rate": 1e-4,
             "step_count": 1,
             "sampling": "uniform",
+            "packing": "bos_bestfit",
             "sft_fit_pass_rate": 0.5,
             "eval_pass_rate": 0.25,
             "sft_final_val_bpb": 1.2,
@@ -102,4 +106,5 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
 
     assert "# Picochat SFT Sweep" in markdown
     assert "Use SFT fit first" in markdown
+    assert "SFT packing: `bos_bestfit`" in markdown
     assert "uniform-lr1em04-steps1" in markdown

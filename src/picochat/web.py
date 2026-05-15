@@ -38,7 +38,7 @@ from picochat.run import TinyRunConfig
 from picochat.run_preflight import assess_run_preflight
 from picochat.scales import RUN_SCALES
 from picochat.sft_starter import generate_sft_starter
-from picochat.sft import SFT_SAMPLING_MODES
+from picochat.sft import SFT_PACKING_MODES, SFT_SAMPLING_MODES
 from picochat.tokenizer import TOKENIZER_TYPES
 from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
@@ -83,6 +83,7 @@ RUN_PRESETS = {
         "sft_ema_decay": 0.0,
         "device": "cpu",
         "sft_sampling": "uniform",
+        "sft_packing": "separate",
         "base_early_stop_patience": 4,
         "sft_early_stop_patience": 4,
         "eval_max_new_tokens": 80,
@@ -124,6 +125,7 @@ RUN_PRESETS = {
         "sft_ema_decay": 0.0,
         "device": "cpu",
         "sft_sampling": "uniform",
+        "sft_packing": "separate",
         "base_early_stop_patience": 3,
         "sft_early_stop_patience": 4,
         "eval_max_new_tokens": 120,
@@ -165,6 +167,7 @@ RUN_PRESETS = {
         "sft_ema_decay": 0.0,
         "device": "auto",
         "sft_sampling": "category_sqrt",
+        "sft_packing": "separate",
         "base_early_stop_patience": 3,
         "sft_early_stop_patience": 4,
         "eval_max_new_tokens": 120,
@@ -919,6 +922,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     sft_sampling = str(payload.get("sft_sampling", preset.get("sft_sampling", "uniform")))
     if sft_sampling not in SFT_SAMPLING_MODES:
         raise ValueError(f"sft_sampling must be one of {', '.join(SFT_SAMPLING_MODES)}")
+    sft_packing = str(payload.get("sft_packing", preset.get("sft_packing", "separate")))
+    if sft_packing not in SFT_PACKING_MODES:
+        raise ValueError(f"sft_packing must be one of {', '.join(SFT_PACKING_MODES)}")
     target_param_data_ratio = _bounded_float(
         payload.get("target_param_data_ratio", preset.get("target_param_data_ratio", 20.0)),
         1.0,
@@ -973,6 +979,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         base_ema_decay=base_ema_decay,
         sft_ema_decay=sft_ema_decay,
         sft_sampling=sft_sampling,
+        sft_packing=sft_packing,
         allow_unsafe_long_run=allow_unsafe_long_run,
         target_param_data_ratio=target_param_data_ratio,
     )
@@ -1069,6 +1076,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(sft_early_stop_patience),
         "--sft-sampling",
         sft_sampling,
+        "--sft-packing",
+        sft_packing,
         "--target-param-data-ratio",
         str(target_param_data_ratio),
         "--split-mode",
@@ -1136,6 +1145,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "base_early_stop_patience": base_early_stop_patience,
             "sft_early_stop_patience": sft_early_stop_patience,
             "sft_sampling": sft_sampling,
+            "sft_packing": sft_packing,
             "target_param_data_ratio": target_param_data_ratio,
             "device": device,
             "allow_unsafe_long_run": allow_unsafe_long_run,

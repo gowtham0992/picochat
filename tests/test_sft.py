@@ -5,6 +5,7 @@ from picochat.model import GPTConfig, TinyGPT
 from picochat.sft import (
     ChatExample,
     ChatSFTDataset,
+    PackedChatSFTDataset,
     SFTConfig,
     category_balanced_weights,
     category_counts,
@@ -70,6 +71,41 @@ def test_chat_sft_dataset_skips_rows_that_do_not_fit_context():
     assert dataset.stats().truncated_examples == 0
     assert dataset.stats().skipped_long_examples == 1
     assert dataset.stats().supervised_tokens > 0
+
+
+def test_packed_chat_sft_dataset_bestfit_packs_examples():
+    tokenizer = CharTokenizer.train([
+        "User: a\nAssistant: x\n"
+        "User: b\nAssistant: y\n"
+        "User: c\nAssistant: z\n"
+        "User: d\nAssistant: w\n"
+    ])
+    source = ChatSFTDataset(
+        [
+            ChatExample(user="a", assistant="x", category="short"),
+            ChatExample(user="b", assistant="y", category="short"),
+            ChatExample(user="c", assistant="z", category="short"),
+            ChatExample(user="d", assistant="w", category="short"),
+        ],
+        tokenizer=tokenizer,
+        context_size=48,
+    )
+    packed = PackedChatSFTDataset(
+        [source.tokenized_example(index) for index in range(len(source))],
+        tokenizer=tokenizer,
+        context_size=48,
+    )
+
+    assert len(packed) < len(source)
+    assert packed.stats().packing == "bos_bestfit"
+    assert packed.stats().source_examples == 4
+    assert packed.stats().packed_sequences == len(packed)
+    assert packed.stats().padded_tokens < source.stats().padded_tokens
+    assert packed.stats().packing_efficiency > source.stats().packing_efficiency
+
+    _, labels = packed[0]
+    assert any(token_id != -100 for token_id in labels.tolist())
+    assert packed.stats().supervised_tokens == source.stats().supervised_tokens
 
 
 def test_split_chat_dataset_keeps_groups_out_of_both_sides():
@@ -184,6 +220,7 @@ def test_train_sft_writes_artifacts(tmp_path):
         min_lr_ratio=0.5,
         grad_clip=1.0,
         sampling="category_balanced",
+        packing="bos_bestfit",
     ))
 
     assert (out_dir / "checkpoint" / "model.pt").exists()
@@ -202,11 +239,16 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert report["stop_reason"] == "max_steps"
     assert report["loss_diagnostics"]["final_step"] == 2
     assert report["dataset"]["sampling"] == "category_balanced"
+    assert report["dataset"]["packing"] == "bos_bestfit"
+    assert report["dataset"]["source_examples"] == 2
+    assert report["dataset"]["packed_sequences"] <= 2
+    assert report["dataset"]["padded_tokens"] >= 0
     assert report["dataset"]["category_counts"] == {"chat": 2}
     report_text = (out_dir / "report.md").read_text(encoding="utf-8")
     assert "Loss Diagnostics" in report_text
     assert "Best validation checkpoint" in report_text
     assert "SFT sampling" in report_text
+    assert "Packing" in report_text
 
 
 def test_train_sft_reports_gradient_accumulation(tmp_path):
