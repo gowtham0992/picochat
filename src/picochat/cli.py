@@ -311,6 +311,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional corpus recipe path that mixes --base-corpus with the skills corpus.",
     )
+    data_skills_corpus.add_argument(
+        "--documents-dir",
+        default=None,
+        help="Optional folder for sharded micro-skills documents. Recipes use this folder when provided.",
+    )
+    data_skills_corpus.add_argument(
+        "--rows-per-shard",
+        type=int,
+        default=1000,
+        help="Rows per micro-skills shard when --documents-dir is set.",
+    )
 
     data_hf_import = data_subparsers.add_parser(
         "hf-import",
@@ -1354,8 +1365,14 @@ def skills_corpus_data(args: argparse.Namespace) -> int:
         force=args.force,
         base_corpus=args.base_corpus,
         recipe_out=args.recipe_out,
+        documents_dir=args.documents_dir,
+        rows_per_shard=args.rows_per_shard,
     )
     print(f"skills corpus: {report.output_path}")
+    if report.documents_dir:
+        print(f"documents_dir: {report.documents_dir}")
+        print(f"shards: {report.num_shards}")
+        print(f"rows_per_shard: {report.rows_per_shard}")
     print(f"rows: {report.total_rows}")
     print(f"characters: {report.characters_written}")
     print("categories:")

@@ -28,10 +28,13 @@ HELDOUT_WORDS = (
 @dataclass(frozen=True)
 class SkillsCorpusReport:
     output_path: str
+    documents_dir: str | None
     report_path: str
     recipe_path: str | None
     base_corpus: str | None
     total_rows: int
+    num_shards: int
+    rows_per_shard: int | None
     categories: dict[str, int]
     characters_written: int
     seed: int
@@ -54,16 +57,21 @@ def generate_skills_corpus(
     force: bool = False,
     base_corpus: str | Path | None = None,
     recipe_out: str | Path | None = None,
+    documents_dir: str | Path | None = None,
+    rows_per_shard: int = 1000,
 ) -> SkillsCorpusReport:
     """Write a deterministic micro-skills corpus for base pretraining."""
     if math_rows < 0 or spelling_rows < 0 or choice_rows < 0:
         raise ValueError("row counts must be non-negative")
     if math_rows + spelling_rows + choice_rows <= 0:
         raise ValueError("at least one skills row is required")
+    if rows_per_shard <= 0:
+        raise ValueError("rows_per_shard must be positive")
 
     out = Path(out_path)
     if out.exists() and not force:
         raise FileExistsError(f"Refusing to overwrite existing skills corpus: {out}")
+    shard_root = Path(documents_dir) if documents_dir else None
 
     rng = random.Random(seed)
     rows = [
@@ -76,12 +84,13 @@ def generate_skills_corpus(
     out.parent.mkdir(parents=True, exist_ok=True)
     text = "\n".join(row["text"] for row in rows) + "\n"
     out.write_text(text, encoding="utf-8")
+    num_shards = _write_shards(shard_root, rows, rows_per_shard=rows_per_shard, force=force) if shard_root else 0
 
     recipe_path = None
     if recipe_out:
         recipe_path = _write_recipe(
             recipe_out,
-            skills_path=out,
+            skills_path=shard_root if shard_root else out,
             base_corpus=Path(base_corpus) if base_corpus else None,
             force=force,
         )
@@ -89,10 +98,13 @@ def generate_skills_corpus(
     report_path = out.with_suffix(".report.md")
     report = SkillsCorpusReport(
         output_path=str(out),
+        documents_dir=str(shard_root) if shard_root else None,
         report_path=str(report_path),
         recipe_path=str(recipe_path) if recipe_path else None,
         base_corpus=str(base_corpus) if base_corpus else None,
         total_rows=len(rows),
+        num_shards=num_shards,
+        rows_per_shard=rows_per_shard if shard_root else None,
         categories=dict(sorted(Counter(row["category"] for row in rows).items())),
         characters_written=len(text),
         seed=seed,
@@ -244,6 +256,38 @@ def _skill_word(index: int, rng: random.Random) -> str:
     return "".join(rng.choice(string.ascii_lowercase) for _ in range(length))
 
 
+def _write_shards(
+    documents_dir: Path | None,
+    rows: list[dict[str, str]],
+    *,
+    rows_per_shard: int,
+    force: bool,
+) -> int:
+    if documents_dir is None:
+        return 0
+    existing_entries = sorted(documents_dir.iterdir()) if documents_dir.exists() else []
+    unexpected_entries = [
+        path for path in existing_entries
+        if not (path.is_file() and path.name.startswith("shard-") and path.suffix == ".txt")
+    ]
+    if unexpected_entries:
+        raise FileExistsError(f"Skills documents dir must be empty or contain only shard-*.txt files: {documents_dir}")
+    existing_shards = [path for path in existing_entries if path.is_file()]
+    if existing_shards and not force:
+        raise FileExistsError(f"Refusing to overwrite existing skills shard(s): {documents_dir}")
+    documents_dir.mkdir(parents=True, exist_ok=True)
+    for old_shard in existing_shards:
+        old_shard.unlink()
+
+    num_shards = 0
+    for start in range(0, len(rows), rows_per_shard):
+        shard_rows = rows[start:start + rows_per_shard]
+        shard_path = documents_dir / f"shard-{num_shards:05d}.txt"
+        shard_path.write_text("\n".join(row["text"] for row in shard_rows) + "\n", encoding="utf-8")
+        num_shards += 1
+    return num_shards
+
+
 def _write_recipe(
     recipe_out: str | Path,
     *,
@@ -284,6 +328,10 @@ def _report_markdown(report: SkillsCorpusReport) -> str:
     return f"""# Picochat Micro-Skills Corpus
 
 Output: `{report.output_path}`
+
+Documents dir: `{report.documents_dir or 'none'}`
+
+Shards: `{report.num_shards}`{f' ({report.rows_per_shard} rows/shard)' if report.rows_per_shard else ''}
 
 Rows: `{report.total_rows}`
 

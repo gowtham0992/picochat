@@ -235,6 +235,7 @@ def test_cli_run_tiny_preflight_only(tmp_path, capsys):
 def test_cli_data_skills_corpus(tmp_path, capsys):
     base_path = tmp_path / "base.txt"
     out_path = tmp_path / "skills.txt"
+    docs_path = tmp_path / "skills_docs"
     recipe_path = tmp_path / "skills_recipe.json"
     base_path.write_text("base text", encoding="utf-8")
 
@@ -253,13 +254,20 @@ def test_cli_data_skills_corpus(tmp_path, capsys):
         str(base_path),
         "--recipe-out",
         str(recipe_path),
+        "--documents-dir",
+        str(docs_path),
+        "--rows-per-shard",
+        "4",
     ])
 
     assert exit_code == 0
     assert out_path.exists()
+    assert len(list(docs_path.glob("shard-*.txt"))) == 2
     assert recipe_path.exists()
     output = capsys.readouterr().out
     assert "skills corpus:" in output
+    assert "documents_dir:" in output
+    assert "shards: 2" in output
     assert "skills_math" in output
     assert "recipe:" in output
 
