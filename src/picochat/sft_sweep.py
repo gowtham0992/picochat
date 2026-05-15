@@ -45,6 +45,9 @@ class SFTSweepConfig:
     muon_momentum_schedule: str = "none"
     ema_decay: float = 0.0
     packing: str = "separate"
+    precision: str = "float32"
+    torch_compile: bool = False
+    torch_compile_mode: str = "default"
 
 
 def run_sft_sweep(config: SFTSweepConfig) -> dict:
@@ -114,6 +117,8 @@ def sft_sweep_markdown(report: dict) -> str:
         f"- Base checkpoint: `{config['checkpoint_path']}`",
         f"- Held-out eval: `{config.get('eval_input_path') or 'not run'}`",
         f"- SFT packing: `{config.get('packing', 'separate')}`",
+        f"- Precision: `{config.get('precision', 'float32')}`",
+        f"- torch.compile: `{config.get('torch_compile', False)}`",
         "",
         "## Results",
         "",
@@ -188,6 +193,9 @@ def _run_candidate(
         muon_momentum_schedule=config.muon_momentum_schedule,
         ema_decay=config.ema_decay,
         packing=config.packing,
+        precision=config.precision,
+        torch_compile=config.torch_compile,
+        torch_compile_mode=config.torch_compile_mode,
     ))
     eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",

@@ -52,6 +52,8 @@ def test_run_sft_sweep_writes_candidate_and_summary_artifacts(tmp_path):
         eval_max_new_tokens=0,
         fit_max_rows=1,
         packing="bos_bestfit",
+        precision="float32",
+        torch_compile=False,
     ))
 
     row = report["rows"][0]
@@ -66,6 +68,8 @@ def test_run_sft_sweep_writes_candidate_and_summary_artifacts(tmp_path):
     assert row["sft_fit_split"] == "sft_train"
     assert row["sft_fit_selected_from_indices"] is True
     assert row["packing"] == "bos_bestfit"
+    assert report["config"]["precision"] == "float32"
+    assert report["config"]["torch_compile"] is False
     assert row["eval_score"] is not None
     assert "eval_non_choice_pass_rate" in row
     assert report["best_sft_fit"]["candidate"] == row["candidate"]
@@ -91,6 +95,8 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
             "checkpoint_path": "base",
             "eval_input_path": "eval.jsonl",
             "packing": "bos_bestfit",
+            "precision": "bf16",
+            "torch_compile": True,
         },
         "rows": [{
             "candidate": "uniform-lr1em04-steps1",
@@ -115,5 +121,7 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
     assert "# Picochat SFT Sweep" in markdown
     assert "Use SFT fit first" in markdown
     assert "SFT packing: `bos_bestfit`" in markdown
+    assert "Precision: `bf16`" in markdown
+    assert "torch.compile: `True`" in markdown
     assert "Best non-choice held-out eval" in markdown
     assert "uniform-lr1em04-steps1" in markdown

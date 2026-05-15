@@ -698,6 +698,23 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_sweep_parser.add_argument("--muon-momentum-schedule", choices=MUON_MOMENTUM_SCHEDULES, default="none")
     train_sft_sweep_parser.add_argument("--ema-decay", type=float, default=0.0)
     train_sft_sweep_parser.add_argument(
+        "--precision",
+        choices=PRECISION_MODES,
+        default="float32",
+        help="Training precision for each SFT candidate. Use bf16/fp16/auto only on supported accelerators.",
+    )
+    train_sft_sweep_parser.add_argument(
+        "--torch-compile",
+        action="store_true",
+        help="Compile each SFT candidate model forward path with torch.compile.",
+    )
+    train_sft_sweep_parser.add_argument(
+        "--torch-compile-mode",
+        choices=COMPILE_MODES,
+        default="default",
+        help="torch.compile mode when --torch-compile is enabled.",
+    )
+    train_sft_sweep_parser.add_argument(
         "--packing",
         "--sft-packing",
         dest="packing",
@@ -1802,6 +1819,9 @@ def run_train_sft_sweep(args: argparse.Namespace) -> int:
         muon_momentum_schedule=args.muon_momentum_schedule,
         ema_decay=args.ema_decay,
         packing=args.packing,
+        precision=args.precision,
+        torch_compile=args.torch_compile,
+        torch_compile_mode=args.torch_compile_mode,
     ))
     print(f"sft sweep report: {Path(args.out_dir) / 'sft_sweep.md'}")
     best_fit = report.get("best_sft_fit") or {}
