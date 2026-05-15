@@ -52,6 +52,9 @@ class TinyRunConfig:
     eval_max_new_tokens: int = 120
     min_quality_score: int = 0
     split_mode: str = "document"
+    base_dataset_mode: str = "memory"
+    base_shard_token_size: int = 1_000_000
+    base_shard_cache_size: int = 2
     tokenizer_type: str = "char"
     tokenizer_vocab_size: int | None = None
     tokenizer_min_freq: int = 1
@@ -212,6 +215,9 @@ def run_tiny(config: TinyRunConfig) -> dict:
         log_every=_validation_log_every(config.base_steps),
         sample_tokens=160,
         split_mode=config.split_mode,
+        dataset_mode=config.base_dataset_mode,
+        shard_token_size=config.base_shard_token_size,
+        shard_cache_size=config.base_shard_cache_size,
         corpus_manifest_path=corpus_build.manifest_path,
         early_stop_patience=config.base_early_stop_patience,
         early_stop_min_delta=config.early_stop_min_delta,

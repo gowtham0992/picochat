@@ -773,6 +773,12 @@ def test_cli_run_tiny(tmp_path, capsys):
         "1",
         "--base-batch-size",
         "2",
+        "--base-dataset-mode",
+        "sharded",
+        "--base-shard-token-size",
+        "64",
+        "--base-shard-cache-size",
+        "2",
         "--sft-batch-size",
         "1",
         "--sft-sampling",
@@ -802,6 +808,9 @@ def test_cli_run_tiny(tmp_path, capsys):
     assert (out_dir / "summary.md").exists()
     summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     assert summary["config"]["tokenizer_type"] == "byte"
+    assert summary["config"]["base_dataset_mode"] == "sharded"
+    assert summary["config"]["base_shard_token_size"] == 64
+    assert summary["config"]["base_shard_cache_size"] == 2
     assert summary["config"]["sft_sampling"] == "category_balanced"
     assert summary["config"]["sft_packing"] == "bos_bestfit"
     assert summary["config"]["base_optimizer"] == "muon"

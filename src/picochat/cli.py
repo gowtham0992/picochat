@@ -1064,6 +1064,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Base training validation split. 'document' holds out complete corpus documents when possible.",
     )
     run_tiny_parser.add_argument(
+        "--base-dataset-mode",
+        choices=("memory", "sharded"),
+        default=None,
+        help=(
+            "Base training dataset path. memory preserves document-split behavior; "
+            "sharded writes token shards to disk for larger H100-scale corpora."
+        ),
+    )
+    run_tiny_parser.add_argument(
+        "--base-shard-token-size",
+        type=int,
+        default=None,
+        help="Target tokens per disk shard when --base-dataset-mode sharded is used.",
+    )
+    run_tiny_parser.add_argument(
+        "--base-shard-cache-size",
+        type=int,
+        default=None,
+        help="Number of token shards to keep hot in memory during sharded base training.",
+    )
+    run_tiny_parser.add_argument(
         "--allow-leaky-eval",
         action="store_true",
         help="Allow a diagnostic run to continue when data honesty detects blocking eval leakage.",
@@ -2085,6 +2106,9 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         eval_max_new_tokens=_resolve_tiny_value(args, defaults, "eval_max_new_tokens"),
         min_quality_score=args.min_score,
         split_mode=args.split_mode,
+        base_dataset_mode=_resolve_tiny_value(args, defaults, "base_dataset_mode"),
+        base_shard_token_size=_resolve_tiny_value(args, defaults, "base_shard_token_size"),
+        base_shard_cache_size=_resolve_tiny_value(args, defaults, "base_shard_cache_size"),
         tokenizer_type=_resolve_tiny_value(args, defaults, "tokenizer_type"),
         tokenizer_vocab_size=_resolve_tiny_value(args, defaults, "tokenizer_vocab_size"),
         tokenizer_min_freq=_resolve_tiny_value(args, defaults, "tokenizer_min_freq"),

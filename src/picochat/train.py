@@ -198,6 +198,11 @@ def train_base(config: TrainConfig) -> dict:
         raise ValueError("dataset_mode must be 'memory' or 'sharded'")
     canary_values = _canary_values(config.seed, config.canary_count)
     if config.dataset_mode == "sharded":
+        print(
+            "base data: preparing sharded token dataset "
+            f"({config.shard_token_size:,} tokens/shard, cache={config.shard_cache_size})",
+            flush=True,
+        )
         split = load_sharded_token_split(
             corpus_path=config.corpus_path,
             tokenizer_path=config.tokenizer_path,
@@ -209,6 +214,7 @@ def train_base(config: TrainConfig) -> dict:
             shard_cache_size=config.shard_cache_size,
         )
     else:
+        print("base data: preparing in-memory token split", flush=True)
         split = load_token_split(
             corpus_path=config.corpus_path,
             tokenizer_path=config.tokenizer_path,
@@ -219,6 +225,12 @@ def train_base(config: TrainConfig) -> dict:
             corpus_manifest_path=config.corpus_manifest_path,
             canary_values=canary_values,
         )
+    print(
+        "base data: ready "
+        f"train={len(split.train_dataset):,} val={len(split.val_dataset):,} "
+        f"mode={split.stats.get('split_mode', config.dataset_mode)}",
+        flush=True,
+    )
     train_batcher = make_resumable_batcher(
         split.train_dataset,
         batch_size=config.batch_size,
