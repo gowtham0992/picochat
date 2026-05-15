@@ -44,6 +44,7 @@ from picochat.optim import (
     WEIGHT_DECAY_DECAYS,
 )
 from picochat.precision import COMPILE_MODES, PRECISION_MODES
+from picochat.sanity import PreH100SanityConfig, run_preh100_sanity
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep
 from picochat.skills_corpus import generate_skills_corpus
@@ -700,6 +701,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--dynamic-int8",
         action="store_true",
         help="Also write a Picochat PyTorch dynamic-int8 serving artifact.",
+    )
+
+    sanity_parser = subparsers.add_parser("sanity", help="Run local readiness sanity checks.")
+    sanity_subparsers = sanity_parser.add_subparsers(dest="sanity_command")
+    sanity_preh100_parser = sanity_subparsers.add_parser(
+        "preh100",
+        help="Run fast checks before spending H100 time on a long run.",
+    )
+    sanity_preh100_parser.add_argument(
+        "--out-dir",
+        default="runs/preh100-sanity",
+        help="Output folder for sanity reports and scratch artifacts.",
+    )
+    sanity_preh100_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    sanity_preh100_parser.add_argument("--precision", choices=PRECISION_MODES, default="auto")
+    sanity_preh100_parser.add_argument(
+        "--include-compile",
+        action="store_true",
+        help="Also run a torch.compile smoke test.",
     )
 
     chat_parser = subparsers.add_parser("chat", help="Interactive terminal chat.")
@@ -1715,6 +1735,22 @@ def run_export_hf(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_sanity_preh100(args: argparse.Namespace) -> int:
+    report = run_preh100_sanity(PreH100SanityConfig(
+        out_dir=args.out_dir,
+        device=args.device,
+        precision=args.precision,
+        include_compile=args.include_compile,
+    ))
+    print(f"sanity: {report['status']}")
+    print(f"json_report: {report['report_path']}")
+    print(f"markdown_report: {report['markdown_path']}")
+    for check in report["checks"]:
+        detail = check.get("detail") or check.get("error") or ""
+        print(f"- {check['name']}: {check['status']} {detail}".rstrip())
+    return 1 if report["status"] == "failed" else 0
+
+
 def run_chat(args: argparse.Namespace) -> int:
     top_k = None if args.top_k <= 0 else args.top_k
     return chat_loop(ChatConfig(
@@ -2016,6 +2052,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "export" and args.export_command == "hf":
         return run_export_hf(args)
+
+    if args.command == "sanity" and args.sanity_command == "preh100":
+        return run_sanity_preh100(args)
 
     if args.command == "chat":
         return run_chat(args)

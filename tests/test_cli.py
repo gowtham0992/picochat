@@ -8,6 +8,38 @@ def test_cli_version(capsys):
     assert "picochat" in capsys.readouterr().out
 
 
+def test_cli_sanity_preh100(tmp_path, capsys, monkeypatch):
+    def fake_run(config):
+        assert config.out_dir == str(tmp_path / "sanity")
+        assert config.precision == "float32"
+        assert config.include_compile is True
+        return {
+            "status": "passed",
+            "report_path": str(tmp_path / "sanity" / "preh100_sanity.json"),
+            "markdown_path": str(tmp_path / "sanity" / "preh100_sanity.md"),
+            "checks": [
+                {"name": "precision_backward", "status": "pass", "detail": "ok"},
+            ],
+        }
+
+    monkeypatch.setattr("picochat.cli.run_preh100_sanity", fake_run)
+
+    exit_code = main([
+        "sanity",
+        "preh100",
+        "--out-dir",
+        str(tmp_path / "sanity"),
+        "--precision",
+        "float32",
+        "--include-compile",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "sanity: passed" in output
+    assert "precision_backward: pass ok" in output
+
+
 def test_cli_tokenizer_train(tmp_path, capsys):
     data_path = tmp_path / "data.txt"
     tokenizer_path = tmp_path / "tokenizer.json"
