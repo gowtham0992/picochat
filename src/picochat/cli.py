@@ -25,6 +25,11 @@ from picochat.sft import SFTConfig, SFT_PACKING_MODES, SFT_SAMPLING_MODES, train
 from picochat.generate import GenerateConfig, generate_text
 from picochat.chat import ChatConfig, chat_loop
 from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
+from picochat.external_benchmark import (
+    EXTERNAL_BENCHMARK_FORMATS,
+    ExternalBenchmarkConvertConfig,
+    convert_external_benchmark,
+)
 from picochat.eval_starter import generate_eval_starter
 from picochat.sft_starter import generate_sft_starter
 from picochat.benchmark_pack import (
@@ -808,6 +813,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Bootstrap samples for eval pass-rate confidence intervals. Use 0 to disable.",
     )
     eval_chat_parser.add_argument("--ci-confidence", type=float, default=0.95)
+
+    eval_external_parser = eval_subparsers.add_parser(
+        "external",
+        help="Convert and run an external ARC/MMLU-style multiple-choice benchmark.",
+    )
+    eval_external_parser.add_argument("--input", required=True, help="Path to external benchmark JSONL/JSON/CSV.")
+    eval_external_parser.add_argument("--format", choices=EXTERNAL_BENCHMARK_FORMATS, default="auto")
+    eval_external_parser.add_argument("--benchmark-name", default="external")
+    eval_external_parser.add_argument("--split", default="external")
+    eval_external_parser.add_argument("--max-rows", type=int, default=0)
+    eval_external_parser.add_argument("--shuffle", action="store_true")
+    eval_external_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
+    eval_external_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
+    eval_external_parser.add_argument("--out-dir", required=True, help="Output eval directory.")
+    eval_external_parser.add_argument("--max-new-tokens", type=int, default=1)
+    eval_external_parser.add_argument("--temperature", type=float, default=0.0)
+    eval_external_parser.add_argument("--top-k", type=int, default=0)
+    eval_external_parser.add_argument("--top-p", type=float, default=1.0)
+    eval_external_parser.add_argument("--repetition-penalty", type=float, default=1.0)
+    eval_external_parser.add_argument("--seed", type=int, default=42)
+    eval_external_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    eval_external_parser.add_argument(
+        "--ci-bootstrap-samples",
+        type=int,
+        default=1000,
+        help="Bootstrap samples for external benchmark confidence intervals. Use 0 to disable.",
+    )
+    eval_external_parser.add_argument("--ci-confidence", type=float, default=0.95)
 
     eval_sft_fit_parser = eval_subparsers.add_parser(
         "sft-fit",
@@ -1889,6 +1922,47 @@ def run_eval_chat(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_eval_external(args: argparse.Namespace) -> int:
+    out_dir = Path(args.out_dir)
+    eval_input = out_dir / "external_eval.jsonl"
+    convert_report = convert_external_benchmark(ExternalBenchmarkConvertConfig(
+        input_path=args.input,
+        output_path=str(eval_input),
+        source_format=args.format,
+        benchmark_name=args.benchmark_name,
+        split=args.split,
+        max_rows=None if args.max_rows <= 0 else args.max_rows,
+        seed=args.seed,
+        shuffle=args.shuffle,
+    ))
+    top_k = None if args.top_k <= 0 else args.top_k
+    report = run_chat_eval(ChatEvalConfig(
+        input_path=str(eval_input),
+        checkpoint_path=args.checkpoint,
+        tokenizer_path=args.tokenizer,
+        out_dir=args.out_dir,
+        max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
+        top_k=top_k,
+        top_p=args.top_p,
+        repetition_penalty=args.repetition_penalty,
+        seed=args.seed,
+        device=args.device,
+        ci_bootstrap_samples=args.ci_bootstrap_samples,
+        ci_confidence=args.ci_confidence,
+    ))
+    summary = report["summary"]
+    choice_accuracy = summary.get("choice_accuracy")
+    choice_text = "n/a" if choice_accuracy is None else f"{choice_accuracy * 100:.2f}%"
+    print(f"converted external eval: {convert_report['output_path']}")
+    print(
+        f"external eval: {summary['num_passed']}/{summary['num_examples']} passed "
+        f"({summary['pass_rate'] * 100:.2f}%), choice accuracy {choice_text}"
+    )
+    print(f"saved eval report: {args.out_dir}")
+    return 0
+
+
 def run_eval_sft_fit(args: argparse.Namespace) -> int:
     out_dir = Path(args.out_dir)
     fit_input = out_dir / "sft_fit_eval.jsonl"
@@ -2175,6 +2249,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "eval" and args.eval_command == "chat":
         return run_eval_chat(args)
+
+    if args.command == "eval" and args.eval_command == "external":
+        return run_eval_external(args)
 
     if args.command == "eval" and args.eval_command == "sft-fit":
         return run_eval_sft_fit(args)
