@@ -396,8 +396,35 @@ def test_run_chat_eval_prints_progress_when_requested(tmp_path, capsys):
     ))
 
     output = capsys.readouterr().out
+    assert "eval 0000/0002" in output
     assert "eval 0001/0002" in output
     assert "eval 0002/0002" in output
+    assert "eta" in output
+
+
+def test_generation_token_budget_uses_public_length_constraints():
+    tokenizer = CharTokenizer.train(["short answer"])
+    config = ChatEvalConfig(
+        input_path="eval.jsonl",
+        checkpoint_path="checkpoint",
+        tokenizer_path="tokenizer.json",
+        out_dir="out",
+        max_new_tokens=80,
+    )
+
+    char_budget = eval_module._generation_max_new_tokens(
+        config,
+        tokenizer,
+        ChatEvalItem(user="say it briefly", max_chars=12, max_words=2),
+    )
+    unrestricted_budget = eval_module._generation_max_new_tokens(
+        config,
+        tokenizer,
+        ChatEvalItem(user="say anything"),
+    )
+
+    assert char_budget == 20
+    assert unrestricted_budget == 80
 
 
 def test_run_chat_eval_indexes_support_corpus_once(tmp_path, monkeypatch):

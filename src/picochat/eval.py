@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import random
 import re
+import time
 
 import torch
 
@@ -446,13 +447,26 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
 
     items = load_chat_eval_items(config.input_path)
     rows = []
+    eval_start = time.perf_counter()
+    if config.log_every > 0:
+        print(
+            f"eval 0000/{len(items):04d} | starting | "
+            f"{Path(config.out_dir).name}"
+        )
     for index, item in enumerate(items):
         choice_scores = None
         choice_details = None
+        generation_max_new_tokens = None
         if item.correct_choice:
             reply, choice_scores, choice_details = _predict_choice_reply(model, tokenizer, config, item)
         else:
-            reply = _generate_eval_reply(model, tokenizer, config, item.user, seed=config.seed + index)
+            reply, generation_max_new_tokens = _generate_eval_reply(
+                model,
+                tokenizer,
+                config,
+                item,
+                seed=config.seed + index,
+            )
         score = score_reply(
             reply,
             item,
@@ -489,13 +503,19 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
                 if item.correct_choice else None
             ),
             "choice_predicted": reply if item.correct_choice else None,
+            "generation_max_new_tokens": generation_max_new_tokens,
             **score,
         })
         if config.log_every > 0 and ((index + 1) % config.log_every == 0 or index + 1 == len(items)):
             passed_so_far = sum(1 for row in rows if row["passed"])
+            elapsed = max(1e-9, time.perf_counter() - eval_start)
+            rows_per_second = (index + 1) / elapsed
+            remaining = len(items) - index - 1
+            eta_seconds = remaining / rows_per_second if rows_per_second > 0 else 0.0
             print(
                 f"eval {index + 1:04d}/{len(items):04d} | "
                 f"passed {passed_so_far}/{len(rows)} | "
+                f"{elapsed:.1f}s elapsed | eta {eta_seconds:.1f}s | "
                 f"{Path(config.out_dir).name}"
             )
 
@@ -1462,18 +1482,19 @@ def _generate_eval_reply(
     model,
     tokenizer: Tokenizer,
     config: ChatEvalConfig,
-    user_message: str,
+    item: ChatEvalItem,
     seed: int,
-) -> str:
-    prompt = render_chat_prompt([], user_message)
+) -> tuple[str, int]:
+    prompt = render_chat_prompt([], item.user)
     input_ids = torch.tensor(
         [tokenizer.encode(prompt, add_bos=True)],
         dtype=torch.long,
         device=next(model.parameters()).device,
     )
+    max_new_tokens = _generation_max_new_tokens(config, tokenizer, item)
     generated = model.generate(
         input_ids,
-        max_new_tokens=config.max_new_tokens,
+        max_new_tokens=max_new_tokens,
         temperature=config.temperature,
         top_k=config.top_k,
         top_p=config.top_p,
@@ -1483,4 +1504,27 @@ def _generate_eval_reply(
     )
     new_token_ids = generated[0, input_ids.shape[1]:].tolist()
     generated_text = tokenizer.decode(new_token_ids)
-    return extract_assistant_reply("", generated_text)
+    return extract_assistant_reply("", generated_text), max_new_tokens
+
+
+def _generation_max_new_tokens(
+    config: ChatEvalConfig,
+    tokenizer: Tokenizer,
+    item: ChatEvalItem,
+) -> int:
+    """Choose a generation cap from public row length constraints."""
+    if config.max_new_tokens <= 0:
+        return config.max_new_tokens
+
+    candidates: list[int] = []
+    if item.max_chars is not None:
+        candidates.append(max(1, item.max_chars + 8))
+
+    tokenizer_type = getattr(tokenizer, "tokenizer_type", "")
+    if item.max_words is not None and tokenizer_type not in {"char"}:
+        candidates.append(max(1, item.max_words * 6 + 8))
+
+    if not candidates:
+        return config.max_new_tokens
+    constrained = max(8, min(candidates))
+    return min(config.max_new_tokens, constrained)
