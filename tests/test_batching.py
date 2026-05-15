@@ -4,6 +4,7 @@ import pytest
 
 from picochat.batching import (
     TokenWindowDataset,
+    load_sharded_token_split,
     load_token_dataset,
     load_token_split,
     make_dataloader,
@@ -39,6 +40,32 @@ def test_load_token_dataset(tmp_path):
 
     assert dataset.stats().num_tokens == len(tokenizer.encode("hello world", add_bos=True, add_eos=True))
     assert dataset[0][0].shape[0] == 4
+
+
+def test_load_sharded_token_split_uses_disk_shards(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    cache_dir = tmp_path / "shards"
+    text = "alpha beta gamma delta epsilon\n" * 30
+    corpus_path.write_text(text, encoding="utf-8")
+    CharTokenizer.train([text]).save(tokenizer_path)
+
+    split = load_sharded_token_split(
+        corpus_path,
+        tokenizer_path,
+        context_size=8,
+        cache_dir=cache_dir,
+        val_fraction=0.25,
+        seed=1,
+        shard_token_size=40,
+    )
+    x, y = split.train_dataset[0]
+
+    assert split.stats["split_mode"] == "sharded"
+    assert split.stats["num_shards"] > 1
+    assert (cache_dir / "token_shards_manifest.json").exists()
+    assert x.shape == (8,)
+    assert y.shape == (8,)
 
 
 def test_make_dataloader_batches_examples():

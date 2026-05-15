@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import bisect
 import json
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,60 @@ class TokenWindowDataset(torch.utils.data.Dataset):
             context_size=self.context_size,
             num_sequences=len(self),
         )
+
+
+class ShardedTokenWindowDataset(torch.utils.data.Dataset):
+    """Fixed-size token windows over token shards stored on disk."""
+
+    def __init__(self, shards: list[dict[str, Any]], context_size: int):
+        if context_size < 2:
+            raise ValueError("context_size must be at least 2")
+        usable_shards = [
+            shard for shard in shards
+            if int(shard.get("num_tokens", 0)) > context_size
+        ]
+        if not usable_shards:
+            raise ValueError("no token shard is longer than context_size")
+        self.shards = usable_shards
+        self.context_size = context_size
+        lengths = [int(shard["num_tokens"]) - context_size for shard in self.shards]
+        self._prefix_lengths: list[int] = []
+        total = 0
+        for length in lengths:
+            total += length
+            self._prefix_lengths.append(total)
+        self._cached_shard_index: int | None = None
+        self._cached_tokens: torch.Tensor | None = None
+
+    def __len__(self) -> int:
+        return self._prefix_lengths[-1]
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        if index < 0 or index >= len(self):
+            raise IndexError(index)
+        shard_index = bisect.bisect_right(self._prefix_lengths, index)
+        previous = 0 if shard_index == 0 else self._prefix_lengths[shard_index - 1]
+        local_index = index - previous
+        tokens = self._load_shard(shard_index)
+        chunk = tokens[local_index: local_index + self.context_size + 1]
+        return chunk[:-1], chunk[1:]
+
+    def stats(self) -> TokenDatasetStats:
+        return TokenDatasetStats(
+            num_tokens=sum(int(shard["num_tokens"]) for shard in self.shards),
+            context_size=self.context_size,
+            num_sequences=len(self),
+        )
+
+    def _load_shard(self, shard_index: int) -> torch.Tensor:
+        if self._cached_shard_index == shard_index and self._cached_tokens is not None:
+            return self._cached_tokens
+        tokens = torch.load(self.shards[shard_index]["path"], map_location="cpu")
+        if not isinstance(tokens, torch.Tensor):
+            tokens = torch.tensor(tokens, dtype=torch.long)
+        self._cached_shard_index = shard_index
+        self._cached_tokens = tokens.long()
+        return self._cached_tokens
 
 
 class ResumableBatcher:
@@ -170,6 +225,147 @@ def load_token_dataset(
     text = Path(corpus_path).read_text(encoding="utf-8")
     tokens = tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos)
     return TokenWindowDataset(tokens, context_size=context_size)
+
+
+def build_token_shards(
+    corpus_path: str | Path,
+    tokenizer_path: str | Path,
+    out_dir: str | Path,
+    shard_token_size: int = 1_000_000,
+    add_bos: bool = True,
+    add_eos: bool = True,
+    read_chars: int = 1_000_000,
+) -> dict[str, Any]:
+    """Tokenize a corpus into disk shards without holding all tokens in memory."""
+    if shard_token_size < 2:
+        raise ValueError("shard_token_size must be at least 2")
+    tokenizer = load_tokenizer(tokenizer_path)
+    corpus_path = Path(corpus_path)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    shard_rows: list[dict[str, Any]] = []
+    buffer: list[int] = []
+    total_tokens = 0
+
+    def append_tokens(ids: list[int]) -> None:
+        nonlocal buffer, total_tokens
+        cursor = 0
+        while cursor < len(ids):
+            remaining = shard_token_size - len(buffer)
+            buffer.extend(ids[cursor: cursor + remaining])
+            cursor += remaining
+            if len(buffer) >= shard_token_size:
+                flush()
+        total_tokens += len(ids)
+
+    def flush() -> None:
+        nonlocal buffer
+        if not buffer:
+            return
+        shard_index = len(shard_rows)
+        shard_path = out_dir / f"tokens-{shard_index:06d}.pt"
+        torch.save(torch.tensor(buffer, dtype=torch.long), shard_path)
+        shard_rows.append({
+            "index": shard_index,
+            "path": str(shard_path),
+            "num_tokens": len(buffer),
+        })
+        buffer = []
+
+    if add_bos:
+        append_tokens([tokenizer.bos_id])
+    with corpus_path.open("r", encoding="utf-8", errors="replace") as handle:
+        while True:
+            chunk = handle.read(read_chars)
+            if not chunk:
+                break
+            append_tokens(tokenizer.encode(chunk, add_bos=False, add_eos=False))
+    if add_eos:
+        append_tokens([tokenizer.eos_id])
+    flush()
+
+    manifest = {
+        "corpus_path": str(corpus_path),
+        "tokenizer_path": str(tokenizer_path),
+        "shard_token_size": shard_token_size,
+        "num_tokens": total_tokens,
+        "num_shards": len(shard_rows),
+        "shards": shard_rows,
+    }
+    (out_dir / "token_shards_manifest.json").write_text(
+        json.dumps(manifest, indent=2),
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def load_sharded_token_split(
+    corpus_path: str | Path,
+    tokenizer_path: str | Path,
+    context_size: int,
+    cache_dir: str | Path,
+    val_fraction: float = 0.1,
+    seed: int = 42,
+    shard_token_size: int = 1_000_000,
+) -> TokenSplitBundle:
+    """Build token shards and return train/validation sharded window datasets."""
+    if not 0.0 < val_fraction < 1.0:
+        raise ValueError("val_fraction must be between 0 and 1")
+    manifest = build_token_shards(
+        corpus_path=corpus_path,
+        tokenizer_path=tokenizer_path,
+        out_dir=cache_dir,
+        shard_token_size=shard_token_size,
+    )
+    shards = manifest["shards"]
+    if len(shards) < 2:
+        raise ValueError("sharded split requires at least two token shards")
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    indices = torch.randperm(len(shards), generator=generator).tolist()
+    num_val = max(1, int(len(shards) * val_fraction))
+    num_train = len(shards) - num_val
+    if num_train < 1:
+        raise ValueError("sharded split needs at least one train shard")
+    train_shards = [shards[index] for index in indices[:num_train]]
+    val_shards = [shards[index] for index in indices[num_train: num_train + num_val]]
+    train_dataset = ShardedTokenWindowDataset(train_shards, context_size=context_size)
+    val_dataset = ShardedTokenWindowDataset(val_shards, context_size=context_size)
+    stats = {
+        "num_tokens": train_dataset.stats().num_tokens + val_dataset.stats().num_tokens,
+        "source_num_tokens": manifest["num_tokens"],
+        "context_size": context_size,
+        "num_sequences": len(train_dataset) + len(val_dataset),
+        "split_mode": "sharded",
+        "split_reason": "disk_token_shards",
+        "packing": "streamed_token_shards",
+        "document_boundary_tokens": False,
+        "train_sequences": len(train_dataset),
+        "val_sequences": len(val_dataset),
+        "train_tokens": train_dataset.stats().num_tokens,
+        "val_tokens": val_dataset.stats().num_tokens,
+        "num_documents": None,
+        "train_documents": None,
+        "val_documents": None,
+        "val_document_paths": [],
+        "num_shards": manifest["num_shards"],
+        "train_shards": len(train_shards),
+        "val_shards": len(val_shards),
+        "shard_token_size": shard_token_size,
+        "shards_manifest": str(Path(cache_dir) / "token_shards_manifest.json"),
+        "canary_values": [],
+        "canaries_enabled": False,
+        "canary_note": "disabled for sharded token split",
+    }
+    return TokenSplitBundle(
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        stats=stats,
+        train_text="",
+        val_text="",
+        canary_values=(),
+    )
 
 
 def make_dataloader(

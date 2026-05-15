@@ -471,6 +471,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use random token windows or hold out complete corpus documents when a manifest is available.",
     )
     train_base_parser.add_argument(
+        "--dataset-mode",
+        choices=("memory", "sharded"),
+        default="memory",
+        help="Use the in-memory token tensor path or disk-backed token shards.",
+    )
+    train_base_parser.add_argument(
+        "--shard-token-size",
+        type=int,
+        default=1_000_000,
+        help="Target tokens per disk shard when --dataset-mode sharded is used.",
+    )
+    train_base_parser.add_argument(
         "--corpus-manifest",
         default=None,
         help="Path to corpus_manifest.json for document-level holdout.",
@@ -1378,6 +1390,8 @@ def run_train_base(args: argparse.Namespace) -> int:
         sample_tokens=args.sample_tokens,
         split_mode=args.split_mode,
         corpus_manifest_path=args.corpus_manifest,
+        dataset_mode=args.dataset_mode,
+        shard_token_size=args.shard_token_size,
         early_stop_patience=args.early_stop_patience,
         early_stop_min_delta=args.early_stop_min_delta,
         max_minutes=args.max_minutes,

@@ -11,7 +11,12 @@ import time
 import torch
 import torch.nn.functional as F
 
-from picochat.batching import load_token_split, make_dataloader, make_resumable_batcher
+from picochat.batching import (
+    load_sharded_token_split,
+    load_token_split,
+    make_dataloader,
+    make_resumable_batcher,
+)
 from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
 from picochat.memorization import memorization_diagnostics
@@ -60,6 +65,8 @@ class TrainConfig:
     sample_tokens: int = 120
     split_mode: str = "window"
     corpus_manifest_path: str | None = None
+    dataset_mode: str = "memory"
+    shard_token_size: int = 1_000_000
     early_stop_patience: int = 0
     early_stop_min_delta: float = 0.0
     max_minutes: float | None = None
@@ -154,17 +161,30 @@ def train_base(config: TrainConfig) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     tokenizer = load_tokenizer(config.tokenizer_path)
+    if config.dataset_mode not in {"memory", "sharded"}:
+        raise ValueError("dataset_mode must be 'memory' or 'sharded'")
     canary_values = _canary_values(config.seed, config.canary_count)
-    split = load_token_split(
-        corpus_path=config.corpus_path,
-        tokenizer_path=config.tokenizer_path,
-        context_size=config.context_size,
-        val_fraction=config.val_fraction,
-        seed=config.seed,
-        split_mode=config.split_mode,
-        corpus_manifest_path=config.corpus_manifest_path,
-        canary_values=canary_values,
-    )
+    if config.dataset_mode == "sharded":
+        split = load_sharded_token_split(
+            corpus_path=config.corpus_path,
+            tokenizer_path=config.tokenizer_path,
+            context_size=config.context_size,
+            cache_dir=out_dir / "token_shards",
+            val_fraction=config.val_fraction,
+            seed=config.seed,
+            shard_token_size=config.shard_token_size,
+        )
+    else:
+        split = load_token_split(
+            corpus_path=config.corpus_path,
+            tokenizer_path=config.tokenizer_path,
+            context_size=config.context_size,
+            val_fraction=config.val_fraction,
+            seed=config.seed,
+            split_mode=config.split_mode,
+            corpus_manifest_path=config.corpus_manifest_path,
+            canary_values=canary_values,
+        )
     train_batcher = make_resumable_batcher(
         split.train_dataset,
         batch_size=config.batch_size,

@@ -160,6 +160,37 @@ def test_train_base_can_resume_from_training_state(tmp_path):
     assert resumed["config"]["resume_from"] == first["resume_checkpoint"]
 
 
+def test_train_base_can_use_sharded_dataset_mode(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    out_dir = tmp_path / "run"
+    text = "sharded data path avoids one giant token tensor\n" * 40
+    corpus_path.write_text(text, encoding="utf-8")
+    CharTokenizer.train([text]).save(tokenizer_path)
+
+    report = train_base(TrainConfig(
+        corpus_path=str(corpus_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir),
+        context_size=8,
+        batch_size=4,
+        max_steps=1,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        dataset_mode="sharded",
+        shard_token_size=64,
+    ))
+
+    assert report["dataset"]["split_mode"] == "sharded"
+    assert report["dataset"]["num_shards"] > 1
+    assert (out_dir / "token_shards" / "token_shards_manifest.json").exists()
+    assert report["coverage"]["actual_steps"] == 1
+
+
 def test_train_base_uses_document_split_when_manifest_is_available(tmp_path):
     import json
 
