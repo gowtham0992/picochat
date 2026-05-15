@@ -162,10 +162,13 @@ def test_weak_skills_profile_overweights_math_and_spelling(tmp_path):
     assert report.chat_stages["math_l1_addition_single_digit"] > 0
     assert report.chat_stages["spelling_l1_count"] > 0
     assert report.eval_stages["math_l3_subtraction_borrow"] > 0
-    assert _prefix_count(chat_categories, "bench_math_") >= 80
-    assert _prefix_count(chat_categories, "bench_spelling_") >= 60
-    assert _prefix_count(eval_categories, "bench_math_") >= 32
-    assert _prefix_count(eval_categories, "bench_spelling_") >= 24
+    assert report.contamination["status"] == "ready"
+    assert _prefix_count(chat_categories, "bench_math_") >= 70
+    assert _prefix_count(chat_categories, "bench_spelling_") >= 55
+    assert chat_categories["identity"] >= 20
+    assert chat_categories["refusal"] >= 15
+    assert _prefix_count(eval_categories, "bench_math_") >= 28
+    assert _prefix_count(eval_categories, "bench_spelling_") >= 22
     assert len([name for name in chat_categories if name.startswith("bench_math_")]) >= 4
     assert len([name for name in chat_categories if name.startswith("bench_spelling_")]) >= 5
     assert chat_stages["math_l1_addition_single_digit"] >= chat_stages["math_l3_addition_carry"]

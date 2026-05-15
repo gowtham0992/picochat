@@ -36,11 +36,11 @@ BEHAVIOR_PROFILE_WEIGHTS = {
         ("refusal", 0.10),
     ),
     "weak_skills": (
-        ("math", 0.40),
-        ("spelling", 0.30),
-        ("choice", 0.20),
-        ("identity", 0.07),
-        ("refusal", 0.03),
+        ("math", 0.36),
+        ("spelling", 0.28),
+        ("choice", 0.16),
+        ("identity", 0.12),
+        ("refusal", 0.08),
     ),
 }
 WEAK_SKILL_MATH_STAGE_WEIGHTS = (
@@ -346,6 +346,7 @@ def _behavior_profile_notes(profile: str) -> tuple[str, ...]:
             "Weak-skills profile was used: math and spelling are deliberately over-sampled with staged ladders.",
             "Math stages move from single-digit arithmetic to carry/borrow, multiplication, and story removal.",
             "Spelling stages emphasize count/first/last before spaced spelling and reversal.",
+            "Identity and refusal rows remain present so narrow skill tuning does not erase basic boundary behavior.",
             "Use this after behavior-first SFT fit is near or above 70% but held-out math/spelling remain weak.",
             "Long open-ended chat rows are excluded so the sweep tests narrow trainability before broad style.",
         )
@@ -1075,12 +1076,12 @@ _MATH_TRAIN_TEMPLATES = (
     "No explanation. Just solve: {compact}",
 )
 _MATH_EVAL_TEMPLATES = (
-    "Solve carefully. {problem}",
-    "Arithmetic benchmark item. Return only the number.\n{problem}",
-    "Compute the answer and give digits only: {compact}",
-    "Short math eval: {problem}",
-    "Answer the arithmetic question with only the final number.\n{problem}",
-    "What is the result? {compact}",
+    "Held-out arithmetic item. Reply with digits only.\n{problem}",
+    "Benchmark arithmetic question: {problem}",
+    "Return just the final number for this calculation: {compact}",
+    "Independent math eval.\nquestion: {problem}\nanswer:",
+    "Give only the numeric result. {problem}",
+    "Calculate the requested quantity: {compact}",
 )
 
 
@@ -1094,22 +1095,38 @@ def _math_stage_row(index: int, stage: str, split: str, eval_rows: bool) -> dict
 
     if stage.startswith("math_l1_addition") or stage.startswith("math_l2_addition") or stage.startswith("math_l3_addition"):
         answer = a + b
-        problem = f"A box has {a} blue marbles and {b} green marbles. How many marbles are in the box?"
-        compact = f"{a} + {b}"
+        if eval_rows:
+            problem = f"A library shelf has {a} red books and {b} black books. How many books are on that shelf?"
+            compact = f"books on shelf: {a} plus {b}"
+        else:
+            problem = f"A box has {a} blue marbles and {b} green marbles. How many marbles are in the box?"
+            compact = f"{a} + {b}"
     elif stage.startswith("math_l1_subtraction") or stage.startswith("math_l2_subtraction") or stage.startswith("math_l3_subtraction"):
         answer = a - b
-        problem = f"Nora had {a} stickers. She gave away {b}. How many stickers remain?"
-        compact = f"{a} - {b}"
+        if eval_rows:
+            problem = f"A train car started with {a} riders. Then {b} riders got off. How many riders stayed on?"
+            compact = f"riders remaining: {a} minus {b}"
+        else:
+            problem = f"Nora had {a} stickers. She gave away {b}. How many stickers remain?"
+            compact = f"{a} - {b}"
     elif stage == "math_l2_multiplication_small":
         answer = a * b
-        problem = f"There are {a} trays with {b} cookies on each tray. How many cookies are there?"
-        compact = f"{a} * {b}"
+        if eval_rows:
+            problem = f"A classroom has {a} rows with {b} chairs in each row. How many chairs are there?"
+            compact = f"chairs arranged: {a} times {b}"
+        else:
+            problem = f"There are {a} trays with {b} cookies on each tray. How many cookies are there?"
+            compact = f"{a} * {b}"
     else:
         removed = 1 + ((index * 7 + (5 if eval_rows else 2)) % 17)
         total = a * b + removed
         answer = total - removed
-        problem = f"A shop packed {total} pencils, then removed {removed}. How many pencils stayed packed?"
-        compact = f"{total} pencils minus {removed} removed"
+        if eval_rows:
+            problem = f"A bakery prepared {total} rolls and sold {removed}. How many rolls were left?"
+            compact = f"rolls left after sale: {total} minus {removed}"
+        else:
+            problem = f"A shop packed {total} pencils, then removed {removed}. How many pencils stayed packed?"
+            compact = f"{total} pencils minus {removed} removed"
 
     user = templates[template_index].format(problem=problem, compact=compact)
     row = {
