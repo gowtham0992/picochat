@@ -28,6 +28,7 @@ def test_inspect_chat_sft_data_reports_ready_file(tmp_path):
     assert report.category_entropy > 0
     assert report.category_entropy_normalized == 1.0
     assert report.assistant_length_distribution["count"] == 8
+    assert report.answer_styles == {"direct": 8}
     assert report.curriculum_label == "mixed_sft"
     assert report.curriculum_breakdown == {"behavior": 4, "domain": 4}
 
@@ -71,6 +72,29 @@ def test_inspect_chat_sft_data_reports_quality_signals(tmp_path):
     assert report.near_duplicate_user_pairs >= 1
     assert report.template_families == {"train-math": 4, "train-spelling": 4}
     assert any("skill SFT" in warning for warning in report.quality_warnings)
+
+
+def test_inspect_chat_sft_data_reports_answer_styles(tmp_path):
+    chat_path = tmp_path / "chat.jsonl"
+    rows = [
+        {"user": "What is 2 + 2?", "assistant": "4", "category": "bench_math"},
+        {
+            "user": "What is 3 + 4?",
+            "assistant": "Scratchpad:\n- Compute: 3 + 4 = 7\nFinal answer: 7",
+            "category": "bench_math",
+            "answer_style": "scratchpad",
+        },
+        {
+            "user": "What is 5 + 6?",
+            "assistant": "Scratchpad:\n- Compute: 5 + 6 = 11\nFinal answer: 11",
+            "category": "bench_math",
+        },
+    ]
+    chat_path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    report = inspect_chat_sft_data(chat_path)
+
+    assert report.answer_styles == {"direct": 1, "scratchpad": 2}
 
 
 def test_inspect_chat_sft_data_blocks_invalid_rows(tmp_path):

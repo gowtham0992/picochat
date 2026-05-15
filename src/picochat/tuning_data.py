@@ -42,6 +42,7 @@ class ChatSFTDataReport:
     category_entropy_normalized: float
     assistant_length_distribution: dict[str, float | int]
     template_families: dict[str, int]
+    answer_styles: dict[str, int]
     curriculum_label: str
     curriculum_breakdown: dict[str, int]
     quality_warnings: tuple[str, ...]
@@ -122,6 +123,7 @@ def inspect_chat_sft_data(path: str | Path, preview_items: int = 3) -> ChatSFTDa
             category_entropy_normalized=0.0,
             assistant_length_distribution=_length_distribution([]),
             template_families={},
+            answer_styles={},
             curriculum_label="unknown",
             curriculum_breakdown={},
             quality_warnings=(),
@@ -135,6 +137,7 @@ def inspect_chat_sft_data(path: str | Path, preview_items: int = 3) -> ChatSFTDa
     assistant_texts: list[str] = []
     categories: dict[str, int] = {}
     template_families: dict[str, int] = {}
+    answer_styles: dict[str, int] = {}
     curriculum_breakdown: Counter[str] = Counter()
     user_chars = 0
     assistant_chars = 0
@@ -159,11 +162,13 @@ def inspect_chat_sft_data(path: str | Path, preview_items: int = 3) -> ChatSFTDa
             continue
         category = category.strip()
         template_family = _template_family(record, category)
+        answer_style = _answer_style(record)
         examples.append({"user": user, "assistant": assistant, "category": category})
         users.append(user)
         assistant_texts.append(assistant)
         categories[category] = categories.get(category, 0) + 1
         template_families[template_family] = template_families.get(template_family, 0) + 1
+        answer_styles[answer_style] = answer_styles.get(answer_style, 0) + 1
         curriculum_breakdown[_curriculum_bucket(category)] += 1
         user_chars += len(user)
         assistant_chars += len(assistant)
@@ -202,6 +207,7 @@ def inspect_chat_sft_data(path: str | Path, preview_items: int = 3) -> ChatSFTDa
         category_entropy_normalized=category_entropy_normalized,
         assistant_length_distribution=_length_distribution(assistant_texts),
         template_families=dict(sorted(template_families.items())),
+        answer_styles=dict(sorted(answer_styles.items())),
         curriculum_label=curriculum_label,
         curriculum_breakdown=dict(sorted(curriculum_breakdown.items())),
         quality_warnings=tuple(quality_warnings),
@@ -608,6 +614,16 @@ def _template_family(record: dict[str, Any], category: str) -> str:
         family = re.sub(r"[-_]\d+$", "", family)
         return family or category
     return f"ungrouped:{category}"
+
+
+def _answer_style(record: dict[str, Any]) -> str:
+    raw = record.get("answer_style")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().lower()
+    assistant = record.get("assistant")
+    if isinstance(assistant, str) and "Scratchpad:" in assistant and "Final answer:" in assistant:
+        return "scratchpad"
+    return "direct"
 
 
 def _curriculum_bucket(category: str) -> str:

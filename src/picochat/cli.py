@@ -1091,6 +1091,8 @@ def print_tuning_data(chat_data, eval_data) -> None:
         )
     if chat_data.template_families:
         print(f"  template_families: {_format_counts(chat_data.template_families)}")
+    if chat_data.answer_styles:
+        print(f"  answer_styles: {_format_counts(chat_data.answer_styles)}")
     print(
         f"  duplicates: exact {chat_data.duplicate_user_prompts} "
         f"({chat_data.duplicate_user_rate * 100:.2f}%), "
