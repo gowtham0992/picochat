@@ -1,5 +1,6 @@
 import json
 
+import picochat.eval as eval_module
 from picochat.checkpoint import save_checkpoint
 from picochat.eval import (
     ChatEvalConfig,
@@ -363,7 +364,51 @@ def test_run_chat_eval_writes_artifacts(tmp_path):
     assert report["summary"]["category_breakdown"]["answerable"]["num_examples"] == 1
     assert report["summary"]["category_breakdown"]["answerable"]["num_passed"] == 1
     assert report["summary"]["category_breakdown"]["answerable"]["pass_rate_ci"]["method"] == "bootstrap"
-    assert report["summary"]["split_breakdown"]["default"]["num_examples"] == 1
+
+
+def test_run_chat_eval_indexes_support_corpus_once(tmp_path, monkeypatch):
+    input_path = tmp_path / "eval.jsonl"
+    support_path = tmp_path / "support.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "checkpoint"
+    out_dir = tmp_path / "eval"
+    write_jsonl(input_path, [
+        {"user": f"question {index}", "require_corpus_support": True}
+        for index in range(3)
+    ])
+    support_path.write_text("Pico Cafe was founded by Mira Chen.", encoding="utf-8")
+    tokenizer = CharTokenizer.train(["User: question\nAssistant:"])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=32,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    calls = 0
+    original = eval_module._corpus_support_token_set
+
+    def counted(corpus_text):
+        nonlocal calls
+        calls += 1
+        return original(corpus_text)
+
+    monkeypatch.setattr(eval_module, "_corpus_support_token_set", counted)
+
+    report = run_chat_eval(ChatEvalConfig(
+        input_path=str(input_path),
+        checkpoint_path=str(checkpoint_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir),
+        max_new_tokens=0,
+        support_corpus_path=str(support_path),
+    ))
+
+    assert calls == 1
+    assert report["summary"]["split_breakdown"]["default"]["num_examples"] == 3
     assert report["examples"][0]["answerable"] is True
     assert report["examples"][0]["category"] == "answerable"
     assert report["examples"][0]["split"] == "default"

@@ -314,6 +314,7 @@ def score_reply(
     item: ChatEvalItem,
     case_sensitive: bool = False,
     support_corpus_text: str | None = None,
+    support_corpus_tokens: frozenset[str] | None = None,
     corpus_support_threshold: float = 0.25,
 ) -> dict:
     """Score a reply with visible word-aware phrase rules."""
@@ -344,7 +345,11 @@ def score_reply(
     reference_metrics = _reference_metrics(reply, item.reference_answer)
     repetition = _repetition_diagnostics(reply)
     refusal_match = _detect_refusal(reply, case_sensitive=case_sensitive)
-    corpus_support = _corpus_support_diagnostics(reply, support_corpus_text)
+    corpus_support = _corpus_support_diagnostics(
+        reply,
+        support_corpus_text=support_corpus_text,
+        support_corpus_tokens=support_corpus_tokens,
+    )
     corpus_support_failed = (
         item.require_corpus_support
         and corpus_support["rate"] is not None
@@ -436,6 +441,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     model = model.to(device)
     model.eval()
     support_corpus_text = _read_optional_text(config.support_corpus_path)
+    support_corpus_tokens = _corpus_support_token_set(support_corpus_text)
 
     rows = []
     for index, item in enumerate(load_chat_eval_items(config.input_path)):
@@ -450,6 +456,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             item,
             case_sensitive=config.case_sensitive,
             support_corpus_text=support_corpus_text,
+            support_corpus_tokens=support_corpus_tokens,
             corpus_support_threshold=config.corpus_support_threshold,
         )
         rows.append({
@@ -1228,13 +1235,27 @@ def _detect_refusal(reply: str, case_sensitive: bool = False) -> bool:
     return any((phrase if case_sensitive else phrase.lower()) in text for phrase in phrases)
 
 
-def _corpus_support_diagnostics(reply: str, corpus_text: str | None) -> dict[str, float | int | None]:
+def _corpus_support_token_set(corpus_text: str | None) -> frozenset[str] | None:
     if not corpus_text:
+        return None
+    return frozenset(_content_tokens(corpus_text))
+
+
+def _corpus_support_diagnostics(
+    reply: str,
+    support_corpus_text: str | None = None,
+    support_corpus_tokens: frozenset[str] | None = None,
+) -> dict[str, float | int | None]:
+    corpus_tokens = (
+        support_corpus_tokens
+        if support_corpus_tokens is not None
+        else _corpus_support_token_set(support_corpus_text)
+    )
+    if not corpus_tokens:
         return {"rate": None, "supported": 0, "total": 0}
     reply_tokens = _content_tokens(reply)
     if not reply_tokens:
         return {"rate": 1.0, "supported": 0, "total": 0}
-    corpus_tokens = set(_content_tokens(corpus_text))
     supported = sum(1 for token in reply_tokens if token in corpus_tokens)
     return {
         "rate": supported / len(reply_tokens),
