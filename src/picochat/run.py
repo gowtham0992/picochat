@@ -83,6 +83,8 @@ class TinyRunConfig:
     precision: str = "float32"
     torch_compile: bool = False
     torch_compile_mode: str = "default"
+    gradient_checkpointing: bool = False
+    ddp: bool = False
     allow_unsafe_long_run: bool = False
     target_param_data_ratio: float = 20.0
 
@@ -194,6 +196,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
         precision=config.precision,
         torch_compile=config.torch_compile,
         torch_compile_mode=config.torch_compile_mode,
+        gradient_checkpointing=config.gradient_checkpointing,
+        ddp=config.ddp,
     ))
     base_eval_checkpoint = base_report.get("best_checkpoint", {}).get(
         "path",
@@ -229,6 +233,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         precision=config.precision,
         torch_compile=config.torch_compile,
         torch_compile_mode=config.torch_compile_mode,
+        ddp=config.ddp,
     ))
     sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",

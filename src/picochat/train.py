@@ -19,6 +19,7 @@ from picochat.batching import (
 )
 from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
+from picochat.distributed import prepare_ddp_model
 from picochat.memorization import memorization_diagnostics
 from picochat.model import GPTConfig, TinyGPT
 from picochat.optim import (
@@ -84,6 +85,8 @@ class TrainConfig:
     torch_compile: bool = False
     torch_compile_mode: str = "default"
     resume_from: str | None = None
+    gradient_checkpointing: bool = False
+    ddp: bool = False
 
 
 @torch.no_grad()
@@ -207,6 +210,7 @@ def train_base(config: TrainConfig) -> dict:
         position_encoding=config.position_encoding,
         activation=config.activation,
         logit_softcap=config.logit_softcap,
+        gradient_checkpointing=config.gradient_checkpointing,
     )
     resume_state = None
     resume_metadata = None
@@ -219,8 +223,9 @@ def train_base(config: TrainConfig) -> dict:
         model = TinyGPT(model_config)
     model = model.to(device)
     precision_runtime = resolve_precision(config.precision, device)
+    ddp_model, ddp_metadata = prepare_ddp_model(model, device, enabled=config.ddp)
     train_model, compile_metadata = maybe_compile_model(
-        model,
+        ddp_model,
         enabled=config.torch_compile,
         mode=config.torch_compile_mode,
     )
@@ -539,6 +544,7 @@ def train_base(config: TrainConfig) -> dict:
             "optimizer_metadata": optimizer.metadata,
             "precision_runtime": precision_runtime.to_dict(),
             "torch_compile_metadata": compile_metadata,
+            "ddp_metadata": ddp_metadata,
         },
         "dataset": {
             **split.stats,

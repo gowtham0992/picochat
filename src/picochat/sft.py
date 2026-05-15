@@ -14,6 +14,7 @@ from picochat.batching import make_resumable_batcher
 from picochat.chat import render_chat_prompt
 from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
+from picochat.distributed import prepare_ddp_model
 from picochat.optim import (
     ExponentialMovingAverage,
     create_optimizer,
@@ -119,6 +120,7 @@ class SFTConfig:
     torch_compile: bool = False
     torch_compile_mode: str = "default"
     resume_from: str | None = None
+    ddp: bool = False
 
 
 class ChatSFTDataset(torch.utils.data.Dataset):
@@ -714,8 +716,9 @@ def train_sft(config: SFTConfig) -> dict:
 
     model = model.to(device)
     precision_runtime = resolve_precision(config.precision, device)
+    ddp_model, ddp_metadata = prepare_ddp_model(model, device, enabled=config.ddp)
     train_model, compile_metadata = maybe_compile_model(
-        model,
+        ddp_model,
         enabled=config.torch_compile,
         mode=config.torch_compile_mode,
     )
@@ -1032,6 +1035,7 @@ def train_sft(config: SFTConfig) -> dict:
             "optimizer_metadata": optimizer.metadata,
             "precision_runtime": precision_runtime.to_dict(),
             "torch_compile_metadata": compile_metadata,
+            "ddp_metadata": ddp_metadata,
         },
         "base_checkpoint": {
             "path": config.checkpoint_path,

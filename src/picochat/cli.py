@@ -454,6 +454,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="torch.compile mode when --torch-compile is enabled.",
     )
     train_base_parser.add_argument(
+        "--gradient-checkpointing",
+        action="store_true",
+        help="Checkpoint transformer blocks during training to reduce activation memory.",
+    )
+    train_base_parser.add_argument(
+        "--ddp",
+        action="store_true",
+        help="Wrap training in DistributedDataParallel. Launch with torchrun.",
+    )
+    train_base_parser.add_argument(
         "--logit-softcap",
         type=float,
         default=0.0,
@@ -536,6 +546,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=COMPILE_MODES,
         default="default",
         help="torch.compile mode when --torch-compile is enabled.",
+    )
+    train_sft_parser.add_argument(
+        "--ddp",
+        action="store_true",
+        help="Wrap SFT training in DistributedDataParallel. Launch with torchrun.",
     )
     train_sft_parser.add_argument(
         "--sampling",
@@ -791,6 +806,16 @@ def build_parser() -> argparse.ArgumentParser:
         choices=COMPILE_MODES,
         default=None,
         help="torch.compile mode when --torch-compile is enabled.",
+    )
+    run_tiny_parser.add_argument(
+        "--gradient-checkpointing",
+        action="store_true",
+        help="Checkpoint base model transformer blocks during training.",
+    )
+    run_tiny_parser.add_argument(
+        "--ddp",
+        action="store_true",
+        help="Wrap base and SFT training in DistributedDataParallel. Launch with torchrun.",
     )
     run_tiny_parser.add_argument(
         "--sft-sampling",
@@ -1429,6 +1454,8 @@ def run_train_base(args: argparse.Namespace) -> int:
         torch_compile=args.torch_compile,
         torch_compile_mode=args.torch_compile_mode,
         resume_from=args.resume_from,
+        gradient_checkpointing=args.gradient_checkpointing,
+        ddp=args.ddp,
     )
     report = train_base(config)
     print(f"saved checkpoint: {report['checkpoint']}")
@@ -1469,6 +1496,7 @@ def run_train_sft(args: argparse.Namespace) -> int:
         torch_compile=args.torch_compile,
         torch_compile_mode=args.torch_compile_mode,
         resume_from=args.resume_from,
+        ddp=args.ddp,
     )
     report = train_sft(config)
     print(f"saved sft checkpoint: {report['checkpoint']}")
@@ -1764,6 +1792,8 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         precision=_resolve_tiny_value(args, defaults, "precision"),
         torch_compile=bool(args.torch_compile or defaults.torch_compile),
         torch_compile_mode=_resolve_tiny_value(args, defaults, "torch_compile_mode"),
+        gradient_checkpointing=bool(args.gradient_checkpointing or defaults.gradient_checkpointing),
+        ddp=bool(args.ddp or defaults.ddp),
         allow_unsafe_long_run=args.allow_unsafe_long_run,
         target_param_data_ratio=_resolve_tiny_value(args, defaults, "target_param_data_ratio"),
     )

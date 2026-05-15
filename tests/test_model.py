@@ -137,6 +137,27 @@ def test_attention_uses_scaled_dot_product_attention(monkeypatch):
     }]
 
 
+def test_model_supports_gradient_checkpointing():
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=2,
+        gradient_checkpointing=True,
+    )
+    model = TinyGPT(config)
+    model.train()
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+    y = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    _, loss = model(x, y)
+    assert loss is not None
+    loss.backward()
+
+    assert any(parameter.grad is not None for parameter in model.parameters())
+
+
 def test_model_rejects_negative_logit_softcap():
     with pytest.raises(ValueError, match="logit_softcap"):
         TinyGPT(GPTConfig(vocab_size=20, context_size=8, logit_softcap=-1.0))

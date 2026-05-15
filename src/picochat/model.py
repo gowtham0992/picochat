@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class GPTConfig:
     activation: str = "gelu"
     rope_base: float = 10000.0
     logit_softcap: float = 0.0
+    gradient_checkpointing: bool = False
 
     def to_dict(self) -> dict[str, int | float | str]:
         return asdict(self)
@@ -157,7 +159,10 @@ class TinyGPT(nn.Module):
             positions = torch.arange(seq_len, device=input_ids.device)
             x = x + self.position_embedding(positions)
         for block in self.blocks:
-            x = block(x)
+            if self.config.gradient_checkpointing and self.training:
+                x = activation_checkpoint(block, x, use_reentrant=False)
+            else:
+                x = block(x)
         x = self.ln_f(x)
         logits = self.lm_head(x)
         if self.config.logit_softcap > 0:
