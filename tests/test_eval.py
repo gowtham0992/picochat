@@ -70,6 +70,7 @@ def test_write_sft_fit_eval_converts_chat_rows(tmp_path):
             "user": "What is Picochat?",
             "assistant": "Picochat is a tiny local model.",
             "category": "identity",
+            "curriculum_stage": "identity_l1_name",
         },
         {
             "user": "What is the secret key?",
@@ -86,6 +87,7 @@ def test_write_sft_fit_eval_converts_chat_rows(tmp_path):
     assert report["category_counts"] == {"identity": 1, "refusal": 1}
     assert items[0].split == "sft_train"
     assert items[0].level == "identity"
+    assert items[0].curriculum_stage == "identity_l1_name"
     assert items[0].must_include == ("Picochat is a tiny local model.",)
     assert items[0].max_words == 14
     assert items[1].answerable is False
@@ -308,6 +310,8 @@ def test_run_chat_eval_writes_artifacts(tmp_path):
     assert report["summary"]["pass_rate_ci"]["n"] == 1
     assert report["summary"]["prompt_echo_rate"] == 0.0
     assert report["summary"]["support_match_rate"] == 1.0
+    assert report["summary"]["non_choice_examples"] == 1
+    assert report["summary"]["non_choice_pass_rate"] == 1.0
     assert report["summary"]["category_breakdown"]["answerable"]["num_examples"] == 1
     assert report["summary"]["category_breakdown"]["answerable"]["num_passed"] == 1
     assert report["summary"]["category_breakdown"]["answerable"]["pass_rate_ci"]["method"] == "bootstrap"

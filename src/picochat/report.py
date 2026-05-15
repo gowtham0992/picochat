@@ -599,6 +599,13 @@ def chat_eval_report_markdown(report: dict) -> str:
     lines.append(f"- Pass rate: {format_float(summary['pass_rate'] * 100)}%")
     if summary.get("pass_rate_ci"):
         lines.append(f"- Pass rate 95% CI: {_format_ci(summary.get('pass_rate_ci'))}")
+    if summary.get("non_choice_pass_rate") is not None:
+        ci = _format_ci(summary.get("non_choice_pass_rate_ci"))
+        suffix = f" ({ci})" if ci != "--" else ""
+        lines.append(
+            f"- Non-choice pass rate: {_format_percent_or_dash(summary.get('non_choice_pass_rate'))}"
+            f"{suffix} over {summary.get('non_choice_examples', 0)} example(s)"
+        )
     if "unsupported_claim_rate" in summary:
         lines.append(f"- Answerable examples: {summary.get('num_answerable', 0)}")
         lines.append(f"- Unanswerable examples: {summary.get('num_unanswerable', 0)}")
@@ -661,6 +668,12 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append("## Eval Ladder")
         lines.append("")
         lines.extend(_level_breakdown_table(summary["level_breakdown"]))
+        lines.append("")
+
+    if summary.get("stage_breakdown"):
+        lines.append("## Curriculum Stages")
+        lines.append("")
+        lines.extend(_breakdown_table(summary["stage_breakdown"], "Stage"))
         lines.append("")
 
     if report.get("analysis"):
@@ -790,6 +803,13 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Eval pass rate: {format_float(eval_summary['pass_rate'] * 100)}%")
     if eval_summary.get("pass_rate_ci"):
         lines.append(f"- Eval pass rate 95% CI: {_format_ci(eval_summary.get('pass_rate_ci'))}")
+    if eval_summary.get("non_choice_pass_rate") is not None:
+        ci = _format_ci(eval_summary.get("non_choice_pass_rate_ci"))
+        suffix = f" ({ci})" if ci != "--" else ""
+        lines.append(
+            f"- Eval non-choice pass rate: {_format_percent_or_dash(eval_summary.get('non_choice_pass_rate'))}"
+            f"{suffix} over {eval_summary.get('non_choice_examples', 0)} example(s)"
+        )
     if sft_fit_summary:
         lines.append(
             f"- SFT fit passed: {sft_fit_summary.get('num_passed', 0)} / "
@@ -800,6 +820,13 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         )
         if sft_fit_summary.get("pass_rate_ci"):
             lines.append(f"- SFT fit rate 95% CI: {_format_ci(sft_fit_summary.get('pass_rate_ci'))}")
+        if sft_fit_summary.get("non_choice_pass_rate") is not None:
+            ci = _format_ci(sft_fit_summary.get("non_choice_pass_rate_ci"))
+            suffix = f" ({ci})" if ci != "--" else ""
+            lines.append(
+                f"- SFT fit non-choice rate: {_format_percent_or_dash(sft_fit_summary.get('non_choice_pass_rate'))}"
+                f"{suffix} over {sft_fit_summary.get('non_choice_examples', 0)} example(s)"
+            )
     lines.append(f"- Failed examples: {eval_summary['num_failed']}")
     if "unsupported_claim_rate" in eval_summary:
         lines.append(f"- Unsupported claim rate: {format_float(eval_summary['unsupported_claim_rate'] * 100)}%")
@@ -900,6 +927,18 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         )
         lines.append("")
         lines.extend(_category_breakdown_table(sft_fit_summary["category_breakdown"]))
+        lines.append("")
+
+    if eval_summary.get("stage_breakdown"):
+        lines.append("## Eval Curriculum Stages")
+        lines.append("")
+        lines.extend(_breakdown_table(eval_summary["stage_breakdown"], "Stage"))
+        lines.append("")
+
+    if sft_fit_summary.get("stage_breakdown"):
+        lines.append("## SFT Fit Curriculum Stages")
+        lines.append("")
+        lines.extend(_breakdown_table(sft_fit_summary["stage_breakdown"], "Stage"))
         lines.append("")
 
     if eval_summary.get("split_breakdown"):

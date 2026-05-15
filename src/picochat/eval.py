@@ -27,6 +27,7 @@ class ChatEvalItem:
     category: str = "answerable"
     split: str = "default"
     level: str = "heldout"
+    curriculum_stage: str = ""
     reference_answer: str | None = None
     required_entities: tuple[str, ...] = ()
     min_words: int | None = None
@@ -95,6 +96,9 @@ def write_sft_fit_eval(
         category = record.get("category", "chat")
         if not isinstance(category, str):
             raise ValueError(f"line {line_number} category field must be a string when present")
+        curriculum_stage = record.get("curriculum_stage", "")
+        if not isinstance(curriculum_stage, str):
+            raise ValueError(f"line {line_number} curriculum_stage field must be a string when present")
         answerable = record.get("answerable", True)
         if not isinstance(answerable, bool):
             raise ValueError(f"line {line_number} answerable field must be a boolean when present")
@@ -104,6 +108,7 @@ def write_sft_fit_eval(
             "user": user,
             "answerable": answerable,
             "category": category,
+            "curriculum_stage": curriculum_stage.strip(),
             "split": "sft_train",
             "level": category,
             "reference_answer": answer,
@@ -173,6 +178,9 @@ def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
         level = record.get("level", record.get("eval_level", _infer_eval_level(split, category, answerable)))
         if not isinstance(level, str) or not level.strip():
             raise ValueError(f"line {line_number} level field must be a non-empty string when present")
+        curriculum_stage = record.get("curriculum_stage", "")
+        if not isinstance(curriculum_stage, str):
+            raise ValueError(f"line {line_number} curriculum_stage field must be a string when present")
         required_entities = record.get("required_entities", record.get("entities", ()))
         require_corpus_support = record.get("require_corpus_support", False)
         if not isinstance(require_corpus_support, bool):
@@ -200,6 +208,7 @@ def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
             category=category,
             split=split or "default",
             level=level.strip(),
+            curriculum_stage=curriculum_stage.strip(),
             reference_answer=reference_answer,
             required_entities=_as_string_tuple(required_entities, line_number, "required_entities"),
             min_words=_optional_int(record.get("min_words"), line_number, "min_words"),
@@ -417,6 +426,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "category": item.category,
             "split": item.split,
             "level": item.level,
+            "curriculum_stage": item.curriculum_stage,
             "reply": reply,
             "must_include": list(item.must_include),
             "must_include_any": [list(group) for group in item.must_include_any],
@@ -480,12 +490,23 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
         confidence=config.ci_confidence,
         seed=config.seed + 303,
     )
+    stage_breakdown = _breakdown(
+        rows,
+        "curriculum_stage",
+        "",
+        bootstrap_samples=config.ci_bootstrap_samples,
+        confidence=config.ci_confidence,
+        seed=config.seed + 404,
+    )
+    stage_breakdown.pop("", None)
     choice_rows = [row for row in rows if row.get("correct_choice")]
+    non_choice_rows = [row for row in rows if not row.get("correct_choice")]
     choice_correct = sum(
         1 for row in choice_rows
         if row.get("choice_predicted") == row.get("correct_choice")
     )
     choice_passed = sum(1 for row in choice_rows if row.get("passed"))
+    non_choice_passed = sum(1 for row in non_choice_rows if row.get("passed"))
     analysis = analyze_eval_failures(rows, category_breakdown, split_breakdown, level_breakdown)
     report = {
         "config": {
@@ -511,6 +532,18 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             ),
             "num_answerable": answerable,
             "num_unanswerable": len(rows) - answerable,
+            "non_choice_examples": len(non_choice_rows),
+            "non_choice_passed": non_choice_passed,
+            "non_choice_pass_rate": (
+                _safe_rate(non_choice_passed, len(non_choice_rows))
+                if non_choice_rows else None
+            ),
+            "non_choice_pass_rate_ci": _bootstrap_rate_ci(
+                [bool(row.get("passed")) for row in non_choice_rows],
+                samples=config.ci_bootstrap_samples,
+                confidence=config.ci_confidence,
+                seed=config.seed + 10,
+            ),
             "answerable_pass_rate": answerable_pass_rate,
             "answerable_pass_rate_ci": _bootstrap_rate_ci(
                 [bool(row.get("passed")) for row in rows if bool(row.get("answerable", True))],
@@ -598,6 +631,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "category_breakdown": category_breakdown,
             "split_breakdown": split_breakdown,
             "level_breakdown": level_breakdown,
+            "stage_breakdown": stage_breakdown,
         },
         "analysis": analysis,
         "examples": rows,

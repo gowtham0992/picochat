@@ -148,6 +148,8 @@ def test_chat_eval_report_markdown_contains_key_sections():
             },
             "num_answerable": 1,
             "num_unanswerable": 0,
+            "non_choice_examples": 1,
+            "non_choice_pass_rate": 0.0,
             "unsupported_claims": 1,
             "unsupported_claim_rate": 1.0,
             "prompt_echoes": 1,
@@ -219,6 +221,22 @@ def test_chat_eval_report_markdown_contains_key_sections():
                     "missing_support_rate": 1.0,
                     "average_reference_token_f1": 0.25,
                     "average_corpus_support_rate": 0.10,
+                },
+            },
+            "stage_breakdown": {
+                "math_l1_addition_single_digit": {
+                    "num_examples": 1,
+                    "num_passed": 0,
+                    "num_failed": 1,
+                    "pass_rate": 0.0,
+                    "num_answerable": 1,
+                    "num_unanswerable": 0,
+                    "unsupported_claims": 1,
+                    "unsupported_claim_rate": 1.0,
+                    "prompt_echoes": 1,
+                    "prompt_echo_rate": 1.0,
+                    "missing_support": 1,
+                    "missing_support_rate": 1.0,
                 },
             },
         },
@@ -322,12 +340,15 @@ def test_chat_eval_report_markdown_contains_key_sections():
     assert "## Category Breakdown" in markdown
     assert "## Split Breakdown" in markdown
     assert "## Eval Ladder" in markdown
+    assert "## Curriculum Stages" in markdown
     assert "## Failure Analysis" in markdown
     assert "`missing_required`" in markdown
     assert "`content_mismatch`" in markdown
     assert "Add more varied SFT rows." in markdown
     assert "`story_generation`" in markdown
     assert "`transfer`" in markdown
+    assert "`math_l1_addition_single_digit`" in markdown
+    assert "Non-choice pass rate: 0.0000%" in markdown
     assert "Avg corpus support rate" in markdown
     assert "Prompt echo rate" in markdown
     assert "Prompt echo: `chat_role_label`" in markdown
@@ -382,6 +403,8 @@ def test_tiny_run_summary_markdown_contains_key_sections():
             "num_passed": 3,
             "num_failed": 1,
             "pass_rate": 0.75,
+            "non_choice_examples": 3,
+            "non_choice_pass_rate": 2 / 3,
             "unsupported_claim_rate": 0.25,
             "prompt_echo_rate": 0.25,
             "missing_support_rate": 0.5,
@@ -407,14 +430,32 @@ def test_tiny_run_summary_markdown_contains_key_sections():
                     "missing_support": 2,
                 },
             },
+            "stage_breakdown": {
+                "spelling_l1_count": {
+                    "num_examples": 2,
+                    "num_passed": 1,
+                    "num_failed": 1,
+                    "pass_rate": 0.5,
+                },
+            },
         },
         "sft_fit": {
             "num_examples": 5,
             "num_passed": 4,
             "num_failed": 1,
             "pass_rate": 0.8,
+            "non_choice_examples": 5,
+            "non_choice_pass_rate": 0.8,
             "category_breakdown": {
                 "identity": {
+                    "num_examples": 5,
+                    "num_passed": 4,
+                    "num_failed": 1,
+                    "pass_rate": 0.8,
+                },
+            },
+            "stage_breakdown": {
+                "spelling_l1_count": {
                     "num_examples": 5,
                     "num_passed": 4,
                     "num_failed": 1,
@@ -451,8 +492,11 @@ def test_tiny_run_summary_markdown_contains_key_sections():
     assert "## Data Honesty" in markdown
     assert "Data honesty report" in markdown
     assert "## Eval Categories" in markdown
+    assert "## Eval Curriculum Stages" in markdown
+    assert "## SFT Fit Curriculum Stages" in markdown
     assert "## Eval Splits" in markdown
     assert "## Eval Recommendations" in markdown
+    assert "Eval non-choice pass rate" in markdown
     assert "Add more varied SFT rows." in markdown
     assert "`story_generation`" in markdown
     assert "`prompt_conditioned`" in markdown

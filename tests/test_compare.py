@@ -41,6 +41,7 @@ def write_summary(
             "num_passed": passed,
             "num_failed": total - passed,
             "pass_rate": passed / total,
+            "non_choice_pass_rate": max(0.0, (passed - 1) / max(1, total - 1)),
             "support_match_rate": 0.5,
             "prompt_echo_rate": 0.25,
         },
@@ -63,6 +64,7 @@ def test_load_compare_row_reads_summary(tmp_path):
     assert row.run == "tiny-a"
     assert row.eval_score == "3/4"
     assert row.pass_rate == 0.75
+    assert row.non_choice_pass_rate == 2 / 3
     assert row.support_match_rate == 0.5
     assert row.prompt_echo_rate == 0.25
     assert row.sft_fit_rate == 0.8
@@ -106,6 +108,7 @@ def test_comparison_table_and_markdown_include_metrics(tmp_path):
     assert "tiny-a" in table
     assert "3/4" in table
     assert "Base BPB" in table
+    assert "NonChoice" in table
     assert "Support" in table
     assert "Echo" in table
     assert "SFT Fit" in table
@@ -121,6 +124,7 @@ def test_comparison_table_and_markdown_include_metrics(tmp_path):
     assert "# Picochat Run Comparison" in markdown
     assert "## Decision Gate" in markdown
     assert "Base Val BPB" in markdown
+    assert "Non-Choice Pass" in markdown
     assert "Support Match" in markdown
     assert "Prompt Echo" in markdown
     assert "SFT Fit" in markdown

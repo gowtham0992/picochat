@@ -43,6 +43,23 @@ BEHAVIOR_PROFILE_WEIGHTS = {
         ("refusal", 0.03),
     ),
 }
+WEAK_SKILL_MATH_STAGE_WEIGHTS = (
+    ("math_l1_addition_single_digit", 0.16),
+    ("math_l2_addition_no_carry", 0.14),
+    ("math_l3_addition_carry", 0.10),
+    ("math_l1_subtraction_single_digit", 0.15),
+    ("math_l2_subtraction_no_borrow", 0.12),
+    ("math_l3_subtraction_borrow", 0.09),
+    ("math_l2_multiplication_small", 0.14),
+    ("math_l3_removal_story", 0.10),
+)
+WEAK_SKILL_SPELLING_STAGE_WEIGHTS = (
+    ("spelling_l1_count", 0.24),
+    ("spelling_l1_first_letter", 0.22),
+    ("spelling_l1_last_letter", 0.22),
+    ("spelling_l2_spaced", 0.16),
+    ("spelling_l3_reverse", 0.16),
+)
 
 
 class BenchmarkSourceError(RuntimeError):
@@ -59,6 +76,8 @@ class BenchmarkTuningPackReport:
     eval_rows: int
     chat_categories: dict[str, int]
     eval_categories: dict[str, int]
+    chat_stages: dict[str, int]
+    eval_stages: dict[str, int]
     eval_splits: dict[str, int]
     promoted_to_pack: bool
     pack_chat_input: str | None
@@ -155,6 +174,8 @@ def generate_benchmark_tuning_pack(
         eval_rows=len(eval_items),
         chat_categories=dict(sorted(Counter(row["category"] for row in chat_rows).items())),
         eval_categories=dict(sorted(Counter(row["category"] for row in eval_items).items())),
+        chat_stages=_curriculum_stage_counts(chat_rows),
+        eval_stages=_curriculum_stage_counts(eval_items),
         eval_splits=dict(sorted(Counter(row.get("split", "heldout") for row in eval_items).items())),
         promoted_to_pack=promoted_pack is not None,
         pack_chat_input=promoted_pack.chat_input if promoted_pack else None,
@@ -179,6 +200,7 @@ def generate_benchmark_tuning_pack(
             "Choice eval facts use a held-out fact pool separate from SFT choice facts.",
             "Multiple-choice eval rows include choice labels so Picochat can score next-token choice likelihood.",
             "Math and spelling rows use granular categories so category-aware SFT sampling covers each subskill.",
+            "Weak-skill rows include curriculum_stage metadata so reports can separate early drills from harder transfer items.",
             *chat_result.source_notes,
             *eval_result.source_notes,
         ),
@@ -285,7 +307,12 @@ def _behavior_profile_result(
     profile: str,
 ) -> _RowBuildResult:
     quotas = _quotas(count, BEHAVIOR_PROFILE_WEIGHTS[profile])
-    rows = _build_local_behavior_rows(
+    row_builder = (
+        _build_weak_skills_behavior_rows
+        if profile == "weak_skills"
+        else _build_local_behavior_rows
+    )
+    rows = row_builder(
         choice=quotas["choice"],
         math=quotas["math"],
         spelling=quotas["spelling"],
@@ -316,7 +343,9 @@ def _behavior_profile_result(
 def _behavior_profile_notes(profile: str) -> tuple[str, ...]:
     if profile == "weak_skills":
         return (
-            "Weak-skills profile was used: math and spelling are deliberately over-sampled.",
+            "Weak-skills profile was used: math and spelling are deliberately over-sampled with staged ladders.",
+            "Math stages move from single-digit arithmetic to carry/borrow, multiplication, and story removal.",
+            "Spelling stages emphasize count/first/last before spaced spelling and reversal.",
             "Use this after behavior-first SFT fit is near or above 70% but held-out math/spelling remain weak.",
             "Long open-ended chat rows are excluded so the sweep tests narrow trainability before broad style.",
         )
@@ -502,6 +531,62 @@ def _build_local_behavior_rows(
     return rows
 
 
+def _build_weak_skills_behavior_rows(
+    spelling: int,
+    identity: int,
+    refusal: int,
+    seed: int,
+    split: str,
+    eval_rows: bool,
+    choice: int = 0,
+    math: int = 0,
+) -> list[dict[str, Any]]:
+    rng = random.Random(seed)
+    rows = _build_local_behavior_rows(
+        choice=choice,
+        math=0,
+        spelling=0,
+        identity=identity,
+        refusal=refusal,
+        seed=seed,
+        split=split,
+        eval_rows=eval_rows,
+    )
+    rows.extend(_build_staged_math_rows(math, seed=seed + 17, split=split, eval_rows=eval_rows))
+    rows.extend(_build_staged_spelling_rows(spelling, seed=seed + 29, split=split, eval_rows=eval_rows))
+    rng.shuffle(rows)
+    return rows
+
+
+def _build_staged_math_rows(count: int, seed: int, split: str, eval_rows: bool) -> list[dict[str, Any]]:
+    rng = random.Random(seed)
+    rows: list[dict[str, Any]] = []
+    for stage, target in _quotas(count, WEAK_SKILL_MATH_STAGE_WEIGHTS).items():
+        rows.extend(_math_stage_row(index, stage=stage, split=split, eval_rows=eval_rows) for index in range(target))
+    rng.shuffle(rows)
+    return rows
+
+
+def _build_staged_spelling_rows(count: int, seed: int, split: str, eval_rows: bool) -> list[dict[str, Any]]:
+    rng = random.Random(seed)
+    rows: list[dict[str, Any]] = []
+    for stage, target in _quotas(count, WEAK_SKILL_SPELLING_STAGE_WEIGHTS).items():
+        mode = _SPELLING_STAGE_MODES[stage]
+        rows.extend(
+            _spelling_row(
+                index,
+                rng,
+                split=split,
+                eval_rows=eval_rows,
+                mode_override=mode,
+                curriculum_stage=stage,
+            )
+            for index in range(target)
+        )
+    rng.shuffle(rows)
+    return rows
+
+
 def _unique_rows(
     candidates: list[dict[str, Any]],
     existing: list[dict[str, Any]],
@@ -518,6 +603,14 @@ def _unique_rows(
         if len(rows) >= limit:
             break
     return rows
+
+
+def _curriculum_stage_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return dict(sorted(Counter(
+        str(row.get("curriculum_stage", "")).strip()
+        for row in rows
+        if str(row.get("curriculum_stage", "")).strip()
+    ).items()))
 
 
 def _hf_smoltalk_sft_rows(limit: int, seed: int) -> list[dict[str, Any]]:
@@ -920,6 +1013,124 @@ def _choice_options(correct: str, distractors: tuple[str, ...], permutation_inde
     return list(permutations[permutation_index % len(permutations)])
 
 
+_MATH_SINGLE_DIGIT_PAIRS = tuple((a, b) for a in range(1, 10) for b in range(1, 10))
+_MATH_ADDITION_NO_CARRY_PAIRS = tuple(
+    (a, b)
+    for a in range(10, 90)
+    for b in range(10, 90)
+    if (a % 10) + (b % 10) < 10
+)
+_MATH_ADDITION_CARRY_PAIRS = tuple(
+    (a, b)
+    for a in range(10, 90)
+    for b in range(10, 90)
+    if (a % 10) + (b % 10) >= 10
+)
+_MATH_SUBTRACTION_SINGLE_DIGIT_PAIRS = tuple(
+    (a, b)
+    for a in range(2, 19)
+    for b in range(1, 10)
+    if a >= b
+)
+_MATH_SUBTRACTION_NO_BORROW_PAIRS = tuple(
+    (a, b)
+    for a in range(20, 100)
+    for b in range(10, a)
+    if (a % 10) >= (b % 10)
+)
+_MATH_SUBTRACTION_BORROW_PAIRS = tuple(
+    (a, b)
+    for a in range(20, 100)
+    for b in range(10, a)
+    if (a % 10) < (b % 10)
+)
+_MATH_MULTIPLICATION_SMALL_PAIRS = tuple((a, b) for a in range(2, 13) for b in range(2, 13))
+_MATH_REMOVAL_STORY_PAIRS = tuple((a, b) for a in range(2, 24) for b in range(2, 13))
+_MATH_STAGE_PAIRS = {
+    "math_l1_addition_single_digit": _MATH_SINGLE_DIGIT_PAIRS,
+    "math_l2_addition_no_carry": _MATH_ADDITION_NO_CARRY_PAIRS,
+    "math_l3_addition_carry": _MATH_ADDITION_CARRY_PAIRS,
+    "math_l1_subtraction_single_digit": _MATH_SUBTRACTION_SINGLE_DIGIT_PAIRS,
+    "math_l2_subtraction_no_borrow": _MATH_SUBTRACTION_NO_BORROW_PAIRS,
+    "math_l3_subtraction_borrow": _MATH_SUBTRACTION_BORROW_PAIRS,
+    "math_l2_multiplication_small": _MATH_MULTIPLICATION_SMALL_PAIRS,
+    "math_l3_removal_story": _MATH_REMOVAL_STORY_PAIRS,
+}
+_MATH_STAGE_CATEGORIES = {
+    "math_l1_addition_single_digit": "addition",
+    "math_l2_addition_no_carry": "addition",
+    "math_l3_addition_carry": "addition",
+    "math_l1_subtraction_single_digit": "subtraction",
+    "math_l2_subtraction_no_borrow": "subtraction",
+    "math_l3_subtraction_borrow": "subtraction",
+    "math_l2_multiplication_small": "multiplication",
+    "math_l3_removal_story": "removal",
+}
+_MATH_TRAIN_TEMPLATES = (
+    "Solve this arithmetic problem. Give only the final answer.\n{problem}",
+    "Math drill. Return only the number.\n{problem}",
+    "Compute carefully and answer with digits only: {compact}",
+    "One-line arithmetic check: {problem} Answer only with the number.",
+    "Arithmetic practice.\nproblem: {compact}\nanswer:",
+    "No explanation. Just solve: {compact}",
+)
+_MATH_EVAL_TEMPLATES = (
+    "Solve carefully. {problem}",
+    "Arithmetic benchmark item. Return only the number.\n{problem}",
+    "Compute the answer and give digits only: {compact}",
+    "Short math eval: {problem}",
+    "Answer the arithmetic question with only the final number.\n{problem}",
+    "What is the result? {compact}",
+)
+
+
+def _math_stage_row(index: int, stage: str, split: str, eval_rows: bool) -> dict[str, Any]:
+    pairs = _MATH_STAGE_PAIRS[stage]
+    templates = _MATH_EVAL_TEMPLATES if eval_rows else _MATH_TRAIN_TEMPLATES
+    template_index = index % len(templates)
+    pair_index = (index // len(templates)) + (23 if eval_rows else 0)
+    a, b = pairs[pair_index % len(pairs)]
+    kind_name = _MATH_STAGE_CATEGORIES[stage]
+
+    if stage.startswith("math_l1_addition") or stage.startswith("math_l2_addition") or stage.startswith("math_l3_addition"):
+        answer = a + b
+        problem = f"A box has {a} blue marbles and {b} green marbles. How many marbles are in the box?"
+        compact = f"{a} + {b}"
+    elif stage.startswith("math_l1_subtraction") or stage.startswith("math_l2_subtraction") or stage.startswith("math_l3_subtraction"):
+        answer = a - b
+        problem = f"Nora had {a} stickers. She gave away {b}. How many stickers remain?"
+        compact = f"{a} - {b}"
+    elif stage == "math_l2_multiplication_small":
+        answer = a * b
+        problem = f"There are {a} trays with {b} cookies on each tray. How many cookies are there?"
+        compact = f"{a} * {b}"
+    else:
+        removed = 1 + ((index * 7 + (5 if eval_rows else 2)) % 17)
+        total = a * b + removed
+        answer = total - removed
+        problem = f"A shop packed {total} pencils, then removed {removed}. How many pencils stayed packed?"
+        compact = f"{total} pencils minus {removed} removed"
+
+    user = templates[template_index].format(problem=problem, compact=compact)
+    row = {
+        "user": user,
+        "assistant": str(answer),
+        "category": f"bench_math_{kind_name}",
+        "group": f"{split}-{stage}-{index}",
+        "answerable": True,
+        "curriculum_stage": stage,
+    }
+    if eval_rows:
+        row.update({
+            "split": "benchmark",
+            "level": "math",
+            "must_include": [str(answer)],
+            "max_words": 24,
+            "reference_answer": str(answer),
+        })
+    return row
+
+
 def _math_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> dict[str, Any]:
     a = 3 + ((index * 11 + (17 if eval_rows else 5)) % 47)
     b = 2 + ((index * 13 + (19 if eval_rows else 7)) % 41)
@@ -1009,11 +1220,33 @@ _HELDOUT_SPELLING_WORDS = (
 )
 
 
-def _spelling_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> dict[str, Any]:
+_SPELLING_STAGE_MODES = {
+    "spelling_l1_count": "count",
+    "spelling_l1_first_letter": "first",
+    "spelling_l1_last_letter": "last",
+    "spelling_l2_spaced": "spaced",
+    "spelling_l3_reverse": "reverse",
+}
+
+
+def _spelling_row(
+    index: int,
+    rng: random.Random,
+    split: str,
+    eval_rows: bool,
+    mode_override: str | None = None,
+    curriculum_stage: str | None = None,
+) -> dict[str, Any]:
     words = _HELDOUT_SPELLING_WORDS if eval_rows else _TRAIN_SPELLING_WORDS
     modes = ("spaced", "count", "reverse", "first", "last")
-    mode = modes[index % len(modes)]
-    word = words[(index // len(modes)) % len(words)]
+    if mode_override:
+        mode = mode_override
+        word = words[index % len(words)]
+        prompt_cycle = index // len(words)
+    else:
+        mode = modes[index % len(modes)]
+        word = words[(index // len(modes)) % len(words)]
+        prompt_cycle = index // (len(words) * len(modes))
 
     def train_prompt(operation: str) -> str:
         templates = (
@@ -1024,7 +1257,7 @@ def _spelling_row(index: int, rng: random.Random, split: str, eval_rows: bool) -
             f"Short word-skill check: {operation} for {word}. No extra words.",
             f"Text manipulation drill -- word {word}; task {operation}; answer only.",
         )
-        prompt_style = (index // (len(words) * len(modes))) % len(templates)
+        prompt_style = prompt_cycle % len(templates)
         return templates[prompt_style]
 
     def eval_prompt(operation: str) -> str:
@@ -1036,7 +1269,7 @@ def _spelling_row(index: int, rng: random.Random, split: str, eval_rows: bool) -
             f"Short spelling benchmark: {operation} on {word}.",
             f"Text operation request: word {word}; operation {operation}; output only the answer.",
         )
-        prompt_style = (index // (len(words) * len(modes))) % len(templates)
+        prompt_style = prompt_cycle % len(templates)
         return templates[prompt_style]
 
     if mode == "spaced":
@@ -1073,9 +1306,11 @@ def _spelling_row(index: int, rng: random.Random, split: str, eval_rows: bool) -
         "user": user,
         "assistant": answer,
         "category": f"bench_spelling_{mode}",
-        "group": f"{split}-spelling-{index}",
+        "group": f"{split}-{curriculum_stage or 'spelling'}-{index}",
         "answerable": True,
     }
+    if curriculum_stage:
+        row["curriculum_stage"] = curriculum_stage
     if eval_rows:
         row.update({
             "split": "benchmark",
@@ -1592,6 +1827,8 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 def _report_markdown(report: BenchmarkTuningPackReport) -> str:
     chat_lines = "\n".join(f"- {name}: {count}" for name, count in report.chat_categories.items())
     eval_lines = "\n".join(f"- {name}: {count}" for name, count in report.eval_categories.items())
+    chat_stage_lines = "\n".join(f"- {name}: {count}" for name, count in report.chat_stages.items())
+    eval_stage_lines = "\n".join(f"- {name}: {count}" for name, count in report.eval_stages.items())
     source_lines = "\n".join(f"- {note}" for note in report.source_notes)
     dataset_lines = "\n".join(f"- {name}: {count}" for name, count in report.source_datasets.items())
     contamination = report.contamination
@@ -1636,7 +1873,15 @@ mixture for instruction behavior and transparent held-out scoring.
 
 {chat_lines}
 
+## Chat Curriculum Stages
+
+{chat_stage_lines or "- none"}
+
 ## Eval Categories
 
 {eval_lines}
+
+## Eval Curriculum Stages
+
+{eval_stage_lines or "- none"}
 """

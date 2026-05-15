@@ -23,6 +23,7 @@ def test_run_tiny_multiseed_aggregates_seed_runs(tmp_path, monkeypatch):
                 "num_passed": int(pass_rate * 4),
                 "num_examples": 4,
                 "pass_rate": pass_rate,
+                "non_choice_pass_rate": pass_rate / 2,
                 "pass_rate_ci": {"low": pass_rate, "high": pass_rate, "confidence": 0.95},
             },
             "sft_fit": {"pass_rate": pass_rate / 2},
@@ -43,6 +44,7 @@ def test_run_tiny_multiseed_aggregates_seed_runs(tmp_path, monkeypatch):
     assert summary["type"] == "multi_seed_tiny"
     assert summary["config"]["seeds"] == [42, 43]
     assert summary["aggregate"]["eval_pass_rate"]["mean"] == 0.5
+    assert summary["aggregate"]["eval_non_choice_pass_rate"]["mean"] == 0.25
     assert round(summary["aggregate"]["eval_pass_rate"]["std"], 4) == 0.3536
     assert (out_dir / "summary.json").exists()
     assert "Picochat Multi-Seed Tiny Run" in (out_dir / "summary.md").read_text(encoding="utf-8")

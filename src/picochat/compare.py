@@ -14,6 +14,7 @@ class CompareRow:
     tokenizer_type: str
     eval_score: str
     pass_rate: float
+    non_choice_pass_rate: float | None
     domain_pass_rate: float | None
     refusal_pass_rate: float | None
     support_match_rate: float | None
@@ -66,6 +67,7 @@ def load_compare_row(run_dir: str | Path) -> CompareRow:
         ),
         eval_score=f"{eval_summary['num_passed']}/{eval_summary['num_examples']}",
         pass_rate=float(eval_summary["pass_rate"]),
+        non_choice_pass_rate=_optional_float(eval_summary.get("non_choice_pass_rate")),
         domain_pass_rate=_optional_float(eval_summary.get("domain_pass_rate")),
         refusal_pass_rate=_optional_float(eval_summary.get("refusal_pass_rate")),
         support_match_rate=_optional_float(eval_summary.get("support_match_rate")),
@@ -122,6 +124,7 @@ def comparison_table(comparison: dict) -> str:
             row["tokenizer_type"],
             row["eval_score"],
             f"{row['pass_rate'] * 100:.2f}%",
+            _format_optional_percent(row["non_choice_pass_rate"]),
             _format_optional_percent(row["domain_pass_rate"]),
             _format_optional_percent(row["refusal_pass_rate"]),
             _format_optional_percent(row["support_match_rate"]),
@@ -149,6 +152,7 @@ def comparison_table(comparison: dict) -> str:
         "Tok",
         "Eval",
         "Pass",
+        "NonChoice",
         "Domain",
         "Refusal",
         "Support",
@@ -237,13 +241,14 @@ def comparison_markdown(comparison: dict) -> str:
                 lines.append(f"- `{issue.get('severity', 'warn')}` {_markdown_text(issue.get('message'))}")
             lines.append("")
     lines.extend([
-        "| Run | Tokenizer | Eval | Pass Rate | Domain Pass | Refusal Pass | Support Match | Prompt Echo | SFT Fit | Base Val BPB | SFT Val BPB | Base Val Loss | SFT Val Loss | Best Steps | Stop Reasons | Base Loss Status | SFT Loss Status | Memorization | Params | Context | Device | Base Eff B | SFT Eff B | Truncated Examples | Skipped Too-Long |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: |",
+        "| Run | Tokenizer | Eval | Pass Rate | Non-Choice Pass | Domain Pass | Refusal Pass | Support Match | Prompt Echo | SFT Fit | Base Val BPB | SFT Val BPB | Base Val Loss | SFT Val Loss | Best Steps | Stop Reasons | Base Loss Status | SFT Loss Status | Memorization | Params | Context | Device | Base Eff B | SFT Eff B | Truncated Examples | Skipped Too-Long |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: |",
     ])
     for row in comparison["rows"]:
         lines.append(
             f"| `{row['run']}` | `{row['tokenizer_type']}` | {row['eval_score']} | "
-            f"{row['pass_rate'] * 100:.2f}% | {_format_optional_percent(row['domain_pass_rate'])} | "
+            f"{row['pass_rate'] * 100:.2f}% | {_format_optional_percent(row.get('non_choice_pass_rate'))} | "
+            f"{_format_optional_percent(row['domain_pass_rate'])} | "
             f"{_format_optional_percent(row['refusal_pass_rate'])} | "
             f"{_format_optional_percent(row['support_match_rate'])} | "
             f"{_format_optional_percent(row['prompt_echo_rate'])} | "

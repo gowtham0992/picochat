@@ -460,6 +460,7 @@ def run_tiny_multiseed(config: TinyRunConfig, n_seeds: int) -> dict:
         "runs": seed_rows,
         "aggregate": {
             "eval_pass_rate": _metric_stats(seed_rows, "eval_pass_rate"),
+            "eval_non_choice_pass_rate": _metric_stats(seed_rows, "eval_non_choice_pass_rate"),
             "sft_fit_rate": _metric_stats(seed_rows, "sft_fit_rate"),
             "base_val_bpb": _metric_stats(seed_rows, "base_val_bpb"),
             "sft_val_bpb": _metric_stats(seed_rows, "sft_val_bpb"),
@@ -483,6 +484,8 @@ def _multi_seed_row(summary: dict, *, seed: int, out_dir: Path) -> dict:
         "eval_score": f"{eval_summary.get('num_passed', 0)}/{eval_summary.get('num_examples', 0)}",
         "eval_pass_rate": _optional_float(eval_summary.get("pass_rate")),
         "eval_pass_rate_ci": eval_summary.get("pass_rate_ci"),
+        "eval_non_choice_pass_rate": _optional_float(eval_summary.get("non_choice_pass_rate")),
+        "eval_non_choice_pass_rate_ci": eval_summary.get("non_choice_pass_rate_ci"),
         "sft_fit_rate": _optional_float(sft_fit.get("pass_rate")),
         "sft_fit_rate_ci": sft_fit.get("pass_rate_ci"),
         "base_val_bpb": _optional_float(base.get("final_val_bpb")),
@@ -528,6 +531,7 @@ def _multi_seed_summary_markdown(summary: dict) -> str:
     ]
     for label, key in [
         ("Eval pass rate", "eval_pass_rate"),
+        ("Eval non-choice pass rate", "eval_non_choice_pass_rate"),
         ("SFT fit rate", "sft_fit_rate"),
         ("Base BPB", "base_val_bpb"),
         ("SFT BPB", "sft_val_bpb"),
@@ -544,12 +548,13 @@ def _multi_seed_summary_markdown(summary: dict) -> str:
         "",
         "## Runs",
         "",
-        "| Seed | Eval | Eval Pass | SFT Fit | Base BPB | SFT BPB | Gate | Path |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Seed | Eval | Eval Pass | Non-Choice | SFT Fit | Base BPB | SFT BPB | Gate | Path |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ])
     for row in summary["runs"]:
         lines.append(
             f"| {row['seed']} | {row['eval_score']} | {_format_percent(row.get('eval_pass_rate'))} | "
+            f"{_format_percent(row.get('eval_non_choice_pass_rate'))} | "
             f"{_format_percent(row.get('sft_fit_rate'))} | {_format_stat(row.get('base_val_bpb'))} | "
             f"{_format_stat(row.get('sft_val_bpb'))} | `{row.get('long_run_gate') or '--'}` | "
             f"`{row['out_dir']}` |"

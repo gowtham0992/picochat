@@ -154,15 +154,23 @@ def test_weak_skills_profile_overweights_math_and_spelling(tmp_path):
     ]
     chat_categories = Counter(row["category"] for row in chat_rows)
     eval_categories = Counter(row["category"] for row in eval_rows)
+    chat_stages = Counter(row.get("curriculum_stage", "") for row in chat_rows)
+    eval_stages = Counter(row.get("curriculum_stage", "") for row in eval_rows)
 
     assert report.profile == "weak_skills"
     assert report.source_status == "weak_skills"
+    assert report.chat_stages["math_l1_addition_single_digit"] > 0
+    assert report.chat_stages["spelling_l1_count"] > 0
+    assert report.eval_stages["math_l3_subtraction_borrow"] > 0
     assert _prefix_count(chat_categories, "bench_math_") >= 80
     assert _prefix_count(chat_categories, "bench_spelling_") >= 60
     assert _prefix_count(eval_categories, "bench_math_") >= 32
     assert _prefix_count(eval_categories, "bench_spelling_") >= 24
     assert len([name for name in chat_categories if name.startswith("bench_math_")]) >= 4
     assert len([name for name in chat_categories if name.startswith("bench_spelling_")]) >= 5
+    assert chat_stages["math_l1_addition_single_digit"] >= chat_stages["math_l3_addition_carry"]
+    assert chat_stages["spelling_l1_first_letter"] >= chat_stages["spelling_l3_reverse"]
+    assert eval_stages["spelling_l1_last_letter"] > 0
     assert "smoltalk" not in chat_categories
     assert len({row["user"] for row in chat_rows}) == len(chat_rows)
     assert len({row["user"] for row in eval_rows}) == len(eval_rows)
