@@ -256,6 +256,38 @@ def test_weak_skills_can_use_scratchpad_final_answer_style(tmp_path):
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
 
 
+def test_weak_skills_scratchpad_generates_requested_mac_size(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=2400,
+        eval_rows=480,
+        profile="weak_skills",
+        skill_answer_style="scratchpad",
+        source="offline",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert report.sft_rows == 2400
+    assert report.eval_rows == 480
+    assert len(chat_rows) == 2400
+    assert len(eval_rows) == 480
+    assert len({row["user"] for row in chat_rows}) == 2400
+    assert sum(count for category, count in report.chat_categories.items() if category.startswith("bench_math_")) == 864
+    assert sum(count for category, count in report.chat_categories.items() if category.startswith("bench_spelling_")) == 672
+    assert report.contamination["status"] in {"ready", "caution"}
+
+
 def test_staged_math_uses_disjoint_train_eval_operand_pools():
     for stage in benchmark_pack._MATH_STAGE_PAIRS:
         train_pairs = set(benchmark_pack._math_stage_pair_pool(stage, eval_rows=False))

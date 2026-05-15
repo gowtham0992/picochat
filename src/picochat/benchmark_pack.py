@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 import random
 import re
+import string
 from typing import Any
 
 from picochat.dataset_pack import load_dataset_pack, update_dataset_pack_tuning_paths
@@ -1329,11 +1330,17 @@ def _math_stage_row(
         total = a * b + removed
         answer = total - removed
         if eval_rows:
-            problem = f"A bakery prepared {total} rolls and sold {removed}. How many rolls were left?"
-            compact = f"rolls left after sale: {total} minus {removed}"
+            problem = (
+                f"A bakery arranged {a} trays with {b} rolls each and {removed} extra rolls. "
+                f"It sold the {removed} extra rolls. How many rolls were left?"
+            )
+            compact = f"{a} * {b} plus {removed}, then minus {removed}"
         else:
-            problem = f"A shop packed {total} pencils, then removed {removed}. How many pencils stayed packed?"
-            compact = f"{total} pencils minus {removed} removed"
+            problem = (
+                f"A shop packed {a} boxes with {b} pencils in each box and {removed} loose pencils. "
+                f"Then it removed the {removed} loose pencils. How many pencils stayed packed?"
+            )
+            compact = f"{a} * {b} plus {removed}, then minus {removed}"
         expression = f"{total} - {removed}"
 
     user = templates[template_index].format(problem=problem, compact=compact)
@@ -1541,16 +1548,16 @@ def _spelling_row(
     skill_answer_style: str = "direct",
 ) -> dict[str, Any]:
     skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
-    words = _HELDOUT_SPELLING_WORDS if eval_rows else _TRAIN_SPELLING_WORDS
+    word_pool_size = len(_HELDOUT_SPELLING_WORDS if eval_rows else _TRAIN_SPELLING_WORDS)
     modes = ("spaced", "count", "reverse", "first", "last")
     if mode_override:
         mode = mode_override
-        word = words[index % len(words)]
-        prompt_cycle = index // len(words)
+        word_index = index
     else:
         mode = modes[index % len(modes)]
-        word = words[(index // len(modes)) % len(words)]
-        prompt_cycle = index // (len(words) * len(modes))
+        word_index = index // len(modes)
+    word = _spelling_word_for_index(word_index, eval_rows=eval_rows)
+    prompt_cycle = word_index // word_pool_size
 
     def train_prompt(operation: str) -> str:
         templates = (
@@ -1627,6 +1634,23 @@ def _spelling_row(
             **_skill_eval_fields(answer, skill_answer_style, direct_max_words=20),
         })
     return row
+
+
+def _spelling_word_for_index(index: int, *, eval_rows: bool) -> str:
+    words = _HELDOUT_SPELLING_WORDS if eval_rows else _TRAIN_SPELLING_WORDS
+    if index < len(words):
+        return words[index]
+    return _synthetic_spelling_word(index - len(words), eval_rows=eval_rows)
+
+
+def _synthetic_spelling_word(index: int, *, eval_rows: bool) -> str:
+    rng = random.Random((9029 if eval_rows else 3137) + index * 104_729)
+    fixed_words = set(_TRAIN_SPELLING_WORDS) | set(_HELDOUT_SPELLING_WORDS)
+    length = 5 + (index % 4)
+    while True:
+        word = "".join(rng.choice(string.ascii_lowercase) for _ in range(length))
+        if word not in fixed_words:
+            return word
 
 
 _IDENTITY_ROWS = (
