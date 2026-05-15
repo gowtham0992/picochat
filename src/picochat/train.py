@@ -288,6 +288,8 @@ def train_base(config: TrainConfig) -> dict:
     losses: list[dict[str, float | int]] = []
     start = time.time()
     elapsed_offset = 0.0
+    last_log_wall_time = start
+    last_log_step = 0
     last_loss = float("nan")
     final_step = 0
     stop_reason = "max_steps"
@@ -311,6 +313,7 @@ def train_base(config: TrainConfig) -> dict:
         )
         final_step = int(resume_state.get("step", resume_metadata.get("step", 0)))
         start_step = final_step + 1
+        last_log_step = final_step
         losses = list(resume_state.get("losses", []))
         if losses:
             last_loss = float(losses[-1].get("train_loss", last_loss))
@@ -438,7 +441,17 @@ def train_base(config: TrainConfig) -> dict:
                 token_bytes=token_bytes,
                 precision_runtime=precision_runtime,
             )
-            elapsed = elapsed_offset + time.time() - start
+            now = time.time()
+            elapsed = elapsed_offset + now - start
+            throughput = _interval_throughput(
+                step=step,
+                last_log_step=last_log_step,
+                now=now,
+                last_log_wall_time=last_log_wall_time,
+                tokens_per_step=effective_tokens_per_step,
+            )
+            last_log_wall_time = now
+            last_log_step = step
             val_loss = float(val_metrics["loss"])
             val_bpb = val_metrics["bpb"]
             train_eval_loss = float(train_metrics["loss"])
@@ -468,6 +481,7 @@ def train_base(config: TrainConfig) -> dict:
                 "grad_accum_steps": config.grad_accum_steps,
                 "effective_batch_size": effective_batch_size,
                 "effective_tokens_per_step": effective_tokens_per_step,
+                **throughput,
                 "elapsed_sec": elapsed,
                 **({
                     "ema_val_loss": float(ema_val_metrics["loss"]),
@@ -696,6 +710,7 @@ def train_base(config: TrainConfig) -> dict:
         "losses": losses,
         "loss_diagnostics": loss_diagnostics(losses),
         "optimization_stability": optimization_stability(losses, config.grad_clip),
+        "throughput": _throughput_summary(losses),
         "rollback_events": rollback_events,
         "memorization": memorization_diagnostics(memorization_text, split.train_text, split.val_text),
         "sample": sample,
@@ -810,6 +825,43 @@ def _coverage_warnings(
 
 def _format_optional(value: float | None) -> str:
     return "--" if value is None else f"{value:.4f}"
+
+
+def _interval_throughput(
+    *,
+    step: int,
+    last_log_step: int,
+    now: float,
+    last_log_wall_time: float,
+    tokens_per_step: int,
+) -> dict[str, float]:
+    interval_steps = max(1, step - last_log_step)
+    interval_sec = max(1e-9, now - last_log_wall_time)
+    interval_tokens = interval_steps * tokens_per_step
+    return {
+        "interval_steps": interval_steps,
+        "interval_sec": interval_sec,
+        "step_time_sec": interval_sec / interval_steps,
+        "steps_per_sec": interval_steps / interval_sec,
+        "tokens_per_sec": interval_tokens / interval_sec,
+    }
+
+
+def _throughput_summary(losses: list[dict]) -> dict[str, float | None]:
+    rows = [row for row in losses if row.get("tokens_per_sec") is not None]
+    if not rows:
+        return {
+            "avg_tokens_per_sec": None,
+            "final_tokens_per_sec": None,
+            "avg_step_time_sec": None,
+            "final_step_time_sec": None,
+        }
+    return {
+        "avg_tokens_per_sec": sum(float(row["tokens_per_sec"]) for row in rows) / len(rows),
+        "final_tokens_per_sec": float(rows[-1]["tokens_per_sec"]),
+        "avg_step_time_sec": sum(float(row["step_time_sec"]) for row in rows) / len(rows),
+        "final_step_time_sec": float(rows[-1]["step_time_sec"]),
+    }
 
 
 def _is_loss_spike(loss: float, baseline: float, threshold: float) -> bool:

@@ -385,6 +385,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "ema_checkpoint": base_report.get("ema_checkpoint"),
             "effective_batch_size": base_report.get("config", {}).get("effective_batch_size"),
             "effective_tokens_per_step": base_report.get("config", {}).get("effective_tokens_per_step"),
+            "throughput": base_report.get("throughput", {}),
             "stop_reason": base_report.get("stop_reason"),
         },
         "sft": {
@@ -405,6 +406,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "ema_checkpoint": sft_report.get("ema_checkpoint"),
             "effective_batch_size": sft_report.get("config", {}).get("effective_batch_size"),
             "effective_tokens_per_step": sft_report.get("config", {}).get("effective_tokens_per_step"),
+            "throughput": sft_report.get("throughput", {}),
             "stop_reason": sft_report.get("stop_reason"),
             "packing": sft_report.get("config", {}).get("packing"),
             "packing_efficiency": sft_report.get("dataset", {}).get("packing_efficiency"),

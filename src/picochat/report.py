@@ -174,6 +174,10 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Gradient accumulation steps: {config.get('grad_accum_steps', 1)}")
     lines.append(f"- Effective batch size: {config.get('effective_batch_size', config['batch_size'])}")
     lines.append(f"- Effective tokens/update: {config.get('effective_tokens_per_step', config['batch_size'] * config.get('context_size', 0))}")
+    throughput = report.get("throughput", {})
+    if throughput:
+        lines.append(f"- Average tokens/sec: {format_optional_float(throughput.get('avg_tokens_per_sec'))}")
+        lines.append(f"- Final tokens/sec: {format_optional_float(throughput.get('final_tokens_per_sec'))}")
     lines.append(f"- Optimizer: `{config.get('optimizer', 'adamw')}`")
     if config.get("optimizer") == "muon":
         lines.append(f"- Muon matrix LR: {config.get('muon_learning_rate')}")
@@ -419,6 +423,10 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Gradient accumulation steps: {config.get('grad_accum_steps', 1)}")
     lines.append(f"- Effective batch size: {config.get('effective_batch_size', config['batch_size'])}")
     lines.append(f"- Effective tokens/update: {config.get('effective_tokens_per_step', config['batch_size'] * report.get('dataset', {}).get('context_size', 0))}")
+    throughput = report.get("throughput", {})
+    if throughput:
+        lines.append(f"- Average tokens/sec: {format_optional_float(throughput.get('avg_tokens_per_sec'))}")
+        lines.append(f"- Final tokens/sec: {format_optional_float(throughput.get('final_tokens_per_sec'))}")
     lines.append(f"- Optimizer: `{config.get('optimizer', 'adamw')}`")
     if config.get("optimizer") == "muon":
         lines.append(f"- Muon matrix LR: {config.get('muon_learning_rate')}")

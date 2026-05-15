@@ -46,8 +46,10 @@ from picochat.resume import (
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 from picochat.train import (
     _capture_rollback_state,
+    _interval_throughput,
     _is_loss_spike,
     _restore_rollback_state,
+    _throughput_summary,
     _update_loss_spike_baseline,
     evaluate_metrics,
 )
@@ -784,6 +786,8 @@ def train_sft(config: SFTConfig) -> dict:
     losses: list[dict[str, float | int]] = []
     start = time.time()
     elapsed_offset = 0.0
+    last_log_wall_time = start
+    last_log_step = 0
     last_loss = float("nan")
     best_loss = float("inf")
     best_checkpoint: dict[str, float | int | str] | None = None
@@ -807,6 +811,7 @@ def train_sft(config: SFTConfig) -> dict:
         )
         final_step = int(resume_state.get("step", metadata.get("step", 0)))
         start_step = final_step + 1
+        last_log_step = final_step
         losses = list(resume_state.get("losses", []))
         if losses:
             last_loss = float(losses[-1].get("train_loss", last_loss))
@@ -935,7 +940,17 @@ def train_sft(config: SFTConfig) -> dict:
                 precision_runtime=precision_runtime,
             )
             val_loss = float(val_metrics["loss"])
-            elapsed = elapsed_offset + time.time() - start
+            now = time.time()
+            elapsed = elapsed_offset + now - start
+            throughput = _interval_throughput(
+                step=step,
+                last_log_step=last_log_step,
+                now=now,
+                last_log_wall_time=last_log_wall_time,
+                tokens_per_step=effective_tokens_per_step,
+            )
+            last_log_wall_time = now
+            last_log_step = step
             ema_val_metrics = None
             if ema is not None:
                 with using_ema_weights(model, ema):
@@ -961,6 +976,7 @@ def train_sft(config: SFTConfig) -> dict:
                 "grad_accum_steps": config.grad_accum_steps,
                 "effective_batch_size": effective_batch_size,
                 "effective_tokens_per_step": effective_tokens_per_step,
+                **throughput,
                 "elapsed_sec": elapsed,
                 **({
                     "ema_val_loss": float(ema_val_metrics["loss"]),
@@ -1228,6 +1244,7 @@ def train_sft(config: SFTConfig) -> dict:
         "losses": losses,
         "loss_diagnostics": loss_diagnostics(losses),
         "optimization_stability": optimization_stability(losses, config.grad_clip),
+        "throughput": _throughput_summary(losses),
         "rollback_events": rollback_events,
         "sample": sample,
         "checkpoint": str(checkpoint_dir),

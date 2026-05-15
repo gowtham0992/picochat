@@ -238,6 +238,8 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert report["config"]["artifacts_written"] is True
     assert "learning_rate" in report["losses"][-1]
     assert "grad_norm" in report["losses"][-1]
+    assert "tokens_per_sec" in report["losses"][-1]
+    assert report["throughput"]["avg_tokens_per_sec"] is not None
     assert report["coverage"]["actual_steps"] == 2
     assert report["stop_reason"] == "max_steps"
     assert report["loss_diagnostics"]["final_step"] == 2
