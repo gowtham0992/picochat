@@ -49,6 +49,7 @@ from picochat.hf_export import HFExportConfig, export_hf_checkpoint
 from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
+from picochat.model import SDPA_BACKENDS
 from picochat.optim import (
     LR_DECAYS,
     MUON_MOMENTUM_SCHEDULES,
@@ -524,6 +525,12 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--activation", choices=("gelu", "relu2", "swiglu"), default="gelu")
     train_base_parser.add_argument("--tie-embeddings", action="store_true")
     train_base_parser.add_argument("--qk-norm", action="store_true")
+    train_base_parser.add_argument(
+        "--attn-backend",
+        choices=SDPA_BACKENDS,
+        default="auto",
+        help="PyTorch SDPA backend. Use flash on H100 after sanity passes; auto is portable.",
+    )
     train_base_parser.add_argument("--seed", type=int, default=42)
     train_base_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
     train_base_parser.add_argument("--log-every", type=int, default=20)
@@ -981,6 +988,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--activation", choices=("gelu", "relu2", "swiglu"), default=None)
     run_tiny_parser.add_argument("--tie-embeddings", action="store_true")
     run_tiny_parser.add_argument("--qk-norm", action="store_true")
+    run_tiny_parser.add_argument(
+        "--attn-backend",
+        choices=SDPA_BACKENDS,
+        default=None,
+        help="PyTorch SDPA backend. Use flash on H100 after sanity passes; auto is portable.",
+    )
     run_tiny_parser.add_argument("--base-steps", type=int, default=None)
     run_tiny_parser.add_argument("--sft-steps", type=int, default=None)
     run_tiny_parser.add_argument("--base-batch-size", type=int, default=None)
@@ -1807,6 +1820,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         activation=args.activation,
         tie_embeddings=args.tie_embeddings,
         qk_norm=args.qk_norm,
+        attn_backend=args.attn_backend,
         seed=args.seed,
         device=args.device,
         log_every=args.log_every,
@@ -2249,6 +2263,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         activation=_resolve_tiny_value(args, defaults, "activation"),
         tie_embeddings=bool(args.tie_embeddings or defaults.tie_embeddings),
         qk_norm=bool(args.qk_norm or defaults.qk_norm),
+        attn_backend=_resolve_tiny_value(args, defaults, "attn_backend"),
         base_steps=_resolve_tiny_value(args, defaults, "base_steps"),
         sft_steps=_resolve_tiny_value(args, defaults, "sft_steps"),
         base_batch_size=_resolve_tiny_value(args, defaults, "base_batch_size"),

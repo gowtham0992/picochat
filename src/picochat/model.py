@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 
 import torch
@@ -10,6 +11,13 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 KVCache = tuple[tuple[torch.Tensor, torch.Tensor], ...]
+SDPA_BACKENDS = ("auto", "flash", "efficient", "math", "cudnn")
+_SDPA_BACKEND_NAMES = {
+    "flash": "FLASH_ATTENTION",
+    "efficient": "EFFICIENT_ATTENTION",
+    "math": "MATH",
+    "cudnn": "CUDNN_ATTENTION",
+}
 
 
 @dataclass(frozen=True)
@@ -29,6 +37,7 @@ class GPTConfig:
     gradient_checkpointing: bool = False
     tie_embeddings: bool = False
     qk_norm: bool = False
+    attn_backend: str = "auto"
 
     def to_dict(self) -> dict[str, int | float | str | bool | None]:
         return asdict(self)
@@ -45,6 +54,32 @@ class RMSNorm(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         scale = torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
         return self.weight * x * scale
+
+
+def sdpa_backend_context(attn_backend: str):
+    """Return a context manager constraining PyTorch SDPA backend selection."""
+    if attn_backend == "auto":
+        return nullcontext()
+    if attn_backend not in _SDPA_BACKEND_NAMES:
+        raise ValueError(f"attn_backend must be one of: {', '.join(SDPA_BACKENDS)}")
+
+    attention = getattr(torch.nn, "attention", None)
+    if attention is not None and hasattr(attention, "sdpa_kernel"):
+        backend_name = _SDPA_BACKEND_NAMES[attn_backend]
+        backend = getattr(attention.SDPBackend, backend_name, None)
+        if backend is None:
+            raise RuntimeError(f"PyTorch build does not expose SDPA backend {attn_backend!r}")
+        return attention.sdpa_kernel(backend)
+
+    cuda_backends = getattr(torch.backends, "cuda", None)
+    if cuda_backends is not None and hasattr(cuda_backends, "sdp_kernel"):
+        return cuda_backends.sdp_kernel(
+            enable_flash=attn_backend == "flash",
+            enable_math=attn_backend == "math",
+            enable_mem_efficient=attn_backend == "efficient",
+            enable_cudnn=attn_backend == "cudnn",
+        )
+    raise RuntimeError("This PyTorch build does not support explicit SDPA backend selection")
 
 
 def make_norm(norm_type: str, size: int) -> nn.Module:
@@ -76,6 +111,9 @@ class CausalSelfAttention(nn.Module):
             raise ValueError("position_encoding must be 'learned' or 'rope'")
         if self.position_encoding == "rope" and self.head_dim % 2 != 0:
             raise ValueError("RoPE requires an even attention head dimension")
+        if config.attn_backend not in SDPA_BACKENDS:
+            raise ValueError(f"attn_backend must be one of: {', '.join(SDPA_BACKENDS)}")
+        self.attn_backend = config.attn_backend
         self.q_norm = RMSNorm(self.head_dim) if config.qk_norm else nn.Identity()
         self.k_norm = RMSNorm(self.head_dim) if config.qk_norm else nn.Identity()
         self.qkv = nn.Linear(config.n_embd, config.n_embd + 2 * self.kv_dim)
@@ -132,12 +170,13 @@ class CausalSelfAttention(nn.Module):
         if attn_mask is not None:
             sdpa_kwargs["attn_mask"] = attn_mask
 
-        y = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            **sdpa_kwargs,
-        )
+        with sdpa_backend_context(self.attn_backend):
+            y = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                **sdpa_kwargs,
+            )
         y = y.transpose(1, 2).contiguous().view(batch_size, seq_len, embd_size)
         y = self.dropout(self.proj(y))
         if use_cache:

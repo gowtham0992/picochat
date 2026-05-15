@@ -959,6 +959,8 @@ def test_cli_run_tiny(tmp_path, capsys):
         "0.5",
         "--sft-ema-decay",
         "0.5",
+        "--attn-backend",
+        "math",
         "--allow-leaky-eval",
     ])
 
@@ -971,6 +973,7 @@ def test_cli_run_tiny(tmp_path, capsys):
     assert summary["config"]["base_shard_cache_size"] == 2
     assert summary["config"]["sft_sampling"] == "category_balanced"
     assert summary["config"]["sft_packing"] == "bos_bestfit"
+    assert summary["config"]["attn_backend"] == "math"
     assert summary["config"]["base_optimizer"] == "muon"
     assert summary["config"]["sft_optimizer"] == "muon"
     assert summary["base"]["best_checkpoint"]["weights"] == "ema"

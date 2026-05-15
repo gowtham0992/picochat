@@ -1,7 +1,9 @@
+from contextlib import contextmanager
+
 import pytest
 import torch
 
-from picochat.model import GPTConfig, RMSNorm, TinyGPT
+from picochat.model import GPTConfig, RMSNorm, TinyGPT, sdpa_backend_context
 
 
 def test_model_forward_shapes_and_loss():
@@ -281,6 +283,44 @@ def test_attention_uses_scaled_dot_product_attention(monkeypatch):
         "dropout_p": 0.0,
         "is_causal": True,
     }]
+
+
+def test_attention_backend_can_force_math_sdpa(monkeypatch):
+    calls = []
+
+    @contextmanager
+    def fake_kernel(backend):
+        calls.append(backend)
+        yield
+
+    monkeypatch.setattr(torch.nn.attention, "sdpa_kernel", fake_kernel)
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        attn_backend="math",
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    logits, _ = model(x)
+
+    assert logits.shape == (2, config.context_size, config.vocab_size)
+    assert calls == [torch.nn.attention.SDPBackend.MATH]
+
+
+def test_attention_backend_rejects_unknown_value():
+    with pytest.raises(ValueError, match="attn_backend"):
+        TinyGPT(GPTConfig(vocab_size=20, context_size=8, attn_backend="made_up"))
+
+
+def test_sdpa_backend_context_auto_is_noop():
+    with sdpa_backend_context("auto"):
+        value = 1
+
+    assert value == 1
 
 
 def test_model_supports_gradient_checkpointing():
