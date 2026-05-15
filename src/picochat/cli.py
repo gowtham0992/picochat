@@ -822,17 +822,37 @@ def print_tuning_data(chat_data, eval_data) -> None:
     print(
         f"- chat_sft: {chat_data.status} | {chat_data.num_examples}/{chat_data.num_rows} usable rows "
         f"| avg_user_chars {chat_data.average_user_chars:.1f} "
-        f"| avg_assistant_chars {chat_data.average_assistant_chars:.1f}"
+        f"| avg_assistant_chars {chat_data.average_assistant_chars:.1f} "
+        f"| curriculum {chat_data.curriculum_label}"
     )
     print(f"  {chat_data.path}: {chat_data.summary}")
     if chat_data.categories:
-        print(f"  categories: {_format_counts(chat_data.categories)}")
+        print(
+            f"  categories: {_format_counts(chat_data.categories)} "
+            f"(entropy {chat_data.category_entropy:.2f}, normalized {chat_data.category_entropy_normalized:.2f})"
+        )
+    if chat_data.template_families:
+        print(f"  template_families: {_format_counts(chat_data.template_families)}")
+    print(
+        f"  duplicates: exact {chat_data.duplicate_user_prompts} "
+        f"({chat_data.duplicate_user_rate * 100:.2f}%), "
+        f"near {chat_data.near_duplicate_user_pairs}"
+    )
+    if chat_data.assistant_length_distribution.get("count"):
+        lengths = chat_data.assistant_length_distribution
+        print(
+            f"  answer_lengths: avg_words {lengths['avg_words']:.1f}, "
+            f"min/max_words {lengths['min_words']}/{lengths['max_words']}"
+        )
+    for warning in chat_data.quality_warnings[:3]:
+        print(f"  warning: {warning}")
     for issue in chat_data.issues[:3]:
         print(f"  issue line {issue.line}: {issue.message}")
     print(
         f"- eval: {eval_data.status} | {eval_data.num_items}/{eval_data.num_rows} usable rows "
         f"| answerable {eval_data.answerable_items} "
-        f"| unanswerable {eval_data.unanswerable_items}"
+        f"| unanswerable {eval_data.unanswerable_items} "
+        f"| curriculum {eval_data.curriculum_label}"
     )
     print(
         f"  rules: include {eval_data.must_include_rules}, "
@@ -841,9 +861,29 @@ def print_tuning_data(chat_data, eval_data) -> None:
     )
     print(f"  {eval_data.path}: {eval_data.summary}")
     if eval_data.categories:
-        print(f"  categories: {_format_counts(eval_data.categories)}")
+        print(
+            f"  categories: {_format_counts(eval_data.categories)} "
+            f"(entropy {eval_data.category_entropy:.2f}, normalized {eval_data.category_entropy_normalized:.2f})"
+        )
+    if eval_data.heldout_categories:
+        print(f"  heldout_categories: {_format_counts(eval_data.heldout_categories)}")
+    if eval_data.template_families:
+        print(f"  template_families: {_format_counts(eval_data.template_families)}")
+    print(
+        f"  duplicates: exact {eval_data.duplicate_user_prompts} "
+        f"({eval_data.duplicate_user_rate * 100:.2f}%), "
+        f"near {eval_data.near_duplicate_user_pairs}"
+    )
+    if eval_data.answer_length_distribution.get("count"):
+        lengths = eval_data.answer_length_distribution
+        print(
+            f"  answer_lengths: avg_words {lengths['avg_words']:.1f}, "
+            f"min/max_words {lengths['min_words']}/{lengths['max_words']}"
+        )
     if eval_data.splits:
         print(f"  splits: {_format_counts(eval_data.splits)}")
+    for warning in eval_data.quality_warnings[:3]:
+        print(f"  warning: {warning}")
     for issue in eval_data.issues[:3]:
         print(f"  issue line {issue.line}: {issue.message}")
 

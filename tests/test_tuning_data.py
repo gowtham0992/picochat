@@ -25,6 +25,52 @@ def test_inspect_chat_sft_data_reports_ready_file(tmp_path):
     assert report.preview[0]["category"] == "story_generation"
     assert report.categories == {"refusal": 4, "story_generation": 4}
     assert report.average_assistant_chars > 0
+    assert report.category_entropy > 0
+    assert report.category_entropy_normalized == 1.0
+    assert report.assistant_length_distribution["count"] == 8
+    assert report.curriculum_label == "mixed_sft"
+    assert report.curriculum_breakdown == {"behavior": 4, "domain": 4}
+
+
+def test_inspect_chat_sft_data_reports_quality_signals(tmp_path):
+    chat_path = tmp_path / "chat.jsonl"
+    rows = [
+        {
+            "user": "Solve 2 + 2. Return only the number.",
+            "assistant": "4",
+            "category": "bench_math",
+            "group": "train-math-001",
+        },
+        {
+            "user": "Solve 2 plus 2. Return only the number.",
+            "assistant": "4",
+            "category": "bench_math",
+            "group": "train-math-002",
+        },
+        {
+            "user": "Spell cat backward.",
+            "assistant": "tac",
+            "category": "bench_spelling",
+            "group": "train-spelling-001",
+        },
+        {
+            "user": "Spell cat backward.",
+            "assistant": "tac",
+            "category": "bench_spelling",
+            "group": "train-spelling-002",
+        },
+    ] * 2
+    chat_path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    report = inspect_chat_sft_data(chat_path)
+
+    assert report.curriculum_label == "skill_sft"
+    assert report.curriculum_breakdown == {"skill": 8}
+    assert report.duplicate_user_prompts == 5
+    assert report.duplicate_user_samples
+    assert report.near_duplicate_user_pairs >= 1
+    assert report.template_families == {"train-math": 4, "train-spelling": 4}
+    assert any("skill SFT" in warning for warning in report.quality_warnings)
 
 
 def test_inspect_chat_sft_data_blocks_invalid_rows(tmp_path):
@@ -102,6 +148,10 @@ def test_inspect_chat_eval_data_reports_rules_and_categories(tmp_path):
     assert report.categories["honesty"] == 1
     assert report.splits["knowledge"] == 1
     assert report.splits["safety"] == 1
+    assert report.heldout_categories["honesty"] == 1
+    assert report.category_entropy > 0
+    assert report.answer_length_distribution["count"] >= 3
+    assert report.curriculum_label == "domain_eval"
 
 
 def test_inspect_chat_eval_data_validates_choice_fields(tmp_path):
@@ -118,6 +168,57 @@ def test_inspect_chat_eval_data_validates_choice_fields(tmp_path):
     assert report.status == "caution"
     assert report.preview[0]["choice_labels"] == ["A", "B"]
     assert report.preview[0]["correct_choice"] == "B"
+
+
+def test_inspect_chat_eval_data_reports_quality_signals(tmp_path):
+    eval_path = tmp_path / "eval.jsonl"
+    rows = [
+        {
+            "user": "Choose the answer. A. red B. blue",
+            "must_include": ["B"],
+            "choice_labels": ["A", "B"],
+            "correct_choice": "B",
+            "category": "bench_choice_color",
+            "split": "benchmark",
+            "group": "heldout-choice-001",
+        },
+        {
+            "user": "Choose the answer. A. red B. blue!",
+            "must_include": ["B"],
+            "choice_labels": ["A", "B"],
+            "correct_choice": "B",
+            "category": "bench_choice_color",
+            "split": "benchmark",
+            "group": "heldout-choice-002",
+        },
+        {
+            "user": "Choose the answer. A. red B. blue",
+            "must_include": ["B"],
+            "choice_labels": ["A", "B"],
+            "correct_choice": "B",
+            "category": "bench_choice_color",
+            "split": "benchmark",
+            "group": "heldout-choice-003",
+        },
+        {
+            "user": "What unsupported private fact should be refused?",
+            "answerable": False,
+            "must_include_any": [["I do not know", "not enough information"]],
+            "category": "refusal",
+            "split": "adversarial",
+            "group": "heldout-refusal-001",
+        },
+    ]
+    eval_path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    report = inspect_chat_eval_data(eval_path)
+
+    assert report.curriculum_label == "mixed_behavior_skill_eval"
+    assert report.curriculum_breakdown == {"behavior": 1, "skill": 3}
+    assert report.duplicate_user_prompts == 1
+    assert report.near_duplicate_user_pairs >= 1
+    assert report.heldout_categories == {"bench_choice_color": 3, "refusal": 1}
+    assert report.template_families == {"heldout-choice": 3, "heldout-refusal": 1}
 
 
 def test_inspect_chat_eval_data_blocks_missing_rules(tmp_path):

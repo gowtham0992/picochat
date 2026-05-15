@@ -5191,8 +5191,16 @@ function renderTuningPreflight(chatData, evalData) {
         <span>${fmtInt(chatData?.num_examples)} usable</span>
         <span>${fmtInt(chatData?.invalid_rows)} invalid</span>
         <span>${fmtPercent(chatData?.duplicate_user_rate || 0)} dup prompts</span>
+        <span>${fmtInt(chatData?.near_duplicate_user_pairs || 0)} near dup</span>
+        <span>${escapeHtml(chatData?.curriculum_label || "--")}</span>
+      </div>
+      <div class="mini-stat-row">
+        <span>entropy ${fmtLoss(chatData?.category_entropy_normalized || 0)}</span>
+        <span>avg answer words ${fmtLoss(chatData?.assistant_length_distribution?.avg_words || 0)}</span>
       </div>
       ${renderCategoryCounts(chatData?.categories)}
+      ${renderTemplateCounts(chatData?.template_families)}
+      ${renderQualityWarnings(chatData?.quality_warnings || [])}
       ${renderIssues(chatData?.issues || [])}
       ${renderChatPreview(chatData?.preview || [])}
     </div>
@@ -5207,9 +5215,18 @@ function renderTuningPreflight(chatData, evalData) {
         <span>${fmtInt(evalData?.answerable_items)} answerable</span>
         <span>${fmtInt(evalData?.unanswerable_items)} unanswerable</span>
         <span>${fmtInt((evalData?.must_include_rules || 0) + (evalData?.must_include_any_groups || 0) + (evalData?.must_not_include_rules || 0))} rules</span>
+        <span>${fmtInt(evalData?.near_duplicate_user_pairs || 0)} near dup</span>
+        <span>${escapeHtml(evalData?.curriculum_label || "--")}</span>
+      </div>
+      <div class="mini-stat-row">
+        <span>entropy ${fmtLoss(evalData?.category_entropy_normalized || 0)}</span>
+        <span>avg answer words ${fmtLoss(evalData?.answer_length_distribution?.avg_words || 0)}</span>
       </div>
       ${renderCategoryCounts(evalData?.categories)}
+      ${renderCategoryCounts(evalData?.heldout_categories)}
+      ${renderTemplateCounts(evalData?.template_families)}
       ${renderSplitCounts(evalData?.splits)}
+      ${renderQualityWarnings(evalData?.quality_warnings || [])}
       ${renderIssues(evalData?.issues || [])}
       ${renderEvalPreview(evalData?.preview || [])}
     </div>
@@ -5232,6 +5249,25 @@ function renderSplitCounts(splits) {
   return `
     <div class="mini-stat-row category-counts">
       ${entries.map(([name, count]) => `<span>split:${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function renderTemplateCounts(families) {
+  const entries = Object.entries(families || {});
+  if (!entries.length) return "";
+  return `
+    <div class="mini-stat-row category-counts">
+      ${entries.slice(0, 8).map(([name, count]) => `<span>template ${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function renderQualityWarnings(warnings) {
+  if (!warnings?.length) return "";
+  return `
+    <div class="notice-list">
+      ${warnings.slice(0, 4).map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}
     </div>
   `;
 }

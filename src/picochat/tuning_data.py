@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import asdict, dataclass
+import difflib
 import json
+import math
 from pathlib import Path
+import re
 from typing import Any
 
 
@@ -29,7 +33,18 @@ class ChatSFTDataReport:
     average_user_chars: float
     average_assistant_chars: float
     duplicate_user_rate: float
+    duplicate_user_prompts: int
+    duplicate_user_samples: tuple[str, ...]
+    near_duplicate_user_pairs: int
+    near_duplicate_user_samples: tuple[dict[str, Any], ...]
     categories: dict[str, int]
+    category_entropy: float
+    category_entropy_normalized: float
+    assistant_length_distribution: dict[str, float | int]
+    template_families: dict[str, int]
+    curriculum_label: str
+    curriculum_breakdown: dict[str, int]
+    quality_warnings: tuple[str, ...]
     issues: tuple[TuningDataIssue, ...]
     preview: tuple[dict[str, str], ...]
 
@@ -55,9 +70,22 @@ class ChatEvalDataReport:
     must_include_rules: int
     must_include_any_groups: int
     must_not_include_rules: int
+    duplicate_user_rate: float
+    duplicate_user_prompts: int
+    duplicate_user_samples: tuple[str, ...]
+    near_duplicate_user_pairs: int
+    near_duplicate_user_samples: tuple[dict[str, Any], ...]
     categories: dict[str, int]
+    category_entropy: float
+    category_entropy_normalized: float
     splits: dict[str, int]
     levels: dict[str, int]
+    heldout_categories: dict[str, int]
+    answer_length_distribution: dict[str, float | int]
+    template_families: dict[str, int]
+    curriculum_label: str
+    curriculum_breakdown: dict[str, int]
+    quality_warnings: tuple[str, ...]
     issues: tuple[TuningDataIssue, ...]
     preview: tuple[dict[str, Any], ...]
 
@@ -85,7 +113,18 @@ def inspect_chat_sft_data(path: str | Path, preview_items: int = 3) -> ChatSFTDa
             average_user_chars=0.0,
             average_assistant_chars=0.0,
             duplicate_user_rate=0.0,
+            duplicate_user_prompts=0,
+            duplicate_user_samples=(),
+            near_duplicate_user_pairs=0,
+            near_duplicate_user_samples=(),
             categories={},
+            category_entropy=0.0,
+            category_entropy_normalized=0.0,
+            assistant_length_distribution=_length_distribution([]),
+            template_families={},
+            curriculum_label="unknown",
+            curriculum_breakdown={},
+            quality_warnings=(),
             issues=(read_issue,),
             preview=(),
         )
@@ -93,7 +132,10 @@ def inspect_chat_sft_data(path: str | Path, preview_items: int = 3) -> ChatSFTDa
     issues: list[TuningDataIssue] = []
     examples: list[dict[str, str]] = []
     users: list[str] = []
+    assistant_texts: list[str] = []
     categories: dict[str, int] = {}
+    template_families: dict[str, int] = {}
+    curriculum_breakdown: Counter[str] = Counter()
     user_chars = 0
     assistant_chars = 0
     for line_number, record in records:
@@ -116,15 +158,29 @@ def inspect_chat_sft_data(path: str | Path, preview_items: int = 3) -> ChatSFTDa
             issues.append(TuningDataIssue(line_number, "category field must be a non-empty string when present"))
             continue
         category = category.strip()
+        template_family = _template_family(record, category)
         examples.append({"user": user, "assistant": assistant, "category": category})
         users.append(user)
+        assistant_texts.append(assistant)
         categories[category] = categories.get(category, 0) + 1
+        template_families[template_family] = template_families.get(template_family, 0) + 1
+        curriculum_breakdown[_curriculum_bucket(category)] += 1
         user_chars += len(user)
         assistant_chars += len(assistant)
 
     num_rows = len(records)
     invalid_rows = len(issues)
-    duplicate_user_rate = _duplicate_rate(users)
+    duplicate_user_rate, duplicate_user_prompts, duplicate_user_samples = _duplicate_prompt_stats(users)
+    near_duplicates = _near_duplicate_prompt_report(users)
+    category_entropy, category_entropy_normalized = _category_entropy(categories)
+    curriculum_label = _curriculum_label(curriculum_breakdown, "sft")
+    quality_warnings = _sft_quality_warnings(
+        num_examples=len(examples),
+        duplicate_user_rate=duplicate_user_rate,
+        near_duplicate_user_pairs=near_duplicates["count"],
+        category_entropy_normalized=category_entropy_normalized,
+        curriculum_label=curriculum_label,
+    )
     status, summary = _chat_sft_status(len(examples), invalid_rows, duplicate_user_rate)
     return ChatSFTDataReport(
         path=path,
@@ -137,7 +193,18 @@ def inspect_chat_sft_data(path: str | Path, preview_items: int = 3) -> ChatSFTDa
         average_user_chars=(user_chars / len(examples)) if examples else 0.0,
         average_assistant_chars=(assistant_chars / len(examples)) if examples else 0.0,
         duplicate_user_rate=duplicate_user_rate,
+        duplicate_user_prompts=duplicate_user_prompts,
+        duplicate_user_samples=tuple(duplicate_user_samples),
+        near_duplicate_user_pairs=near_duplicates["count"],
+        near_duplicate_user_samples=tuple(near_duplicates["samples"]),
         categories=dict(sorted(categories.items())),
+        category_entropy=category_entropy,
+        category_entropy_normalized=category_entropy_normalized,
+        assistant_length_distribution=_length_distribution(assistant_texts),
+        template_families=dict(sorted(template_families.items())),
+        curriculum_label=curriculum_label,
+        curriculum_breakdown=dict(sorted(curriculum_breakdown.items())),
+        quality_warnings=tuple(quality_warnings),
         issues=tuple(issues[:8]),
         preview=tuple(examples[:max(0, preview_items)]),
     )
@@ -161,9 +228,22 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
             must_include_rules=0,
             must_include_any_groups=0,
             must_not_include_rules=0,
+            duplicate_user_rate=0.0,
+            duplicate_user_prompts=0,
+            duplicate_user_samples=(),
+            near_duplicate_user_pairs=0,
+            near_duplicate_user_samples=(),
             categories={},
+            category_entropy=0.0,
+            category_entropy_normalized=0.0,
             splits={},
             levels={},
+            heldout_categories={},
+            answer_length_distribution=_length_distribution([]),
+            template_families={},
+            curriculum_label="unknown",
+            curriculum_breakdown={},
+            quality_warnings=(),
             issues=(read_issue,),
             preview=(),
         )
@@ -173,6 +253,11 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
     categories: dict[str, int] = {}
     splits: dict[str, int] = {}
     levels: dict[str, int] = {}
+    heldout_categories: dict[str, int] = {}
+    template_families: dict[str, int] = {}
+    curriculum_breakdown: Counter[str] = Counter()
+    users: list[str] = []
+    answer_texts: list[str] = []
     answerable_items = 0
     must_include_rules = 0
     must_include_any_groups = 0
@@ -183,14 +268,21 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
             issues.extend(item_issues)
             continue
         items.append(item)
+        users.append(item["user"])
         category = item["category"]
         categories[category] = categories.get(category, 0) + 1
+        curriculum_breakdown[_curriculum_bucket(category)] += 1
         split = item["split"]
         splits[split] = splits.get(split, 0) + 1
+        if split.lower() not in {"train", "sft", "practice"}:
+            heldout_categories[category] = heldout_categories.get(category, 0) + 1
         level = item["level"]
         levels[level] = levels.get(level, 0) + 1
+        template_family = item["template_family"]
+        template_families[template_family] = template_families.get(template_family, 0) + 1
         if item["answerable"]:
             answerable_items += 1
+        answer_texts.extend(_eval_answer_texts(item))
         must_include_rules += len(item["must_include"])
         must_include_any_groups += len(item["must_include_any"])
         must_not_include_rules += len(item["must_not_include"])
@@ -198,6 +290,17 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
     num_rows = len(records)
     invalid_rows = len(issues)
     unanswerable_items = len(items) - answerable_items
+    duplicate_user_rate, duplicate_user_prompts, duplicate_user_samples = _duplicate_prompt_stats(users)
+    near_duplicates = _near_duplicate_prompt_report(users)
+    category_entropy, category_entropy_normalized = _category_entropy(categories)
+    curriculum_label = _curriculum_label(curriculum_breakdown, "eval")
+    quality_warnings = _eval_quality_warnings(
+        num_items=len(items),
+        duplicate_user_rate=duplicate_user_rate,
+        near_duplicate_user_pairs=near_duplicates["count"],
+        category_entropy_normalized=category_entropy_normalized,
+        heldout_categories=heldout_categories,
+    )
     status, summary = _chat_eval_status(
         len(items),
         invalid_rows,
@@ -217,9 +320,22 @@ def inspect_chat_eval_data(path: str | Path, preview_items: int = 3) -> ChatEval
         must_include_rules=must_include_rules,
         must_include_any_groups=must_include_any_groups,
         must_not_include_rules=must_not_include_rules,
+        duplicate_user_rate=duplicate_user_rate,
+        duplicate_user_prompts=duplicate_user_prompts,
+        duplicate_user_samples=tuple(duplicate_user_samples),
+        near_duplicate_user_pairs=near_duplicates["count"],
+        near_duplicate_user_samples=tuple(near_duplicates["samples"]),
         categories=dict(sorted(categories.items())),
+        category_entropy=category_entropy,
+        category_entropy_normalized=category_entropy_normalized,
         splits=dict(sorted(splits.items())),
         levels=dict(sorted(levels.items())),
+        heldout_categories=dict(sorted(heldout_categories.items())),
+        answer_length_distribution=_length_distribution(answer_texts),
+        template_families=dict(sorted(template_families.items())),
+        curriculum_label=curriculum_label,
+        curriculum_breakdown=dict(sorted(curriculum_breakdown.items())),
+        quality_warnings=tuple(quality_warnings),
         issues=tuple(issues[:8]),
         preview=tuple(items[:max(0, preview_items)]),
     )
@@ -294,6 +410,7 @@ def _parse_eval_item(line_number: int, record: Any) -> tuple[dict[str, Any], lis
     if not isinstance(level, str) or not level.strip():
         issues.append(TuningDataIssue(line_number, "level field must be a non-empty string when present"))
         level = "heldout"
+    template_family = _template_family(record, category)
     required_entities = _string_list(
         record.get("required_entities", record.get("entities", ())),
         line_number,
@@ -325,6 +442,7 @@ def _parse_eval_item(line_number: int, record: Any) -> tuple[dict[str, Any], lis
         "category": category,
         "split": split,
         "level": level,
+        "template_family": template_family,
         "must_include": must_include_values,
         "must_include_any": must_include_any_values,
         "must_not_include": must_not_include_values,
@@ -380,10 +498,215 @@ def _infer_eval_level(split: str, category: str, answerable: bool) -> str:
     return "heldout"
 
 
-def _duplicate_rate(values: list[str]) -> float:
+def _duplicate_prompt_stats(values: list[str]) -> tuple[float, int, list[str]]:
     if not values:
+        return 0.0, 0, []
+    normalized = [_norm_prompt(value) for value in values]
+    counts = Counter(value for value in normalized if value)
+    duplicate_prompts = sum(count - 1 for count in counts.values() if count > 1)
+    samples = [value for value, count in counts.most_common() if count > 1][:5]
+    return duplicate_prompts / len(values), duplicate_prompts, samples
+
+
+def _duplicate_rate(values: list[str]) -> float:
+    return _duplicate_prompt_stats(values)[0]
+
+
+def _near_duplicate_prompt_report(
+    values: list[str],
+    threshold: float = 0.90,
+    max_samples: int = 5,
+    max_checks: int = 100_000,
+) -> dict[str, Any]:
+    normalized = [_norm_prompt(value) for value in values]
+    indexed = [
+        (index, prompt, values[index])
+        for index, prompt in enumerate(normalized)
+        if prompt
+    ]
+    buckets: dict[str, list[tuple[int, str, str]]] = {}
+    for item in indexed:
+        tokens = item[1].split()
+        key = tokens[0] if tokens else ""
+        buckets.setdefault(key, []).append(item)
+
+    count = 0
+    samples: list[dict[str, Any]] = []
+    checks = 0
+    for bucket in buckets.values():
+        for left_index, left_prompt, left_raw in bucket:
+            for right_index, right_prompt, right_raw in bucket:
+                if right_index <= left_index:
+                    continue
+                checks += 1
+                if checks > max_checks:
+                    return {"count": count, "samples": samples, "truncated": True}
+                if left_prompt == right_prompt:
+                    continue
+                jaccard = _token_jaccard(left_prompt, right_prompt)
+                if jaccard < threshold and not _can_reach_similarity(left_prompt, right_prompt, threshold):
+                    continue
+                matcher = difflib.SequenceMatcher(None, left_prompt, right_prompt)
+                if max(jaccard, matcher.quick_ratio()) < threshold:
+                    continue
+                ratio = matcher.ratio()
+                similarity = max(ratio, jaccard)
+                if similarity < threshold:
+                    continue
+                count += 1
+                if len(samples) < max_samples:
+                    samples.append({
+                        "similarity": round(float(ratio), 4),
+                        "token_jaccard": round(float(jaccard), 4),
+                        "left": left_raw[:180],
+                        "right": right_raw[:180],
+                    })
+    return {"count": count, "samples": samples, "truncated": False}
+
+
+def _category_entropy(categories: dict[str, int]) -> tuple[float, float]:
+    total = sum(categories.values())
+    if total <= 0 or len(categories) <= 1:
+        return 0.0, 0.0
+    entropy = 0.0
+    for count in categories.values():
+        probability = count / total
+        entropy -= probability * math.log2(probability)
+    max_entropy = math.log2(len(categories))
+    return entropy, entropy / max_entropy if max_entropy > 0 else 0.0
+
+
+def _length_distribution(texts: list[str]) -> dict[str, float | int]:
+    if not texts:
+        return {
+            "count": 0,
+            "min_chars": 0,
+            "max_chars": 0,
+            "avg_chars": 0.0,
+            "min_words": 0,
+            "max_words": 0,
+            "avg_words": 0.0,
+        }
+    char_lengths = [len(text) for text in texts]
+    word_lengths = [len(re.findall(r"\S+", text)) for text in texts]
+    return {
+        "count": len(texts),
+        "min_chars": min(char_lengths),
+        "max_chars": max(char_lengths),
+        "avg_chars": sum(char_lengths) / len(char_lengths),
+        "min_words": min(word_lengths),
+        "max_words": max(word_lengths),
+        "avg_words": sum(word_lengths) / len(word_lengths),
+    }
+
+
+def _template_family(record: dict[str, Any], category: str) -> str:
+    raw = record.get("template", record.get("group", record.get("group_id")))
+    if isinstance(raw, str) and raw.strip():
+        family = raw.strip()
+        family = re.sub(r"[-_]\d+$", "", family)
+        family = re.sub(r"[-_]\d+$", "", family)
+        return family or category
+    return f"ungrouped:{category}"
+
+
+def _curriculum_bucket(category: str) -> str:
+    text = str(category).lower()
+    if any(token in text for token in ("math", "spelling", "choice", "mmlu", "gsm", "arc", "bench_")):
+        return "skill"
+    if any(token in text for token in ("identity", "refusal", "safety", "honesty", "smoltalk", "behavior")):
+        return "behavior"
+    return "domain"
+
+
+def _curriculum_label(breakdown: Counter[str], suffix: str) -> str:
+    total = sum(breakdown.values())
+    if total <= 0:
+        return "unknown"
+    skill = breakdown.get("skill", 0) / total
+    behavior = breakdown.get("behavior", 0) / total
+    domain = breakdown.get("domain", 0) / total
+    if skill > 0 and behavior > 0 and min(skill, behavior) >= 0.20:
+        return f"mixed_behavior_skill_{suffix}"
+    if skill >= 0.70:
+        return f"skill_{suffix}"
+    if behavior >= 0.70:
+        return f"behavior_{suffix}"
+    if domain >= 0.70:
+        return f"domain_{suffix}"
+    if skill > 0 and behavior > 0:
+        return f"mixed_behavior_skill_{suffix}"
+    return f"mixed_{suffix}"
+
+
+def _eval_answer_texts(item: dict[str, Any]) -> list[str]:
+    reference = item.get("reference_answer")
+    if isinstance(reference, str) and reference.strip():
+        return [reference]
+    texts = [value for value in item.get("must_include", []) if isinstance(value, str)]
+    for group in item.get("must_include_any", []):
+        texts.extend(value for value in group if isinstance(value, str))
+    return texts
+
+
+def _sft_quality_warnings(
+    *,
+    num_examples: int,
+    duplicate_user_rate: float,
+    near_duplicate_user_pairs: int,
+    category_entropy_normalized: float,
+    curriculum_label: str,
+) -> list[str]:
+    warnings: list[str] = []
+    if num_examples >= 32 and category_entropy_normalized < 0.45:
+        warnings.append("Category entropy is low; one SFT category dominates the file.")
+    if duplicate_user_rate > 0.10:
+        warnings.append("More than 10% of SFT prompts are exact duplicates.")
+    if near_duplicate_user_pairs:
+        warnings.append("Near-duplicate SFT prompts were detected; inspect template variety before trusting fit.")
+    if curriculum_label.startswith("skill_"):
+        warnings.append("This looks like skill SFT; do not interpret low loss as broad chat behavior.")
+    elif curriculum_label.startswith("behavior_"):
+        warnings.append("This looks like behavior SFT; it teaches format/refusal/identity more than missing knowledge.")
+    return warnings
+
+
+def _eval_quality_warnings(
+    *,
+    num_items: int,
+    duplicate_user_rate: float,
+    near_duplicate_user_pairs: int,
+    category_entropy_normalized: float,
+    heldout_categories: dict[str, int],
+) -> list[str]:
+    warnings: list[str] = []
+    if num_items >= 16 and category_entropy_normalized < 0.45:
+        warnings.append("Eval category entropy is low; one category may dominate the score.")
+    if duplicate_user_rate > 0.0:
+        warnings.append("Eval contains exact duplicate prompts.")
+    if near_duplicate_user_pairs:
+        warnings.append("Eval contains near-duplicate prompts; score variance may be misleading.")
+    if not heldout_categories:
+        warnings.append("No held-out eval category distribution was detected.")
+    return warnings
+
+
+def _norm_prompt(text: str) -> str:
+    return " ".join(str(text).lower().split())
+
+
+def _token_jaccard(left: str, right: str) -> float:
+    left_tokens = set(re.findall(r"[a-z0-9]+", left.lower()))
+    right_tokens = set(re.findall(r"[a-z0-9]+", right.lower()))
+    if not left_tokens or not right_tokens:
         return 0.0
-    return (len(values) - len(set(values))) / len(values)
+    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+
+
+def _can_reach_similarity(left: str, right: str, threshold: float) -> bool:
+    if not left or not right:
+        return False
+    return (2 * min(len(left), len(right)) / (len(left) + len(right))) >= threshold
 
 
 def _chat_sft_status(num_examples: int, invalid_rows: int, duplicate_user_rate: float) -> tuple[str, str]:

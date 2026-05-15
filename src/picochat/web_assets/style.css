@@ -1345,6 +1345,18 @@ textarea.guide-target-focus {
   gap: 4px;
 }
 
+.notice-list {
+  display: grid;
+  gap: 4px;
+}
+
+.notice-list p {
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--dim-line));
+  color: var(--accent);
+  margin: 0;
+  padding: 5px 6px;
+}
+
 .issue-list strong {
   color: var(--red);
 }
