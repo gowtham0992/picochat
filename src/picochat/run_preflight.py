@@ -301,7 +301,7 @@ def _tokenizer_checks(config: Any, stats: CorpusStats, long_run: bool) -> list[R
             "Document split keeps validation text held out by source document.",
         ),
     ]
-    if tokenizer_type == "bpe":
+    if _is_bpe_tokenizer(tokenizer_type):
         target = _tokenizer_vocab_estimate(config)
         checks.append(_check(
             "bpe_vocab_size",
@@ -329,10 +329,10 @@ def _tokenizer_checks(config: Any, stats: CorpusStats, long_run: bool) -> list[R
     else:
         checks.append(_check(
             "tokenizer_type",
-            "warn" if long_run and tokenizer_type != "bpe" else "pass",
+            "warn" if long_run and not _is_bpe_tokenizer(tokenizer_type) else "pass",
             tokenizer_type,
-            "bpe preferred for long runs",
-            "Char/byte tokenizers are educational, but BPE is the better long-run baseline.",
+            "BPE preferred for long runs",
+            "Char/byte tokenizers are educational; compiled hf_bpe is the preferred long-run baseline.",
         ))
     return checks
 
@@ -643,9 +643,13 @@ def _tokenizer_vocab_estimate(config: Any) -> int:
         return int(vocab_size)
     if tokenizer_type == "byte":
         return 260
-    if tokenizer_type == "bpe":
+    if _is_bpe_tokenizer(tokenizer_type):
         return 512
     return 128
+
+
+def _is_bpe_tokenizer(tokenizer_type: str) -> bool:
+    return tokenizer_type in {"bpe", "hf_bpe"}
 
 
 def _value(config: Any, name: str, default: Any) -> Any:

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
+from typing import Iterable
 
 
 SPECIAL_TOKENS = ("<pad>", "<bos>", "<eos>", "<unk>")
@@ -22,6 +23,10 @@ DEFAULT_BPE_PRETOKENIZER = "regex"
 BPE_REGEX_PATTERN = re.compile(
     r"'(?:[sdmt]|ll|ve|re)| ?[^\W\d_]+| ?\d+(?:[.,]\d+)*%?| ?[^\s\w]+|\s+(?!\S)|\s+",
     flags=re.IGNORECASE | re.UNICODE,
+)
+HF_BPE_REGEX_PATTERN = (
+    r"'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|"
+    r"\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"
 )
 
 
@@ -50,7 +55,7 @@ class CharTokenizer:
     @classmethod
     def train(
         cls,
-        texts: list[str],
+        texts: Iterable[str],
         vocab_size: int | None = None,
         min_freq: int = 1,
     ) -> "CharTokenizer":
@@ -173,7 +178,7 @@ class ByteTokenizer:
     @classmethod
     def train(
         cls,
-        texts: list[str],
+        texts: Iterable[str],
         vocab_size: int | None = None,
         min_freq: int = 1,
     ) -> "ByteTokenizer":
@@ -304,7 +309,7 @@ class BPETokenizer:
     @classmethod
     def train(
         cls,
-        texts: list[str],
+        texts: Iterable[str],
         vocab_size: int | None = None,
         min_freq: int = 1,
         pretokenizer: str = DEFAULT_BPE_PRETOKENIZER,
@@ -454,12 +459,173 @@ class BPETokenizer:
         )
 
 
-Tokenizer = CharTokenizer | ByteTokenizer | BPETokenizer
-TOKENIZER_TYPES = ("char", "byte", "bpe")
+class HuggingFaceBPETokenizer:
+    """Production BPE tokenizer backed by Hugging Face's compiled tokenizers.
+
+    Picochat's ``bpe`` tokenizer is deliberately small and readable. This
+    backend is the long-run path: it keeps the same Picochat special-token
+    contract, but delegates BPE training and encoding to compiled Rust code so
+    H100 runs do not waste paid time in Python tokenizer loops.
+    """
+
+    tokenizer_type = "hf_bpe"
+
+    def __init__(self, backend, pretokenizer: str = DEFAULT_BPE_PRETOKENIZER):
+        if pretokenizer not in BPE_PRETOKENIZERS:
+            raise ValueError(f"pretokenizer must be one of {BPE_PRETOKENIZERS}")
+        self.backend = backend
+        self.pretokenizer = pretokenizer
+        self.token_to_id = {token: int(idx) for token, idx in backend.get_vocab().items()}
+        missing = [token for token in SPECIAL_TOKENS if token not in self.token_to_id]
+        if missing:
+            raise ValueError(f"Missing required special tokens: {missing}")
+        self.id_to_token = {idx: token for token, idx in self.token_to_id.items()}
+        if len(self.id_to_token) != len(self.token_to_id):
+            raise ValueError("Token ids must be unique")
+
+    @classmethod
+    def train(
+        cls,
+        texts: Iterable[str],
+        vocab_size: int | None = None,
+        min_freq: int = 1,
+        pretokenizer: str = DEFAULT_BPE_PRETOKENIZER,
+    ) -> "HuggingFaceBPETokenizer":
+        if min_freq < 1:
+            raise ValueError("min_freq must be at least 1")
+        if pretokenizer not in BPE_PRETOKENIZERS:
+            raise ValueError(f"pretokenizer must be one of {BPE_PRETOKENIZERS}")
+        target_vocab_size = vocab_size or DEFAULT_BPE_VOCAB_SIZE
+        if target_vocab_size < len(SPECIAL_TOKENS) + 256:
+            raise ValueError("hf_bpe vocab_size must leave room for special tokens and byte fallback")
+
+        tokenizers = _require_tokenizers()
+        backend = tokenizers["Tokenizer"](tokenizers["BPE"](
+            byte_fallback=True,
+            unk_token="<unk>",
+            fuse_unk=False,
+        ))
+        backend.normalizer = None
+        if pretokenizer == "regex":
+            backend.pre_tokenizer = tokenizers["pre_tokenizers"].Sequence([
+                tokenizers["pre_tokenizers"].Split(
+                    pattern=tokenizers["Regex"](HF_BPE_REGEX_PATTERN),
+                    behavior="isolated",
+                    invert=False,
+                ),
+                tokenizers["pre_tokenizers"].ByteLevel(add_prefix_space=False, use_regex=False),
+            ])
+        else:
+            backend.pre_tokenizer = tokenizers["pre_tokenizers"].ByteLevel(
+                add_prefix_space=False,
+                use_regex=False,
+            )
+        backend.decoder = tokenizers["decoders"].ByteLevel()
+        backend.post_processor = None
+        trainer = tokenizers["BpeTrainer"](
+            vocab_size=target_vocab_size,
+            show_progress=True,
+            min_frequency=min_freq,
+            initial_alphabet=tokenizers["pre_tokenizers"].ByteLevel.alphabet(),
+            special_tokens=list(SPECIAL_TOKENS),
+        )
+        backend.train_from_iterator((text for text in texts if text), trainer)
+        return cls(backend, pretokenizer=pretokenizer)
+
+    @property
+    def pad_id(self) -> int:
+        return self.token_to_id["<pad>"]
+
+    @property
+    def bos_id(self) -> int:
+        return self.token_to_id["<bos>"]
+
+    @property
+    def eos_id(self) -> int:
+        return self.token_to_id["<eos>"]
+
+    @property
+    def unk_id(self) -> int:
+        return self.token_to_id["<unk>"]
+
+    def __len__(self) -> int:
+        return self.backend.get_vocab_size()
+
+    def stats(self) -> TokenizerStats:
+        return TokenizerStats(
+            tokenizer_type=self.tokenizer_type,
+            vocab_size=len(self),
+            num_special_tokens=len(SPECIAL_TOKENS),
+            num_text_tokens=len(self) - len(SPECIAL_TOKENS),
+        )
+
+    def encode(
+        self,
+        text: str,
+        add_bos: bool = False,
+        add_eos: bool = False,
+    ) -> list[int]:
+        ids: list[int] = []
+        if add_bos:
+            ids.append(self.bos_id)
+        ids.extend(self.backend.encode(text, add_special_tokens=False).ids)
+        if add_eos:
+            ids.append(self.eos_id)
+        return ids
+
+    def decode(self, ids: list[int], skip_special: bool = True) -> str:
+        return self.backend.decode([int(idx) for idx in ids], skip_special_tokens=skip_special)
+
+    def token_byte_lengths(self) -> list[int]:
+        lengths = [0] * len(self)
+        for token_id in range(len(self)):
+            token = self.id_to_token.get(token_id)
+            if token in SPECIAL_TOKENS:
+                lengths[token_id] = 0
+                continue
+            piece = self.backend.decode([token_id], skip_special_tokens=False)
+            lengths[token_id] = len(piece.encode("utf-8"))
+        return lengths
+
+    def save(self, path: str | Path) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "type": self.tokenizer_type,
+            "special_tokens": list(SPECIAL_TOKENS),
+            "token_to_id": self.token_to_id,
+            "pretokenizer": self.pretokenizer,
+            "backend": "huggingface_tokenizers",
+            "hf_tokenizer": json.loads(self.backend.to_str()),
+        }
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: str | Path) -> "HuggingFaceBPETokenizer":
+        data = _read_tokenizer_json(path)
+        if data.get("type") != "hf_bpe":
+            raise ValueError(f"Unsupported tokenizer type: {data.get('type')}")
+        return cls.from_data(data)
+
+    @classmethod
+    def from_data(cls, data: dict) -> "HuggingFaceBPETokenizer":
+        if tuple(data.get("special_tokens", [])) != SPECIAL_TOKENS:
+            raise ValueError("Tokenizer special tokens do not match this version")
+        if "hf_tokenizer" not in data:
+            raise ValueError("hf_bpe tokenizer JSON is missing hf_tokenizer payload")
+        tokenizers = _require_tokenizers()
+        backend = tokenizers["Tokenizer"].from_str(json.dumps(data["hf_tokenizer"]))
+        return cls(backend, pretokenizer=str(data.get("pretokenizer", DEFAULT_BPE_PRETOKENIZER)))
+
+
+Tokenizer = CharTokenizer | ByteTokenizer | BPETokenizer | HuggingFaceBPETokenizer
+TOKENIZER_TYPES = ("char", "byte", "bpe", "hf_bpe")
 
 
 def token_byte_lengths(tokenizer: Tokenizer) -> list[int]:
     """Return byte length for each token id, with special tokens counted as zero."""
+    if isinstance(tokenizer, HuggingFaceBPETokenizer):
+        return tokenizer.token_byte_lengths()
     lengths = [0] * len(tokenizer)
     for token_id, token in tokenizer.id_to_token.items():
         token_id = int(token_id)
@@ -474,7 +640,7 @@ def token_byte_lengths(tokenizer: Tokenizer) -> list[int]:
 
 def train_tokenizer(
     tokenizer_type: str,
-    texts: list[str],
+    texts: Iterable[str],
     vocab_size: int | None = None,
     min_freq: int = 1,
     bpe_pretokenizer: str = DEFAULT_BPE_PRETOKENIZER,
@@ -486,6 +652,13 @@ def train_tokenizer(
         return ByteTokenizer.train(texts, vocab_size=vocab_size, min_freq=min_freq)
     if tokenizer_type == "bpe":
         return BPETokenizer.train(
+            texts,
+            vocab_size=vocab_size,
+            min_freq=min_freq,
+            pretokenizer=bpe_pretokenizer,
+        )
+    if tokenizer_type == "hf_bpe":
+        return HuggingFaceBPETokenizer.train(
             texts,
             vocab_size=vocab_size,
             min_freq=min_freq,
@@ -504,11 +677,35 @@ def load_tokenizer(path: str | Path) -> Tokenizer:
         return ByteTokenizer.from_data(data)
     if tokenizer_type == "bpe":
         return BPETokenizer.from_data(data)
+    if tokenizer_type == "hf_bpe":
+        return HuggingFaceBPETokenizer.from_data(data)
     raise ValueError(f"Unsupported tokenizer type: {tokenizer_type}")
 
 
 def _read_tokenizer_json(path: str | Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _require_tokenizers():
+    try:
+        from tokenizers import Regex
+        from tokenizers import Tokenizer as HFTokenizer
+        from tokenizers import decoders, pre_tokenizers
+        from tokenizers.models import BPE
+        from tokenizers.trainers import BpeTrainer
+    except ImportError as exc:
+        raise RuntimeError(
+            "hf_bpe requires the 'tokenizers' package. Install Picochat with "
+            "`pip install -e '.[hf]'` or install `tokenizers>=0.20`."
+        ) from exc
+    return {
+        "Tokenizer": HFTokenizer,
+        "Regex": Regex,
+        "BPE": BPE,
+        "BpeTrainer": BpeTrainer,
+        "pre_tokenizers": pre_tokenizers,
+        "decoders": decoders,
+    }
 
 
 def _pair_counts(sequences: list[list[str]]) -> Counter[tuple[str, str]]:

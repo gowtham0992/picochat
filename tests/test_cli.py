@@ -147,6 +147,36 @@ def test_cli_tokenizer_train_bpe(tmp_path, capsys):
     assert data["merges"]
 
 
+def test_cli_tokenizer_train_hf_bpe(tmp_path, capsys):
+    import json
+    import pytest
+
+    pytest.importorskip("tokenizers")
+    data_path = tmp_path / "data.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    data_path.write_text("picochat trains fast tokenizers\n" * 20, encoding="utf-8")
+
+    exit_code = main([
+        "tok",
+        "train",
+        "--input",
+        str(data_path),
+        "--out",
+        str(tokenizer_path),
+        "--type",
+        "hf_bpe",
+        "--vocab-size",
+        "300",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    data = json.loads(tokenizer_path.read_text(encoding="utf-8"))
+    assert "type: hf_bpe" in output
+    assert data["type"] == "hf_bpe"
+    assert data["backend"] == "huggingface_tokenizers"
+
+
 def test_cli_data_inspect(tmp_path, capsys):
     data_path = tmp_path / "data.txt"
     data_path.write_text("hello\npicochat\n", encoding="utf-8")

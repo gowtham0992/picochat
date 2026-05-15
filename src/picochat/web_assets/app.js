@@ -3477,10 +3477,11 @@ function launchReadiness(config = launchConfig()) {
   }
   if (config.eval_max_new_tokens < 1) blockers.push("Eval tokens must be at least 1.");
   if (config.target_param_data_ratio < 1) blockers.push("Tokens / param target must be at least 1.");
-  if (config.tokenizer_type === "bpe" && !config.tokenizer_vocab_size) {
+  const usesBpe = ["bpe", "hf_bpe"].includes(config.tokenizer_type);
+  if (usesBpe && !config.tokenizer_vocab_size) {
     cautions.push("BPE vocab is empty, so the backend default will decide tokenizer size.");
   }
-  if (config.tokenizer_type !== "bpe" && config.tokenizer_vocab_size) {
+  if (!usesBpe && config.tokenizer_vocab_size) {
     cautions.push("Vocab size only changes BPE; char and byte tokenizers ignore it.");
   }
   const starterWarning = starterSizeWarning(currentChatRowCount(), currentEvalRowCount());
@@ -3500,7 +3501,7 @@ function launchReadiness(config = launchConfig()) {
   notes.push(`${config.n_layer}L x ${config.n_embd} embd / ${config.n_head} heads / ${config.n_kv_head} kv`);
   notes.push(`${config.norm_type} / ${config.position_encoding} / ${config.activation}`);
   notes.push(`${String(config.tokenizer_type).toUpperCase()} tokenizer${config.tokenizer_vocab_size ? ` vocab ${config.tokenizer_vocab_size}` : ""}`);
-  if (config.tokenizer_type === "bpe") notes.push(`BPE split ${config.bpe_pretokenizer}`);
+  if (usesBpe) notes.push(`BPE split ${config.bpe_pretokenizer}`);
   notes.push(`base ${config.base_steps} / sft ${config.sft_steps}`);
   if (usingBenchmarkPack) notes.push("clean benchmark pack active");
   notes.push(`optimizer ${config.base_optimizer}/${config.sft_optimizer}`);

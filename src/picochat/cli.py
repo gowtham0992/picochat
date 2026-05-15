@@ -399,7 +399,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         choices=TOKENIZER_TYPES,
         default="char",
-        help="Tokenizer type to train. Use char for the baseline, byte for UTF-8 bytes, or bpe for learned merges.",
+        help=(
+            "Tokenizer type to train. Use char for the baseline, byte for UTF-8 bytes, "
+            "bpe for inspectable Python BPE, or hf_bpe for compiled long-run BPE."
+        ),
     )
     tok_train.add_argument(
         "--vocab-size",
@@ -920,7 +923,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--tokenizer-type",
         choices=TOKENIZER_TYPES,
         default=None,
-        help="Tokenizer used for this run. Compare char, byte, and bpe on the same dataset pack.",
+        help=(
+            "Tokenizer used for this run. Compare char, byte, inspectable bpe, "
+            "and compiled hf_bpe on the same dataset pack."
+        ),
     )
     run_tiny_parser.add_argument(
         "--tokenizer-vocab-size",

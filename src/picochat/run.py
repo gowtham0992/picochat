@@ -174,10 +174,14 @@ def run_tiny(config: TinyRunConfig) -> dict:
         )
 
     print(f"[3/7] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
-    text = corpus_path.read_text(encoding="utf-8")
+    texts = (
+        _iter_text_chunks(corpus_path)
+        if config.tokenizer_type == "hf_bpe"
+        else [corpus_path.read_text(encoding="utf-8")]
+    )
     tokenizer = train_tokenizer(
         config.tokenizer_type,
-        [text],
+        texts,
         vocab_size=config.tokenizer_vocab_size,
         min_freq=config.tokenizer_min_freq,
         bpe_pretokenizer=config.bpe_pretokenizer,
@@ -479,6 +483,16 @@ def run_tiny(config: TinyRunConfig) -> dict:
     )
     print(f"summary: {out_dir / 'summary.md'}")
     return summary
+
+
+def _iter_text_chunks(path: Path, chunk_chars: int = 1_000_000):
+    """Stream large tokenizer corpora so compiled tokenizers can train without a giant Python string."""
+    with path.open("r", encoding="utf-8") as handle:
+        while True:
+            chunk = handle.read(chunk_chars)
+            if not chunk:
+                break
+            yield chunk
 
 
 def run_tiny_multiseed(config: TinyRunConfig, n_seeds: int) -> dict:

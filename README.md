@@ -161,6 +161,9 @@ Longer runs add guardrails instead of blind optimism:
   leakage before you trust the score; blocking leakage stops the run unless
   you explicitly pass `--allow-leaky-eval` for a diagnostic-only experiment
 - base training reports validation BPB, a tokenizer-fair bits-per-byte metric
+- long runs can use `hf_bpe`, a compiled Hugging Face BPE backend for tokenizer
+  training; the pure-Python `bpe` path remains available for inspection and
+  small educational runs
 - base training can inject train-only `pico-canary-*` phrases when document
   split is available
 - base and SFT reports estimate how many tokens/examples were actually seen;

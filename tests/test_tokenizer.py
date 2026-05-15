@@ -4,6 +4,7 @@ from picochat.tokenizer import (
     BPETokenizer,
     ByteTokenizer,
     CharTokenizer,
+    HuggingFaceBPETokenizer,
     SPECIAL_TOKENS,
     load_tokenizer,
     token_byte_lengths,
@@ -140,6 +141,39 @@ def test_train_tokenizer_factory_supports_bpe():
     assert tokenizer.decode(tokenizer.encode("tiny stories")) == "tiny stories"
 
 
+def test_hf_bpe_tokenizer_roundtrips_and_saves(tmp_path):
+    pytest.importorskip("tokenizers")
+    path = tmp_path / "hf-bpe-tokenizer.json"
+    tokenizer = HuggingFaceBPETokenizer.train(
+        ["picochat trains fast tokenizers\nhello café\n" * 20],
+        vocab_size=300,
+        min_freq=1,
+    )
+
+    ids = tokenizer.encode("hello café", add_bos=True, add_eos=True)
+    tokenizer.save(path)
+    loaded = load_tokenizer(path)
+
+    assert isinstance(loaded, HuggingFaceBPETokenizer)
+    assert tokenizer.stats().tokenizer_type == "hf_bpe"
+    assert loaded.decode(ids) == "hello café"
+    assert loaded.pretokenizer == "regex"
+    assert "hf_tokenizer" in path.read_text(encoding="utf-8")
+
+
+def test_train_tokenizer_factory_supports_hf_bpe():
+    pytest.importorskip("tokenizers")
+    tokenizer = train_tokenizer(
+        "hf_bpe",
+        ["tiny tiny stories\n" * 20],
+        vocab_size=300,
+        min_freq=1,
+    )
+
+    assert isinstance(tokenizer, HuggingFaceBPETokenizer)
+    assert tokenizer.decode(tokenizer.encode("tiny stories")) == "tiny stories"
+
+
 def test_byte_tokenizer_rejects_custom_vocab_size():
     with pytest.raises(ValueError, match="fixed vocab"):
         ByteTokenizer.train(["hello"], vocab_size=100)
@@ -160,3 +194,12 @@ def test_token_byte_lengths_count_text_bytes_not_specials():
     assert byte_lengths[byte_tokenizer.token_to_id["<byte:c3>"]] == 1
     assert bpe_lengths[bpe_tokenizer.bos_id] == 0
     assert any(length > 1 for length in bpe_lengths)
+
+
+def test_hf_bpe_token_byte_lengths_count_text_bytes_not_specials():
+    pytest.importorskip("tokenizers")
+    tokenizer = HuggingFaceBPETokenizer.train(["hello hello café\n" * 20], vocab_size=300)
+    lengths = token_byte_lengths(tokenizer)
+
+    assert lengths[tokenizer.bos_id] == 0
+    assert any(length > 1 for length in lengths)
