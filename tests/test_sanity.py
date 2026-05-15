@@ -11,6 +11,7 @@ def test_run_preh100_sanity_writes_reports(tmp_path):
 
     assert report["status"] == "passed"
     assert {check["name"] for check in report["checks"]} == {
+        "attention_backend",
         "precision_backward",
         "kv_cache_equivalence",
         "resume_fingerprint_guard",

@@ -16,7 +16,13 @@ from picochat.device import resolve_device
 from picochat.generate import GenerateConfig, generate_text_with_trace
 from picochat.hf_export import HFExportConfig, export_hf_checkpoint
 from picochat.model import GPTConfig, TinyGPT
-from picochat.precision import autocast_context, make_grad_scaler, maybe_compile_model, resolve_precision
+from picochat.precision import (
+    autocast_context,
+    configure_float32_matmul_precision,
+    make_grad_scaler,
+    maybe_compile_model,
+    resolve_precision,
+)
 from picochat.tokenizer import CharTokenizer
 from picochat.train import TrainConfig, train_base
 
@@ -26,6 +32,8 @@ class PreH100SanityConfig:
     out_dir: str
     device: str = "cpu"
     precision: str = "auto"
+    matmul_precision: str = "default"
+    attn_backend: str = "auto"
     include_compile: bool = False
 
 
@@ -36,6 +44,7 @@ def run_preh100_sanity(config: PreH100SanityConfig) -> dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
     checks: list[dict[str, Any]] = []
     for name, check in [
+        ("attention_backend", _check_attention_backend),
         ("precision_backward", _check_precision_backward),
         ("kv_cache_equivalence", _check_kv_cache_equivalence),
         ("resume_fingerprint_guard", _check_resume_fingerprint_guard),
@@ -110,8 +119,13 @@ def _run_check(
 def _check_precision_backward(config: PreH100SanityConfig, work_dir: Path) -> dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
     device = resolve_device(config.device)
+    matmul_runtime = configure_float32_matmul_precision(config.matmul_precision)
     runtime = resolve_precision(config.precision, device)
-    model = TinyGPT(_tiny_model_config(vocab_size=32, gradient_checkpointing=True)).to(device)
+    model = TinyGPT(_tiny_model_config(
+        vocab_size=32,
+        gradient_checkpointing=True,
+        attn_backend=config.attn_backend,
+    )).to(device)
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     scaler = make_grad_scaler(runtime)
@@ -126,8 +140,28 @@ def _check_precision_backward(config: PreH100SanityConfig, work_dir: Path) -> di
     scaler.step(optimizer)
     scaler.update()
     return {
-        "detail": f"loss={float(loss.detach().cpu()):.4f}, precision={runtime.dtype_name}",
+        "detail": (
+            f"loss={float(loss.detach().cpu()):.4f}, precision={runtime.dtype_name}, "
+            f"matmul={matmul_runtime['after'] or matmul_runtime['requested']}"
+        ),
         "precision_runtime": runtime.to_dict(),
+        "matmul_precision_runtime": matmul_runtime,
+    }
+
+
+def _check_attention_backend(config: PreH100SanityConfig, work_dir: Path) -> dict[str, Any]:
+    work_dir.mkdir(parents=True, exist_ok=True)
+    device = resolve_device(config.device)
+    model = TinyGPT(_tiny_model_config(vocab_size=32, attn_backend=config.attn_backend)).to(device)
+    model.eval()
+    x = torch.randint(0, model.config.vocab_size, (1, 8), device=device)
+    with torch.no_grad():
+        logits, _ = model(x)
+    if logits.shape != (1, 8, model.config.vocab_size):
+        raise AssertionError("attention backend returned bad logits shape")
+    return {
+        "detail": f"attn_backend={config.attn_backend}, device={device.type}",
+        "attn_backend": config.attn_backend,
     }
 
 
@@ -138,10 +172,11 @@ def _check_kv_cache_equivalence(config: PreH100SanityConfig, work_dir: Path) -> 
     model_config = GPTConfig(
         vocab_size=len(tokenizer),
         context_size=24,
-        n_embd=16,
+        n_embd=32,
         n_head=4,
         n_layer=2,
         position_encoding="rope",
+        attn_backend=config.attn_backend,
     )
     model = TinyGPT(model_config)
     model.eval()
@@ -202,7 +237,7 @@ def _check_resume_fingerprint_guard(config: PreH100SanityConfig, work_dir: Path)
         batch_size=2,
         max_steps=1,
         learning_rate=1e-3,
-        n_embd=16,
+        n_embd=32,
         n_head=4,
         n_layer=1,
         log_every=1,
@@ -212,6 +247,8 @@ def _check_resume_fingerprint_guard(config: PreH100SanityConfig, work_dir: Path)
         seed=123,
         device=config.device,
         precision=config.precision,
+        matmul_precision=config.matmul_precision,
+        attn_backend=config.attn_backend,
     )
     report = train_base(train_config)
     checkpoint = report["checkpoint"]
@@ -295,7 +332,7 @@ def _check_torch_compile(config: PreH100SanityConfig, work_dir: Path) -> dict[st
         }
     work_dir.mkdir(parents=True, exist_ok=True)
     device = resolve_device(config.device)
-    model = TinyGPT(_tiny_model_config(vocab_size=32)).to(device)
+    model = TinyGPT(_tiny_model_config(vocab_size=32, attn_backend=config.attn_backend)).to(device)
     compiled, metadata = maybe_compile_model(model, enabled=True)
     x = torch.randint(0, model.config.vocab_size, (1, 8), device=device)
     with torch.no_grad():
@@ -331,10 +368,11 @@ def _write_checkpoint_fixture(work_dir: Path) -> tuple[Path, Path]:
     model = TinyGPT(GPTConfig(
         vocab_size=len(tokenizer),
         context_size=24,
-        n_embd=16,
+        n_embd=32,
         n_head=4,
         n_layer=2,
         position_encoding="rope",
+        attn_backend="auto",
     ))
     save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
     return tokenizer_path, checkpoint_path
@@ -344,11 +382,12 @@ def _tiny_model_config(
     vocab_size: int,
     *,
     gradient_checkpointing: bool = False,
+    attn_backend: str = "auto",
 ) -> GPTConfig:
     return GPTConfig(
         vocab_size=vocab_size,
         context_size=16,
-        n_embd=16,
+        n_embd=32,
         n_head=4,
         n_layer=2,
         norm_type="rmsnorm",
@@ -356,4 +395,5 @@ def _tiny_model_config(
         activation="relu2",
         logit_softcap=30.0,
         gradient_checkpointing=gradient_checkpointing,
+        attn_backend=attn_backend,
     )

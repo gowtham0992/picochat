@@ -12,6 +12,8 @@ def test_cli_sanity_preh100(tmp_path, capsys, monkeypatch):
     def fake_run(config):
         assert config.out_dir == str(tmp_path / "sanity")
         assert config.precision == "float32"
+        assert config.matmul_precision == "high"
+        assert config.attn_backend == "math"
         assert config.include_compile is True
         return {
             "status": "passed",
@@ -31,6 +33,10 @@ def test_cli_sanity_preh100(tmp_path, capsys, monkeypatch):
         str(tmp_path / "sanity"),
         "--precision",
         "float32",
+        "--matmul-precision",
+        "high",
+        "--attn-backend",
+        "math",
         "--include-compile",
     ])
 

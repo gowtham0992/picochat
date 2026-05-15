@@ -876,6 +876,18 @@ def build_parser() -> argparse.ArgumentParser:
     sanity_preh100_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
     sanity_preh100_parser.add_argument("--precision", choices=PRECISION_MODES, default="auto")
     sanity_preh100_parser.add_argument(
+        "--matmul-precision",
+        choices=MATMUL_PRECISION_MODES,
+        default="default",
+        help="torch.set_float32_matmul_precision setting to verify before a GPU run.",
+    )
+    sanity_preh100_parser.add_argument(
+        "--attn-backend",
+        choices=SDPA_BACKENDS,
+        default="auto",
+        help="Attention backend to force during sanity checks. Use flash on H100 smoke tests.",
+    )
+    sanity_preh100_parser.add_argument(
         "--include-compile",
         action="store_true",
         help="Also run a torch.compile smoke test.",
@@ -2085,6 +2097,8 @@ def run_sanity_preh100(args: argparse.Namespace) -> int:
         out_dir=args.out_dir,
         device=args.device,
         precision=args.precision,
+        matmul_precision=args.matmul_precision,
+        attn_backend=args.attn_backend,
         include_compile=args.include_compile,
     ))
     print(f"sanity: {report['status']}")
