@@ -11,8 +11,8 @@ import time
 import torch
 import torch.nn.functional as F
 
-from picochat.batching import load_token_split, make_dataloader
-from picochat.checkpoint import save_checkpoint
+from picochat.batching import load_token_split, make_dataloader, make_resumable_batcher
+from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
 from picochat.memorization import memorization_diagnostics
 from picochat.model import GPTConfig, TinyGPT
@@ -32,6 +32,7 @@ from picochat.precision import (
     resolve_precision,
 )
 from picochat.report import loss_diagnostics, optimization_stability, training_report_markdown
+from picochat.resume import make_training_state, restore_training_state
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 
 
@@ -75,6 +76,7 @@ class TrainConfig:
     precision: str = "float32"
     torch_compile: bool = False
     torch_compile_mode: str = "default"
+    resume_from: str | None = None
 
 
 @torch.no_grad()
@@ -163,10 +165,14 @@ def train_base(config: TrainConfig) -> dict:
         corpus_manifest_path=config.corpus_manifest_path,
         canary_values=canary_values,
     )
-    train_loader = make_dataloader(split.train_dataset, batch_size=config.batch_size, shuffle=True, seed=config.seed)
+    train_batcher = make_resumable_batcher(
+        split.train_dataset,
+        batch_size=config.batch_size,
+        shuffle=True,
+        seed=config.seed,
+    )
     train_eval_loader = make_dataloader(split.train_dataset, batch_size=config.batch_size, shuffle=False, seed=config.seed)
     val_loader = make_dataloader(split.val_dataset, batch_size=config.batch_size, shuffle=False, seed=config.seed)
-    data_iter = iter(train_loader)
 
     device = resolve_device(config.device)
     token_bytes = torch.tensor(token_byte_lengths(tokenizer), dtype=torch.long, device=device)
@@ -182,7 +188,16 @@ def train_base(config: TrainConfig) -> dict:
         activation=config.activation,
         logit_softcap=config.logit_softcap,
     )
-    model = TinyGPT(model_config).to(device)
+    resume_state = None
+    resume_metadata = None
+    if config.resume_from:
+        model, resume_metadata = load_checkpoint(config.resume_from, map_location=device)
+        if model.config.to_dict() != model_config.to_dict():
+            raise ValueError("resume checkpoint model config does not match this train command")
+        resume_state = load_training_state(config.resume_from, map_location=device)
+    else:
+        model = TinyGPT(model_config)
+    model = model.to(device)
     precision_runtime = resolve_precision(config.precision, device)
     train_model, compile_metadata = maybe_compile_model(
         model,
@@ -202,6 +217,7 @@ def train_base(config: TrainConfig) -> dict:
 
     losses: list[dict[str, float | int]] = []
     start = time.time()
+    elapsed_offset = 0.0
     last_loss = float("nan")
     final_step = 0
     stop_reason = "max_steps"
@@ -209,10 +225,28 @@ def train_base(config: TrainConfig) -> dict:
     best_checkpoint: dict[str, float | int | str] | None = None
     best_checkpoint_dir = out_dir / "best_checkpoint"
     evals_without_improvement = 0
+    start_step = 1
+    if resume_state is not None:
+        restore_training_state(
+            resume_state,
+            optimizer=optimizer,
+            scaler=scaler,
+            ema=ema,
+            batcher=train_batcher,
+        )
+        final_step = int(resume_state.get("step", resume_metadata.get("step", 0)))
+        start_step = final_step + 1
+        losses = list(resume_state.get("losses", []))
+        if losses:
+            last_loss = float(losses[-1].get("train_loss", last_loss))
+        best_metric = float(resume_state.get("best_metric", best_metric))
+        best_checkpoint = resume_state.get("best_checkpoint")
+        evals_without_improvement = int(resume_state.get("evals_without_improvement", 0))
+        elapsed_offset = float(resume_state.get("elapsed_sec", 0.0))
 
     model.train()
     train_model.train()
-    for step in range(1, config.max_steps + 1):
+    for step in range(start_step, config.max_steps + 1):
         learning_rate = learning_rate_for_step(
             base_learning_rate=config.learning_rate,
             step=step,
@@ -225,12 +259,7 @@ def train_base(config: TrainConfig) -> dict:
         optimizer.zero_grad(set_to_none=True)
         micro_losses: list[float] = []
         for _ in range(config.grad_accum_steps):
-            try:
-                x, y = next(data_iter)
-            except StopIteration:
-                data_iter = iter(train_loader)
-                x, y = next(data_iter)
-
+            x, y = next(train_batcher)
             x = x.to(device)
             y = y.to(device)
             with autocast_context(precision_runtime):
@@ -272,7 +301,7 @@ def train_base(config: TrainConfig) -> dict:
                 token_bytes=token_bytes,
                 precision_runtime=precision_runtime,
             )
-            elapsed = time.time() - start
+            elapsed = elapsed_offset + time.time() - start
             val_loss = float(val_metrics["loss"])
             val_bpb = val_metrics["bpb"]
             train_eval_loss = float(train_metrics["loss"])
@@ -356,6 +385,32 @@ def train_base(config: TrainConfig) -> dict:
                 f"train {last_loss:.4f} | val {val_loss:.4f} | "
                 f"val_bpb {_format_optional(val_bpb)} | {elapsed:.1f}s"
             )
+            save_checkpoint(
+                out_dir / "resume_checkpoint",
+                model,
+                step=final_step,
+                train_loss=last_loss,
+                extra_metadata={
+                    "checkpoint_kind": "resume",
+                    "weights": "raw",
+                    "best_checkpoint": best_checkpoint,
+                    "resume_source": config.resume_from,
+                },
+                training_state=make_training_state(
+                    step=final_step,
+                    losses=losses,
+                    best_metric=best_metric,
+                    best_checkpoint=best_checkpoint,
+                    evals_without_improvement=evals_without_improvement,
+                    stop_reason=stop_reason,
+                    elapsed_sec=elapsed,
+                    optimizer=optimizer,
+                    scaler=scaler,
+                    ema=ema,
+                    batcher=train_batcher,
+                    device=device,
+                ),
+            )
             if (
                 config.early_stop_patience > 0
                 and evals_without_improvement >= config.early_stop_patience
@@ -366,13 +421,14 @@ def train_base(config: TrainConfig) -> dict:
                     f"{config.early_stop_patience} evals"
                 )
                 break
-        if config.max_minutes is not None and time.time() - start >= config.max_minutes * 60:
+        if config.max_minutes is not None and elapsed_offset + time.time() - start >= config.max_minutes * 60:
             stop_reason = "max_minutes"
             print(f"time stop: reached {config.max_minutes:.2f} minute budget")
             break
 
     checkpoint_dir = out_dir / "checkpoint"
     ema_checkpoint_dir = out_dir / "ema_checkpoint"
+    elapsed_final = elapsed_offset + time.time() - start
     save_checkpoint(
         checkpoint_dir,
         model,
@@ -385,6 +441,20 @@ def train_base(config: TrainConfig) -> dict:
             "best_checkpoint": best_checkpoint,
             "ema_checkpoint": str(ema_checkpoint_dir) if ema is not None else None,
         },
+        training_state=make_training_state(
+            step=final_step,
+            losses=losses,
+            best_metric=best_metric,
+            best_checkpoint=best_checkpoint,
+            evals_without_improvement=evals_without_improvement,
+            stop_reason=stop_reason,
+            elapsed_sec=elapsed_final,
+            optimizer=optimizer,
+            scaler=scaler,
+            ema=ema,
+            batcher=train_batcher,
+            device=device,
+        ),
     )
     if ema is not None:
         with using_ema_weights(model, ema):
@@ -465,6 +535,7 @@ def train_base(config: TrainConfig) -> dict:
         "sample": sample,
         "canary_probe": canary_probe,
         "checkpoint": str(checkpoint_dir),
+        "resume_checkpoint": str(out_dir / "resume_checkpoint"),
         "ema_checkpoint": str(ema_checkpoint_dir) if ema is not None else None,
         "best_checkpoint": best_checkpoint,
         "stop_reason": stop_reason,

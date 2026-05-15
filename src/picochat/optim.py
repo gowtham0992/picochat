@@ -129,6 +129,19 @@ class OptimizerBundle:
         for optimizer in self.optimizers:
             optimizer.step()
 
+    def state_dict(self) -> dict:
+        return {
+            "metadata": self.metadata,
+            "optimizers": [optimizer.state_dict() for optimizer in self.optimizers],
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        optimizer_states = state.get("optimizers", [])
+        if len(optimizer_states) != len(self.optimizers):
+            raise ValueError("optimizer state does not match this optimizer bundle")
+        for optimizer, optimizer_state in zip(self.optimizers, optimizer_states):
+            optimizer.load_state_dict(optimizer_state)
+
 
 def create_optimizer(
     model: torch.nn.Module,
@@ -230,6 +243,25 @@ class ExponentialMovingAverage:
         return {
             name: self.shadow[name].to(device=tensor.device, dtype=tensor.dtype)
             for name, tensor in current.items()
+        }
+
+    def state_dict(self) -> dict:
+        return {
+            "decay": self.decay,
+            "num_updates": self.num_updates,
+            "shadow": self.shadow,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        if float(state.get("decay", self.decay)) != self.decay:
+            raise ValueError("EMA decay in checkpoint does not match this run")
+        self.num_updates = int(state.get("num_updates", 0))
+        shadow = state.get("shadow")
+        if not isinstance(shadow, dict):
+            raise ValueError("EMA state is missing shadow weights")
+        self.shadow = {
+            name: tensor.detach().clone()
+            for name, tensor in shadow.items()
         }
 
 

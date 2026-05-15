@@ -10,8 +10,9 @@ import time
 
 import torch
 
+from picochat.batching import make_resumable_batcher
 from picochat.chat import render_chat_prompt
-from picochat.checkpoint import load_checkpoint, save_checkpoint
+from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
 from picochat.optim import (
     ExponentialMovingAverage,
@@ -29,6 +30,7 @@ from picochat.precision import (
     resolve_precision,
 )
 from picochat.report import loss_diagnostics, optimization_stability, sft_report_markdown
+from picochat.resume import make_training_state, restore_training_state
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 from picochat.train import evaluate_metrics
 
@@ -116,6 +118,7 @@ class SFTConfig:
     precision: str = "float32"
     torch_compile: bool = False
     torch_compile_mode: str = "default"
+    resume_from: str | None = None
 
 
 class ChatSFTDataset(torch.utils.data.Dataset):
@@ -654,9 +657,15 @@ def train_sft(config: SFTConfig) -> dict:
 
     tokenizer = load_tokenizer(config.tokenizer_path)
     device = resolve_device(config.device)
-    model, metadata = load_checkpoint(config.checkpoint_path, map_location=device)
+    checkpoint_source = config.resume_from or config.checkpoint_path
+    model, metadata = load_checkpoint(checkpoint_source, map_location=device)
     if model.config.vocab_size != len(tokenizer):
         raise ValueError("tokenizer vocabulary size does not match checkpoint")
+    resume_state = (
+        load_training_state(config.resume_from, map_location=device)
+        if config.resume_from
+        else None
+    )
 
     source_dataset = ChatSFTDataset(
         load_chat_examples(config.input_path),
@@ -688,16 +697,20 @@ def train_sft(config: SFTConfig) -> dict:
         dataset = source_dataset
         train_dataset = split.train
         val_dataset = split.val
-    train_loader = make_chat_dataloader(
+    train_weights = None
+    if config.sampling == "category_balanced":
+        train_weights = category_balanced_weights(train_dataset)
+    elif config.sampling == "category_sqrt":
+        train_weights = category_sqrt_weights(train_dataset)
+    train_batcher = make_resumable_batcher(
         train_dataset,
         config.batch_size,
         shuffle=True,
         seed=config.seed,
-        sampling=config.sampling,
+        weights=train_weights,
     )
     train_eval_loader = make_chat_dataloader(train_dataset, config.batch_size, shuffle=False, seed=config.seed)
     val_loader = make_chat_dataloader(val_dataset, config.batch_size, shuffle=False, seed=config.seed)
-    data_iter = iter(train_loader)
 
     model = model.to(device)
     precision_runtime = resolve_precision(config.precision, device)
@@ -720,6 +733,7 @@ def train_sft(config: SFTConfig) -> dict:
 
     losses: list[dict[str, float | int]] = []
     start = time.time()
+    elapsed_offset = 0.0
     last_loss = float("nan")
     best_loss = float("inf")
     best_checkpoint: dict[str, float | int | str] | None = None
@@ -727,10 +741,28 @@ def train_sft(config: SFTConfig) -> dict:
     evals_without_improvement = 0
     final_step = 0
     stop_reason = "max_steps"
+    start_step = 1
+    if resume_state is not None:
+        restore_training_state(
+            resume_state,
+            optimizer=optimizer,
+            scaler=scaler,
+            ema=ema,
+            batcher=train_batcher,
+        )
+        final_step = int(resume_state.get("step", metadata.get("step", 0)))
+        start_step = final_step + 1
+        losses = list(resume_state.get("losses", []))
+        if losses:
+            last_loss = float(losses[-1].get("train_loss", last_loss))
+        best_loss = float(resume_state.get("best_metric", best_loss))
+        best_checkpoint = resume_state.get("best_checkpoint")
+        evals_without_improvement = int(resume_state.get("evals_without_improvement", 0))
+        elapsed_offset = float(resume_state.get("elapsed_sec", 0.0))
 
     model.train()
     train_model.train()
-    for step in range(1, config.max_steps + 1):
+    for step in range(start_step, config.max_steps + 1):
         learning_rate = learning_rate_for_step(
             base_learning_rate=config.learning_rate,
             step=step,
@@ -743,12 +775,7 @@ def train_sft(config: SFTConfig) -> dict:
         optimizer.zero_grad(set_to_none=True)
         micro_losses: list[float] = []
         for _ in range(config.grad_accum_steps):
-            try:
-                x, y = next(data_iter)
-            except StopIteration:
-                data_iter = iter(train_loader)
-                x, y = next(data_iter)
-
+            x, y = next(train_batcher)
             x = x.to(device)
             y = y.to(device)
             with autocast_context(precision_runtime):
@@ -791,7 +818,7 @@ def train_sft(config: SFTConfig) -> dict:
                 precision_runtime=precision_runtime,
             )
             val_loss = float(val_metrics["loss"])
-            elapsed = time.time() - start
+            elapsed = elapsed_offset + time.time() - start
             ema_val_metrics = None
             if ema is not None:
                 with using_ema_weights(model, ema):
@@ -867,6 +894,32 @@ def train_sft(config: SFTConfig) -> dict:
                 f"train {last_loss:.4f} | val {val_loss:.4f} | "
                 f"val_bpb {_format_optional(val_metrics['bpb'])} | {elapsed:.1f}s"
             )
+            save_checkpoint(
+                out_dir / "resume_checkpoint",
+                model,
+                step=final_step,
+                train_loss=last_loss,
+                extra_metadata={
+                    "checkpoint_kind": "resume",
+                    "weights": "raw",
+                    "best_checkpoint": best_checkpoint,
+                    "resume_source": config.resume_from,
+                },
+                training_state=make_training_state(
+                    step=final_step,
+                    losses=losses,
+                    best_metric=best_loss,
+                    best_checkpoint=best_checkpoint,
+                    evals_without_improvement=evals_without_improvement,
+                    stop_reason=stop_reason,
+                    elapsed_sec=elapsed,
+                    optimizer=optimizer,
+                    scaler=scaler,
+                    ema=ema,
+                    batcher=train_batcher,
+                    device=device,
+                ),
+            )
             if (
                 config.early_stop_patience > 0
                 and evals_without_improvement >= config.early_stop_patience
@@ -877,13 +930,14 @@ def train_sft(config: SFTConfig) -> dict:
                     f"{config.early_stop_patience} evals"
                 )
                 break
-        if config.max_minutes is not None and time.time() - start >= config.max_minutes * 60:
+        if config.max_minutes is not None and elapsed_offset + time.time() - start >= config.max_minutes * 60:
             stop_reason = "max_minutes"
             print(f"sft time stop: reached {config.max_minutes:.2f} minute budget")
             break
 
     checkpoint_dir = out_dir / "checkpoint"
     ema_checkpoint_dir = out_dir / "ema_checkpoint"
+    elapsed_final = elapsed_offset + time.time() - start
     save_checkpoint(
         checkpoint_dir,
         model,
@@ -896,6 +950,20 @@ def train_sft(config: SFTConfig) -> dict:
             "best_checkpoint": best_checkpoint,
             "ema_checkpoint": str(ema_checkpoint_dir) if ema is not None else None,
         },
+        training_state=make_training_state(
+            step=final_step,
+            losses=losses,
+            best_metric=best_loss,
+            best_checkpoint=best_checkpoint,
+            evals_without_improvement=evals_without_improvement,
+            stop_reason=stop_reason,
+            elapsed_sec=elapsed_final,
+            optimizer=optimizer,
+            scaler=scaler,
+            ema=ema,
+            batcher=train_batcher,
+            device=device,
+        ),
     )
     if ema is not None:
         with using_ema_weights(model, ema):
@@ -1017,6 +1085,7 @@ def train_sft(config: SFTConfig) -> dict:
         "optimization_stability": optimization_stability(losses, config.grad_clip),
         "sample": sample,
         "checkpoint": str(checkpoint_dir),
+        "resume_checkpoint": str(out_dir / "resume_checkpoint"),
         "ema_checkpoint": str(ema_checkpoint_dir) if ema is not None else None,
         "best_checkpoint": best_checkpoint,
         "stop_reason": stop_reason,

@@ -402,6 +402,11 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--corpus", required=True, help="Path to corpus text.")
     train_base_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
     train_base_parser.add_argument("--out-dir", required=True, help="Output run directory.")
+    train_base_parser.add_argument(
+        "--resume-from",
+        default=None,
+        help="Resumable checkpoint directory containing training_state.pt.",
+    )
     train_base_parser.add_argument("--context-size", type=int, default=64)
     train_base_parser.add_argument("--batch-size", type=int, default=16)
     train_base_parser.add_argument("--max-steps", type=int, default=200)
@@ -476,6 +481,11 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
     train_sft_parser.add_argument("--checkpoint", required=True, help="Base checkpoint directory.")
     train_sft_parser.add_argument("--out-dir", required=True, help="Output run directory.")
+    train_sft_parser.add_argument(
+        "--resume-from",
+        default=None,
+        help="Resumable SFT checkpoint directory containing training_state.pt.",
+    )
     train_sft_parser.add_argument("--batch-size", type=int, default=8)
     train_sft_parser.add_argument("--max-steps", type=int, default=100)
     train_sft_parser.add_argument("--learning-rate", type=float, default=1e-4)
@@ -1384,6 +1394,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         precision=args.precision,
         torch_compile=args.torch_compile,
         torch_compile_mode=args.torch_compile_mode,
+        resume_from=args.resume_from,
     )
     report = train_base(config)
     print(f"saved checkpoint: {report['checkpoint']}")
@@ -1423,6 +1434,7 @@ def run_train_sft(args: argparse.Namespace) -> int:
         precision=args.precision,
         torch_compile=args.torch_compile,
         torch_compile_mode=args.torch_compile_mode,
+        resume_from=args.resume_from,
     )
     report = train_sft(config)
     print(f"saved sft checkpoint: {report['checkpoint']}")

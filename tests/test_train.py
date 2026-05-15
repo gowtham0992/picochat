@@ -112,6 +112,54 @@ def test_train_base_records_precision_runtime(tmp_path):
     assert report["config"]["torch_compile_metadata"]["enabled"] is False
 
 
+def test_train_base_can_resume_from_training_state(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    first_dir = tmp_path / "first"
+    resumed_dir = tmp_path / "resumed"
+    text = "resume checkpoint keeps optimizer state\n" * 30
+    corpus_path.write_text(text, encoding="utf-8")
+    CharTokenizer.train([text]).save(tokenizer_path)
+
+    first = train_base(TrainConfig(
+        corpus_path=str(corpus_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(first_dir),
+        context_size=8,
+        batch_size=4,
+        max_steps=1,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        ema_decay=0.5,
+    ))
+    resumed = train_base(TrainConfig(
+        corpus_path=str(corpus_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(resumed_dir),
+        context_size=8,
+        batch_size=4,
+        max_steps=3,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        ema_decay=0.5,
+        resume_from=first["resume_checkpoint"],
+    ))
+
+    assert (first_dir / "resume_checkpoint" / "training_state.pt").exists()
+    assert (resumed_dir / "checkpoint" / "training_state.pt").exists()
+    assert resumed["coverage"]["actual_steps"] == 3
+    assert [row["step"] for row in resumed["losses"]] == [1, 2, 3]
+    assert resumed["config"]["resume_from"] == first["resume_checkpoint"]
+
+
 def test_train_base_uses_document_split_when_manifest_is_available(tmp_path):
     import json
 

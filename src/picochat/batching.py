@@ -59,6 +59,105 @@ class TokenWindowDataset(torch.utils.data.Dataset):
         )
 
 
+class ResumableBatcher:
+    """Deterministic map-style batch iterator with explicit resume state."""
+
+    def __init__(
+        self,
+        dataset,
+        batch_size: int,
+        shuffle: bool = True,
+        seed: int = 42,
+        epoch: int = 0,
+        batch_index: int = 0,
+        weights: torch.Tensor | None = None,
+    ):
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+        if len(dataset) < 1:
+            raise ValueError("dataset must not be empty")
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.seed = seed
+        self.epoch = epoch
+        self.batch_index = batch_index
+        self.weights = weights.double() if weights is not None else None
+        self._indices_epoch: int | None = None
+        self._indices: list[int] = []
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.batch_index >= self.batches_per_epoch:
+            self.epoch += 1
+            self.batch_index = 0
+            self._indices_epoch = None
+        indices = self._epoch_indices()
+        start = self.batch_index * self.batch_size
+        end = min(start + self.batch_size, len(indices))
+        self.batch_index += 1
+        batch = [self.dataset[index] for index in indices[start:end]]
+        return _collate_tensor_pairs(batch)
+
+    @property
+    def batches_per_epoch(self) -> int:
+        return (len(self.dataset) + self.batch_size - 1) // self.batch_size
+
+    def state_dict(self) -> dict[str, int | bool]:
+        return {
+            "epoch": self.epoch,
+            "batch_index": self.batch_index,
+            "batch_size": self.batch_size,
+            "shuffle": self.shuffle,
+            "seed": self.seed,
+            "weighted": self.weights is not None,
+            "batches_per_epoch": self.batches_per_epoch,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        if int(state.get("batch_size", self.batch_size)) != self.batch_size:
+            raise ValueError("batcher state batch_size does not match this run")
+        if bool(state.get("shuffle", self.shuffle)) != self.shuffle:
+            raise ValueError("batcher state shuffle setting does not match this run")
+        if int(state.get("seed", self.seed)) != self.seed:
+            raise ValueError("batcher state seed does not match this run")
+        if bool(state.get("weighted", self.weights is not None)) != (self.weights is not None):
+            raise ValueError("batcher state weighting does not match this run")
+        self.epoch = int(state.get("epoch", 0))
+        self.batch_index = int(state.get("batch_index", 0))
+        if self.batch_index < 0 or self.batch_index > self.batches_per_epoch:
+            raise ValueError("batcher state batch_index is out of range")
+        self._indices_epoch = None
+
+    def _epoch_indices(self) -> list[int]:
+        if self._indices_epoch == self.epoch:
+            return self._indices
+        if self.shuffle:
+            generator = torch.Generator()
+            generator.manual_seed(self.seed + self.epoch)
+            if self.weights is not None:
+                self._indices = torch.multinomial(
+                    self.weights,
+                    num_samples=len(self.dataset),
+                    replacement=True,
+                    generator=generator,
+                ).tolist()
+            else:
+                self._indices = torch.randperm(len(self.dataset), generator=generator).tolist()
+        else:
+            self._indices = list(range(len(self.dataset)))
+        self._indices_epoch = self.epoch
+        return self._indices
+
+
+def _collate_tensor_pairs(batch) -> tuple[torch.Tensor, torch.Tensor]:
+    x = torch.stack([item[0] for item in batch])
+    y = torch.stack([item[1] for item in batch])
+    return x, y
+
+
 def load_token_dataset(
     corpus_path: str | Path,
     tokenizer_path: str | Path,
@@ -88,6 +187,23 @@ def make_dataloader(
         shuffle=shuffle,
         generator=generator,
         drop_last=False,
+    )
+
+
+def make_resumable_batcher(
+    dataset,
+    batch_size: int,
+    shuffle: bool = True,
+    seed: int = 42,
+    weights: torch.Tensor | None = None,
+) -> ResumableBatcher:
+    """Create a deterministic train iterator that can save and load position."""
+    return ResumableBatcher(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        seed=seed,
+        weights=weights,
     )
 
 

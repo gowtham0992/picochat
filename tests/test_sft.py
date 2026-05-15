@@ -251,6 +251,66 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert "Packing" in report_text
 
 
+def test_train_sft_can_resume_from_training_state(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "base"
+    first_dir = tmp_path / "sft-first"
+    resumed_dir = tmp_path / "sft-resumed"
+    rows = [
+        {"user": "What is Picochat?", "assistant": "Picochat is small."},
+        {"user": "What comes next?", "assistant": "Chat tuning comes next."},
+        {"user": "What is tested?", "assistant": "Resume state is tested."},
+    ]
+    write_jsonl(input_path, rows)
+    tokenizer = CharTokenizer.train([
+        "User: What is Picochat?\nAssistant: Picochat is small.\n"
+        "User: What comes next?\nAssistant: Chat tuning comes next.\n"
+        "User: What is tested?\nAssistant: Resume state is tested."
+    ])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=64,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    first = train_sft(SFTConfig(
+        input_path=str(input_path),
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=str(checkpoint_path),
+        out_dir=str(first_dir),
+        batch_size=2,
+        max_steps=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        sampling="category_sqrt",
+    ))
+    resumed = train_sft(SFTConfig(
+        input_path=str(input_path),
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=str(checkpoint_path),
+        out_dir=str(resumed_dir),
+        batch_size=2,
+        max_steps=3,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        sampling="category_sqrt",
+        resume_from=first["resume_checkpoint"],
+    ))
+
+    assert (first_dir / "resume_checkpoint" / "training_state.pt").exists()
+    assert (resumed_dir / "checkpoint" / "training_state.pt").exists()
+    assert resumed["coverage"]["actual_steps"] == 3
+    assert [row["step"] for row in resumed["losses"]] == [1, 2, 3]
+    assert resumed["config"]["resume_from"] == first["resume_checkpoint"]
+
+
 def test_train_sft_reports_gradient_accumulation(tmp_path):
     input_path = tmp_path / "chat.jsonl"
     tokenizer_path = tmp_path / "tokenizer.json"

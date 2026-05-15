@@ -2,7 +2,14 @@ import json
 
 import pytest
 
-from picochat.batching import TokenWindowDataset, load_token_dataset, load_token_split, make_dataloader, split_dataset
+from picochat.batching import (
+    TokenWindowDataset,
+    load_token_dataset,
+    load_token_split,
+    make_dataloader,
+    make_resumable_batcher,
+    split_dataset,
+)
 from picochat.tokenizer import CharTokenizer
 
 
@@ -44,6 +51,21 @@ def test_make_dataloader_batches_examples():
     assert y.shape == (3, 4)
     assert x[0].tolist() == [0, 1, 2, 3]
     assert y[0].tolist() == [1, 2, 3, 4]
+
+
+def test_resumable_batcher_restores_batch_position():
+    dataset = TokenWindowDataset(list(range(20)), context_size=4)
+    first = make_resumable_batcher(dataset, batch_size=3, shuffle=True, seed=7)
+    next(first)
+    state = first.state_dict()
+    expected_x, expected_y = next(first)
+
+    resumed = make_resumable_batcher(dataset, batch_size=3, shuffle=True, seed=7)
+    resumed.load_state_dict(state)
+    resumed_x, resumed_y = next(resumed)
+
+    assert resumed_x.tolist() == expected_x.tolist()
+    assert resumed_y.tolist() == expected_y.tolist()
 
 
 def test_split_dataset_is_deterministic():
