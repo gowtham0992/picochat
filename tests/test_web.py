@@ -696,10 +696,12 @@ def test_benchmark_tuning_pack_plan_generates_and_promotes_curriculum(tmp_path):
     assert report["eval_categories"]
     assert report["source_status"] == "offline"
     assert report["profile"] == "full"
+    assert report["skill_answer_style"] == "direct"
     assert report["contamination"]["status"] == "ready"
     assert "benchmark-pack" in report["command"]
     assert "--source offline" in report["command"]
     assert "--profile full" in report["command"]
+    assert "--skill-answer-style direct" in report["command"]
 
 
 def test_starter_plans_accept_recipe_backed_dataset_pack(tmp_path):
