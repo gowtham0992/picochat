@@ -168,6 +168,24 @@ def test_resumable_batcher_uses_random_sampling_for_large_auto_mode():
     assert resumed_y.tolist() == expected_y.tolist()
 
 
+def test_sharded_random_batches_stay_within_one_shard(tmp_path):
+    shards = []
+    for index, start in enumerate((0, 100)):
+        path = tmp_path / f"tokens-{index:06d}.pt"
+        tokens = torch.arange(start, start + 24, dtype=torch.long)
+        torch.save(tokens, path)
+        shards.append({"index": index, "path": str(path), "num_tokens": len(tokens)})
+    dataset = ShardedTokenWindowDataset(shards, context_size=4)
+    generator = torch.Generator().manual_seed(123)
+
+    for _ in range(10):
+        indices = dataset.random_batch_indices(batch_size=8, generator=generator)
+        assert len(indices) == 8
+        assert max(indices) < len(dataset)
+        assert min(indices) >= 0
+        assert all(index < 20 for index in indices) or all(index >= 20 for index in indices)
+
+
 def test_device_batch_prefetcher_preserves_resume_position():
     dataset = TokenWindowDataset(list(range(30)), context_size=4)
     batcher = make_resumable_batcher(dataset, batch_size=3, shuffle=True, seed=9)

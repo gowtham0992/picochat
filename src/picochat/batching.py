@@ -83,6 +83,7 @@ class ShardedTokenWindowDataset(torch.utils.data.Dataset):
         self.shards = usable_shards
         self.context_size = context_size
         lengths = [int(shard["num_tokens"]) - context_size for shard in self.shards]
+        self._window_counts = lengths
         self._prefix_lengths: list[int] = []
         total = 0
         for length in lengths:
@@ -103,6 +104,29 @@ class ShardedTokenWindowDataset(torch.utils.data.Dataset):
         tokens = self._load_shard(shard_index)
         chunk = tokens[local_index: local_index + self.context_size + 1]
         return chunk[:-1], chunk[1:]
+
+    def random_batch_indices(
+        self,
+        batch_size: int,
+        generator: torch.Generator,
+    ) -> list[int]:
+        """Sample a random batch from one shard to avoid cross-shard cache thrash."""
+        draw = int(torch.randint(
+            low=0,
+            high=self._prefix_lengths[-1],
+            size=(1,),
+            generator=generator,
+        ).item())
+        shard_index = bisect.bisect_right(self._prefix_lengths, draw)
+        previous = 0 if shard_index == 0 else self._prefix_lengths[shard_index - 1]
+        shard_windows = self._window_counts[shard_index]
+        local_indices = torch.randint(
+            low=0,
+            high=shard_windows,
+            size=(batch_size,),
+            generator=generator,
+        )
+        return (local_indices + previous).tolist()
 
     def stats(self) -> TokenDatasetStats:
         return TokenDatasetStats(
@@ -233,12 +257,15 @@ class ResumableBatcher:
         batch_size = min(self.batch_size, len(self.dataset))
         generator = torch.Generator()
         generator.manual_seed(self.seed + (self.epoch * 1_000_003) + self.batch_index)
-        indices = torch.randint(
-            low=0,
-            high=len(self.dataset),
-            size=(batch_size,),
-            generator=generator,
-        ).tolist()
+        if hasattr(self.dataset, "random_batch_indices"):
+            indices = self.dataset.random_batch_indices(batch_size, generator)
+        else:
+            indices = torch.randint(
+                low=0,
+                high=len(self.dataset),
+                size=(batch_size,),
+                generator=generator,
+            ).tolist()
         self.batch_index += 1
         batch = [self.dataset[index] for index in indices]
         return _collate_tensor_pairs(batch, pin_memory=self.pin_memory)
