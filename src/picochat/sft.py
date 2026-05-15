@@ -48,6 +48,7 @@ from picochat.train import (
     _capture_rollback_state,
     _interval_throughput,
     _is_loss_spike,
+    _move_batch_to_device,
     _restore_rollback_state,
     _throughput_summary,
     _update_loss_spike_baseline,
@@ -587,6 +588,7 @@ def make_chat_dataloader(
     shuffle: bool,
     seed: int,
     sampling: str = "uniform",
+    pin_memory: bool = False,
 ) -> torch.utils.data.DataLoader:
     """Create a deterministic dataloader for small chat datasets."""
     if sampling not in SFT_SAMPLING_MODES:
@@ -605,6 +607,7 @@ def make_chat_dataloader(
             batch_size=batch_size,
             sampler=sampler,
             drop_last=False,
+            pin_memory=pin_memory,
         )
     if sampling == "category_sqrt":
         sampler = torch.utils.data.WeightedRandomSampler(
@@ -618,6 +621,7 @@ def make_chat_dataloader(
             batch_size=batch_size,
             sampler=sampler,
             drop_last=False,
+            pin_memory=pin_memory,
         )
     return torch.utils.data.DataLoader(
         dataset,
@@ -625,6 +629,7 @@ def make_chat_dataloader(
         shuffle=shuffle,
         generator=generator,
         drop_last=False,
+        pin_memory=pin_memory,
     )
 
 
@@ -758,8 +763,21 @@ def train_sft(config: SFTConfig) -> dict:
         seed=config.seed,
         weights=train_weights,
     )
-    train_eval_loader = make_chat_dataloader(train_dataset, config.batch_size, shuffle=False, seed=config.seed)
-    val_loader = make_chat_dataloader(val_dataset, config.batch_size, shuffle=False, seed=config.seed)
+    pin_memory = device.type == "cuda"
+    train_eval_loader = make_chat_dataloader(
+        train_dataset,
+        config.batch_size,
+        shuffle=False,
+        seed=config.seed,
+        pin_memory=pin_memory,
+    )
+    val_loader = make_chat_dataloader(
+        val_dataset,
+        config.batch_size,
+        shuffle=False,
+        seed=config.seed,
+        pin_memory=pin_memory,
+    )
 
     model = model.to(device)
     precision_runtime = resolve_precision(config.precision, device)
@@ -855,8 +873,7 @@ def train_sft(config: SFTConfig) -> dict:
         micro_losses: list[float] = []
         for _ in range(config.grad_accum_steps):
             x, y = next(train_batcher)
-            x = x.to(device)
-            y = y.to(device)
+            x, y = _move_batch_to_device(x, y, device)
             with autocast_context(precision_runtime):
                 _, loss = train_model(x, y)
             assert loss is not None

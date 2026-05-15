@@ -135,8 +135,7 @@ def evaluate_metrics(
     for batch_index, (x, y) in enumerate(loader):
         if batch_index >= max_batches:
             break
-        x = x.to(device)
-        y = y.to(device)
+        x, y = _move_batch_to_device(x, y, device)
         with autocast_context(precision_runtime) if precision_runtime else nullcontext():
             logits, _ = model(x)
         flat_logits = logits.view(-1, logits.size(-1))
@@ -169,6 +168,18 @@ def evaluate_metrics(
     return {"loss": sum(losses) / len(losses), "bpb": bpb}
 
 
+def _move_batch_to_device(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    non_blocking = device.type == "cuda"
+    return (
+        x.to(device, non_blocking=non_blocking),
+        y.to(device, non_blocking=non_blocking),
+    )
+
+
 def train_base(config: TrainConfig) -> dict:
     """Train a tiny next-token model and save artifacts."""
     validate_optim_controls(
@@ -193,6 +204,7 @@ def train_base(config: TrainConfig) -> dict:
     out_dir = Path(config.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    device = resolve_device(config.device)
     tokenizer = load_tokenizer(config.tokenizer_path)
     if config.dataset_mode not in {"memory", "sharded"}:
         raise ValueError("dataset_mode must be 'memory' or 'sharded'")
@@ -237,10 +249,28 @@ def train_base(config: TrainConfig) -> dict:
         shuffle=True,
         seed=config.seed,
     )
-    train_eval_loader = make_dataloader(split.train_dataset, batch_size=config.batch_size, shuffle=False, seed=config.seed)
-    val_loader = make_dataloader(split.val_dataset, batch_size=config.batch_size, shuffle=False, seed=config.seed)
-
-    device = resolve_device(config.device)
+    batcher_metadata = train_batcher.state_dict()
+    print(
+        "base data: batch sampling "
+        f"mode={batcher_metadata.get('resolved_index_mode', 'unknown')} "
+        f"batches/epoch={batcher_metadata.get('batches_per_epoch', 'unknown')}",
+        flush=True,
+    )
+    pin_memory = device.type == "cuda"
+    train_eval_loader = make_dataloader(
+        split.train_dataset,
+        batch_size=config.batch_size,
+        shuffle=False,
+        seed=config.seed,
+        pin_memory=pin_memory,
+    )
+    val_loader = make_dataloader(
+        split.val_dataset,
+        batch_size=config.batch_size,
+        shuffle=False,
+        seed=config.seed,
+        pin_memory=pin_memory,
+    )
     token_bytes = torch.tensor(token_byte_lengths(tokenizer), dtype=torch.long, device=device)
     model_config = GPTConfig(
         vocab_size=len(tokenizer),
@@ -375,8 +405,7 @@ def train_base(config: TrainConfig) -> dict:
         micro_losses: list[float] = []
         for _ in range(config.grad_accum_steps):
             x, y = next(train_batcher)
-            x = x.to(device)
-            y = y.to(device)
+            x, y = _move_batch_to_device(x, y, device)
             with autocast_context(precision_runtime):
                 _, loss = train_model(x, y)
             assert loss is not None
@@ -714,6 +743,7 @@ def train_base(config: TrainConfig) -> dict:
             "precision_runtime": precision_runtime.to_dict(),
             "torch_compile_metadata": compile_metadata,
             "ddp_metadata": ddp_metadata,
+            "batcher_metadata": batcher_metadata,
             "artifacts_written": main_process,
             "training_fingerprint": training_fingerprint,
         },

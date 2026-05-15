@@ -128,6 +128,45 @@ def test_resumable_batcher_restores_batch_position():
     assert resumed_y.tolist() == expected_y.tolist()
 
 
+def test_resumable_batcher_uses_random_sampling_for_large_auto_mode():
+    class LargeSyntheticDataset(torch.utils.data.Dataset):
+        def __len__(self):
+            return 100
+
+        def __getitem__(self, index):
+            return torch.tensor([index]), torch.tensor([index + 1])
+
+    dataset = LargeSyntheticDataset()
+    first = make_resumable_batcher(
+        dataset,
+        batch_size=4,
+        shuffle=True,
+        seed=11,
+        permutation_threshold=10,
+    )
+
+    first_x, first_y = next(first)
+    state = first.state_dict()
+    expected_x, expected_y = next(first)
+
+    resumed = make_resumable_batcher(
+        dataset,
+        batch_size=4,
+        shuffle=True,
+        seed=11,
+        permutation_threshold=10,
+    )
+    resumed.load_state_dict(state)
+    resumed_x, resumed_y = next(resumed)
+
+    assert state["resolved_index_mode"] == "random"
+    assert first._indices == []
+    assert first_x.shape == (4, 1)
+    assert first_y.tolist() == (first_x + 1).tolist()
+    assert resumed_x.tolist() == expected_x.tolist()
+    assert resumed_y.tolist() == expected_y.tolist()
+
+
 def test_split_dataset_is_deterministic():
     dataset = TokenWindowDataset(list(range(30)), context_size=4)
 

@@ -137,11 +137,19 @@ class ResumableBatcher:
         epoch: int = 0,
         batch_index: int = 0,
         weights: torch.Tensor | None = None,
+        index_mode: str = "auto",
+        permutation_threshold: int = 5_000_000,
     ):
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
         if len(dataset) < 1:
             raise ValueError("dataset must not be empty")
+        if index_mode not in {"auto", "permutation", "random"}:
+            raise ValueError("index_mode must be 'auto', 'permutation', or 'random'")
+        if permutation_threshold < 1:
+            raise ValueError("permutation_threshold must be at least 1")
+        if weights is not None and index_mode == "random":
+            raise ValueError("random index_mode does not support weighted sampling")
         self.dataset = dataset
         self.batch_size = batch_size
         self.shuffle = shuffle
@@ -149,6 +157,8 @@ class ResumableBatcher:
         self.epoch = epoch
         self.batch_index = batch_index
         self.weights = weights.double() if weights is not None else None
+        self.index_mode = index_mode
+        self.permutation_threshold = permutation_threshold
         self._indices_epoch: int | None = None
         self._indices: list[int] = []
 
@@ -160,6 +170,8 @@ class ResumableBatcher:
             self.epoch += 1
             self.batch_index = 0
             self._indices_epoch = None
+        if self._resolved_index_mode() == "random":
+            return self._next_random_batch()
         indices = self._epoch_indices()
         start = self.batch_index * self.batch_size
         end = min(start + self.batch_size, len(indices))
@@ -180,6 +192,9 @@ class ResumableBatcher:
             "seed": self.seed,
             "weighted": self.weights is not None,
             "batches_per_epoch": self.batches_per_epoch,
+            "index_mode": self.index_mode,
+            "resolved_index_mode": self._resolved_index_mode(),
+            "permutation_threshold": self.permutation_threshold,
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -191,11 +206,37 @@ class ResumableBatcher:
             raise ValueError("batcher state seed does not match this run")
         if bool(state.get("weighted", self.weights is not None)) != (self.weights is not None):
             raise ValueError("batcher state weighting does not match this run")
+        observed_index_mode = str(state.get("index_mode", self.index_mode))
+        if observed_index_mode != self.index_mode:
+            raise ValueError("batcher state index_mode does not match this run")
         self.epoch = int(state.get("epoch", 0))
         self.batch_index = int(state.get("batch_index", 0))
         if self.batch_index < 0 or self.batch_index > self.batches_per_epoch:
             raise ValueError("batcher state batch_index is out of range")
         self._indices_epoch = None
+
+    def _resolved_index_mode(self) -> str:
+        if not self.shuffle:
+            return "permutation"
+        if self.index_mode == "auto":
+            if self.weights is None and len(self.dataset) > self.permutation_threshold:
+                return "random"
+            return "permutation"
+        return self.index_mode
+
+    def _next_random_batch(self):
+        batch_size = min(self.batch_size, len(self.dataset))
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + (self.epoch * 1_000_003) + self.batch_index)
+        indices = torch.randint(
+            low=0,
+            high=len(self.dataset),
+            size=(batch_size,),
+            generator=generator,
+        ).tolist()
+        self.batch_index += 1
+        batch = [self.dataset[index] for index in indices]
+        return _collate_tensor_pairs(batch)
 
     def _epoch_indices(self) -> list[int]:
         if self._indices_epoch == self.epoch:
@@ -394,6 +435,7 @@ def make_dataloader(
     batch_size: int,
     shuffle: bool = True,
     seed: int = 42,
+    pin_memory: bool = False,
 ) -> torch.utils.data.DataLoader:
     """Create a deterministic PyTorch DataLoader for token windows."""
     generator = torch.Generator()
@@ -404,6 +446,7 @@ def make_dataloader(
         shuffle=shuffle,
         generator=generator,
         drop_last=False,
+        pin_memory=pin_memory,
     )
 
 
@@ -413,6 +456,8 @@ def make_resumable_batcher(
     shuffle: bool = True,
     seed: int = 42,
     weights: torch.Tensor | None = None,
+    index_mode: str = "auto",
+    permutation_threshold: int = 5_000_000,
 ) -> ResumableBatcher:
     """Create a deterministic train iterator that can save and load position."""
     return ResumableBatcher(
@@ -421,6 +466,8 @@ def make_resumable_batcher(
         shuffle=shuffle,
         seed=seed,
         weights=weights,
+        index_mode=index_mode,
+        permutation_threshold=permutation_threshold,
     )
 
 
