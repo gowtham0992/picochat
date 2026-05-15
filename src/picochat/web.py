@@ -26,6 +26,7 @@ from picochat.device import DEVICE_CHOICES
 from picochat.eval_starter import generate_eval_starter
 from picochat.benchmark_pack import (
     BENCHMARK_PROFILES,
+    BENCHMARK_SKILL_ANSWER_STYLES,
     BENCHMARK_SOURCES,
     DEFAULT_BENCHMARK_EVAL_ROWS,
     DEFAULT_BENCHMARK_SFT_ROWS,
@@ -725,6 +726,9 @@ def benchmark_tuning_pack_plan(payload: dict) -> dict:
     profile = _optional_string(payload.get("profile")) or "full"
     if profile not in BENCHMARK_PROFILES:
         raise ValueError(f"profile must be one of {', '.join(BENCHMARK_PROFILES)}")
+    skill_answer_style = _optional_string(payload.get("skill_answer_style")) or "direct"
+    if skill_answer_style not in BENCHMARK_SKILL_ANSWER_STYLES:
+        raise ValueError(f"skill_answer_style must be one of {', '.join(BENCHMARK_SKILL_ANSWER_STYLES)}")
     force = payload.get("force", False)
     if not isinstance(force, bool):
         raise ValueError("force must be true or false")
@@ -741,6 +745,7 @@ def benchmark_tuning_pack_plan(payload: dict) -> dict:
         seed=seed,
         source=source,
         profile=profile,
+        skill_answer_style=skill_answer_style,
         force=force,
         promote_to_pack=promote_to_pack,
     )
@@ -761,6 +766,8 @@ def benchmark_tuning_pack_plan(payload: dict) -> dict:
         source,
         "--profile",
         profile,
+        "--skill-answer-style",
+        skill_answer_style,
         "--seed",
         str(seed),
     ]

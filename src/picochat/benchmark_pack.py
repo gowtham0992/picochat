@@ -26,6 +26,7 @@ DEFAULT_BENCHMARK_SFT_ROWS = 300
 DEFAULT_BENCHMARK_EVAL_ROWS = 80
 BENCHMARK_SOURCES = ("offline", "auto", "hf")
 BENCHMARK_PROFILES = ("full", "behavior", "weak_skills")
+BENCHMARK_SKILL_ANSWER_STYLES = ("direct", "scratchpad")
 SFT_CHAR_BUDGET = 900
 BEHAVIOR_PROFILE_WEIGHTS = {
     "behavior": (
@@ -87,6 +88,7 @@ class BenchmarkTuningPackReport:
     source_datasets: dict[str, int]
     fallback_reason: str | None
     profile: str
+    skill_answer_style: str
     contamination: dict[str, Any]
     source_notes: tuple[str, ...]
 
@@ -116,6 +118,7 @@ def generate_benchmark_tuning_pack(
     seed: int = 42,
     source: str = "offline",
     profile: str = "full",
+    skill_answer_style: str = "direct",
     force: bool = False,
     promote_to_pack: bool = True,
 ) -> BenchmarkTuningPackReport:
@@ -126,6 +129,7 @@ def generate_benchmark_tuning_pack(
         raise ValueError("eval_rows must be at least 16")
     source = _normalize_source(source)
     profile = _normalize_profile(profile)
+    skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
 
     pack = load_dataset_pack(dataset_pack)
     pack_dir = Path(pack.path).parent
@@ -138,8 +142,20 @@ def generate_benchmark_tuning_pack(
         names = ", ".join(str(path) for path in existing)
         raise FileExistsError(f"Refusing to overwrite existing benchmark tuning file(s): {names}")
 
-    chat_result = _build_benchmark_sft_result(sft_rows, seed=seed, source=source, profile=profile)
-    eval_result = _build_benchmark_eval_result(eval_rows, seed=seed + 100_000, source=source, profile=profile)
+    chat_result = _build_benchmark_sft_result(
+        sft_rows,
+        seed=seed,
+        source=source,
+        profile=profile,
+        skill_answer_style=skill_answer_style,
+    )
+    eval_result = _build_benchmark_eval_result(
+        eval_rows,
+        seed=seed + 100_000,
+        source=source,
+        profile=profile,
+        skill_answer_style=skill_answer_style,
+    )
     chat_rows = chat_result.rows
     eval_items = eval_result.rows
     _assert_no_prompt_overlap(chat_rows, eval_items)
@@ -187,12 +203,14 @@ def generate_benchmark_tuning_pack(
         ).items())),
         fallback_reason=chat_result.fallback_reason or eval_result.fallback_reason,
         profile=profile,
+        skill_answer_style=skill_answer_style,
         contamination=contamination,
         source_notes=(
             "ClimbMix or the selected corpus remains the base pretraining data.",
             "This pack adds a nanochat-style curated SFT/eval curriculum.",
             f"Curriculum source mode: {source}.",
             f"Curriculum profile: {profile}.",
+            f"Skill answer style: {skill_answer_style}.",
             "Eval prompts are generated from a held-out stream and are not copied into SFT.",
             "Synthetic behavior rows use separate train/eval templates and held-out word pools.",
             "Behavior curriculum now intentionally over-samples identity, short math, spelling, and choice-format drills because these are the first fragile closed-book skills.",
@@ -209,29 +227,77 @@ def generate_benchmark_tuning_pack(
     return report
 
 
-def build_benchmark_sft_rows(count: int, seed: int = 42, source: str = "offline") -> list[dict[str, Any]]:
+def build_benchmark_sft_rows(
+    count: int,
+    seed: int = 42,
+    source: str = "offline",
+    skill_answer_style: str = "direct",
+) -> list[dict[str, Any]]:
     """Build deterministic SFT rows from separate train-only task streams."""
-    return _build_benchmark_sft_result(count, seed=seed, source=source, profile="full").rows
+    return _build_benchmark_sft_result(
+        count,
+        seed=seed,
+        source=source,
+        profile="full",
+        skill_answer_style=skill_answer_style,
+    ).rows
 
 
-def build_benchmark_eval_rows(count: int, seed: int = 42, source: str = "offline") -> list[dict[str, Any]]:
+def build_benchmark_eval_rows(
+    count: int,
+    seed: int = 42,
+    source: str = "offline",
+    skill_answer_style: str = "direct",
+) -> list[dict[str, Any]]:
     """Build deterministic held-out transparent eval rows."""
-    return _build_benchmark_eval_result(count, seed=seed, source=source, profile="full").rows
+    return _build_benchmark_eval_result(
+        count,
+        seed=seed,
+        source=source,
+        profile="full",
+        skill_answer_style=skill_answer_style,
+    ).rows
 
 
-def _build_benchmark_sft_result(count: int, seed: int, source: str, profile: str) -> _RowBuildResult:
+def _build_benchmark_sft_result(
+    count: int,
+    seed: int,
+    source: str,
+    profile: str,
+    skill_answer_style: str = "direct",
+) -> _RowBuildResult:
     source = _normalize_source(source)
     profile = _normalize_profile(profile)
+    skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
     if profile in BEHAVIOR_PROFILE_WEIGHTS:
-        return _behavior_profile_result(count, seed=seed, split="train", eval_rows=False, profile=profile)
+        return _behavior_profile_result(
+            count,
+            seed=seed,
+            split="train",
+            eval_rows=False,
+            profile=profile,
+            skill_answer_style=skill_answer_style,
+        )
     if source == "offline":
-        return _offline_result(count, seed=seed, split="train", eval_rows=False)
+        return _offline_result(
+            count,
+            seed=seed,
+            split="train",
+            eval_rows=False,
+            skill_answer_style=skill_answer_style,
+        )
     try:
         result = _build_hf_sft_result(count, seed=seed)
     except BenchmarkSourceError as exc:
         if source == "hf":
             raise
-        fallback = _offline_result(count, seed=seed, split="train", eval_rows=False)
+        fallback = _offline_result(
+            count,
+            seed=seed,
+            split="train",
+            eval_rows=False,
+            skill_answer_style=skill_answer_style,
+        )
         return _RowBuildResult(
             rows=fallback.rows,
             source_mode=source,
@@ -246,19 +312,45 @@ def _build_benchmark_sft_result(count: int, seed: int, source: str, profile: str
     return result
 
 
-def _build_benchmark_eval_result(count: int, seed: int, source: str, profile: str) -> _RowBuildResult:
+def _build_benchmark_eval_result(
+    count: int,
+    seed: int,
+    source: str,
+    profile: str,
+    skill_answer_style: str = "direct",
+) -> _RowBuildResult:
     source = _normalize_source(source)
     profile = _normalize_profile(profile)
+    skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
     if profile in BEHAVIOR_PROFILE_WEIGHTS:
-        return _behavior_profile_result(count, seed=seed, split="heldout", eval_rows=True, profile=profile)
+        return _behavior_profile_result(
+            count,
+            seed=seed,
+            split="heldout",
+            eval_rows=True,
+            profile=profile,
+            skill_answer_style=skill_answer_style,
+        )
     if source == "offline":
-        return _offline_result(count, seed=seed, split="heldout", eval_rows=True)
+        return _offline_result(
+            count,
+            seed=seed,
+            split="heldout",
+            eval_rows=True,
+            skill_answer_style=skill_answer_style,
+        )
     try:
         result = _build_hf_eval_result(count, seed=seed)
     except BenchmarkSourceError as exc:
         if source == "hf":
             raise
-        fallback = _offline_result(count, seed=seed, split="heldout", eval_rows=True)
+        fallback = _offline_result(
+            count,
+            seed=seed,
+            split="heldout",
+            eval_rows=True,
+            skill_answer_style=skill_answer_style,
+        )
         return _RowBuildResult(
             rows=fallback.rows,
             source_mode=source,
@@ -273,8 +365,20 @@ def _build_benchmark_eval_result(count: int, seed: int, source: str, profile: st
     return result
 
 
-def _offline_result(count: int, seed: int, split: str, eval_rows: bool) -> _RowBuildResult:
-    rows = _build_rows(count, seed=seed, split=split, eval_rows=eval_rows)
+def _offline_result(
+    count: int,
+    seed: int,
+    split: str,
+    eval_rows: bool,
+    skill_answer_style: str = "direct",
+) -> _RowBuildResult:
+    rows = _build_rows(
+        count,
+        seed=seed,
+        split=split,
+        eval_rows=eval_rows,
+        skill_answer_style=skill_answer_style,
+    )
     return _RowBuildResult(
         rows=rows,
         source_mode="offline",
@@ -299,12 +403,20 @@ def _normalize_profile(profile: str) -> str:
     return normalized
 
 
+def _normalize_skill_answer_style(style: str) -> str:
+    normalized = str(style or "direct").strip().lower()
+    if normalized not in BENCHMARK_SKILL_ANSWER_STYLES:
+        raise ValueError(f"skill_answer_style must be one of {', '.join(BENCHMARK_SKILL_ANSWER_STYLES)}")
+    return normalized
+
+
 def _behavior_profile_result(
     count: int,
     seed: int,
     split: str,
     eval_rows: bool,
     profile: str,
+    skill_answer_style: str = "direct",
 ) -> _RowBuildResult:
     quotas = _quotas(count, BEHAVIOR_PROFILE_WEIGHTS[profile])
     row_builder = (
@@ -321,6 +433,7 @@ def _behavior_profile_result(
         seed=seed,
         split=split,
         eval_rows=eval_rows,
+        skill_answer_style=skill_answer_style,
     )
     rows = _unique_rows(rows, [], limit=count)
     if len(rows) < count:
@@ -398,6 +511,7 @@ def _build_hf_sft_result(count: int, seed: int) -> _RowBuildResult:
         seed=seed + 101,
         split="train",
         eval_rows=False,
+        skill_answer_style="direct",
     )
     added_local = _unique_rows(local_rows, rows, limit=len(local_rows))
     rows.extend(added_local)
@@ -466,6 +580,7 @@ def _build_hf_eval_result(count: int, seed: int) -> _RowBuildResult:
         seed=seed + 211,
         split="heldout",
         eval_rows=True,
+        skill_answer_style="direct",
     )
     added_local = _unique_rows(local_rows, rows, limit=len(local_rows))
     rows.extend(added_local)
@@ -515,15 +630,29 @@ def _build_local_behavior_rows(
     eval_rows: bool,
     choice: int = 0,
     math: int = 0,
+    skill_answer_style: str = "direct",
 ) -> list[dict[str, Any]]:
+    skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
     rng = random.Random(seed)
     rows: list[dict[str, Any]] = []
     for index in range(choice):
         rows.append(_choice_row(index, rng, split=split, eval_rows=eval_rows))
     for index in range(math):
-        rows.append(_math_row(index, rng, split=split, eval_rows=eval_rows))
+        rows.append(_math_row(
+            index,
+            rng,
+            split=split,
+            eval_rows=eval_rows,
+            skill_answer_style=skill_answer_style,
+        ))
     for index in range(spelling):
-        rows.append(_spelling_row(index, rng, split=split, eval_rows=eval_rows))
+        rows.append(_spelling_row(
+            index,
+            rng,
+            split=split,
+            eval_rows=eval_rows,
+            skill_answer_style=skill_answer_style,
+        ))
     for index in range(identity):
         rows.append(_identity_row(index, rng, split=split, eval_rows=eval_rows))
     for index in range(refusal):
@@ -541,7 +670,9 @@ def _build_weak_skills_behavior_rows(
     eval_rows: bool,
     choice: int = 0,
     math: int = 0,
+    skill_answer_style: str = "direct",
 ) -> list[dict[str, Any]]:
+    skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
     rng = random.Random(seed)
     rows = _build_local_behavior_rows(
         choice=choice,
@@ -552,23 +683,59 @@ def _build_weak_skills_behavior_rows(
         seed=seed,
         split=split,
         eval_rows=eval_rows,
+        skill_answer_style=skill_answer_style,
     )
-    rows.extend(_build_staged_math_rows(math, seed=seed + 17, split=split, eval_rows=eval_rows))
-    rows.extend(_build_staged_spelling_rows(spelling, seed=seed + 29, split=split, eval_rows=eval_rows))
+    rows.extend(_build_staged_math_rows(
+        math,
+        seed=seed + 17,
+        split=split,
+        eval_rows=eval_rows,
+        skill_answer_style=skill_answer_style,
+    ))
+    rows.extend(_build_staged_spelling_rows(
+        spelling,
+        seed=seed + 29,
+        split=split,
+        eval_rows=eval_rows,
+        skill_answer_style=skill_answer_style,
+    ))
     rng.shuffle(rows)
     return rows
 
 
-def _build_staged_math_rows(count: int, seed: int, split: str, eval_rows: bool) -> list[dict[str, Any]]:
+def _build_staged_math_rows(
+    count: int,
+    seed: int,
+    split: str,
+    eval_rows: bool,
+    skill_answer_style: str = "direct",
+) -> list[dict[str, Any]]:
+    skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
     rng = random.Random(seed)
     rows: list[dict[str, Any]] = []
     for stage, target in _quotas(count, WEAK_SKILL_MATH_STAGE_WEIGHTS).items():
-        rows.extend(_math_stage_row(index, stage=stage, split=split, eval_rows=eval_rows) for index in range(target))
+        rows.extend(
+            _math_stage_row(
+                index,
+                stage=stage,
+                split=split,
+                eval_rows=eval_rows,
+                skill_answer_style=skill_answer_style,
+            )
+            for index in range(target)
+        )
     rng.shuffle(rows)
     return rows
 
 
-def _build_staged_spelling_rows(count: int, seed: int, split: str, eval_rows: bool) -> list[dict[str, Any]]:
+def _build_staged_spelling_rows(
+    count: int,
+    seed: int,
+    split: str,
+    eval_rows: bool,
+    skill_answer_style: str = "direct",
+) -> list[dict[str, Any]]:
+    skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
     rng = random.Random(seed)
     rows: list[dict[str, Any]] = []
     for stage, target in _quotas(count, WEAK_SKILL_SPELLING_STAGE_WEIGHTS).items():
@@ -581,6 +748,7 @@ def _build_staged_spelling_rows(count: int, seed: int, split: str, eval_rows: bo
                 eval_rows=eval_rows,
                 mode_override=mode,
                 curriculum_stage=stage,
+                skill_answer_style=skill_answer_style,
             )
             for index in range(target)
         )
@@ -887,7 +1055,14 @@ def _slug(text: str) -> str:
     return slug or "general"
 
 
-def _build_rows(count: int, seed: int, split: str, eval_rows: bool) -> list[dict[str, Any]]:
+def _build_rows(
+    count: int,
+    seed: int,
+    split: str,
+    eval_rows: bool,
+    skill_answer_style: str = "direct",
+) -> list[dict[str, Any]]:
+    skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
     rng = random.Random(seed)
     builders = (
         ("bench_choice", 34, _choice_row),
@@ -906,7 +1081,16 @@ def _build_rows(count: int, seed: int, split: str, eval_rows: bool) -> list[dict
     index = 0
     while len(rows) < count:
         category, builder = schedule[index % len(schedule)]
-        row = builder(index, rng, split=split, eval_rows=eval_rows)
+        if builder in (_math_row, _spelling_row):
+            row = builder(
+                index,
+                rng,
+                split=split,
+                eval_rows=eval_rows,
+                skill_answer_style=skill_answer_style,
+            )
+        else:
+            row = builder(index, rng, split=split, eval_rows=eval_rows)
         row["category"] = row.get("category") or category
         prompt_key = _norm_prompt(row["user"])
         if prompt_key not in seen_prompts:
@@ -1083,11 +1267,31 @@ _MATH_EVAL_TEMPLATES = (
     "Give only the numeric result. {problem}",
     "Calculate the requested quantity: {compact}",
 )
+_MATH_SCRATCHPAD_TRAIN_TEMPLATES = (
+    "Solve with a short scratchpad, then finish with `Final answer: <number>`.\n{problem}",
+    "Use scratchpad steps and end with the final numeric answer.\nProblem: {problem}",
+    "Math drill. Show the operation briefly, then write `Final answer: <number>`.\n{compact}",
+)
+_MATH_SCRATCHPAD_EVAL_TEMPLATES = (
+    "Solve with a short scratchpad and finish with `Final answer: <number>`.\n{problem}",
+    "Independent math eval. Show one brief calculation, then final answer.\nquestion: {problem}",
+    "Use a compact scratchpad for this calculation, then give the final number: {compact}",
+)
 
 
-def _math_stage_row(index: int, stage: str, split: str, eval_rows: bool) -> dict[str, Any]:
+def _math_stage_row(
+    index: int,
+    stage: str,
+    split: str,
+    eval_rows: bool,
+    skill_answer_style: str = "direct",
+) -> dict[str, Any]:
+    skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
     pairs = _math_stage_pair_pool(stage, eval_rows=eval_rows)
-    templates = _MATH_EVAL_TEMPLATES if eval_rows else _MATH_TRAIN_TEMPLATES
+    if skill_answer_style == "scratchpad":
+        templates = _MATH_SCRATCHPAD_EVAL_TEMPLATES if eval_rows else _MATH_SCRATCHPAD_TRAIN_TEMPLATES
+    else:
+        templates = _MATH_EVAL_TEMPLATES if eval_rows else _MATH_TRAIN_TEMPLATES
     template_index = index % len(templates)
     pair_index = index // len(templates)
     a, b = pairs[pair_index % len(pairs)]
@@ -1101,6 +1305,7 @@ def _math_stage_row(index: int, stage: str, split: str, eval_rows: bool) -> dict
         else:
             problem = f"A box has {a} blue marbles and {b} green marbles. How many marbles are in the box?"
             compact = f"{a} + {b}"
+        expression = f"{a} + {b}"
     elif stage.startswith("math_l1_subtraction") or stage.startswith("math_l2_subtraction") or stage.startswith("math_l3_subtraction"):
         answer = a - b
         if eval_rows:
@@ -1109,6 +1314,7 @@ def _math_stage_row(index: int, stage: str, split: str, eval_rows: bool) -> dict
         else:
             problem = f"Nora had {a} stickers. She gave away {b}. How many stickers remain?"
             compact = f"{a} - {b}"
+        expression = f"{a} - {b}"
     elif stage == "math_l2_multiplication_small":
         answer = a * b
         if eval_rows:
@@ -1117,6 +1323,7 @@ def _math_stage_row(index: int, stage: str, split: str, eval_rows: bool) -> dict
         else:
             problem = f"There are {a} trays with {b} cookies on each tray. How many cookies are there?"
             compact = f"{a} * {b}"
+        expression = f"{a} * {b}"
     else:
         removed = 1 + ((index * 7 + (5 if eval_rows else 2)) % 17)
         total = a * b + removed
@@ -1127,23 +1334,26 @@ def _math_stage_row(index: int, stage: str, split: str, eval_rows: bool) -> dict
         else:
             problem = f"A shop packed {total} pencils, then removed {removed}. How many pencils stayed packed?"
             compact = f"{total} pencils minus {removed} removed"
+        expression = f"{total} - {removed}"
 
     user = templates[template_index].format(problem=problem, compact=compact)
+    answer_text = str(answer)
     row = {
         "user": user,
-        "assistant": str(answer),
+        "assistant": _math_assistant_answer(expression, answer_text, skill_answer_style),
         "category": f"bench_math_{kind_name}",
         "group": f"{split}-{stage}-{index}",
         "answerable": True,
         "curriculum_stage": stage,
+        "answer_style": skill_answer_style,
+        "expected_final_answer": answer_text,
+        **_skill_fit_fields(answer_text, skill_answer_style),
     }
     if eval_rows:
         row.update({
             "split": "benchmark",
             "level": "math",
-            "must_include": [str(answer)],
-            "max_words": 24,
-            "reference_answer": str(answer),
+            **_skill_eval_fields(answer_text, skill_answer_style, direct_max_words=24),
         })
     return row
 
@@ -1158,7 +1368,66 @@ def _math_stage_pair_pool(stage: str, *, eval_rows: bool) -> tuple[tuple[int, in
     return eval_pairs if eval_rows else train_pairs
 
 
-def _math_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> dict[str, Any]:
+def _final_answer_line(answer: str) -> str:
+    return f"Final answer: {answer}"
+
+
+def _skill_eval_fields(answer: str, skill_answer_style: str, direct_max_words: int) -> dict[str, Any]:
+    if skill_answer_style == "scratchpad":
+        return {
+            "must_include": [_final_answer_line(answer)],
+            "max_words": 80,
+            "reference_answer": answer,
+        }
+    return {
+        "must_include": [answer],
+        "max_words": direct_max_words,
+        "reference_answer": answer,
+    }
+
+
+def _skill_fit_fields(answer: str, skill_answer_style: str) -> dict[str, Any]:
+    if skill_answer_style != "scratchpad":
+        return {}
+    return {
+        "fit_must_include": ["Scratchpad:", _final_answer_line(answer)],
+        "fit_reference_answer": answer,
+        "fit_max_words": 80,
+    }
+
+
+def _math_assistant_answer(expression: str, answer: str, skill_answer_style: str) -> str:
+    if skill_answer_style != "scratchpad":
+        return answer
+    return (
+        "Scratchpad:\n"
+        f"- Compute: {expression}.\n"
+        f"- Result: {answer}.\n"
+        f"{_final_answer_line(answer)}"
+    )
+
+
+def _spelling_assistant_answer(word: str, operation: str, answer: str, skill_answer_style: str) -> str:
+    if skill_answer_style != "scratchpad":
+        return answer
+    characters = " ".join(word)
+    return (
+        "Scratchpad:\n"
+        f"- Word: {word}.\n"
+        f"- Characters: {characters}.\n"
+        f"- Task: {operation}.\n"
+        f"{_final_answer_line(answer)}"
+    )
+
+
+def _math_row(
+    index: int,
+    rng: random.Random,
+    split: str,
+    eval_rows: bool,
+    skill_answer_style: str = "direct",
+) -> dict[str, Any]:
+    skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
     a = 3 + ((index * 11 + (17 if eval_rows else 5)) % 47)
     b = 2 + ((index * 13 + (19 if eval_rows else 7)) % 41)
     c = 1 + ((index * 5 + (23 if eval_rows else 3)) % 13)
@@ -1175,59 +1444,65 @@ def _math_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> di
         )
         return templates[train_template]
 
+    def scratchpad_prompt(problem: str, compact: str) -> str:
+        templates = _MATH_SCRATCHPAD_EVAL_TEMPLATES if eval_rows else _MATH_SCRATCHPAD_TRAIN_TEMPLATES
+        return templates[train_template % len(templates)].format(problem=problem, compact=compact)
+
     if kind == 0:
         answer = a + b
+        expression = f"{a} + {b}"
+        problem = f"A box has {a} blue marbles and {b} green marbles. How many marbles are in the box?"
+        compact = f"{a} + {b}"
         if eval_rows:
-            user = f"Solve carefully. A box has {a} blue marbles and {b} green marbles. How many marbles are in the box?"
+            user = scratchpad_prompt(problem, compact) if skill_answer_style == "scratchpad" else f"Solve carefully. {problem}"
         else:
-            user = train_prompt(
-                f"A box has {a} blue marbles and {b} green marbles. How many marbles are in the box?",
-                f"{a} + {b}",
-            )
+            user = scratchpad_prompt(problem, compact) if skill_answer_style == "scratchpad" else train_prompt(problem, compact)
     elif kind == 1:
         total = a + b + c
         answer = total - c
+        expression = f"{total} - {c}"
+        problem = f"Nora had {total} stickers. She gave away {c}. How many stickers remain?"
+        compact = f"{total} - {c}"
         if eval_rows:
-            user = f"Nora had {total} stickers. She gave away {c}. How many stickers remain?"
+            user = scratchpad_prompt(problem, compact) if skill_answer_style == "scratchpad" else problem
         else:
-            user = train_prompt(
-                f"Nora had {total} stickers. She gave away {c}. How many stickers remain?",
-                f"{total} - {c}",
-            )
+            user = scratchpad_prompt(problem, compact) if skill_answer_style == "scratchpad" else train_prompt(problem, compact)
     elif kind == 2:
         answer = a * c
+        expression = f"{a} * {c}"
+        problem = f"There are {a} trays with {c} cookies on each tray. How many cookies are there?"
+        compact = f"{a} * {c}"
         if eval_rows:
-            user = f"There are {a} trays with {c} cookies on each tray. How many cookies are there?"
+            user = scratchpad_prompt(problem, compact) if skill_answer_style == "scratchpad" else problem
         else:
-            user = train_prompt(
-                f"There are {a} trays with {c} cookies on each tray. How many cookies are there?",
-                f"{a} * {c}",
-            )
+            user = scratchpad_prompt(problem, compact) if skill_answer_style == "scratchpad" else train_prompt(problem, compact)
     else:
         total = a * c + b
         answer = total - b
+        expression = f"{total} - {b}"
+        problem = f"A shop packed {total} pencils, then removed {b}. How many pencils stayed packed?"
+        compact = f"{total} - {b}"
         if eval_rows:
-            user = f"A shop packed {total} pencils, then removed {b}. How many pencils stayed packed?"
+            user = scratchpad_prompt(problem, compact) if skill_answer_style == "scratchpad" else problem
         else:
-            user = train_prompt(
-                f"A shop packed {total} pencils, then removed {b}. How many pencils stayed packed?",
-                f"{total} - {b}",
-            )
-    assistant = f"{answer}"
+            user = scratchpad_prompt(problem, compact) if skill_answer_style == "scratchpad" else train_prompt(problem, compact)
+    answer_text = str(answer)
+    assistant = _math_assistant_answer(expression, answer_text, skill_answer_style)
     row = {
         "user": user,
         "assistant": assistant,
         "category": f"bench_math_{kind_name}",
         "group": f"{split}-math-{index}",
         "answerable": True,
+        "answer_style": skill_answer_style,
+        "expected_final_answer": answer_text,
+        **_skill_fit_fields(answer_text, skill_answer_style),
     }
     if eval_rows:
         row.update({
             "split": "benchmark",
             "level": "math",
-            "must_include": [str(answer)],
-            "max_words": 24,
-            "reference_answer": str(answer),
+            **_skill_eval_fields(answer_text, skill_answer_style, direct_max_words=24),
         })
     return row
 
@@ -1263,7 +1538,9 @@ def _spelling_row(
     eval_rows: bool,
     mode_override: str | None = None,
     curriculum_stage: str | None = None,
+    skill_answer_style: str = "direct",
 ) -> dict[str, Any]:
+    skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
     words = _HELDOUT_SPELLING_WORDS if eval_rows else _TRAIN_SPELLING_WORDS
     modes = ("spaced", "count", "reverse", "first", "last")
     if mode_override:
@@ -1299,42 +1576,47 @@ def _spelling_row(
         prompt_style = prompt_cycle % len(templates)
         return templates[prompt_style]
 
+    def scratchpad_prompt(operation: str) -> str:
+        templates = (
+            f"Use a short scratchpad for this word task, then finish with `Final answer: <answer>`.\nword={word}\ntask={operation}",
+            f"Word skill drill. Show the characters briefly, then write the final answer.\nWord: {word}. Task: {operation}.",
+            f"Do the text operation with a compact scratchpad and final answer line: {operation} for {word}.",
+        )
+        prompt_style = prompt_cycle % len(templates)
+        return templates[prompt_style]
+
     if mode == "spaced":
         answer = " ".join(word)
-        if eval_rows:
-            user = eval_prompt("write each character separated by one space")
-        else:
-            user = train_prompt("write each character separated by one space")
+        operation = "write each character separated by one space"
     elif mode == "count":
         answer = str(len(word))
-        if eval_rows:
-            user = eval_prompt("count letters")
-        else:
-            user = train_prompt("count letters")
+        operation = "count letters"
     elif mode == "reverse":
         answer = word[::-1]
-        if eval_rows:
-            user = eval_prompt("reverse the letters")
-        else:
-            user = train_prompt("reverse the letters")
+        operation = "reverse the letters"
     elif mode == "first":
         answer = word[0]
-        if eval_rows:
-            user = eval_prompt("return the first letter")
-        else:
-            user = train_prompt("return the first letter")
+        operation = "return the first letter"
     else:
         answer = word[-1]
-        if eval_rows:
-            user = eval_prompt("return the last letter")
-        else:
-            user = train_prompt("return the last letter")
+        operation = "return the last letter"
+
+    if skill_answer_style == "scratchpad":
+        user = scratchpad_prompt(operation)
+    elif eval_rows:
+        user = eval_prompt(operation)
+    else:
+        user = train_prompt(operation)
+
     row = {
         "user": user,
-        "assistant": answer,
+        "assistant": _spelling_assistant_answer(word, operation, answer, skill_answer_style),
         "category": f"bench_spelling_{mode}",
         "group": f"{split}-{curriculum_stage or 'spelling'}-{index}",
         "answerable": True,
+        "answer_style": skill_answer_style,
+        "expected_final_answer": answer,
+        **_skill_fit_fields(answer, skill_answer_style),
     }
     if curriculum_stage:
         row["curriculum_stage"] = curriculum_stage
@@ -1342,9 +1624,7 @@ def _spelling_row(
         row.update({
             "split": "benchmark",
             "level": "spelling",
-            "must_include": [answer],
-            "max_words": 20,
-            "reference_answer": answer,
+            **_skill_eval_fields(answer, skill_answer_style, direct_max_words=20),
         })
     return row
 
@@ -1874,6 +2154,8 @@ Source mode: `{report.source_mode}`
 Source status: `{report.source_status}`
 
 Profile: `{report.profile}`
+
+Skill answer style: `{report.skill_answer_style}`
 
 ## Why This Exists
 

@@ -118,6 +118,29 @@ def test_write_sft_fit_eval_can_select_split_indices(tmp_path):
     assert {item.split for item in items} == {"sft_heldout"}
 
 
+def test_write_sft_fit_eval_uses_declared_fit_phrases(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    output_path = tmp_path / "fit.jsonl"
+    write_jsonl(input_path, [
+        {
+            "user": "Solve 2 + 3 with scratchpad.",
+            "assistant": "Scratchpad:\n- Compute: 2 + 3.\n- Result: 5.\nFinal answer: 5",
+            "category": "bench_math_addition",
+            "fit_must_include": ["Scratchpad:", "Final answer: 5"],
+            "fit_reference_answer": "5",
+            "fit_max_words": 80,
+        },
+    ])
+
+    report = write_sft_fit_eval(input_path, output_path)
+    items = load_chat_eval_items(output_path)
+
+    assert report["num_rows"] == 1
+    assert items[0].must_include == ("Scratchpad:", "Final answer: 5")
+    assert items[0].reference_answer == "5"
+    assert items[0].max_words == 80
+
+
 def test_choice_continuation_candidates_cover_sft_and_bare_styles():
     tokenizer = CharTokenizer.train(["Assistant: A B\n"])
 

@@ -216,6 +216,46 @@ def test_weak_skills_choice_labels_are_balanced(tmp_path):
     assert max(eval_choices.values()) - min(eval_choices.values()) <= 2
 
 
+def test_weak_skills_can_use_scratchpad_final_answer_style(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=200,
+        eval_rows=80,
+        profile="weak_skills",
+        skill_answer_style="scratchpad",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    skill_chat_rows = [
+        row for row in chat_rows
+        if row["category"].startswith(("bench_math_", "bench_spelling_"))
+    ]
+    skill_eval_rows = [
+        row for row in eval_rows
+        if row["category"].startswith(("bench_math_", "bench_spelling_"))
+    ]
+
+    assert report.skill_answer_style == "scratchpad"
+    assert skill_chat_rows
+    assert all(row["answer_style"] == "scratchpad" for row in skill_chat_rows)
+    assert all("Scratchpad:" in row["assistant"] for row in skill_chat_rows)
+    assert all("Final answer:" in row["assistant"] for row in skill_chat_rows)
+    assert all(row["fit_must_include"][0] == "Scratchpad:" for row in skill_chat_rows)
+    assert all(row["must_include"][0].startswith("Final answer:") for row in skill_eval_rows)
+    assert all(row["max_words"] == 80 for row in skill_eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
 def test_staged_math_uses_disjoint_train_eval_operand_pools():
     for stage in benchmark_pack._MATH_STAGE_PAIRS:
         train_pairs = set(benchmark_pack._math_stage_pair_pool(stage, eval_rows=False))

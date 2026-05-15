@@ -116,6 +116,22 @@ def write_sft_fit_eval(
         if not isinstance(answerable, bool):
             raise ValueError(f"line {line_number} answerable field must be a boolean when present")
 
+        fit_must_include = record.get("fit_must_include")
+        must_include = (
+            [answer]
+            if fit_must_include is None
+            else list(_as_string_tuple(fit_must_include, line_number, "fit_must_include"))
+        )
+        fit_reference_answer = record.get("fit_reference_answer", answer)
+        if not isinstance(fit_reference_answer, str):
+            raise ValueError(f"line {line_number} fit_reference_answer field must be a string when present")
+        fit_max_words = record.get("fit_max_words")
+        max_words = (
+            _sft_fit_max_words(answer)
+            if fit_max_words is None
+            else _optional_int(fit_max_words, line_number, "fit_max_words")
+        )
+
         category_counts[category] = category_counts.get(category, 0) + 1
         rows.append({
             "user": user,
@@ -124,9 +140,9 @@ def write_sft_fit_eval(
             "curriculum_stage": curriculum_stage.strip(),
             "split": split_label.strip(),
             "level": category,
-            "reference_answer": answer,
-            "must_include": [answer],
-            "max_words": _sft_fit_max_words(answer),
+            "reference_answer": fit_reference_answer,
+            "must_include": must_include,
+            "max_words": max_words,
         })
         selected_count += 1
         if max_rows is not None and len(rows) >= max_rows:

@@ -23,6 +23,7 @@ from picochat.eval_starter import generate_eval_starter
 from picochat.sft_starter import generate_sft_starter
 from picochat.benchmark_pack import (
     BENCHMARK_PROFILES,
+    BENCHMARK_SKILL_ANSWER_STYLES,
     BENCHMARK_SOURCES,
     DEFAULT_BENCHMARK_EVAL_ROWS,
     DEFAULT_BENCHMARK_SFT_ROWS,
@@ -271,6 +272,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Curriculum profile. behavior excludes broad long-form chat rows for first-stage SFT fit; "
             "weak_skills over-samples math and spelling after behavior fit is healthy."
+        ),
+    )
+    data_benchmark_pack.add_argument(
+        "--skill-answer-style",
+        choices=BENCHMARK_SKILL_ANSWER_STYLES,
+        default="direct",
+        help=(
+            "How local math/spelling rows should answer. direct keeps terse answers; "
+            "scratchpad teaches a short work trace ending in `Final answer:`."
         ),
     )
     data_benchmark_pack.add_argument("--seed", type=int, default=42)
@@ -1304,6 +1314,7 @@ def benchmark_pack_data(args: argparse.Namespace) -> int:
         seed=args.seed,
         source=args.source,
         profile=args.profile,
+        skill_answer_style=args.skill_answer_style,
         force=args.force,
         promote_to_pack=not args.no_promote,
     )
@@ -1314,6 +1325,7 @@ def benchmark_pack_data(args: argparse.Namespace) -> int:
     print(f"source: {report.source_mode}")
     print(f"source_status: {report.source_status}")
     print(f"profile: {report.profile}")
+    print(f"skill_answer_style: {report.skill_answer_style}")
     if report.fallback_reason:
         print(f"fallback_reason: {report.fallback_reason}")
     print(f"contamination: {report.contamination['status']}")
