@@ -13,10 +13,12 @@ import torch
 import torch.nn.functional as F
 
 from picochat.batching import (
+    DeviceBatchPrefetcher,
     load_sharded_token_split,
     load_token_split,
     make_dataloader,
     make_resumable_batcher,
+    move_batch_to_device,
 )
 from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
@@ -135,7 +137,7 @@ def evaluate_metrics(
     for batch_index, (x, y) in enumerate(loader):
         if batch_index >= max_batches:
             break
-        x, y = _move_batch_to_device(x, y, device)
+        x, y = move_batch_to_device(x, y, device)
         with autocast_context(precision_runtime) if precision_runtime else nullcontext():
             logits, _ = model(x)
         flat_logits = logits.view(-1, logits.size(-1))
@@ -166,18 +168,6 @@ def evaluate_metrics(
     if not losses:
         return {"loss": float("nan"), "bpb": bpb}
     return {"loss": sum(losses) / len(losses), "bpb": bpb}
-
-
-def _move_batch_to_device(
-    x: torch.Tensor,
-    y: torch.Tensor,
-    device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    non_blocking = device.type == "cuda"
-    return (
-        x.to(device, non_blocking=non_blocking),
-        y.to(device, non_blocking=non_blocking),
-    )
 
 
 def train_base(config: TrainConfig) -> dict:
@@ -248,6 +238,7 @@ def train_base(config: TrainConfig) -> dict:
         batch_size=config.batch_size,
         shuffle=True,
         seed=config.seed,
+        pin_memory=device.type == "cuda",
     )
     batcher_metadata = train_batcher.state_dict()
     print(
@@ -376,6 +367,7 @@ def train_base(config: TrainConfig) -> dict:
     if loss_spike_baseline is None and math.isfinite(last_loss) and last_loss > 0:
         loss_spike_baseline = last_loss
 
+    train_batches = DeviceBatchPrefetcher(train_batcher, device)
     model.train()
     train_model.train()
     for step in range(start_step, config.max_steps + 1):
@@ -404,8 +396,7 @@ def train_base(config: TrainConfig) -> dict:
         optimizer.zero_grad(set_to_none=True)
         micro_losses: list[float] = []
         for _ in range(config.grad_accum_steps):
-            x, y = next(train_batcher)
-            x, y = _move_batch_to_device(x, y, device)
+            x, y = next(train_batches)
             with autocast_context(precision_runtime):
                 _, loss = train_model(x, y)
             assert loss is not None
@@ -610,12 +601,12 @@ def train_base(config: TrainConfig) -> dict:
                         optimizer=optimizer,
                         scaler=scaler,
                         ema=ema,
-                    batcher=train_batcher,
-                    device=device,
-                    training_fingerprint=training_fingerprint,
-                    extra_state={
-                        "rollback_events": rollback_events,
-                        "rollback_lr_scale": rollback_lr_scale,
+                        batcher=train_batches,
+                        device=device,
+                        training_fingerprint=training_fingerprint,
+                        extra_state={
+                            "rollback_events": rollback_events,
+                            "rollback_lr_scale": rollback_lr_scale,
                             "loss_spike_baseline": loss_spike_baseline,
                         },
                     ),
@@ -665,7 +656,7 @@ def train_base(config: TrainConfig) -> dict:
                 optimizer=optimizer,
                 scaler=scaler,
                 ema=ema,
-                batcher=train_batcher,
+                batcher=train_batches,
                 device=device,
                 training_fingerprint=training_fingerprint,
                 extra_state={

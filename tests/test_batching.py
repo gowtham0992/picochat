@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from picochat.batching import (
+    DeviceBatchPrefetcher,
     ShardedTokenWindowDataset,
     TokenWindowDataset,
     load_sharded_token_split,
@@ -162,6 +163,25 @@ def test_resumable_batcher_uses_random_sampling_for_large_auto_mode():
     assert state["resolved_index_mode"] == "random"
     assert first._indices == []
     assert first_x.shape == (4, 1)
+    assert first_y.tolist() == (first_x + 1).tolist()
+    assert resumed_x.tolist() == expected_x.tolist()
+    assert resumed_y.tolist() == expected_y.tolist()
+
+
+def test_device_batch_prefetcher_preserves_resume_position():
+    dataset = TokenWindowDataset(list(range(30)), context_size=4)
+    batcher = make_resumable_batcher(dataset, batch_size=3, shuffle=True, seed=9)
+    prefetcher = DeviceBatchPrefetcher(batcher, torch.device("cpu"))
+
+    first_x, first_y = next(prefetcher)
+    state = prefetcher.state_dict()
+    expected_x, expected_y = next(prefetcher)
+
+    resumed_batcher = make_resumable_batcher(dataset, batch_size=3, shuffle=True, seed=9)
+    resumed_prefetcher = DeviceBatchPrefetcher(resumed_batcher, torch.device("cpu"))
+    resumed_prefetcher.load_state_dict(state)
+    resumed_x, resumed_y = next(resumed_prefetcher)
+
     assert first_y.tolist() == (first_x + 1).tolist()
     assert resumed_x.tolist() == expected_x.tolist()
     assert resumed_y.tolist() == expected_y.tolist()

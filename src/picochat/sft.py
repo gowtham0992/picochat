@@ -11,7 +11,7 @@ import time
 
 import torch
 
-from picochat.batching import make_resumable_batcher
+from picochat.batching import DeviceBatchPrefetcher, make_resumable_batcher
 from picochat.chat import render_chat_prompt
 from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
@@ -48,7 +48,6 @@ from picochat.train import (
     _capture_rollback_state,
     _interval_throughput,
     _is_loss_spike,
-    _move_batch_to_device,
     _restore_rollback_state,
     _throughput_summary,
     _update_loss_spike_baseline,
@@ -762,6 +761,7 @@ def train_sft(config: SFTConfig) -> dict:
         shuffle=True,
         seed=config.seed,
         weights=train_weights,
+        pin_memory=device.type == "cuda",
     )
     pin_memory = device.type == "cuda"
     train_eval_loader = make_chat_dataloader(
@@ -844,6 +844,7 @@ def train_sft(config: SFTConfig) -> dict:
     if loss_spike_baseline is None and math.isfinite(last_loss) and last_loss > 0:
         loss_spike_baseline = last_loss
 
+    train_batches = DeviceBatchPrefetcher(train_batcher, device)
     model.train()
     train_model.train()
     for step in range(start_step, config.max_steps + 1):
@@ -872,8 +873,7 @@ def train_sft(config: SFTConfig) -> dict:
         optimizer.zero_grad(set_to_none=True)
         micro_losses: list[float] = []
         for _ in range(config.grad_accum_steps):
-            x, y = next(train_batcher)
-            x, y = _move_batch_to_device(x, y, device)
+            x, y = next(train_batches)
             with autocast_context(precision_runtime):
                 _, loss = train_model(x, y)
             assert loss is not None
@@ -1071,7 +1071,7 @@ def train_sft(config: SFTConfig) -> dict:
                         optimizer=optimizer,
                         scaler=scaler,
                         ema=ema,
-                        batcher=train_batcher,
+                        batcher=train_batches,
                         device=device,
                         training_fingerprint=training_fingerprint,
                         extra_state={
@@ -1126,7 +1126,7 @@ def train_sft(config: SFTConfig) -> dict:
                 optimizer=optimizer,
                 scaler=scaler,
                 ema=ema,
-                batcher=train_batcher,
+                batcher=train_batches,
                 device=device,
                 training_fingerprint=training_fingerprint,
                 extra_state={

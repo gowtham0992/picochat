@@ -139,6 +139,7 @@ class ResumableBatcher:
         weights: torch.Tensor | None = None,
         index_mode: str = "auto",
         permutation_threshold: int = 5_000_000,
+        pin_memory: bool = False,
     ):
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
@@ -159,6 +160,7 @@ class ResumableBatcher:
         self.weights = weights.double() if weights is not None else None
         self.index_mode = index_mode
         self.permutation_threshold = permutation_threshold
+        self.pin_memory = pin_memory
         self._indices_epoch: int | None = None
         self._indices: list[int] = []
 
@@ -177,13 +179,13 @@ class ResumableBatcher:
         end = min(start + self.batch_size, len(indices))
         self.batch_index += 1
         batch = [self.dataset[index] for index in indices[start:end]]
-        return _collate_tensor_pairs(batch)
+        return _collate_tensor_pairs(batch, pin_memory=self.pin_memory)
 
     @property
     def batches_per_epoch(self) -> int:
         return (len(self.dataset) + self.batch_size - 1) // self.batch_size
 
-    def state_dict(self) -> dict[str, int | bool]:
+    def state_dict(self) -> dict[str, Any]:
         return {
             "epoch": self.epoch,
             "batch_index": self.batch_index,
@@ -195,6 +197,7 @@ class ResumableBatcher:
             "index_mode": self.index_mode,
             "resolved_index_mode": self._resolved_index_mode(),
             "permutation_threshold": self.permutation_threshold,
+            "pin_memory": self.pin_memory,
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -209,6 +212,8 @@ class ResumableBatcher:
         observed_index_mode = str(state.get("index_mode", self.index_mode))
         if observed_index_mode != self.index_mode:
             raise ValueError("batcher state index_mode does not match this run")
+        if bool(state.get("pin_memory", self.pin_memory)) != self.pin_memory:
+            raise ValueError("batcher state pin_memory does not match this run")
         self.epoch = int(state.get("epoch", 0))
         self.batch_index = int(state.get("batch_index", 0))
         if self.batch_index < 0 or self.batch_index > self.batches_per_epoch:
@@ -236,7 +241,7 @@ class ResumableBatcher:
         ).tolist()
         self.batch_index += 1
         batch = [self.dataset[index] for index in indices]
-        return _collate_tensor_pairs(batch)
+        return _collate_tensor_pairs(batch, pin_memory=self.pin_memory)
 
     def _epoch_indices(self) -> list[int]:
         if self._indices_epoch == self.epoch:
@@ -259,9 +264,80 @@ class ResumableBatcher:
         return self._indices
 
 
-def _collate_tensor_pairs(batch) -> tuple[torch.Tensor, torch.Tensor]:
+class DeviceBatchPrefetcher:
+    """Move batches to device ahead of use while preserving resumable batch state."""
+
+    def __init__(self, batcher, device: torch.device):
+        self.batcher = batcher
+        self.device = device
+        self.use_cuda = device.type == "cuda"
+        self.stream = torch.cuda.Stream(device=device) if self.use_cuda else None
+        self._next_batch: tuple[torch.Tensor, torch.Tensor] | None = None
+        self._next_state: dict[str, Any] | None = None
+        self._preload()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> tuple[torch.Tensor, torch.Tensor]:
+        if self._next_batch is None:
+            raise StopIteration
+        if self.use_cuda:
+            assert self.stream is not None
+            current_stream = torch.cuda.current_stream(self.device)
+            current_stream.wait_stream(self.stream)
+            for tensor in self._next_batch:
+                tensor.record_stream(current_stream)
+        batch = self._next_batch
+        self._preload()
+        return batch
+
+    def state_dict(self) -> dict[str, Any]:
+        return self._next_state or self.batcher.state_dict()
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        self.batcher.load_state_dict(state)
+        self._preload()
+
+    def _preload(self) -> None:
+        try:
+            next_state = self.batcher.state_dict()
+            x, y = next(self.batcher)
+        except StopIteration:
+            self._next_batch = None
+            self._next_state = self.batcher.state_dict()
+            return
+        self._next_state = next_state
+        if self.use_cuda:
+            assert self.stream is not None
+            with torch.cuda.stream(self.stream):
+                self._next_batch = move_batch_to_device(x, y, self.device)
+        else:
+            self._next_batch = move_batch_to_device(x, y, self.device)
+
+
+def move_batch_to_device(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    non_blocking = device.type == "cuda"
+    return (
+        x.to(device, non_blocking=non_blocking),
+        y.to(device, non_blocking=non_blocking),
+    )
+
+
+def _collate_tensor_pairs(
+    batch,
+    *,
+    pin_memory: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor]:
     x = torch.stack([item[0] for item in batch])
     y = torch.stack([item[1] for item in batch])
+    if pin_memory and torch.cuda.is_available():
+        x = x.pin_memory()
+        y = y.pin_memory()
     return x, y
 
 
@@ -458,6 +534,7 @@ def make_resumable_batcher(
     weights: torch.Tensor | None = None,
     index_mode: str = "auto",
     permutation_threshold: int = 5_000_000,
+    pin_memory: bool = False,
 ) -> ResumableBatcher:
     """Create a deterministic train iterator that can save and load position."""
     return ResumableBatcher(
@@ -468,6 +545,7 @@ def make_resumable_batcher(
         weights=weights,
         index_mode=index_mode,
         permutation_threshold=permutation_threshold,
+        pin_memory=pin_memory,
     )
 
 
