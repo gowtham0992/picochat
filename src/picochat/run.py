@@ -42,6 +42,7 @@ class TinyRunConfig:
     tie_embeddings: bool = False
     qk_norm: bool = False
     attn_backend: str = "auto"
+    parallel_residual: bool = False
     base_steps: int = 300
     sft_steps: int = 600
     base_batch_size: int = 8
@@ -213,6 +214,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         tie_embeddings=config.tie_embeddings,
         qk_norm=config.qk_norm,
         attn_backend=config.attn_backend,
+        parallel_residual=config.parallel_residual,
         seed=config.seed,
         device=config.device,
         log_every=_validation_log_every(config.base_steps),

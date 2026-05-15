@@ -526,6 +526,11 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--tie-embeddings", action="store_true")
     train_base_parser.add_argument("--qk-norm", action="store_true")
     train_base_parser.add_argument(
+        "--parallel-residual",
+        action="store_true",
+        help="Use a parallel residual block: x + attn(norm(x)) + mlp(norm(x)).",
+    )
+    train_base_parser.add_argument(
         "--attn-backend",
         choices=SDPA_BACKENDS,
         default="auto",
@@ -1018,6 +1023,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--activation", choices=("gelu", "relu2", "swiglu"), default=None)
     run_tiny_parser.add_argument("--tie-embeddings", action="store_true")
     run_tiny_parser.add_argument("--qk-norm", action="store_true")
+    run_tiny_parser.add_argument(
+        "--parallel-residual",
+        action="store_true",
+        help="Use a parallel residual block: x + attn(norm(x)) + mlp(norm(x)).",
+    )
     run_tiny_parser.add_argument(
         "--attn-backend",
         choices=SDPA_BACKENDS,
@@ -1857,6 +1867,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         tie_embeddings=args.tie_embeddings,
         qk_norm=args.qk_norm,
         attn_backend=args.attn_backend,
+        parallel_residual=args.parallel_residual,
         seed=args.seed,
         device=args.device,
         log_every=args.log_every,
@@ -2305,6 +2316,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         tie_embeddings=bool(args.tie_embeddings or defaults.tie_embeddings),
         qk_norm=bool(args.qk_norm or defaults.qk_norm),
         attn_backend=_resolve_tiny_value(args, defaults, "attn_backend"),
+        parallel_residual=bool(args.parallel_residual or getattr(defaults, "parallel_residual", False)),
         base_steps=_resolve_tiny_value(args, defaults, "base_steps"),
         sft_steps=_resolve_tiny_value(args, defaults, "sft_steps"),
         base_batch_size=_resolve_tiny_value(args, defaults, "base_batch_size"),

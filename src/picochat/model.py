@@ -38,6 +38,7 @@ class GPTConfig:
     tie_embeddings: bool = False
     qk_norm: bool = False
     attn_backend: str = "auto"
+    parallel_residual: bool = False
 
     def to_dict(self) -> dict[str, int | float | str | bool | None]:
         return asdict(self)
@@ -218,9 +219,10 @@ def _swiglu_hidden_size(n_embd: int) -> int:
 class Block(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
+        self.parallel_residual = config.parallel_residual
         self.ln_1 = make_norm(config.norm_type, config.n_embd)
         self.attn = CausalSelfAttention(config)
-        self.ln_2 = make_norm(config.norm_type, config.n_embd)
+        self.ln_2 = None if self.parallel_residual else make_norm(config.norm_type, config.n_embd)
         self.mlp = MLP(config)
 
     def forward(
@@ -230,6 +232,22 @@ class Block(nn.Module):
         start_pos: int = 0,
         use_cache: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        if self.parallel_residual:
+            h = self.ln_1(x)
+            attn_out = self.attn(
+                h,
+                past_kv=past_kv,
+                start_pos=start_pos,
+                use_cache=use_cache,
+            )
+            present_kv = None
+            if use_cache:
+                attn_out, present_kv = attn_out
+            x = x + attn_out + self.mlp(h)
+            if use_cache:
+                return x, present_kv
+            return x
+
         attn_out = self.attn(
             self.ln_1(x),
             past_kv=past_kv,

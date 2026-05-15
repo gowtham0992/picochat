@@ -167,6 +167,7 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Activation: `{model_config.get('activation', 'gelu')}`")
     lines.append(f"- Tied embeddings: {'enabled' if model_config.get('tie_embeddings') else 'disabled'}")
     lines.append(f"- QK norm: {'enabled' if model_config.get('qk_norm') else 'disabled'}")
+    lines.append(f"- Parallel residual: {'enabled' if model_config.get('parallel_residual') else 'disabled'}")
     lines.append(f"- Logit softcap: {model_config.get('logit_softcap', 0.0) or 'disabled'}")
     lines.append("")
 
@@ -428,6 +429,7 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Activation: `{model_config.get('activation', 'gelu')}`")
     lines.append(f"- Tied embeddings: {'enabled' if model_config.get('tie_embeddings') else 'disabled'}")
     lines.append(f"- QK norm: {'enabled' if model_config.get('qk_norm') else 'disabled'}")
+    lines.append(f"- Parallel residual: {'enabled' if model_config.get('parallel_residual') else 'disabled'}")
     lines.append(f"- Logit softcap: {model_config.get('logit_softcap', 0.0) or 'disabled'}")
     lines.append("")
 
@@ -1024,6 +1026,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- Activation: `{config.get('activation', 'gelu')}`")
     lines.append(f"- Tied embeddings: {'enabled' if config.get('tie_embeddings') else 'disabled'}")
     lines.append(f"- QK norm: {'enabled' if config.get('qk_norm') else 'disabled'}")
+    lines.append(f"- Parallel residual: {'enabled' if config.get('parallel_residual') else 'disabled'}")
     lines.append(f"- Logit softcap: {config.get('logit_softcap', 0.0) or 'disabled'}")
     lines.append(f"- Base steps: {config['base_steps']}")
     lines.append(f"- SFT steps: {config['sft_steps']}")

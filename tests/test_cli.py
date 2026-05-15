@@ -968,6 +968,7 @@ def test_cli_run_tiny(tmp_path, capsys):
         "0.5",
         "--attn-backend",
         "math",
+        "--parallel-residual",
         "--allow-leaky-eval",
     ])
 
@@ -981,6 +982,7 @@ def test_cli_run_tiny(tmp_path, capsys):
     assert summary["config"]["sft_sampling"] == "category_balanced"
     assert summary["config"]["sft_packing"] == "bos_bestfit"
     assert summary["config"]["attn_backend"] == "math"
+    assert summary["config"]["parallel_residual"] is True
     assert summary["config"]["base_optimizer"] == "muon"
     assert summary["config"]["sft_optimizer"] == "muon"
     assert summary["base"]["best_checkpoint"]["weights"] == "ema"

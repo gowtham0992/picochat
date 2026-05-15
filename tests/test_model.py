@@ -239,6 +239,26 @@ def test_model_supports_grouped_query_attention_cache():
     assert past_kv[0][0].shape == (2, 1, 3, config.n_embd // config.n_head)
 
 
+def test_model_supports_parallel_residual_blocks():
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        parallel_residual=True,
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    logits, loss = model(x, x)
+
+    assert logits.shape == (2, config.context_size, config.vocab_size)
+    assert loss is not None
+    assert model.blocks[0].parallel_residual is True
+    assert model.blocks[0].ln_2 is None
+
+
 def test_model_can_softcap_logits():
     config = GPTConfig(
         vocab_size=20,

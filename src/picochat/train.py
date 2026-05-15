@@ -76,6 +76,7 @@ class TrainConfig:
     tie_embeddings: bool = False
     qk_norm: bool = False
     attn_backend: str = "auto"
+    parallel_residual: bool = False
     seed: int = 42
     device: str = "cpu"
     log_every: int = 20
@@ -280,6 +281,7 @@ def train_base(config: TrainConfig) -> dict:
         tie_embeddings=config.tie_embeddings,
         qk_norm=config.qk_norm,
         attn_backend=config.attn_backend,
+        parallel_residual=config.parallel_residual,
         logit_softcap=config.logit_softcap,
         gradient_checkpointing=config.gradient_checkpointing,
     )

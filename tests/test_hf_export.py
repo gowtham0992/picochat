@@ -23,6 +23,7 @@ def test_export_hf_checkpoint_writes_release_folder(tmp_path):
         n_layer=1,
         qk_norm=True,
         attn_backend="math",
+        parallel_residual=True,
     ))
     save_checkpoint(checkpoint_path, model, step=3, train_loss=1.23)
 
@@ -48,6 +49,7 @@ def test_export_hf_checkpoint_writes_release_folder(tmp_path):
     assert config["picochat_model_config"]["n_kv_head"] == 2
     assert config["picochat_model_config"]["qk_norm"] is True
     assert config["picochat_model_config"]["attn_backend"] == "math"
+    assert config["picochat_model_config"]["parallel_residual"] is True
     assert config["auto_map"]["AutoModelForCausalLM"] == "modeling_picochat.PicochatForCausalLM"
     assert manifest["files"]["weights"] == "pytorch_model.bin"
     assert manifest["files"]["dynamic_int8"] == "pytorch_model.dynamic_int8.bin"
