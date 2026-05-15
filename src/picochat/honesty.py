@@ -90,7 +90,6 @@ def inspect_data_honesty(
     chat_rows = _read_chat_rows(chat_input)
     eval_rows = _read_eval_rows(eval_input)
     corpus_text = _read_corpus_text(corpus_path) if corpus_path else ""
-    normalized_corpus = _normalize(corpus_text)
 
     findings: list[HonestyFinding] = []
     exact_prompt_leaks = 0
@@ -100,14 +99,45 @@ def inspect_data_honesty(
     corpus_support_phrase_hits = 0
     duplicate_eval_prompts = 0
     max_similarity = 0.0
+    normalized_prompt_rows = []
+    for chat_row in chat_rows:
+        normalized_chat_prompt = _normalize(chat_row["user"])
+        normalized_prompt_rows.append((chat_row, normalized_chat_prompt, set(normalized_chat_prompt.split())))
+    exact_chat_prompts = {
+        normalized_prompt: chat_row
+        for chat_row, normalized_prompt, _ in normalized_prompt_rows
+    }
     normalized_assistant_rows = [
         (chat_row, _normalize(chat_row["assistant"]))
         for chat_row in chat_rows
     ]
+    normalized_eval_prompts = {
+        eval_row["line"]: _normalize(eval_row["user"])
+        for eval_row in eval_rows
+    }
+    normalized_support_phrases: dict[int, list[tuple[str, str]]] = {}
+    corpus_patterns: set[str] = set()
+    for eval_row in eval_rows:
+        normalized_prompt = normalized_eval_prompts[eval_row["line"]]
+        if len(normalized_prompt) >= 24:
+            corpus_patterns.add(normalized_prompt)
+        support_rows: list[tuple[str, str]] = []
+        for phrase in eval_row["support_phrases"]:
+            normalized_phrase = _normalize(phrase)
+            if not _is_specific_support_phrase(normalized_phrase):
+                continue
+            support_rows.append((phrase, normalized_phrase))
+            corpus_patterns.add(normalized_phrase)
+        normalized_support_phrases[eval_row["line"]] = support_rows
+    corpus_hits = _find_corpus_phrase_hits_for_corpus(
+        corpus_text,
+        corpus_patterns,
+        full_corpus_matrix_char_limit,
+    )
 
     seen_eval_prompts: dict[str, int] = {}
     for eval_row in eval_rows:
-        normalized_prompt = _normalize(eval_row["user"])
+        normalized_prompt = normalized_eval_prompts[eval_row["line"]]
         if normalized_prompt in seen_eval_prompts:
             duplicate_eval_prompts += 1
             findings.append(HonestyFinding(
@@ -123,13 +153,15 @@ def inspect_data_honesty(
         else:
             seen_eval_prompts[normalized_prompt] = eval_row["line"]
 
-        best_chat_row = None
-        best_similarity = 0.0
-        for chat_row in chat_rows:
-            similarity = _prompt_similarity(normalized_prompt, _normalize(chat_row["user"]))
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_chat_row = chat_row
+        best_chat_row = exact_chat_prompts.get(normalized_prompt)
+        best_similarity = 1.0 if best_chat_row is not None else 0.0
+        if best_chat_row is None:
+            prompt_words = set(normalized_prompt.split())
+            for chat_row, chat_prompt, chat_words in normalized_prompt_rows:
+                similarity = _prompt_similarity(normalized_prompt, chat_prompt, prompt_words, chat_words)
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_chat_row = chat_row
 
         max_similarity = max(max_similarity, best_similarity)
         if best_chat_row and normalized_prompt == _normalize(best_chat_row["user"]):
@@ -160,9 +192,9 @@ def inspect_data_honesty(
             ))
 
         if (
-            normalized_corpus
+            corpus_hits
             and len(normalized_prompt) >= 24
-            and normalized_prompt in normalized_corpus
+            and normalized_prompt in corpus_hits
         ):
             corpus_prompt_hits += 1
             findings.append(HonestyFinding(
@@ -175,10 +207,7 @@ def inspect_data_honesty(
                 snippet=_preview(eval_row["user"]),
             ))
 
-        for phrase in eval_row["support_phrases"]:
-            normalized_phrase = _normalize(phrase)
-            if not _is_specific_support_phrase(normalized_phrase):
-                continue
+        for phrase, normalized_phrase in normalized_support_phrases[eval_row["line"]]:
             assistant_hit = next(
                 (
                     chat_row
@@ -203,7 +232,7 @@ def inspect_data_honesty(
                     snippet=_preview(phrase),
                 ))
 
-            if normalized_corpus and normalized_phrase in normalized_corpus:
+            if corpus_hits and normalized_phrase in corpus_hits:
                 corpus_support_phrase_hits += 1
                 findings.append(HonestyFinding(
                     kind="eval_support_phrase_in_corpus",
@@ -858,6 +887,73 @@ def _read_corpus_text(path: str | Path | None) -> str:
     return "\n\n".join(texts)
 
 
+def _find_corpus_phrase_hits(normalized_corpus: str, phrases: set[str]) -> set[str]:
+    """Find many normalized phrases in one corpus pass.
+
+    Repeated ``phrase in huge_corpus`` checks scale poorly on large training
+    corpora. A single escaped alternation keeps the exact-leak guard while
+    avoiding hundreds of full-corpus scans.
+    """
+    if not normalized_corpus or not phrases:
+        return set()
+    candidates = sorted({phrase for phrase in phrases if phrase}, key=len, reverse=True)
+    if not candidates:
+        return set()
+    matcher = re.compile("|".join(re.escape(phrase) for phrase in candidates))
+    raw_hits = {match.group(0) for match in matcher.finditer(normalized_corpus)}
+    if not raw_hits:
+        return set()
+    hits = set(raw_hits)
+    for phrase in candidates:
+        if phrase in hits:
+            continue
+        if any(phrase in hit for hit in raw_hits):
+            hits.add(phrase)
+    return hits
+
+
+def _find_corpus_phrase_hits_for_corpus(
+    corpus_text: str,
+    phrases: set[str],
+    full_normalize_char_limit: int,
+) -> set[str]:
+    if not corpus_text or not phrases:
+        return set()
+    if len(corpus_text) <= max(0, int(full_normalize_char_limit)):
+        return _find_corpus_phrase_hits(_normalize(corpus_text), phrases)
+    return _find_corpus_phrase_hits_in_chunks(corpus_text, phrases)
+
+
+def _find_corpus_phrase_hits_in_chunks(
+    corpus_text: str,
+    phrases: set[str],
+    chunk_chars: int = 1_000_000,
+) -> set[str]:
+    candidates = sorted({phrase for phrase in phrases if phrase}, key=len, reverse=True)
+    if not candidates:
+        return set()
+    matcher = re.compile("|".join(re.escape(phrase) for phrase in candidates))
+    raw_hits: set[str] = set()
+    max_tail_chars = max(8192, max(len(phrase) for phrase in candidates) * 4)
+    tail = ""
+    for start in range(0, len(corpus_text), chunk_chars):
+        chunk = corpus_text[start:start + chunk_chars]
+        normalized_chunk = _normalize(f"{tail} {chunk}" if tail else chunk)
+        raw_hits.update(match.group(0) for match in matcher.finditer(normalized_chunk))
+        if len(raw_hits) == len(candidates):
+            break
+        tail = chunk[-max_tail_chars:]
+    if not raw_hits:
+        return set()
+    hits = set(raw_hits)
+    for phrase in candidates:
+        if phrase in hits:
+            continue
+        if any(phrase in hit for hit in raw_hits):
+            hits.add(phrase)
+    return hits
+
+
 def _normalize(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
 
@@ -875,15 +971,22 @@ def _ngrams(tokens: tuple[str, ...], ngram_size: int) -> set[tuple[str, ...]]:
     }
 
 
-def _prompt_similarity(left: str, right: str) -> float:
+def _prompt_similarity(
+    left: str,
+    right: str,
+    left_words: set[str] | None = None,
+    right_words: set[str] | None = None,
+) -> float:
     if not left or not right:
         return 0.0
-    sequence = SequenceMatcher(None, left, right).ratio()
-    left_words = set(left.split())
-    right_words = set(right.split())
+    left_words = set(left.split()) if left_words is None else left_words
+    right_words = set(right.split()) if right_words is None else right_words
     if not left_words or not right_words:
-        return sequence
+        return SequenceMatcher(None, left, right).ratio()
     jaccard = len(left_words & right_words) / len(left_words | right_words)
+    if jaccard < 0.35:
+        return jaccard
+    sequence = SequenceMatcher(None, left, right).ratio()
     return max(sequence, jaccard)
 
 
