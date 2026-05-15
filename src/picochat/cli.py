@@ -60,6 +60,7 @@ from picochat.sanity import PreH100SanityConfig, run_preh100_sanity
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep
 from picochat.skills_corpus import generate_skills_corpus
+from picochat.tuning_slice import parse_category_patterns, slice_tuning_pack
 from picochat.web import WebConfig, serve_web
 
 
@@ -301,6 +302,32 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write files but do not point dataset_pack.json at them.",
     )
+
+    data_slice_pack = data_subparsers.add_parser(
+        "slice-pack",
+        help="Create an audited dataset-pack slice for staged SFT by category.",
+    )
+    data_slice_pack.add_argument(
+        "--dataset-pack",
+        "--pack",
+        dest="dataset_pack",
+        required=True,
+        help="Source dataset pack whose chat/eval rows should be sliced.",
+    )
+    data_slice_pack.add_argument("--out-dir", required=True, help="Output folder for the sliced dataset pack.")
+    data_slice_pack.add_argument(
+        "--include-categories",
+        default="",
+        help="Comma-separated category globs to keep, e.g. identity,refusal or bench_choice_*.",
+    )
+    data_slice_pack.add_argument(
+        "--exclude-categories",
+        default="",
+        help="Comma-separated category globs to remove after include filtering.",
+    )
+    data_slice_pack.add_argument("--name", default=None, help="Optional name for the sliced dataset_pack.json.")
+    data_slice_pack.add_argument("--description", default=None, help="Optional description for the sliced dataset_pack.json.")
+    data_slice_pack.add_argument("--force", action="store_true", help="Overwrite existing slice files.")
 
     data_skills_corpus = data_subparsers.add_parser(
         "skills-corpus",
@@ -1456,6 +1483,34 @@ def benchmark_pack_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def slice_pack_data(args: argparse.Namespace) -> int:
+    report = slice_tuning_pack(
+        args.dataset_pack,
+        args.out_dir,
+        include_categories=parse_category_patterns(args.include_categories),
+        exclude_categories=parse_category_patterns(args.exclude_categories),
+        name=args.name,
+        description=args.description,
+        force=args.force,
+    )
+    print(f"sliced dataset pack: {report.dataset_pack}")
+    print(f"source dataset pack: {report.source_dataset_pack}")
+    print(f"chat rows: {report.chat_rows_out}/{report.chat_rows_in}")
+    print(f"eval rows: {report.eval_rows_out}/{report.eval_rows_in}")
+    print(f"chat status: {report.sft_status}")
+    print(f"eval status: {report.eval_status}")
+    print("chat categories:")
+    for name, count in report.chat_categories.items():
+        print(f"- {name}: {count}")
+    print("eval categories:")
+    for name, count in report.eval_categories.items():
+        print(f"- {name}: {count}")
+    print(f"report: {report.report_path}")
+    print("\nnext:")
+    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {report.dataset_pack}")
+    return 0
+
+
 def skills_corpus_data(args: argparse.Namespace) -> int:
     report = generate_skills_corpus(
         args.out,
@@ -2257,6 +2312,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "benchmark-pack":
         return benchmark_pack_data(args)
+
+    if args.command == "data" and args.data_command == "slice-pack":
+        return slice_pack_data(args)
 
     if args.command == "data" and args.data_command == "skills-corpus":
         return skills_corpus_data(args)

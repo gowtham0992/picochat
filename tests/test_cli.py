@@ -342,6 +342,55 @@ def test_cli_data_benchmark_pack(tmp_path, capsys):
     assert (tmp_path / "eval_benchmark.jsonl").exists()
 
 
+def test_cli_data_slice_pack(tmp_path, capsys):
+    import json
+
+    corpus = tmp_path / "corpus.txt"
+    corpus.write_text("Picochat trains tiny local models.\n", encoding="utf-8")
+    chat = tmp_path / "chat.jsonl"
+    chat.write_text(
+        json.dumps({"user": "who", "assistant": "Picochat", "category": "identity"})
+        + "\n"
+        + json.dumps({"user": "add", "assistant": "4", "category": "bench_math_addition"})
+        + "\n",
+        encoding="utf-8",
+    )
+    eval_path = tmp_path / "eval.jsonl"
+    eval_path.write_text(
+        json.dumps({"user": "who", "must_include": ["Picochat"], "category": "identity"})
+        + "\n"
+        + json.dumps({"user": "add", "must_include": ["4"], "category": "bench_math_addition"})
+        + "\n",
+        encoding="utf-8",
+    )
+    pack = tmp_path / "dataset_pack.json"
+    pack.write_text(json.dumps({
+        "corpus": "corpus.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    exit_code = main([
+        "data",
+        "slice-pack",
+        "--dataset-pack",
+        str(pack),
+        "--out-dir",
+        str(tmp_path / "identity-pack"),
+        "--include-categories",
+        "identity",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "sliced dataset pack:" in output
+    assert "chat rows: 1/2" in output
+    assert "eval rows: 1/2" in output
+    assert "- identity: 1" in output
+    assert (tmp_path / "identity-pack" / "dataset_pack.json").exists()
+    assert (tmp_path / "identity-pack" / "tuning_slice.md").exists()
+
+
 def test_cli_data_preview_from_recipe(tmp_path, capsys):
     import json
 
