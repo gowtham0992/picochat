@@ -741,6 +741,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_sweep_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
     train_sft_sweep_parser.add_argument("--eval-max-new-tokens", type=int, default=120)
     train_sft_sweep_parser.add_argument("--fit-max-rows", type=int, default=500)
+    train_sft_sweep_parser.add_argument("--eval-log-every", type=int, default=50, help="Print progress every N eval rows. 0 disables progress logs.")
     train_sft_sweep_parser.add_argument("--val-fraction", type=float, default=0.2)
     train_sft_sweep_parser.add_argument("--eval-batches", type=int, default=10)
     train_sft_sweep_parser.add_argument("--sample-prompt", default="What is Picochat?")
@@ -885,6 +886,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_chat_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     eval_chat_parser.add_argument("--seed", type=int, default=42)
     eval_chat_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    eval_chat_parser.add_argument("--log-every", type=int, default=0, help="Print progress every N eval rows. 0 disables progress logs.")
     eval_chat_parser.add_argument("--case-sensitive", action="store_true")
     eval_chat_parser.add_argument("--support-corpus", default=None, help="Optional corpus text file for support-overlap diagnostics.")
     eval_chat_parser.add_argument("--corpus-support-threshold", type=float, default=0.25)
@@ -916,6 +918,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_external_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     eval_external_parser.add_argument("--seed", type=int, default=42)
     eval_external_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    eval_external_parser.add_argument("--log-every", type=int, default=0, help="Print progress every N eval rows. 0 disables progress logs.")
     eval_external_parser.add_argument(
         "--ci-bootstrap-samples",
         type=int,
@@ -940,6 +943,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_sft_fit_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     eval_sft_fit_parser.add_argument("--seed", type=int, default=42)
     eval_sft_fit_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    eval_sft_fit_parser.add_argument("--log-every", type=int, default=50, help="Print progress every N eval rows. 0 disables progress logs.")
     eval_sft_fit_parser.add_argument("--case-sensitive", action="store_true")
     eval_sft_fit_parser.add_argument("--support-corpus", default=None, help="Optional corpus text file for support-overlap diagnostics.")
     eval_sft_fit_parser.add_argument("--corpus-support-threshold", type=float, default=0.25)
@@ -1948,6 +1952,7 @@ def run_train_sft_sweep(args: argparse.Namespace) -> int:
         precision=args.precision,
         torch_compile=args.torch_compile,
         torch_compile_mode=args.torch_compile_mode,
+        eval_log_every=args.eval_log_every,
     ))
     print(f"sft sweep report: {Path(args.out_dir) / 'sft_sweep.md'}")
     best_fit = report.get("best_sft_fit") or {}
@@ -2085,6 +2090,7 @@ def run_eval_chat(args: argparse.Namespace) -> int:
         corpus_support_threshold=args.corpus_support_threshold,
         ci_bootstrap_samples=args.ci_bootstrap_samples,
         ci_confidence=args.ci_confidence,
+        log_every=args.log_every,
     ))
     summary = report["summary"]
     print(
@@ -2123,6 +2129,7 @@ def run_eval_external(args: argparse.Namespace) -> int:
         device=args.device,
         ci_bootstrap_samples=args.ci_bootstrap_samples,
         ci_confidence=args.ci_confidence,
+        log_every=args.log_every,
     ))
     summary = report["summary"]
     choice_accuracy = summary.get("choice_accuracy")
@@ -2162,6 +2169,7 @@ def run_eval_sft_fit(args: argparse.Namespace) -> int:
         corpus_support_threshold=args.corpus_support_threshold,
         ci_bootstrap_samples=args.ci_bootstrap_samples,
         ci_confidence=args.ci_confidence,
+        log_every=args.log_every,
     ))
     summary = report["summary"]
     print(

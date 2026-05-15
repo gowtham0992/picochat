@@ -316,6 +316,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         seed=config.seed,
         device=config.device,
         support_corpus_path=str(corpus_path),
+        log_every=_eval_log_every(sft_fit_dataset["num_rows"]),
     ))
     sft_fit_heldout_dataset = None
     sft_fit_heldout_report = None
@@ -337,6 +338,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             seed=config.seed,
             device=config.device,
             support_corpus_path=str(corpus_path),
+            log_every=_eval_log_every(sft_fit_heldout_dataset["num_rows"]),
         ))
 
     print("[7/7] run chat eval")
@@ -349,6 +351,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         seed=config.seed,
         device=config.device,
         support_corpus_path=str(corpus_path),
+        log_every=50,
     ))
     generated_eval_replies = [
         str(row.get("reply", ""))
@@ -499,6 +502,13 @@ def _iter_text_chunks(path: Path, chunk_chars: int = 1_000_000):
             if not chunk:
                 break
             yield chunk
+
+
+def _eval_log_every(num_rows: int) -> int:
+    """Choose a useful progress cadence for generation-heavy diagnostics."""
+    if num_rows <= 0:
+        return 0
+    return max(1, min(100, num_rows // 10 or 1))
 
 
 def run_tiny_multiseed(config: TinyRunConfig, n_seeds: int) -> dict:

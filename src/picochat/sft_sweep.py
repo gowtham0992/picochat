@@ -48,6 +48,7 @@ class SFTSweepConfig:
     precision: str = "float32"
     torch_compile: bool = False
     torch_compile_mode: str = "default"
+    eval_log_every: int = 50
 
 
 def run_sft_sweep(config: SFTSweepConfig) -> dict:
@@ -220,6 +221,7 @@ def _run_candidate(
         seed=config.seed,
         device=config.device,
         support_corpus_path=config.support_corpus_path,
+        log_every=config.eval_log_every,
     ))
 
     eval_report = None
@@ -233,6 +235,7 @@ def _run_candidate(
             seed=config.seed,
             device=config.device,
             support_corpus_path=config.support_corpus_path,
+            log_every=config.eval_log_every,
         ))
 
     row = {

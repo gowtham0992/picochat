@@ -58,6 +58,7 @@ class ChatEvalConfig:
     corpus_support_threshold: float = 0.25
     ci_bootstrap_samples: int = 1000
     ci_confidence: float = 0.95
+    log_every: int = 0
 
 
 @dataclass(frozen=True)
@@ -443,8 +444,9 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     support_corpus_text = _read_optional_text(config.support_corpus_path)
     support_corpus_tokens = _corpus_support_token_set(support_corpus_text)
 
+    items = load_chat_eval_items(config.input_path)
     rows = []
-    for index, item in enumerate(load_chat_eval_items(config.input_path)):
+    for index, item in enumerate(items):
         choice_scores = None
         choice_details = None
         if item.correct_choice:
@@ -489,6 +491,13 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "choice_predicted": reply if item.correct_choice else None,
             **score,
         })
+        if config.log_every > 0 and ((index + 1) % config.log_every == 0 or index + 1 == len(items)):
+            passed_so_far = sum(1 for row in rows if row["passed"])
+            print(
+                f"eval {index + 1:04d}/{len(items):04d} | "
+                f"passed {passed_so_far}/{len(rows)} | "
+                f"{Path(config.out_dir).name}"
+            )
 
     passed = sum(1 for row in rows if row["passed"])
     unsupported_claims = sum(1 for row in rows if row["found_forbidden"])

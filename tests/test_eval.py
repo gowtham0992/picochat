@@ -366,6 +366,40 @@ def test_run_chat_eval_writes_artifacts(tmp_path):
     assert report["summary"]["category_breakdown"]["answerable"]["pass_rate_ci"]["method"] == "bootstrap"
 
 
+def test_run_chat_eval_prints_progress_when_requested(tmp_path, capsys):
+    input_path = tmp_path / "eval.jsonl"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "checkpoint"
+    out_dir = tmp_path / "eval"
+    write_jsonl(input_path, [
+        {"user": "one"},
+        {"user": "two"},
+    ])
+    tokenizer = CharTokenizer.train(["User: one\nAssistant:"])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=32,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    run_chat_eval(ChatEvalConfig(
+        input_path=str(input_path),
+        checkpoint_path=str(checkpoint_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir),
+        max_new_tokens=0,
+        log_every=1,
+    ))
+
+    output = capsys.readouterr().out
+    assert "eval 0001/0002" in output
+    assert "eval 0002/0002" in output
+
+
 def test_run_chat_eval_indexes_support_corpus_once(tmp_path, monkeypatch):
     input_path = tmp_path / "eval.jsonl"
     support_path = tmp_path / "support.txt"
