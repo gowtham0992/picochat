@@ -33,6 +33,7 @@ from picochat.run_preflight import assess_run_preflight, preflight_markdown
 from picochat.compare import compare_runs, comparison_table, write_comparison_report
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.device import DEVICE_CHOICES
+from picochat.hf_export import HFExportConfig, export_hf_checkpoint
 from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
@@ -618,6 +619,25 @@ def build_parser() -> argparse.ArgumentParser:
     generate_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     generate_parser.add_argument("--seed", type=int, default=42)
     generate_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+
+    export_parser = subparsers.add_parser("export", help="Export model artifacts.")
+    export_subparsers = export_parser.add_subparsers(dest="export_command")
+    export_hf_parser = export_subparsers.add_parser(
+        "hf",
+        help="Export a checkpoint as a HuggingFace-style release folder.",
+    )
+    export_hf_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
+    export_hf_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
+    export_hf_parser.add_argument("--out-dir", required=True, help="Output model folder.")
+    export_hf_parser.add_argument("--model-name", default="picochat", help="Model card title.")
+    export_hf_parser.add_argument(
+        "--fine-tuned",
+        action="store_true",
+        help="Mark this export as a fine-tuned model instead of a base model.",
+    )
+    export_hf_parser.add_argument("--license", default="unknown", help="License string for the model card.")
+    export_hf_parser.add_argument("--dataset-summary", default="Not provided.", help="Training data summary.")
+    export_hf_parser.add_argument("--eval-summary", default="Not provided.", help="Evaluation summary.")
 
     chat_parser = subparsers.add_parser("chat", help="Interactive terminal chat.")
     chat_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
@@ -1553,6 +1573,23 @@ def run_generate(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_export_hf(args: argparse.Namespace) -> int:
+    report = export_hf_checkpoint(HFExportConfig(
+        checkpoint_path=args.checkpoint,
+        tokenizer_path=args.tokenizer,
+        out_dir=args.out_dir,
+        model_name=args.model_name,
+        base_model=not args.fine_tuned,
+        license_name=args.license,
+        dataset_summary=args.dataset_summary,
+        eval_summary=args.eval_summary,
+    ))
+    print(f"exported: {report['out_dir']}")
+    print(f"manifest: {report['manifest']}")
+    print(f"model_card: {report['model_card']}")
+    return 0
+
+
 def run_chat(args: argparse.Namespace) -> int:
     top_k = None if args.top_k <= 0 else args.top_k
     return chat_loop(ChatConfig(
@@ -1836,6 +1873,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "generate":
         return run_generate(args)
+
+    if args.command == "export" and args.export_command == "hf":
+        return run_export_hf(args)
 
     if args.command == "chat":
         return run_chat(args)
