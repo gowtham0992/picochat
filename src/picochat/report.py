@@ -813,6 +813,21 @@ def tiny_run_summary_markdown(summary: dict) -> str:
                 f"- Max SFT/eval prompt similarity: "
                 f"{format_float(honesty.get('max_sft_prompt_similarity', 0.0))}"
             )
+        matrix_pairs = honesty.get("contamination_matrix", {}).get("pairs", [])
+        if matrix_pairs:
+            lines.append("- Contamination matrix:")
+            for pair in matrix_pairs:
+                checked = (
+                    "checked"
+                    if pair.get("checked")
+                    else f"not checked: {pair.get('reason', 'unknown')}"
+                )
+                lines.append(
+                    f"  - `{pair.get('name', 'unknown')}`: risk `{pair.get('risk', 'unknown')}`, "
+                    f"{checked}, max n-gram overlap "
+                    f"{format_float(float(pair.get('max_ngram_overlap_rate', 0.0)))}, "
+                    f"longest overlap {int(pair.get('max_longest_overlap_tokens', 0))} tokens"
+                )
         lines.append("")
 
     if eval_summary.get("category_breakdown"):

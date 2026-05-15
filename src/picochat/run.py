@@ -255,6 +255,21 @@ def run_tiny(config: TinyRunConfig) -> dict:
         device=config.device,
         support_corpus_path=str(corpus_path),
     ))
+    generated_eval_replies = [
+        str(row.get("reply", ""))
+        for row in eval_report.get("examples", [])
+        if isinstance(row, dict) and str(row.get("reply", "")).strip()
+    ]
+    honesty_report = inspect_data_honesty(
+        corpus_path=corpus_path,
+        chat_input=chat_input,
+        eval_input=eval_input,
+        generated_texts=generated_eval_replies,
+    )
+    honesty_json_path, honesty_markdown_path = write_data_honesty_report(
+        honesty_report,
+        out_dir / "honesty",
+    )
     long_run_gate = _long_run_gate(
         preflight_report=preflight_report.to_dict(),
         sft_fit_summary=sft_fit_report["summary"],

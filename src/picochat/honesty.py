@@ -54,6 +54,7 @@ class DataHonestyReport:
     corpus_support_phrase_hits: int
     duplicate_eval_prompts: int
     max_sft_prompt_similarity: float
+    contamination_matrix: dict[str, Any]
     findings: tuple[HonestyFinding, ...]
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,11 +64,25 @@ class DataHonestyReport:
         }
 
 
+@dataclass(frozen=True)
+class _TextRecord:
+    source: str
+    kind: str
+    line: int | None
+    category: str | None
+    text: str
+    normalized: str
+    tokens: tuple[str, ...]
+    ngrams: frozenset[tuple[str, ...]]
+
+
 def inspect_data_honesty(
     chat_input: str | Path,
     eval_input: str | Path,
     corpus_path: str | Path | None = None,
     near_threshold: float = 0.86,
+    generated_texts: list[str] | None = None,
+    ngram_size: int = 8,
 ) -> DataHonestyReport:
     """Check whether an eval is visibly contaminated by SFT or corpus text."""
     chat_rows = _read_chat_rows(chat_input)
@@ -201,6 +216,14 @@ def inspect_data_honesty(
                     snippet=_preview(phrase),
                 ))
 
+    contamination_matrix = _build_contamination_matrix(
+        chat_rows=chat_rows,
+        eval_rows=eval_rows,
+        corpus_text=corpus_text,
+        generated_texts=generated_texts or [],
+        near_threshold=near_threshold,
+        ngram_size=ngram_size,
+    )
     status = _status(findings)
     return DataHonestyReport(
         status=status,
@@ -217,6 +240,7 @@ def inspect_data_honesty(
         corpus_support_phrase_hits=corpus_support_phrase_hits,
         duplicate_eval_prompts=duplicate_eval_prompts,
         max_sft_prompt_similarity=max_similarity,
+        contamination_matrix=contamination_matrix,
         findings=tuple(findings),
     )
 
@@ -257,9 +281,69 @@ def data_honesty_markdown(report: DataHonestyReport) -> str:
         f"- Duplicate eval prompts: {report.duplicate_eval_prompts}",
         f"- Max SFT/eval prompt similarity: {report.max_sft_prompt_similarity:.4f}",
         "",
-        "## Findings",
+        "## Contamination Matrix",
         "",
     ]
+    matrix = report.contamination_matrix or {}
+    pairs = matrix.get("pairs", [])
+    if not pairs:
+        lines.append("No contamination matrix was recorded.")
+        lines.append("")
+    else:
+        lines.append(f"- N-gram size: {matrix.get('ngram_size', 8)}")
+        lines.append(f"- Near-text threshold: {float(matrix.get('near_threshold', 0.0)):.4f}")
+        lines.append("")
+        lines.extend([
+            "| Pair | Risk | Checked | Exact text hits | Near text hits | "
+            "Max n-gram overlap | Longest overlap tokens |",
+            "| --- | --- | --- | ---: | ---: | ---: | ---: |",
+        ])
+        for pair in pairs:
+            checked = "yes" if pair.get("checked") else f"no: {pair.get('reason', 'not checked')}"
+            lines.append(
+                f"| `{_escape_table(str(pair.get('name', 'unknown')))}` | "
+                f"`{_escape_table(str(pair.get('risk', 'unknown')))}` | "
+                f"{_escape_table(checked)} | "
+                f"{int(pair.get('exact_text_hits', 0))} | "
+                f"{int(pair.get('near_text_hits', 0))} | "
+                f"{float(pair.get('max_ngram_overlap_rate', 0.0)):.4f} | "
+                f"{int(pair.get('max_longest_overlap_tokens', 0))} |"
+            )
+        lines.append("")
+        for pair in pairs:
+            samples = pair.get("nearest_neighbors", [])
+            if not samples:
+                continue
+            lines.append(f"### `{pair.get('name', 'unknown')}` nearest neighbors")
+            lines.append("")
+            lines.extend([
+                "| Target | Reference | Overlap | Longest | Preview |",
+                "| --- | --- | ---: | ---: | --- |",
+            ])
+            for sample in samples[:3]:
+                target = _record_label(
+                    sample.get("target_source"),
+                    sample.get("target_kind"),
+                    sample.get("target_line"),
+                )
+                reference = _record_label(
+                    sample.get("reference_source"),
+                    sample.get("reference_kind"),
+                    sample.get("reference_line"),
+                )
+                preview = sample.get("overlap_preview") or sample.get("target_preview") or ""
+                lines.append(
+                    f"| `{_escape_table(target)}` | `{_escape_table(reference)}` | "
+                    f"{float(sample.get('ngram_overlap_rate', 0.0)):.4f} | "
+                    f"{int(sample.get('longest_overlap_tokens', 0))} | "
+                    f"{_escape_table(str(preview))} |"
+                )
+            lines.append("")
+
+    lines.extend([
+        "## Findings",
+        "",
+    ])
     if not report.findings:
         lines.append("No obvious leakage findings.")
         lines.append("")
@@ -287,6 +371,376 @@ def data_honesty_markdown(report: DataHonestyReport) -> str:
         "",
     ])
     return "\n".join(lines)
+
+
+def _build_contamination_matrix(
+    chat_rows: list[dict[str, Any]],
+    eval_rows: list[dict[str, Any]],
+    corpus_text: str,
+    generated_texts: list[str],
+    near_threshold: float,
+    ngram_size: int,
+) -> dict[str, Any]:
+    ngram_size = max(1, int(ngram_size))
+    corpus_records = (
+        [_make_record("base_corpus", "corpus", corpus_text, ngram_size)]
+        if corpus_text.strip()
+        else []
+    )
+    sft_records = _chat_text_records(chat_rows, ngram_size)
+    eval_records = _eval_text_records(eval_rows, ngram_size)
+    generated_records = [
+        _make_record("generated_answers", "reply", text, ngram_size, line=index)
+        for index, text in enumerate(generated_texts, start=1)
+        if isinstance(text, str) and text.strip()
+    ]
+    pairs = [
+        _matrix_pair(
+            name="base_corpus_vs_sft",
+            reference_label="base_corpus",
+            target_label="chat_sft",
+            reference_records=corpus_records,
+            target_records=sft_records,
+            near_threshold=near_threshold,
+            ngram_size=ngram_size,
+        ),
+        _matrix_pair(
+            name="base_corpus_vs_eval",
+            reference_label="base_corpus",
+            target_label="eval",
+            reference_records=corpus_records,
+            target_records=eval_records,
+            near_threshold=near_threshold,
+            ngram_size=ngram_size,
+        ),
+        _matrix_pair(
+            name="sft_vs_eval",
+            reference_label="chat_sft",
+            target_label="eval",
+            reference_records=sft_records,
+            target_records=eval_records,
+            near_threshold=near_threshold,
+            ngram_size=ngram_size,
+        ),
+        _matrix_pair(
+            name="generated_vs_sft",
+            reference_label="chat_sft",
+            target_label="generated_answers",
+            reference_records=sft_records,
+            target_records=generated_records,
+            near_threshold=near_threshold,
+            ngram_size=ngram_size,
+        ),
+        _matrix_pair(
+            name="generated_vs_base_corpus",
+            reference_label="base_corpus",
+            target_label="generated_answers",
+            reference_records=corpus_records,
+            target_records=generated_records,
+            near_threshold=near_threshold,
+            ngram_size=ngram_size,
+        ),
+    ]
+    return {
+        "ngram_size": ngram_size,
+        "near_threshold": near_threshold,
+        "pairs": pairs,
+    }
+
+
+def _chat_text_records(chat_rows: list[dict[str, Any]], ngram_size: int) -> list[_TextRecord]:
+    records: list[_TextRecord] = []
+    for row in chat_rows:
+        records.append(_make_record(
+            "chat_sft",
+            "prompt",
+            row["user"],
+            ngram_size,
+            line=row["line"],
+            category=row["category"],
+        ))
+        records.append(_make_record(
+            "chat_sft",
+            "answer",
+            row["assistant"],
+            ngram_size,
+            line=row["line"],
+            category=row["category"],
+        ))
+    return records
+
+
+def _eval_text_records(eval_rows: list[dict[str, Any]], ngram_size: int) -> list[_TextRecord]:
+    records: list[_TextRecord] = []
+    for row in eval_rows:
+        records.append(_make_record(
+            "eval",
+            "prompt",
+            row["user"],
+            ngram_size,
+            line=row["line"],
+            category=row["category"],
+        ))
+        for phrase in row["support_phrases"]:
+            normalized_phrase = _normalize(phrase)
+            if _is_specific_support_phrase(normalized_phrase):
+                records.append(_make_record(
+                    "eval",
+                    "support_phrase",
+                    phrase,
+                    ngram_size,
+                    line=row["line"],
+                    category=row["category"],
+                ))
+    return records
+
+
+def _make_record(
+    source: str,
+    kind: str,
+    text: str,
+    ngram_size: int,
+    line: int | None = None,
+    category: str | None = None,
+) -> _TextRecord:
+    tokens = tuple(_tokens(text))
+    return _TextRecord(
+        source=source,
+        kind=kind,
+        line=line,
+        category=category,
+        text=text,
+        normalized=_normalize(text),
+        tokens=tokens,
+        ngrams=frozenset(_ngrams(tokens, ngram_size)),
+    )
+
+
+def _matrix_pair(
+    name: str,
+    reference_label: str,
+    target_label: str,
+    reference_records: list[_TextRecord],
+    target_records: list[_TextRecord],
+    near_threshold: float,
+    ngram_size: int,
+) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "name": name,
+        "reference": reference_label,
+        "target": target_label,
+        "reference_items": len(reference_records),
+        "target_items": len(target_records),
+        "exact_text_hits": 0,
+        "near_text_hits": 0,
+        "max_text_similarity": 0.0,
+        "max_ngram_overlap_rate": 0.0,
+        "max_longest_overlap_tokens": 0,
+        "nearest_neighbors": [],
+    }
+    if not reference_records:
+        return {
+            **base,
+            "checked": False,
+            "reason": f"no {reference_label} records",
+            "risk": "not_checked",
+        }
+    if not target_records:
+        return {
+            **base,
+            "checked": False,
+            "reason": f"no {target_label} records",
+            "risk": "not_checked",
+        }
+
+    exact_hits = 0
+    near_hits = 0
+    max_similarity = 0.0
+    max_overlap_rate = 0.0
+    max_longest = 0
+    samples: list[dict[str, Any]] = []
+    for target in target_records:
+        best_match: dict[str, Any] | None = None
+        target_exact_hit = False
+        target_near_hit = False
+        for reference in reference_records:
+            match = _record_match(reference, target, near_threshold, ngram_size)
+            target_exact_hit = target_exact_hit or match["exact_text_hit"]
+            target_near_hit = target_near_hit or match["near_text_hit"]
+            if best_match is None or _match_key(match) > _match_key(best_match):
+                best_match = match
+        if best_match is None:
+            continue
+        if target_exact_hit:
+            exact_hits += 1
+        if target_near_hit:
+            near_hits += 1
+        max_similarity = max(max_similarity, best_match["text_similarity"])
+        max_overlap_rate = max(max_overlap_rate, best_match["ngram_overlap_rate"])
+        max_longest = max(max_longest, best_match["longest_overlap_tokens"])
+        if _interesting_match(best_match, ngram_size):
+            samples.append(_sample_match(best_match))
+
+    samples.sort(key=lambda item: (
+        int(item.get("exact_text_hit", False)),
+        float(item.get("ngram_overlap_rate", 0.0)),
+        int(item.get("longest_overlap_tokens", 0)),
+        float(item.get("text_similarity", 0.0)),
+    ), reverse=True)
+    return {
+        **base,
+        "checked": True,
+        "risk": _matrix_risk(exact_hits, near_hits, max_overlap_rate, max_longest, ngram_size),
+        "exact_text_hits": exact_hits,
+        "near_text_hits": near_hits,
+        "max_text_similarity": round(max_similarity, 6),
+        "max_ngram_overlap_rate": round(max_overlap_rate, 6),
+        "max_longest_overlap_tokens": max_longest,
+        "nearest_neighbors": samples[:5],
+    }
+
+
+def _record_match(
+    reference: _TextRecord,
+    target: _TextRecord,
+    near_threshold: float,
+    ngram_size: int,
+) -> dict[str, Any]:
+    exact_text_hit = _exact_text_hit(reference.normalized, target.normalized)
+    text_similarity = 0.0
+    if _can_compare_similarity(reference.normalized, target.normalized):
+        text_similarity = _prompt_similarity(target.normalized, reference.normalized)
+    elif exact_text_hit:
+        text_similarity = 1.0
+    overlap_rate = _ngram_overlap_rate(reference, target)
+    longest_overlap, overlap_preview = _longest_overlap(target.tokens, reference.normalized)
+    near_text_hit = (
+        not exact_text_hit
+        and len(target.normalized) >= 24
+        and text_similarity >= near_threshold
+    )
+    return {
+        "reference": reference,
+        "target": target,
+        "exact_text_hit": exact_text_hit,
+        "near_text_hit": near_text_hit,
+        "text_similarity": text_similarity,
+        "ngram_overlap_rate": overlap_rate,
+        "longest_overlap_tokens": longest_overlap,
+        "overlap_preview": overlap_preview,
+        "ngram_size": ngram_size,
+    }
+
+
+def _sample_match(match: dict[str, Any]) -> dict[str, Any]:
+    reference = match["reference"]
+    target = match["target"]
+    return {
+        "target_source": target.source,
+        "target_kind": target.kind,
+        "target_line": target.line,
+        "target_category": target.category,
+        "reference_source": reference.source,
+        "reference_kind": reference.kind,
+        "reference_line": reference.line,
+        "reference_category": reference.category,
+        "exact_text_hit": match["exact_text_hit"],
+        "near_text_hit": match["near_text_hit"],
+        "text_similarity": round(match["text_similarity"], 6),
+        "ngram_overlap_rate": round(match["ngram_overlap_rate"], 6),
+        "longest_overlap_tokens": match["longest_overlap_tokens"],
+        "overlap_preview": _preview(match["overlap_preview"]) if match["overlap_preview"] else None,
+        "target_preview": _preview(target.text),
+        "reference_preview": _preview(reference.text),
+    }
+
+
+def _match_key(match: dict[str, Any]) -> tuple[int, float, int, float]:
+    return (
+        int(match["exact_text_hit"]),
+        float(match["ngram_overlap_rate"]),
+        int(match["longest_overlap_tokens"]),
+        float(match["text_similarity"]),
+    )
+
+
+def _interesting_match(match: dict[str, Any], ngram_size: int) -> bool:
+    return (
+        match["exact_text_hit"]
+        or match["near_text_hit"]
+        or match["ngram_overlap_rate"] > 0.0
+        or match["longest_overlap_tokens"] >= ngram_size
+    )
+
+
+def _matrix_risk(
+    exact_hits: int,
+    near_hits: int,
+    max_overlap_rate: float,
+    max_longest: int,
+    ngram_size: int,
+) -> str:
+    if (
+        exact_hits
+        or max_overlap_rate >= 0.80
+        or max_longest >= max(40, ngram_size * 5)
+    ):
+        return "high"
+    if near_hits or max_overlap_rate >= 0.35 or max_longest >= max(16, ngram_size * 2):
+        return "medium"
+    if max_overlap_rate > 0.0 or max_longest >= ngram_size:
+        return "low"
+    return "clean"
+
+
+def _exact_text_hit(
+    reference_normalized: str,
+    target_normalized: str,
+    min_chars: int = 24,
+) -> bool:
+    if len(target_normalized) < min_chars or not reference_normalized:
+        return False
+    if target_normalized == reference_normalized:
+        return True
+    return f" {target_normalized} " in f" {reference_normalized} "
+
+
+def _can_compare_similarity(reference_normalized: str, target_normalized: str) -> bool:
+    if len(target_normalized) < 24 or len(reference_normalized) < 24:
+        return False
+    return max(len(reference_normalized), len(target_normalized)) <= 2000
+
+
+def _ngram_overlap_rate(reference: _TextRecord, target: _TextRecord) -> float:
+    if not target.ngrams:
+        return 0.0
+    return len(target.ngrams & reference.ngrams) / len(target.ngrams)
+
+
+def _longest_overlap(
+    target_tokens: tuple[str, ...],
+    reference_normalized: str,
+    max_target_tokens: int = 120,
+) -> tuple[int, str | None]:
+    if not target_tokens or not reference_normalized:
+        return 0, None
+    tokens = target_tokens[:max_target_tokens]
+    reference_blob = f" {reference_normalized} "
+    best_len = 0
+    best_text: str | None = None
+    for start in range(len(tokens)):
+        for end in range(start + best_len + 1, len(tokens) + 1):
+            phrase = " ".join(tokens[start:end])
+            if f" {phrase} " not in reference_blob:
+                break
+            best_len = end - start
+            best_text = phrase
+    return best_len, best_text
+
+
+def _record_label(source: Any, kind: Any, line: Any) -> str:
+    base = f"{source or 'unknown'}:{kind or 'text'}"
+    return f"{base}:{line}" if line is not None else base
 
 
 def _read_chat_rows(path: str | Path) -> list[dict[str, Any]]:
@@ -378,6 +832,19 @@ def _read_corpus_text(path: str | Path | None) -> str:
 
 def _normalize(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def _ngrams(tokens: tuple[str, ...], ngram_size: int) -> set[tuple[str, ...]]:
+    if ngram_size <= 0 or len(tokens) < ngram_size:
+        return set()
+    return {
+        tuple(tokens[index:index + ngram_size])
+        for index in range(len(tokens) - ngram_size + 1)
+    }
 
 
 def _prompt_similarity(left: str, right: str) -> float:

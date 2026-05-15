@@ -191,6 +191,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.86,
         help="Similarity threshold for near-duplicate prompt warnings.",
     )
+    data_honesty.add_argument(
+        "--ngram-size",
+        type=int,
+        default=8,
+        help="Token n-gram size for contamination matrix overlap checks.",
+    )
 
     data_init_pack = data_subparsers.add_parser("init-pack", help="Create a starter dataset pack folder.")
     data_init_pack.add_argument("--name", default="picochat-pack", help="Human-readable dataset pack name.")
@@ -1200,6 +1206,7 @@ def honesty_data(args: argparse.Namespace) -> int:
         chat_input=chat_input,
         eval_input=eval_input,
         near_threshold=args.near_threshold,
+        ngram_size=args.ngram_size,
     )
     print(f"honesty: {report.status}")
     print(f"summary: {report.summary}")
@@ -1212,6 +1219,19 @@ def honesty_data(args: argparse.Namespace) -> int:
     print(f"corpus_support_phrase_hits: {report.corpus_support_phrase_hits}")
     print(f"duplicate_eval_prompts: {report.duplicate_eval_prompts}")
     print(f"max_sft_prompt_similarity: {report.max_sft_prompt_similarity:.4f}")
+    print("contamination_matrix:")
+    for pair in report.contamination_matrix.get("pairs", []):
+        checked = (
+            "checked"
+            if pair.get("checked")
+            else f"not_checked({pair.get('reason', 'unknown')})"
+        )
+        print(
+            f"- {pair.get('name')}: risk={pair.get('risk')} {checked} "
+            f"exact={pair.get('exact_text_hits', 0)} near={pair.get('near_text_hits', 0)} "
+            f"max_ngram_overlap={float(pair.get('max_ngram_overlap_rate', 0.0)):.4f} "
+            f"longest={pair.get('max_longest_overlap_tokens', 0)}"
+        )
     for finding in report.findings[:8]:
         message = (
             f"- {finding.severity} {finding.kind} eval_line={finding.eval_line} "

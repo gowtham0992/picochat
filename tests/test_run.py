@@ -77,6 +77,11 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert "honesty_report" in summary["artifacts"]
     assert summary["honesty"]["status"] == "blocked"
     assert summary["honesty"]["exact_prompt_leaks"] == 1
+    assert "contamination_matrix" in summary["honesty"]
+    assert any(
+        pair["name"] == "generated_vs_sft"
+        for pair in summary["honesty"]["contamination_matrix"]["pairs"]
+    )
     assert summary["artifacts"]["sft_eval_checkpoint"] == str(out_dir / "sft" / "best_checkpoint")
     assert summary["artifacts"]["base_eval_checkpoint"] == str(out_dir / "base" / "best_checkpoint")
     assert summary["base"]["eval_checkpoint"] == str(out_dir / "base" / "best_checkpoint")
