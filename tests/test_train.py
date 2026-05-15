@@ -122,6 +122,7 @@ def test_train_base_records_precision_runtime(tmp_path):
     assert report["config"]["precision"] == "bf16"
     assert report["config"]["precision_runtime"]["requested"] == "bf16"
     assert report["config"]["precision_runtime"]["dtype_name"] == "bfloat16"
+    assert report["config"]["matmul_precision_runtime"]["requested"] == "default"
     assert report["config"]["torch_compile_metadata"]["enabled"] is False
 
 

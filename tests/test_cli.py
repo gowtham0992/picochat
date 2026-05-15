@@ -96,6 +96,7 @@ def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
         assert config.tokenizer_path == "tok.json"
         assert config.checkpoint_path == "base"
         assert config.eval_log_every == 50
+        assert config.matmul_precision == "default"
         return {
             "best_sft_fit": {
                 "candidate": "uniform-lr1em04-steps1",

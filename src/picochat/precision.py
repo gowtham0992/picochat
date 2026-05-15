@@ -10,6 +10,7 @@ import torch
 
 
 PRECISION_MODES = ("float32", "bf16", "fp16", "auto")
+MATMUL_PRECISION_MODES = ("default", "highest", "high", "medium")
 COMPILE_MODES = ("default", "reduce-overhead", "max-autotune")
 
 
@@ -65,6 +66,27 @@ def resolve_precision(mode: str, device: torch.device) -> PrecisionRuntime:
         )
     dtype = torch.bfloat16 if requested == "bf16" else torch.float16
     return _runtime(requested, device, dtype)
+
+
+def configure_float32_matmul_precision(mode: str) -> dict[str, Any]:
+    """Configure PyTorch float32 matmul precision for CUDA tensor cores."""
+    requested = mode.lower()
+    if requested not in MATMUL_PRECISION_MODES:
+        raise ValueError(f"matmul_precision must be one of: {', '.join(MATMUL_PRECISION_MODES)}")
+    getter = getattr(torch, "get_float32_matmul_precision", None)
+    setter = getattr(torch, "set_float32_matmul_precision", None)
+    before = getter() if getter else None
+    if requested != "default":
+        if setter is None:
+            raise RuntimeError("torch.set_float32_matmul_precision is not available in this PyTorch build")
+        setter(requested)
+    after = getter() if getter else before
+    return {
+        "requested": requested,
+        "before": before,
+        "after": after,
+        "changed": requested != "default" and before != after,
+    }
 
 
 def autocast_context(runtime: PrecisionRuntime):

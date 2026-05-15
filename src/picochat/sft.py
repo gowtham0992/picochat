@@ -31,6 +31,7 @@ from picochat.optim import (
 )
 from picochat.precision import (
     autocast_context,
+    configure_float32_matmul_precision,
     make_grad_scaler,
     maybe_compile_model,
     resolve_precision,
@@ -139,6 +140,7 @@ class SFTConfig:
     ema_decay: float = 0.0
     packing: str = "separate"
     precision: str = "float32"
+    matmul_precision: str = "default"
     torch_compile: bool = False
     torch_compile_mode: str = "default"
     resume_from: str | None = None
@@ -780,6 +782,7 @@ def train_sft(config: SFTConfig) -> dict:
     )
 
     model = model.to(device)
+    matmul_precision_runtime = configure_float32_matmul_precision(config.matmul_precision)
     precision_runtime = resolve_precision(config.precision, device)
     ddp_model, ddp_metadata = prepare_ddp_model(model, device, enabled=config.ddp)
     main_process = is_main_process(ddp_metadata)
@@ -1206,6 +1209,7 @@ def train_sft(config: SFTConfig) -> dict:
             "effective_tokens_per_step": effective_tokens_per_step,
             "optimizer_metadata": optimizer.metadata,
             "precision_runtime": precision_runtime.to_dict(),
+            "matmul_precision_runtime": matmul_precision_runtime,
             "torch_compile_metadata": compile_metadata,
             "ddp_metadata": ddp_metadata,
             "artifacts_written": main_process,

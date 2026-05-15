@@ -96,6 +96,7 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
             "eval_input_path": "eval.jsonl",
             "packing": "bos_bestfit",
             "precision": "bf16",
+            "matmul_precision": "high",
             "torch_compile": True,
         },
         "rows": [{
@@ -122,6 +123,7 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
     assert "Use SFT fit first" in markdown
     assert "SFT packing: `bos_bestfit`" in markdown
     assert "Precision: `bf16`" in markdown
+    assert "Matmul precision: `high`" in markdown
     assert "torch.compile: `True`" in markdown
     assert "Best non-choice held-out eval" in markdown
     assert "uniform-lr1em04-steps1" in markdown

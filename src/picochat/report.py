@@ -205,6 +205,12 @@ def training_report_markdown(report: dict) -> str:
             f"- Precision: `{precision.get('requested', 'float32')}` "
             f"-> `{precision.get('dtype_name', 'float32')}`"
         )
+    matmul_precision = config.get("matmul_precision_runtime", {})
+    if matmul_precision:
+        lines.append(
+            f"- Float32 matmul precision: `{matmul_precision.get('requested', 'default')}` "
+            f"-> `{matmul_precision.get('after') or 'unchanged'}`"
+        )
     compile_metadata = config.get("torch_compile_metadata", {})
     lines.append(
         f"- Torch compile: "
@@ -458,6 +464,12 @@ def sft_report_markdown(report: dict) -> str:
         lines.append(
             f"- Precision: `{precision.get('requested', 'float32')}` "
             f"-> `{precision.get('dtype_name', 'float32')}`"
+        )
+    matmul_precision = config.get("matmul_precision_runtime", {})
+    if matmul_precision:
+        lines.append(
+            f"- Float32 matmul precision: `{matmul_precision.get('requested', 'default')}` "
+            f"-> `{matmul_precision.get('after') or 'unchanged'}`"
         )
     compile_metadata = config.get("torch_compile_metadata", {})
     lines.append(

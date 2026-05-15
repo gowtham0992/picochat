@@ -56,7 +56,7 @@ from picochat.optim import (
     OPTIMIZER_TYPES,
     WEIGHT_DECAY_DECAYS,
 )
-from picochat.precision import COMPILE_MODES, PRECISION_MODES
+from picochat.precision import COMPILE_MODES, MATMUL_PRECISION_MODES, PRECISION_MODES
 from picochat.sanity import PreH100SanityConfig, run_preh100_sanity
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep
@@ -567,6 +567,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Training precision. Use bf16/fp16/auto only on supported accelerators.",
     )
     train_base_parser.add_argument(
+        "--matmul-precision",
+        choices=MATMUL_PRECISION_MODES,
+        default="default",
+        help="torch.set_float32_matmul_precision setting. Use high on H100/CUDA for TF32 tensor cores.",
+    )
+    train_base_parser.add_argument(
         "--torch-compile",
         action="store_true",
         help="Compile the model forward path with torch.compile.",
@@ -679,6 +685,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Training precision. Use bf16/fp16/auto only on supported accelerators.",
     )
     train_sft_parser.add_argument(
+        "--matmul-precision",
+        choices=MATMUL_PRECISION_MODES,
+        default="default",
+        help="torch.set_float32_matmul_precision setting. Use high on H100/CUDA for TF32 tensor cores.",
+    )
+    train_sft_parser.add_argument(
         "--torch-compile",
         action="store_true",
         help="Compile the model forward path with torch.compile.",
@@ -772,6 +784,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=PRECISION_MODES,
         default="float32",
         help="Training precision for each SFT candidate. Use bf16/fp16/auto only on supported accelerators.",
+    )
+    train_sft_sweep_parser.add_argument(
+        "--matmul-precision",
+        choices=MATMUL_PRECISION_MODES,
+        default="default",
+        help="torch.set_float32_matmul_precision setting for each candidate.",
     )
     train_sft_sweep_parser.add_argument(
         "--torch-compile",
@@ -1098,6 +1116,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=PRECISION_MODES,
         default=None,
         help="Base and SFT training precision. Defaults to the selected scale.",
+    )
+    run_tiny_parser.add_argument(
+        "--matmul-precision",
+        choices=MATMUL_PRECISION_MODES,
+        default=None,
+        help="torch.set_float32_matmul_precision setting. Use high on H100/CUDA for TF32 tensor cores.",
     )
     run_tiny_parser.add_argument(
         "--torch-compile",
@@ -1849,6 +1873,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         ema_decay=args.ema_decay,
         logit_softcap=args.logit_softcap,
         precision=args.precision,
+        matmul_precision=args.matmul_precision,
         torch_compile=args.torch_compile,
         torch_compile_mode=args.torch_compile_mode,
         resume_from=args.resume_from,
@@ -1900,6 +1925,7 @@ def run_train_sft(args: argparse.Namespace) -> int:
         ema_decay=args.ema_decay,
         packing=args.packing,
         precision=args.precision,
+        matmul_precision=args.matmul_precision,
         torch_compile=args.torch_compile,
         torch_compile_mode=args.torch_compile_mode,
         resume_from=args.resume_from,
@@ -1964,6 +1990,7 @@ def run_train_sft_sweep(args: argparse.Namespace) -> int:
         ema_decay=args.ema_decay,
         packing=args.packing,
         precision=args.precision,
+        matmul_precision=args.matmul_precision,
         torch_compile=args.torch_compile,
         torch_compile_mode=args.torch_compile_mode,
         eval_log_every=args.eval_log_every,
@@ -2317,6 +2344,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         allow_default_tuning_data=args.allow_default_tuning_data,
         logit_softcap=_resolve_tiny_value(args, defaults, "logit_softcap"),
         precision=_resolve_tiny_value(args, defaults, "precision"),
+        matmul_precision=_resolve_tiny_value(args, defaults, "matmul_precision"),
         torch_compile=bool(args.torch_compile or defaults.torch_compile),
         torch_compile_mode=_resolve_tiny_value(args, defaults, "torch_compile_mode"),
         gradient_checkpointing=bool(args.gradient_checkpointing or defaults.gradient_checkpointing),

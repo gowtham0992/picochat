@@ -46,6 +46,7 @@ class SFTSweepConfig:
     ema_decay: float = 0.0
     packing: str = "separate"
     precision: str = "float32"
+    matmul_precision: str = "default"
     torch_compile: bool = False
     torch_compile_mode: str = "default"
     eval_log_every: int = 50
@@ -119,6 +120,7 @@ def sft_sweep_markdown(report: dict) -> str:
         f"- Held-out eval: `{config.get('eval_input_path') or 'not run'}`",
         f"- SFT packing: `{config.get('packing', 'separate')}`",
         f"- Precision: `{config.get('precision', 'float32')}`",
+        f"- Matmul precision: `{config.get('matmul_precision', 'default')}`",
         f"- torch.compile: `{config.get('torch_compile', False)}`",
         "",
         "## Results",
@@ -195,6 +197,7 @@ def _run_candidate(
         ema_decay=config.ema_decay,
         packing=config.packing,
         precision=config.precision,
+        matmul_precision=config.matmul_precision,
         torch_compile=config.torch_compile,
         torch_compile_mode=config.torch_compile_mode,
     ))

@@ -95,6 +95,7 @@ class TinyRunConfig:
     allow_default_tuning_data: bool = False
     logit_softcap: float = 0.0
     precision: str = "float32"
+    matmul_precision: str = "default"
     torch_compile: bool = False
     torch_compile_mode: str = "default"
     gradient_checkpointing: bool = False
@@ -238,6 +239,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         ema_decay=config.base_ema_decay,
         logit_softcap=config.logit_softcap,
         precision=config.precision,
+        matmul_precision=config.matmul_precision,
         torch_compile=config.torch_compile,
         torch_compile_mode=config.torch_compile_mode,
         gradient_checkpointing=config.gradient_checkpointing,
@@ -283,6 +285,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         ema_decay=config.sft_ema_decay,
         packing=config.sft_packing,
         precision=config.precision,
+        matmul_precision=config.matmul_precision,
         torch_compile=config.torch_compile,
         torch_compile_mode=config.torch_compile_mode,
         ddp=config.ddp,
