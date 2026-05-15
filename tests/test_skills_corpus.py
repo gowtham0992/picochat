@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from picochat.data import inspect_documents
 from picochat.skills_corpus import HELDOUT_WORDS, generate_skills_corpus
 
 
@@ -38,6 +39,16 @@ def test_generate_skills_corpus_writes_train_only_drills_and_recipe(tmp_path):
     assert recipe_payload["sources"][0]["label"] == "base"
     assert recipe_payload["sources"][1]["label"] == "micro_skills"
     assert (tmp_path / "skills.report.md").exists()
+
+
+def test_generate_skills_corpus_keeps_duplicate_line_rate_low(tmp_path):
+    out = tmp_path / "skills.txt"
+
+    generate_skills_corpus(out, math_rows=1000, spelling_rows=1000, choice_rows=200, seed=7)
+
+    stats = inspect_documents([out.read_text(encoding="utf-8")])
+
+    assert stats.duplicate_line_rate < 0.15
 
 
 def test_generate_skills_corpus_refuses_overwrite_without_force(tmp_path):

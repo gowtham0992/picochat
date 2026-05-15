@@ -25,15 +25,6 @@ HELDOUT_WORDS = (
     "magnet", "napkin", "pillow", "square", "temple", "wonder", "zipper", "artist",
 )
 
-CHOICE_FACTS = (
-    ("Which planet is known as the Red Planet?", "Mars", ("Venus", "Jupiter", "Mercury")),
-    ("Which organ pumps blood through the body?", "heart", ("lung", "stomach", "kidney")),
-    ("Which word is a noun?", "teacher", ("quickly", "blue", "because")),
-    ("Which direction is opposite of north?", "south", ("east", "west", "up")),
-    ("What do people use to measure temperature?", "thermometer", ("ruler", "scale", "clock")),
-)
-
-
 @dataclass(frozen=True)
 class SkillsCorpusReport:
     output_path: str
@@ -83,7 +74,7 @@ def generate_skills_corpus(
     rng.shuffle(rows)
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    text = "\n\n".join(row["text"] for row in rows) + "\n"
+    text = "\n".join(row["text"] for row in rows) + "\n"
     out.write_text(text, encoding="utf-8")
 
     recipe_path = None
@@ -136,10 +127,10 @@ def _math_example(index: int, rng: random.Random) -> dict[str, str]:
         question = f"Combine {a} objects and {b} objects. What is the total count?"
         answer = str(a + b)
     templates = (
-        "Arithmetic drill\nQuestion: {question}\nAnswer: {answer}",
-        "Compute exactly.\n{question} = {answer}",
+        "Arithmetic drill: question {question}; answer {answer}.",
+        "Compute exactly: {question} = {answer}.",
         "Math fact: the answer to {question} is {answer}.",
-        "Return only the number.\nProblem: {question}\nNumber: {answer}",
+        "Return only the number: problem {question}; number {answer}.",
     )
     return {
         "category": "skills_math",
@@ -169,9 +160,9 @@ def _spelling_example(index: int, rng: random.Random) -> dict[str, str]:
         task = f"characters in {word}"
         answer = " | ".join(word)
     templates = (
-        "Character drill\nTask: {task}\nAnswer: {answer}",
-        "Word skill: {task} -> {answer}",
-        "Spelling fact: {task}. Correct answer: {answer}",
+        "Character drill: task {task}; answer {answer}.",
+        "Word skill: {task} -> {answer}.",
+        "Spelling fact: {task}; correct answer {answer}.",
     )
     return {
         "category": "skills_spelling",
@@ -180,24 +171,75 @@ def _spelling_example(index: int, rng: random.Random) -> dict[str, str]:
 
 
 def _choice_example(index: int, rng: random.Random) -> dict[str, str]:
-    question, correct, distractors = CHOICE_FACTS[index % len(CHOICE_FACTS)]
-    options = [correct, *distractors]
+    kind = index % 4
+    if kind == 0:
+        a = rng.randint(0, 999)
+        b = rng.randint(0, 999)
+        correct = str(a + b)
+        distractors = _numeric_distractors(a + b, rng)
+        question = f"Which option equals {a} + {b}?"
+    elif kind == 1:
+        word = _skill_word(index + 100_000, rng)
+        correct = word[0]
+        distractors = _letter_distractors(correct, rng)
+        question = f"Which option is the first letter of {word}?"
+    elif kind == 2:
+        word = _skill_word(index + 200_000, rng)
+        correct = str(len(word))
+        distractors = _numeric_distractors(len(word), rng)
+        question = f"Which option is the letter count of {word}?"
+    else:
+        word = _skill_word(index + 300_000, rng)
+        correct = word[::-1]
+        distractors = _word_distractors(word, rng)
+        question = f"Which option is {word} reversed?"
+    options = [correct, *distractors[:3]]
     rng.shuffle(options)
     labels = ("A", "B", "C", "D")
     correct_label = labels[options.index(correct)]
     text = (
-        "Choice drill\n"
-        f"Question: {question}\n"
-        f"A. {options[0]}\nB. {options[1]}\nC. {options[2]}\nD. {options[3]}\n"
-        f"Answer letter: {correct_label}\n"
-        f"Answer text: {correct}"
+        f"Choice drill: question {question}; "
+        f"A. {options[0]}; B. {options[1]}; C. {options[2]}; D. {options[3]}; "
+        f"answer letter {correct_label}; answer text {correct}."
     )
     return {"category": "skills_choice", "text": text}
 
 
+def _numeric_distractors(answer: int, rng: random.Random) -> list[str]:
+    distractors: set[int] = set()
+    while len(distractors) < 3:
+        offset = rng.choice((-9, -7, -5, -3, -2, -1, 1, 2, 3, 5, 7, 9))
+        distractor = max(0, answer + offset)
+        if distractor != answer:
+            distractors.add(distractor)
+    return [str(value) for value in sorted(distractors)]
+
+
+def _letter_distractors(answer: str, rng: random.Random) -> list[str]:
+    letters = [letter for letter in string.ascii_lowercase if letter != answer]
+    rng.shuffle(letters)
+    return letters[:3]
+
+
+def _word_distractors(word: str, rng: random.Random) -> list[str]:
+    answer = word[::-1]
+    distractors = {
+        word,
+        "".join(sorted(word)),
+        word[1:] + word[:1],
+        word[-1:] + word[:-1],
+    }
+    distractors.discard(answer)
+    while len(distractors) < 4:
+        candidate = "".join(rng.choice(string.ascii_lowercase) for _ in range(len(word)))
+        if candidate != answer:
+            distractors.add(candidate)
+    return sorted(distractors)[:3]
+
+
 def _skill_word(index: int, rng: random.Random) -> str:
-    if index % 3 == 0:
-        return TRAIN_WORDS[(index // 3) % len(TRAIN_WORDS)]
+    if index % 10 == 0:
+        return TRAIN_WORDS[(index // 10) % len(TRAIN_WORDS)]
     length = 4 + (index % 5)
     return "".join(rng.choice(string.ascii_lowercase) for _ in range(length))
 
@@ -260,6 +302,7 @@ Recipe: `{report.recipe_path or 'none'}`
 ## Honesty Notes
 
 - This is pretraining data, not eval data.
+- Drills are compact one-example-per-line records so duplicate-line checks catch true replay, not repeated formatting labels.
 - Held-out eval spelling words are intentionally excluded from the fixed word pool.
 - Random synthetic strings are included so character operations are not only memorized words.
 - Use a separate held-out eval after training to verify transfer.
