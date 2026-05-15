@@ -123,6 +123,18 @@ def test_invalid_head_count_rejected():
         TinyGPT(GPTConfig(vocab_size=20, context_size=8, n_embd=18, n_head=4, n_layer=1))
 
 
+def test_invalid_grouped_query_attention_shape_raises():
+    with pytest.raises(ValueError, match="n_head must be divisible by n_kv_head"):
+        TinyGPT(GPTConfig(
+            vocab_size=20,
+            context_size=8,
+            n_embd=16,
+            n_head=4,
+            n_kv_head=3,
+            n_layer=1,
+        ))
+
+
 def test_model_supports_rmsnorm_and_rope():
     config = GPTConfig(
         vocab_size=20,
@@ -201,6 +213,28 @@ def test_model_supports_qk_norm():
     assert loss is not None
     assert isinstance(model.blocks[0].attn.q_norm, RMSNorm)
     assert isinstance(model.blocks[0].attn.k_norm, RMSNorm)
+
+
+def test_model_supports_grouped_query_attention_cache():
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_kv_head=1,
+        n_layer=1,
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, 3))
+
+    logits, loss, past_kv = model(x, use_cache=True)
+
+    assert logits.shape == (2, 3, config.vocab_size)
+    assert loss is None
+    assert model.blocks[0].attn.qkv.out_features == config.n_embd + 2 * (
+        config.n_embd // config.n_head
+    )
+    assert past_kv[0][0].shape == (2, 1, 3, config.n_embd // config.n_head)
 
 
 def test_model_can_softcap_logits():

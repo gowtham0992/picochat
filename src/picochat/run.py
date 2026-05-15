@@ -33,6 +33,7 @@ class TinyRunConfig:
     context_size: int = 128
     n_embd: int = 64
     n_head: int = 4
+    n_kv_head: int | None = None
     n_layer: int = 2
     dropout: float = 0.0
     norm_type: str = "layernorm"
@@ -192,6 +193,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         learning_rate=base_learning_rate,
         n_embd=config.n_embd,
         n_head=config.n_head,
+        n_kv_head=config.n_kv_head,
         n_layer=config.n_layer,
         dropout=config.dropout,
         norm_type=config.norm_type,

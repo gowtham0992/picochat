@@ -855,9 +855,12 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     eval_max_new_tokens = _bounded_int(payload.get("eval_max_new_tokens", preset["eval_max_new_tokens"]), 1, 320)
     n_embd = _bounded_int(payload.get("n_embd", preset["n_embd"]), 16, 512)
     n_head = _bounded_int(payload.get("n_head", preset["n_head"]), 1, 16)
+    n_kv_head = _bounded_int(payload.get("n_kv_head", preset.get("n_kv_head", n_head)), 1, 16)
     n_layer = _bounded_int(payload.get("n_layer", preset["n_layer"]), 1, 12)
     if n_embd % n_head != 0:
         raise ValueError("n_embd must be divisible by n_head")
+    if n_head % n_kv_head != 0:
+        raise ValueError("n_head must be divisible by n_kv_head")
     norm_type = str(payload.get("norm_type", preset.get("norm_type", "layernorm")))
     if norm_type not in {"layernorm", "rmsnorm"}:
         raise ValueError("norm_type must be layernorm or rmsnorm")
@@ -951,6 +954,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         context_size=context_size,
         n_embd=n_embd,
         n_head=n_head,
+        n_kv_head=n_kv_head,
         n_layer=n_layer,
         norm_type=norm_type,
         position_encoding=position_encoding,
@@ -1021,6 +1025,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(n_embd),
         "--n-head",
         str(n_head),
+        "--n-kv-head",
+        str(n_kv_head),
         "--n-layer",
         str(n_layer),
         "--norm-type",
@@ -1138,6 +1144,10 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "context_size": context_size,
             "base_steps": base_steps,
             "sft_steps": sft_steps,
+            "n_embd": n_embd,
+            "n_head": n_head,
+            "n_kv_head": n_kv_head,
+            "n_layer": n_layer,
             "norm_type": norm_type,
             "position_encoding": position_encoding,
             "activation": activation,

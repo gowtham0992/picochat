@@ -18,6 +18,7 @@ class GPTConfig:
     context_size: int = 64
     n_embd: int = 128
     n_head: int = 4
+    n_kv_head: int | None = None
     n_layer: int = 2
     dropout: float = 0.0
     norm_type: str = "layernorm"
@@ -29,7 +30,7 @@ class GPTConfig:
     tie_embeddings: bool = False
     qk_norm: bool = False
 
-    def to_dict(self) -> dict[str, int | float | str | bool]:
+    def to_dict(self) -> dict[str, int | float | str | bool | None]:
         return asdict(self)
 
 
@@ -62,7 +63,13 @@ class CausalSelfAttention(nn.Module):
         if config.n_embd % config.n_head != 0:
             raise ValueError("n_embd must be divisible by n_head")
         self.n_head = config.n_head
+        self.n_kv_head = config.n_kv_head or config.n_head
+        if self.n_kv_head < 1:
+            raise ValueError("n_kv_head must be positive")
+        if self.n_head % self.n_kv_head != 0:
+            raise ValueError("n_head must be divisible by n_kv_head")
         self.head_dim = config.n_embd // config.n_head
+        self.kv_dim = self.n_kv_head * self.head_dim
         self.position_encoding = config.position_encoding
         self.rope_base = config.rope_base
         if self.position_encoding not in {"learned", "rope"}:
@@ -71,7 +78,7 @@ class CausalSelfAttention(nn.Module):
             raise ValueError("RoPE requires an even attention head dimension")
         self.q_norm = RMSNorm(self.head_dim) if config.qk_norm else nn.Identity()
         self.k_norm = RMSNorm(self.head_dim) if config.qk_norm else nn.Identity()
-        self.qkv = nn.Linear(config.n_embd, 3 * config.n_embd)
+        self.qkv = nn.Linear(config.n_embd, config.n_embd + 2 * self.kv_dim)
         self.proj = nn.Linear(config.n_embd, config.n_embd)
         self.dropout = nn.Dropout(config.dropout)
 
@@ -83,11 +90,11 @@ class CausalSelfAttention(nn.Module):
         use_cache: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         batch_size, seq_len, embd_size = x.shape
-        q, k, v = self.qkv(x).split(embd_size, dim=-1)
+        q, k, v = self.qkv(x).split((embd_size, self.kv_dim, self.kv_dim), dim=-1)
 
         q = q.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
-        k = k.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
-        v = v.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
+        k = k.view(batch_size, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+        v = v.view(batch_size, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
         q = self.q_norm(q)
         k = self.k_norm(k)
         if self.position_encoding == "rope":
@@ -99,6 +106,10 @@ class CausalSelfAttention(nn.Module):
             past_len = past_k.size(-2)
             k = torch.cat((past_k, k), dim=-2)
             v = torch.cat((past_v, v), dim=-2)
+        cache_k, cache_v = k, v
+        if self.n_kv_head != self.n_head:
+            k = _repeat_kv(k, self.n_head // self.n_kv_head)
+            v = _repeat_kv(v, self.n_head // self.n_kv_head)
 
         attn_mask = None
         is_causal = past_kv is None
@@ -130,7 +141,7 @@ class CausalSelfAttention(nn.Module):
         y = y.transpose(1, 2).contiguous().view(batch_size, seq_len, embd_size)
         y = self.dropout(self.proj(y))
         if use_cache:
-            return y, (k, v)
+            return y, (cache_k, cache_v)
         return y
 
 
@@ -430,6 +441,14 @@ def _infer_start_pos(past_kv: KVCache | None) -> int:
     if not past_kv:
         return 0
     return int(past_kv[0][0].size(-2))
+
+
+def _repeat_kv(x: torch.Tensor, repeat_factor: int) -> torch.Tensor:
+    if repeat_factor == 1:
+        return x
+    batch_size, n_kv_head, seq_len, head_dim = x.shape
+    x = x[:, :, None, :, :].expand(batch_size, n_kv_head, repeat_factor, seq_len, head_dim)
+    return x.reshape(batch_size, n_kv_head * repeat_factor, seq_len, head_dim)
 
 
 def apply_rope(

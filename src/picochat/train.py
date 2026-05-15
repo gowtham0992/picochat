@@ -64,6 +64,7 @@ class TrainConfig:
     learning_rate: float = 3e-4
     n_embd: int = 128
     n_head: int = 4
+    n_kv_head: int | None = None
     n_layer: int = 2
     dropout: float = 0.0
     norm_type: str = "layernorm"
@@ -234,6 +235,7 @@ def train_base(config: TrainConfig) -> dict:
         context_size=config.context_size,
         n_embd=config.n_embd,
         n_head=config.n_head,
+        n_kv_head=config.n_kv_head,
         n_layer=config.n_layer,
         dropout=config.dropout,
         norm_type=config.norm_type,

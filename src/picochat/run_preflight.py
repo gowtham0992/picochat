@@ -160,6 +160,8 @@ def estimate_run_budget(config: Any, stats: CorpusStats, sft_examples: int) -> R
     tokenizer_type = str(_value(config, "tokenizer_type", "char"))
     vocab_size = _tokenizer_vocab_estimate(config)
     n_embd = int(_value(config, "n_embd", 64) or 64)
+    n_head = int(_value(config, "n_head", 4) or 4)
+    n_kv_head = int(_value(config, "n_kv_head", n_head) or n_head)
     n_layer = int(_value(config, "n_layer", 2) or 2)
     tie_embeddings = bool(_value(config, "tie_embeddings", False))
     qk_norm = bool(_value(config, "qk_norm", False))
@@ -172,7 +174,8 @@ def estimate_run_budget(config: Any, stats: CorpusStats, sft_examples: int) -> R
         vocab_size,
         n_embd,
         n_layer,
-        n_head=int(_value(config, "n_head", 4) or 4),
+        n_head=n_head,
+        n_kv_head=n_kv_head,
         tie_embeddings=tie_embeddings,
         qk_norm=qk_norm,
     )
@@ -576,13 +579,19 @@ def _estimate_parameters(
     n_layer: int,
     *,
     n_head: int = 4,
+    n_kv_head: int | None = None,
     tie_embeddings: bool = False,
     qk_norm: bool = False,
 ) -> int:
     # Approximate GPT parameter count before the tokenizer exists. Good enough for budget gating.
+    n_kv_head = n_kv_head or n_head
+    head_dim = max(1, n_embd // max(1, n_head))
+    kv_dim = n_kv_head * head_dim
     embeddings_and_head = vocab_size * n_embd if tie_embeddings else 2 * vocab_size * n_embd
-    blocks = n_layer * (12 * n_embd * n_embd + 4 * n_embd)
-    qk_norm_params = n_layer * 2 * max(1, n_embd // max(1, n_head)) if qk_norm else 0
+    attention = n_embd * (n_embd + 2 * kv_dim) + n_embd * n_embd
+    mlp = 8 * n_embd * n_embd
+    blocks = n_layer * (attention + mlp + 4 * n_embd)
+    qk_norm_params = n_layer * 2 * head_dim if qk_norm else 0
     final_norm = 2 * n_embd
     return int(embeddings_and_head + blocks + qk_norm_params + final_norm)
 

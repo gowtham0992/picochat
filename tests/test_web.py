@@ -1280,13 +1280,16 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
         "base_steps": 1,
         "sft_steps": 1,
         "activation": "swiglu",
+        "n_kv_head": 2,
         "tie_embeddings": True,
         "qk_norm": True,
     })
 
     assert "--activation swiglu" in started["job"]["command"]
+    assert "--n-kv-head 2" in started["job"]["command"]
     assert "--tie-embeddings" in started["job"]["command"]
     assert "--qk-norm" in started["job"]["command"]
+    assert started["job"]["launch_config"]["n_kv_head"] == 2
     assert started["job"]["launch_config"]["tie_embeddings"] is True
     assert started["job"]["launch_config"]["qk_norm"] is True
 

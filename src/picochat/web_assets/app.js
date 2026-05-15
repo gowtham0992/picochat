@@ -69,6 +69,7 @@ const LAUNCH_CONTROL_IDS = [
   "launch-sft-steps",
   "launch-n-embd",
   "launch-n-head",
+  "launch-n-kv-head",
   "launch-n-layer",
   "launch-norm-type",
   "launch-position-encoding",
@@ -1890,6 +1891,7 @@ function pipelineStages() {
         "--context-size", config.context_size ?? 128,
         "--n-embd", config.n_embd ?? 64,
         "--n-head", config.n_head ?? 4,
+        "--n-kv-head", config.n_kv_head ?? config.n_head ?? 4,
         "--n-layer", config.n_layer ?? 2,
         "--norm-type", config.norm_type || "layernorm",
         "--position-encoding", config.position_encoding || "learned",
@@ -3321,6 +3323,7 @@ function applyLaunchPreset(quiet = false) {
   $("launch-context-size").value = values.context_size;
   $("launch-n-embd").value = values.n_embd;
   $("launch-n-head").value = values.n_head;
+  $("launch-n-kv-head").value = values.n_kv_head || values.n_head;
   $("launch-n-layer").value = values.n_layer;
   $("launch-norm-type").value = values.norm_type || "layernorm";
   $("launch-position-encoding").value = values.position_encoding || "learned";
@@ -3399,6 +3402,7 @@ function launchConfig() {
     context_size: launchNumber("launch-context-size"),
     n_embd: launchNumber("launch-n-embd"),
     n_head: launchNumber("launch-n-head"),
+    n_kv_head: launchNumber("launch-n-kv-head"),
     n_layer: launchNumber("launch-n-layer"),
     norm_type: $("launch-norm-type").value,
     position_encoding: $("launch-position-encoding").value,
@@ -3450,6 +3454,9 @@ function launchReadiness(config = launchConfig()) {
   if (config.n_head > 0 && config.n_embd % config.n_head !== 0) {
     blockers.push(`N EMBED ${config.n_embd} must divide evenly by HEADS ${config.n_head}.`);
   }
+  if (config.n_kv_head > 0 && config.n_head % config.n_kv_head !== 0) {
+    blockers.push(`HEADS ${config.n_head} must divide evenly by KV HEADS ${config.n_kv_head}.`);
+  }
   if (config.position_encoding === "rope" && config.n_head > 0 && Math.floor(config.n_embd / config.n_head) % 2 !== 0) {
     blockers.push("RoPE requires an even attention head dimension.");
   }
@@ -3487,7 +3494,7 @@ function launchReadiness(config = launchConfig()) {
     cautions.push("Curated benchmark SFT usually overfits past a few hundred steps; start near 300, then compare.");
   }
   if (config.sft_steps > config.base_steps * 2) cautions.push("SFT is much longer than base; watch eval leakage and overfitting.");
-  notes.push(`${config.n_layer}L x ${config.n_embd} embd / ${config.n_head} heads`);
+  notes.push(`${config.n_layer}L x ${config.n_embd} embd / ${config.n_head} heads / ${config.n_kv_head} kv`);
   notes.push(`${config.norm_type} / ${config.position_encoding} / ${config.activation}`);
   notes.push(`${String(config.tokenizer_type).toUpperCase()} tokenizer${config.tokenizer_vocab_size ? ` vocab ${config.tokenizer_vocab_size}` : ""}`);
   notes.push(`base ${config.base_steps} / sft ${config.sft_steps}`);
@@ -3537,6 +3544,8 @@ function launchPreviewCommand(config = launchConfig()) {
     config.n_embd,
     "--n-head",
     config.n_head,
+    "--n-kv-head",
+    config.n_kv_head,
     "--n-layer",
     config.n_layer,
     "--norm-type",
@@ -3684,6 +3693,7 @@ function runStartPayload(config) {
     context_size: config.context_size,
     n_embd: config.n_embd,
     n_head: config.n_head,
+    n_kv_head: config.n_kv_head,
     n_layer: config.n_layer,
     norm_type: config.norm_type,
     position_encoding: config.position_encoding,
@@ -5886,7 +5896,7 @@ function runHypothesis(item, previous) {
   const changes = importantConfigChanges(prior, current);
   if (!changes.length) return "Same visible config; result difference may be data, seed, runtime, or artifact changes.";
   if (changes.some((change) => change.key.includes("tokenizer"))) return "Test whether tokenizer changes improve compression and downstream eval.";
-  if (changes.some((change) => ["n_embd", "n_layer", "n_head"].includes(change.key))) return "Test whether more model capacity improves learning without extra memorization.";
+  if (changes.some((change) => ["n_embd", "n_layer", "n_head", "n_kv_head"].includes(change.key))) return "Test whether more model capacity improves learning without extra memorization.";
   if (changes.some((change) => change.key.includes("steps"))) return "Test whether more optimization time improves validation and eval.";
   if (changes.some((change) => change.key.includes("learning_rate") || change.key.includes("lr_"))) return "Test whether the optimizer schedule trains more cleanly.";
   if (changes.some((change) => change.key.includes("dataset") || change.key.includes("input"))) return "Test whether different data improves the behavior target.";
@@ -5897,7 +5907,7 @@ function runConfigLine(item) {
   const config = item.detail?.summary?.config || {};
   const row = item.row || {};
   const shape = [config.n_embd, config.n_layer, config.n_head].every((value) => value !== undefined)
-    ? `${config.n_embd}x${config.n_layer} h${config.n_head}`
+    ? `${config.n_embd}x${config.n_layer} h${config.n_head}/kv${config.n_kv_head || config.n_head}`
     : `${fmtInt(row.num_parameters)} params`;
   return `${config.tokenizer_type || row.tokenizer_type || "--"} vocab ${config.tokenizer_vocab_size || "--"} | ${shape} | ctx ${config.context_size || row.context_size || "--"} | base ${config.base_steps || "--"} / sft ${config.sft_steps || "--"}`;
 }
@@ -5975,6 +5985,7 @@ function importantConfigChanges(before, after) {
     ["n_embd", "Embedding"],
     ["n_layer", "Layers"],
     ["n_head", "Heads"],
+    ["n_kv_head", "KV Heads"],
     ["norm_type", "Norm"],
     ["position_encoding", "Position"],
     ["activation", "Activation"],
@@ -6001,7 +6012,7 @@ function importantConfigChanges(before, after) {
 function changeTeachingNote(key) {
   if (key.includes("tokenizer")) return "Changes compression and model vocabulary.";
   if (key === "context_size") return "Changes how much text the model sees at once.";
-  if (["n_embd", "n_layer", "n_head"].includes(key)) return "Changes model capacity and compute cost.";
+  if (["n_embd", "n_layer", "n_head", "n_kv_head"].includes(key)) return "Changes model capacity and compute cost.";
   if (["norm_type", "position_encoding", "activation"].includes(key)) return "Changes the Transformer architecture.";
   if (key.includes("steps")) return "Changes optimization time.";
   if (key.includes("learning_rate") || key.includes("lr_")) return "Changes optimizer behavior.";

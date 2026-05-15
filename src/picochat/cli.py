@@ -441,6 +441,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--learning-rate", type=float, default=3e-4)
     train_base_parser.add_argument("--n-embd", type=int, default=128)
     train_base_parser.add_argument("--n-head", type=int, default=4)
+    train_base_parser.add_argument("--n-kv-head", type=int, default=None)
     train_base_parser.add_argument("--n-layer", type=int, default=2)
     train_base_parser.add_argument("--dropout", type=float, default=0.0)
     train_base_parser.add_argument("--norm-type", choices=("layernorm", "rmsnorm"), default="layernorm")
@@ -841,6 +842,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--context-size", type=int, default=None)
     run_tiny_parser.add_argument("--n-embd", type=int, default=None)
     run_tiny_parser.add_argument("--n-head", type=int, default=None)
+    run_tiny_parser.add_argument("--n-kv-head", type=int, default=None)
     run_tiny_parser.add_argument("--n-layer", type=int, default=None)
     run_tiny_parser.add_argument("--dropout", type=float, default=None)
     run_tiny_parser.add_argument("--norm-type", choices=("layernorm", "rmsnorm"), default=None)
@@ -1580,6 +1582,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         learning_rate=args.learning_rate,
         n_embd=args.n_embd,
         n_head=args.n_head,
+        n_kv_head=args.n_kv_head,
         n_layer=args.n_layer,
         dropout=args.dropout,
         norm_type=args.norm_type,
@@ -1962,6 +1965,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         context_size=_resolve_tiny_value(args, defaults, "context_size"),
         n_embd=_resolve_tiny_value(args, defaults, "n_embd"),
         n_head=_resolve_tiny_value(args, defaults, "n_head"),
+        n_kv_head=_resolve_tiny_value(args, defaults, "n_kv_head"),
         n_layer=_resolve_tiny_value(args, defaults, "n_layer"),
         dropout=_resolve_tiny_value(args, defaults, "dropout"),
         norm_type=_resolve_tiny_value(args, defaults, "norm_type"),

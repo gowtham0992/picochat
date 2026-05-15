@@ -82,6 +82,7 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "context_size": model.config.context_size,
         "n_embd": model.config.n_embd,
         "n_head": model.config.n_head,
+        "n_kv_head": model.config.n_kv_head,
         "n_layer": model.config.n_layer,
         "dropout": model.config.dropout,
         "norm_type": model.config.norm_type,
@@ -258,6 +259,7 @@ class PicochatConfig(PretrainedConfig):
         max_position_embeddings=None,
         n_embd=128,
         n_head=4,
+        n_kv_head=None,
         n_layer=2,
         dropout=0.0,
         norm_type="layernorm",
@@ -287,6 +289,7 @@ class PicochatConfig(PretrainedConfig):
         self.max_position_embeddings = self.context_size
         self.n_embd = n_embd
         self.n_head = n_head
+        self.n_kv_head = n_kv_head
         self.n_layer = n_layer
         self.dropout = dropout
         self.norm_type = norm_type
@@ -307,6 +310,7 @@ class PicochatConfig(PretrainedConfig):
             context_size=self.context_size,
             n_embd=self.n_embd,
             n_head=self.n_head,
+            n_kv_head=self.n_kv_head,
             n_layer=self.n_layer,
             dropout=self.dropout,
             norm_type=self.norm_type,
