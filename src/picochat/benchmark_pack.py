@@ -36,10 +36,10 @@ BEHAVIOR_PROFILE_WEIGHTS = {
         ("refusal", 0.10),
     ),
     "weak_skills": (
-        ("math", 0.45),
-        ("spelling", 0.35),
-        ("choice", 0.12),
-        ("identity", 0.05),
+        ("math", 0.40),
+        ("spelling", 0.30),
+        ("choice", 0.20),
+        ("identity", 0.07),
         ("refusal", 0.03),
     ),
 }
@@ -178,6 +178,7 @@ def generate_benchmark_tuning_pack(
             f"HF chat SFT rows are length-budgeted to about {SFT_CHAR_BUDGET} characters for local 512-context runs.",
             "Choice eval facts use a held-out fact pool separate from SFT choice facts.",
             "Multiple-choice eval rows include choice labels so Picochat can score next-token choice likelihood.",
+            "Math and spelling rows use granular categories so category-aware SFT sampling covers each subskill.",
             *chat_result.source_notes,
             *eval_result.source_notes,
         ),
@@ -924,6 +925,7 @@ def _math_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> di
     b = 2 + ((index * 13 + (19 if eval_rows else 7)) % 41)
     c = 1 + ((index * 5 + (23 if eval_rows else 3)) % 13)
     kind = index % 4
+    kind_name = ("addition", "subtraction", "multiplication", "removal")[kind]
     train_template = (index // 4) % 4
 
     def train_prompt(problem: str, compact: str) -> str:
@@ -977,7 +979,7 @@ def _math_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> di
     row = {
         "user": user,
         "assistant": assistant,
-        "category": "bench_math",
+        "category": f"bench_math_{kind_name}",
         "group": f"{split}-math-{index}",
         "answerable": True,
     }
@@ -1010,8 +1012,8 @@ _HELDOUT_SPELLING_WORDS = (
 def _spelling_row(index: int, rng: random.Random, split: str, eval_rows: bool) -> dict[str, Any]:
     words = _HELDOUT_SPELLING_WORDS if eval_rows else _TRAIN_SPELLING_WORDS
     modes = ("spaced", "count", "reverse", "first", "last")
-    word = words[index % len(words)]
-    mode = modes[(index // len(words)) % len(modes)]
+    mode = modes[index % len(modes)]
+    word = words[(index // len(modes)) % len(words)]
 
     def train_prompt(operation: str) -> str:
         templates = (
@@ -1070,7 +1072,7 @@ def _spelling_row(index: int, rng: random.Random, split: str, eval_rows: bool) -
     row = {
         "user": user,
         "assistant": answer,
-        "category": "bench_spelling",
+        "category": f"bench_spelling_{mode}",
         "group": f"{split}-spelling-{index}",
         "answerable": True,
     }
@@ -1540,9 +1542,9 @@ def _behavior_bucket(category: Any) -> str:
     category_text = str(category)
     if category_text.startswith("bench_choice"):
         return "choice"
-    if category_text == "bench_math":
+    if category_text.startswith("bench_math"):
         return "math"
-    if category_text == "bench_spelling":
+    if category_text.startswith("bench_spelling"):
         return "spelling"
     if category_text == "identity":
         return "identity"

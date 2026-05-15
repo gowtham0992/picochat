@@ -83,7 +83,7 @@ def test_behavior_profile_excludes_broad_long_form_chat_rows(tmp_path):
     assert report.source_status == "behavior"
     assert "smoltalk" not in chat_categories
     assert any(row["category"].startswith("bench_choice") for row in chat_rows)
-    assert any(row["category"] == "bench_math" for row in chat_rows)
+    assert any(row["category"].startswith("bench_math_") for row in chat_rows)
     assert any(row["category"] == "identity" for row in chat_rows)
     assert len({row["user"] for row in chat_rows}) == len(chat_rows)
     assert len({row["user"] for row in eval_rows}) == len(eval_rows)
@@ -157,10 +157,12 @@ def test_weak_skills_profile_overweights_math_and_spelling(tmp_path):
 
     assert report.profile == "weak_skills"
     assert report.source_status == "weak_skills"
-    assert chat_categories["bench_math"] >= 80
-    assert chat_categories["bench_spelling"] >= 60
-    assert eval_categories["bench_math"] >= 32
-    assert eval_categories["bench_spelling"] >= 24
+    assert _prefix_count(chat_categories, "bench_math_") >= 80
+    assert _prefix_count(chat_categories, "bench_spelling_") >= 60
+    assert _prefix_count(eval_categories, "bench_math_") >= 32
+    assert _prefix_count(eval_categories, "bench_spelling_") >= 24
+    assert len([name for name in chat_categories if name.startswith("bench_math_")]) >= 4
+    assert len([name for name in chat_categories if name.startswith("bench_spelling_")]) >= 5
     assert "smoltalk" not in chat_categories
     assert len({row["user"] for row in chat_rows}) == len(chat_rows)
     assert len({row["user"] for row in eval_rows}) == len(eval_rows)
@@ -171,11 +173,11 @@ def test_offline_behavior_curriculum_has_unique_skill_coverage():
     chat_rows = benchmark_pack.build_benchmark_sft_rows(160, seed=19, source="offline")
     eval_rows = benchmark_pack.build_benchmark_eval_rows(64, seed=29, source="offline")
 
-    assert sum(row["category"] == "bench_math" for row in chat_rows) >= 30
-    assert sum(row["category"] == "bench_spelling" for row in chat_rows) >= 25
+    assert sum(row["category"].startswith("bench_math_") for row in chat_rows) >= 30
+    assert sum(row["category"].startswith("bench_spelling_") for row in chat_rows) >= 25
     assert sum(row["category"] == "identity" for row in chat_rows) >= 10
-    assert sum(row["category"] == "bench_math" for row in eval_rows) >= 8
-    assert sum(row["category"] == "bench_spelling" for row in eval_rows) >= 8
+    assert sum(row["category"].startswith("bench_math_") for row in eval_rows) >= 8
+    assert sum(row["category"].startswith("bench_spelling_") for row in eval_rows) >= 8
     assert sum(row["category"] == "identity" for row in eval_rows) >= 4
     assert any(row.get("correct_choice") for row in eval_rows)
     assert len({row["user"] for row in chat_rows}) == len(chat_rows)
@@ -214,3 +216,7 @@ def test_generate_benchmark_tuning_pack_auto_falls_back_to_offline(tmp_path, mon
     assert report.source_status == "offline_fallback"
     assert report.fallback_reason == "hf unavailable"
     assert (tmp_path / "chat_benchmark.jsonl").exists()
+
+
+def _prefix_count(counter: Counter, prefix: str) -> int:
+    return sum(count for name, count in counter.items() if name.startswith(prefix))
