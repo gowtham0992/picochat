@@ -322,6 +322,11 @@ The web workbench also has a **Scale Up** view. It generates:
 This keeps GPU experiments inside the same artifact trail instead of becoming
 one-off notebook results.
 
+For the current single-H100 pilot recipe, use
+[`docs/h100_pilot_runbook.md`](docs/h100_pilot_runbook.md). It includes the
+CUDA-compatible PyTorch install, `preh100` sanity command, ClimbMix import,
+modern H100 preflight/run commands, monitoring, and artifact packaging.
+
 Before a serious run, check that the eval is not accidentally copied from the
 SFT file or base corpus:
 
