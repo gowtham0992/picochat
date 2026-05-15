@@ -140,7 +140,7 @@ class ShardedTokenWindowDataset(torch.utils.data.Dataset):
             tokens = self._shard_cache.pop(shard_index)
             self._shard_cache[shard_index] = tokens
             return tokens
-        tokens = torch.load(self.shards[shard_index]["path"], map_location="cpu")
+        tokens = torch.load(self.shards[shard_index]["path"], map_location="cpu", weights_only=True)
         if not isinstance(tokens, torch.Tensor):
             tokens = torch.tensor(tokens, dtype=torch.long)
         self._shard_cache[shard_index] = tokens.long()

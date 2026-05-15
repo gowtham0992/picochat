@@ -39,7 +39,7 @@ def test_export_hf_checkpoint_writes_release_folder(tmp_path):
     config = json.loads((out_dir / "config.json").read_text(encoding="utf-8"))
     manifest = json.loads((out_dir / "release_manifest.json").read_text(encoding="utf-8"))
     serving_manifest = json.loads((out_dir / "serving_manifest.json").read_text(encoding="utf-8"))
-    state = torch.load(out_dir / "pytorch_model.bin", map_location="cpu")
+    state = torch.load(out_dir / "pytorch_model.bin", map_location="cpu", weights_only=True)
 
     assert report["out_dir"] == str(out_dir)
     assert report["dynamic_int8"] is True

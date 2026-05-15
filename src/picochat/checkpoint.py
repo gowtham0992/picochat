@@ -41,7 +41,7 @@ def load_checkpoint(path: str | Path, map_location: str | torch.device = "cpu") 
     metadata = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
     config = GPTConfig(**metadata["model_config"])
     model = TinyGPT(config)
-    state = torch.load(path / "model.pt", map_location=map_location)
+    state = torch.load(path / "model.pt", map_location=map_location, weights_only=True)
     model.load_state_dict(state)
     return model, metadata
 
