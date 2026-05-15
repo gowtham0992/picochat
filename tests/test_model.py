@@ -144,6 +144,25 @@ def test_model_supports_rmsnorm_and_rope():
     assert model.position_embedding is None
 
 
+def test_model_supports_swiglu_activation():
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        activation="swiglu",
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    logits, loss = model(x, x)
+
+    assert logits.shape == (2, config.context_size, config.vocab_size)
+    assert loss is not None
+    assert model.blocks[0].mlp.fc.out_features == 2 * int(8 * config.n_embd / 3)
+
+
 def test_model_can_softcap_logits():
     config = GPTConfig(
         vocab_size=20,

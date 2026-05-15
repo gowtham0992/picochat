@@ -867,8 +867,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     if position_encoding == "rope" and (n_embd // n_head) % 2 != 0:
         raise ValueError("RoPE requires an even attention head dimension")
     activation = str(payload.get("activation", preset.get("activation", "gelu")))
-    if activation not in {"gelu", "relu2"}:
-        raise ValueError("activation must be gelu or relu2")
+    if activation not in {"gelu", "relu2", "swiglu"}:
+        raise ValueError("activation must be gelu, relu2, or swiglu")
     tokenizer_type = str(payload.get("tokenizer_type", preset.get("tokenizer_type", "char")))
     if tokenizer_type not in TOKENIZER_TYPES:
         raise ValueError(f"tokenizer_type must be one of {', '.join(TOKENIZER_TYPES)}")

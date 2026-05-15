@@ -1253,6 +1253,38 @@ def test_cancel_run_plan_terminates_active_job(tmp_path, monkeypatch):
     assert "--activation relu2" in started["job"]["command"]
 
 
+def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
+    pack_path = tmp_path / "dataset_pack.json"
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+    (tmp_path / "lesson.txt").write_text("lesson text", encoding="utf-8")
+    (tmp_path / "chat.jsonl").write_text(json.dumps({"user": "hi", "assistant": "hello"}) + "\n", encoding="utf-8")
+    (tmp_path / "eval.jsonl").write_text(json.dumps({"user": "hi", "must_include": ["hello"]}) + "\n", encoding="utf-8")
+
+    class FakeProcess:
+        pid = 1234
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr("picochat.web.subprocess.Popen", lambda *args, **kwargs: FakeProcess())
+
+    started = start_run_plan(tmp_path / "runs", {
+        "dataset_pack": str(pack_path),
+        "run_name": "swiglu",
+        "scale": "smoke",
+        "base_steps": 1,
+        "sft_steps": 1,
+        "activation": "swiglu",
+    })
+
+    assert "--activation swiglu" in started["job"]["command"]
+
+
 def test_run_presets_are_exposed_for_web_launcher():
     presets = run_presets_plan()["presets"]
 

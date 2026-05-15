@@ -131,20 +131,32 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
-        if config.activation not in {"gelu", "relu2"}:
-            raise ValueError("activation must be 'gelu' or 'relu2'")
-        self.fc = nn.Linear(config.n_embd, 4 * config.n_embd)
-        self.proj = nn.Linear(4 * config.n_embd, config.n_embd)
+        if config.activation not in {"gelu", "relu2", "swiglu"}:
+            raise ValueError("activation must be 'gelu', 'relu2', or 'swiglu'")
         self.dropout = nn.Dropout(config.dropout)
         self.activation = config.activation
+        if self.activation == "swiglu":
+            hidden_size = _swiglu_hidden_size(config.n_embd)
+            self.fc = nn.Linear(config.n_embd, 2 * hidden_size)
+            self.proj = nn.Linear(hidden_size, config.n_embd)
+        else:
+            self.fc = nn.Linear(config.n_embd, 4 * config.n_embd)
+            self.proj = nn.Linear(4 * config.n_embd, config.n_embd)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.fc(x)
-        if self.activation == "relu2":
+        if self.activation == "swiglu":
+            gate, value = x.chunk(2, dim=-1)
+            x = F.silu(gate) * value
+        elif self.activation == "relu2":
             x = F.relu(x).square()
         else:
             x = F.gelu(x)
         return self.dropout(self.proj(x))
+
+
+def _swiglu_hidden_size(n_embd: int) -> int:
+    return max(1, int(8 * n_embd / 3))
 
 
 class Block(nn.Module):
