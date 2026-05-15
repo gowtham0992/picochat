@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from picochat.model import GPTConfig, TinyGPT
+from picochat.model import GPTConfig, RMSNorm, TinyGPT
 
 
 def test_model_forward_shapes_and_loss():
@@ -181,6 +181,26 @@ def test_model_can_tie_input_and_output_embeddings():
     assert loss is not None
     assert model.lm_head.weight is model.token_embedding.weight
     assert model.lm_head.bias is None
+
+
+def test_model_supports_qk_norm():
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        qk_norm=True,
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    logits, loss = model(x, x)
+
+    assert logits.shape == (2, config.context_size, config.vocab_size)
+    assert loss is not None
+    assert isinstance(model.blocks[0].attn.q_norm, RMSNorm)
+    assert isinstance(model.blocks[0].attn.k_norm, RMSNorm)
 
 
 def test_model_can_softcap_logits():

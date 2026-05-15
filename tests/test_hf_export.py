@@ -20,6 +20,7 @@ def test_export_hf_checkpoint_writes_release_folder(tmp_path):
         n_embd=16,
         n_head=4,
         n_layer=1,
+        qk_norm=True,
     ))
     save_checkpoint(checkpoint_path, model, step=3, train_loss=1.23)
 
@@ -42,6 +43,7 @@ def test_export_hf_checkpoint_writes_release_folder(tmp_path):
     assert report["transformers_adapter"] is True
     assert config["model_type"] == "picochat"
     assert config["picochat_model_config"]["context_size"] == 8
+    assert config["picochat_model_config"]["qk_norm"] is True
     assert config["auto_map"]["AutoModelForCausalLM"] == "modeling_picochat.PicochatForCausalLM"
     assert manifest["files"]["weights"] == "pytorch_model.bin"
     assert manifest["files"]["dynamic_int8"] == "pytorch_model.dynamic_int8.bin"

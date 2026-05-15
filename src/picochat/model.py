@@ -27,6 +27,7 @@ class GPTConfig:
     logit_softcap: float = 0.0
     gradient_checkpointing: bool = False
     tie_embeddings: bool = False
+    qk_norm: bool = False
 
     def to_dict(self) -> dict[str, int | float | str | bool]:
         return asdict(self)
@@ -68,6 +69,8 @@ class CausalSelfAttention(nn.Module):
             raise ValueError("position_encoding must be 'learned' or 'rope'")
         if self.position_encoding == "rope" and self.head_dim % 2 != 0:
             raise ValueError("RoPE requires an even attention head dimension")
+        self.q_norm = RMSNorm(self.head_dim) if config.qk_norm else nn.Identity()
+        self.k_norm = RMSNorm(self.head_dim) if config.qk_norm else nn.Identity()
         self.qkv = nn.Linear(config.n_embd, 3 * config.n_embd)
         self.proj = nn.Linear(config.n_embd, config.n_embd)
         self.dropout = nn.Dropout(config.dropout)
@@ -85,6 +88,8 @@ class CausalSelfAttention(nn.Module):
         q = q.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
         k = k.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
+        q = self.q_norm(q)
+        k = self.k_norm(k)
         if self.position_encoding == "rope":
             q, k = apply_rope(q, k, base=self.rope_base, start_pos=start_pos)
 

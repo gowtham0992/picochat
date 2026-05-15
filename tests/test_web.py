@@ -1281,11 +1281,14 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
         "sft_steps": 1,
         "activation": "swiglu",
         "tie_embeddings": True,
+        "qk_norm": True,
     })
 
     assert "--activation swiglu" in started["job"]["command"]
     assert "--tie-embeddings" in started["job"]["command"]
+    assert "--qk-norm" in started["job"]["command"]
     assert started["job"]["launch_config"]["tie_embeddings"] is True
+    assert started["job"]["launch_config"]["qk_norm"] is True
 
 
 def test_run_presets_are_exposed_for_web_launcher():

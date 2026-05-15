@@ -91,6 +91,7 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "logit_softcap": model.config.logit_softcap,
         "gradient_checkpointing": model.config.gradient_checkpointing,
         "tie_embeddings": model.config.tie_embeddings,
+        "qk_norm": model.config.qk_norm,
         "bos_token_id": tokenizer.bos_id,
         "eos_token_id": tokenizer.eos_id,
         "pad_token_id": tokenizer.pad_id,
@@ -266,6 +267,7 @@ class PicochatConfig(PretrainedConfig):
         logit_softcap=0.0,
         gradient_checkpointing=False,
         tie_embeddings=False,
+        qk_norm=False,
         use_cache=True,
         bos_token_id=1,
         eos_token_id=2,
@@ -294,6 +296,7 @@ class PicochatConfig(PretrainedConfig):
         self.logit_softcap = logit_softcap
         self.gradient_checkpointing = gradient_checkpointing
         self.tie_embeddings = tie_embeddings
+        self.qk_norm = qk_norm
         self.use_cache = use_cache
 
     def to_picochat_config(self):
@@ -313,6 +316,7 @@ class PicochatConfig(PretrainedConfig):
             logit_softcap=self.logit_softcap,
             gradient_checkpointing=self.gradient_checkpointing,
             tie_embeddings=self.tie_embeddings,
+            qk_norm=self.qk_norm,
         )
 '''
 
