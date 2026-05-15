@@ -73,6 +73,7 @@ const LAUNCH_CONTROL_IDS = [
   "launch-norm-type",
   "launch-position-encoding",
   "launch-activation",
+  "launch-tie-embeddings",
   "launch-base-batch-size",
   "launch-sft-batch-size",
   "launch-base-learning-rate",
@@ -3323,6 +3324,7 @@ function applyLaunchPreset(quiet = false) {
   $("launch-norm-type").value = values.norm_type || "layernorm";
   $("launch-position-encoding").value = values.position_encoding || "learned";
   $("launch-activation").value = values.activation || "gelu";
+  $("launch-tie-embeddings").checked = Boolean(values.tie_embeddings);
   $("launch-base-steps").value = values.base_steps;
   $("launch-sft-steps").value = values.sft_steps;
   $("launch-base-batch-size").value = values.base_batch_size;
@@ -3399,6 +3401,7 @@ function launchConfig() {
     norm_type: $("launch-norm-type").value,
     position_encoding: $("launch-position-encoding").value,
     activation: $("launch-activation").value,
+    tie_embeddings: $("launch-tie-embeddings").checked,
     base_steps: launchNumber("launch-base-steps"),
     sft_steps: launchNumber("launch-sft-steps"),
     base_batch_size: launchNumber("launch-base-batch-size"),
@@ -3603,6 +3606,7 @@ function launchPreviewCommand(config = launchConfig()) {
     config.device || "cpu",
   ];
   if (state.runPresets[config.preset]) parts.push("--scale", config.preset);
+  if (config.tie_embeddings) parts.push("--tie-embeddings");
   if (config.tokenizer_vocab_size) parts.push("--tokenizer-vocab-size", config.tokenizer_vocab_size);
   return shellCommand(parts);
 }

@@ -163,6 +163,26 @@ def test_model_supports_swiglu_activation():
     assert model.blocks[0].mlp.fc.out_features == 2 * int(8 * config.n_embd / 3)
 
 
+def test_model_can_tie_input_and_output_embeddings():
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        tie_embeddings=True,
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    logits, loss = model(x, x)
+
+    assert logits.shape == (2, config.context_size, config.vocab_size)
+    assert loss is not None
+    assert model.lm_head.weight is model.token_embedding.weight
+    assert model.lm_head.bias is None
+
+
 def test_model_can_softcap_logits():
     config = GPTConfig(
         vocab_size=20,

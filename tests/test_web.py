@@ -1280,9 +1280,12 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
         "base_steps": 1,
         "sft_steps": 1,
         "activation": "swiglu",
+        "tie_embeddings": True,
     })
 
     assert "--activation swiglu" in started["job"]["command"]
+    assert "--tie-embeddings" in started["job"]["command"]
+    assert started["job"]["launch_config"]["tie_embeddings"] is True
 
 
 def test_run_presets_are_exposed_for_web_launcher():

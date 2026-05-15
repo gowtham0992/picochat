@@ -38,6 +38,7 @@ class TinyRunConfig:
     norm_type: str = "layernorm"
     position_encoding: str = "learned"
     activation: str = "gelu"
+    tie_embeddings: bool = False
     base_steps: int = 300
     sft_steps: int = 600
     base_batch_size: int = 8
@@ -195,6 +196,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         norm_type=config.norm_type,
         position_encoding=config.position_encoding,
         activation=config.activation,
+        tie_embeddings=config.tie_embeddings,
         seed=config.seed,
         device=config.device,
         log_every=_validation_log_every(config.base_steps),

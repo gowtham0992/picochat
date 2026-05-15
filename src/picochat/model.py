@@ -26,8 +26,9 @@ class GPTConfig:
     rope_base: float = 10000.0
     logit_softcap: float = 0.0
     gradient_checkpointing: bool = False
+    tie_embeddings: bool = False
 
-    def to_dict(self) -> dict[str, int | float | str]:
+    def to_dict(self) -> dict[str, int | float | str | bool]:
         return asdict(self)
 
 
@@ -208,7 +209,9 @@ class TinyGPT(nn.Module):
         )
         self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layer))
         self.ln_f = make_norm(config.norm_type, config.n_embd)
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=not config.tie_embeddings)
+        if config.tie_embeddings:
+            self.lm_head.weight = self.token_embedding.weight
 
     def forward(
         self,

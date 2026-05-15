@@ -446,6 +446,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--norm-type", choices=("layernorm", "rmsnorm"), default="layernorm")
     train_base_parser.add_argument("--position-encoding", choices=("learned", "rope"), default="learned")
     train_base_parser.add_argument("--activation", choices=("gelu", "relu2", "swiglu"), default="gelu")
+    train_base_parser.add_argument("--tie-embeddings", action="store_true")
     train_base_parser.add_argument("--seed", type=int, default=42)
     train_base_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
     train_base_parser.add_argument("--log-every", type=int, default=20)
@@ -844,6 +845,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--norm-type", choices=("layernorm", "rmsnorm"), default=None)
     run_tiny_parser.add_argument("--position-encoding", choices=("learned", "rope"), default=None)
     run_tiny_parser.add_argument("--activation", choices=("gelu", "relu2", "swiglu"), default=None)
+    run_tiny_parser.add_argument("--tie-embeddings", action="store_true")
     run_tiny_parser.add_argument("--base-steps", type=int, default=None)
     run_tiny_parser.add_argument("--sft-steps", type=int, default=None)
     run_tiny_parser.add_argument("--base-batch-size", type=int, default=None)
@@ -1581,6 +1583,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         norm_type=args.norm_type,
         position_encoding=args.position_encoding,
         activation=args.activation,
+        tie_embeddings=args.tie_embeddings,
         seed=args.seed,
         device=args.device,
         log_every=args.log_every,
@@ -1961,6 +1964,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         norm_type=_resolve_tiny_value(args, defaults, "norm_type"),
         position_encoding=_resolve_tiny_value(args, defaults, "position_encoding"),
         activation=_resolve_tiny_value(args, defaults, "activation"),
+        tie_embeddings=bool(args.tie_embeddings or defaults.tie_embeddings),
         base_steps=_resolve_tiny_value(args, defaults, "base_steps"),
         sft_steps=_resolve_tiny_value(args, defaults, "sft_steps"),
         base_batch_size=_resolve_tiny_value(args, defaults, "base_batch_size"),

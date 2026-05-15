@@ -869,6 +869,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     activation = str(payload.get("activation", preset.get("activation", "gelu")))
     if activation not in {"gelu", "relu2", "swiglu"}:
         raise ValueError("activation must be gelu, relu2, or swiglu")
+    tie_embeddings = bool(payload.get("tie_embeddings", preset.get("tie_embeddings", False)))
     tokenizer_type = str(payload.get("tokenizer_type", preset.get("tokenizer_type", "char")))
     if tokenizer_type not in TOKENIZER_TYPES:
         raise ValueError(f"tokenizer_type must be one of {', '.join(TOKENIZER_TYPES)}")
@@ -953,6 +954,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         norm_type=norm_type,
         position_encoding=position_encoding,
         activation=activation,
+        tie_embeddings=tie_embeddings,
         base_steps=base_steps,
         sft_steps=sft_steps,
         base_batch_size=base_batch_size,
@@ -1096,6 +1098,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     ]
     if preset_name in RUN_SCALES:
         command.extend(["--scale", preset_name])
+    if tie_embeddings:
+        command.append("--tie-embeddings")
     if tokenizer_vocab_size is not None:
         command.extend(["--tokenizer-vocab-size", str(tokenizer_vocab_size)])
     if allow_unsafe_long_run:
@@ -1133,6 +1137,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "norm_type": norm_type,
             "position_encoding": position_encoding,
             "activation": activation,
+            "tie_embeddings": tie_embeddings,
             "tokenizer_type": tokenizer_type,
             "tokenizer_vocab_size": tokenizer_vocab_size,
             "base_learning_rate": base_learning_rate,

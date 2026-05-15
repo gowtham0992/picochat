@@ -161,12 +161,13 @@ def estimate_run_budget(config: Any, stats: CorpusStats, sft_examples: int) -> R
     vocab_size = _tokenizer_vocab_estimate(config)
     n_embd = int(_value(config, "n_embd", 64) or 64)
     n_layer = int(_value(config, "n_layer", 2) or 2)
+    tie_embeddings = bool(_value(config, "tie_embeddings", False))
     context_size = int(_value(config, "context_size", 128) or 128)
     base_steps = int(_value(config, "base_steps", 0) or 0)
     sft_steps = int(_value(config, "sft_steps", 0) or 0)
     base_effective_batch = int(_value(config, "base_batch_size", 1) or 1) * int(_value(config, "base_grad_accum_steps", 1) or 1)
     sft_effective_batch = int(_value(config, "sft_batch_size", 1) or 1) * int(_value(config, "sft_grad_accum_steps", 1) or 1)
-    estimated_parameters = _estimate_parameters(vocab_size, n_embd, n_layer)
+    estimated_parameters = _estimate_parameters(vocab_size, n_embd, n_layer, tie_embeddings=tie_embeddings)
     corpus_tokens, token_note = _estimate_corpus_tokens(stats, tokenizer_type, vocab_size)
     base_tokens_per_step = base_effective_batch * context_size
     base_planned_tokens = base_steps * base_tokens_per_step
@@ -561,9 +562,9 @@ def _check(name: str, status: str, metric: str, threshold: str, message: str) ->
     return RunPreflightCheck(name=name, status=status, metric=metric, threshold=threshold, message=message)
 
 
-def _estimate_parameters(vocab_size: int, n_embd: int, n_layer: int) -> int:
+def _estimate_parameters(vocab_size: int, n_embd: int, n_layer: int, *, tie_embeddings: bool = False) -> int:
     # Approximate GPT parameter count before the tokenizer exists. Good enough for budget gating.
-    embeddings_and_head = 2 * vocab_size * n_embd
+    embeddings_and_head = vocab_size * n_embd if tie_embeddings else 2 * vocab_size * n_embd
     blocks = n_layer * (12 * n_embd * n_embd + 4 * n_embd)
     final_norm = 2 * n_embd
     return int(embeddings_and_head + blocks + final_norm)
