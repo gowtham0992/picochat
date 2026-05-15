@@ -73,6 +73,61 @@ def test_cli_run_tiny_multiseed(tmp_path, capsys, monkeypatch):
     assert "multi-seed tiny run: n=3 eval pass mean 25.00% std 5.00%" in output
 
 
+def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
+    import json
+
+    corpus = tmp_path / "corpus.txt"
+    chat = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack = tmp_path / "dataset_pack.json"
+    corpus.write_text("base corpus\n", encoding="utf-8")
+    chat.write_text(json.dumps({"user": "who", "assistant": "Picochat"}) + "\n", encoding="utf-8")
+    eval_path.write_text(json.dumps({"user": "who", "must_include": ["Picochat"]}) + "\n", encoding="utf-8")
+    pack.write_text(json.dumps({
+        "corpus": "corpus.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    def fake_run(config):
+        assert config.input_path == str(chat)
+        assert config.eval_input_path == str(eval_path)
+        assert config.support_corpus_path == str(corpus)
+        assert config.tokenizer_path == "tok.json"
+        assert config.checkpoint_path == "base"
+        return {
+            "best_sft_fit": {
+                "candidate": "uniform-lr1em04-steps1",
+                "sft_fit_pass_rate": 0.9,
+            },
+            "best_eval": {
+                "candidate": "uniform-lr1em04-steps1",
+                "eval_pass_rate": 0.4,
+            },
+        }
+
+    monkeypatch.setattr("picochat.cli.run_sft_sweep", fake_run)
+
+    exit_code = main([
+        "train",
+        "sft-sweep",
+        "--dataset-pack",
+        str(pack),
+        "--tokenizer",
+        "tok.json",
+        "--checkpoint",
+        "base",
+        "--out-dir",
+        str(tmp_path / "sweep"),
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "sft sweep report:" in output
+    assert "best sft fit: uniform-lr1em04-steps1 (90.00%)" in output
+    assert "best eval: uniform-lr1em04-steps1 (40.00%)" in output
+
+
 def test_cli_tokenizer_train(tmp_path, capsys):
     data_path = tmp_path / "data.txt"
     tokenizer_path = tmp_path / "tokenizer.json"

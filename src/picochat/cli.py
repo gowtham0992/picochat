@@ -708,7 +708,14 @@ def build_parser() -> argparse.ArgumentParser:
         "sft-sweep",
         help="Run a controlled SFT schedule sweep from one base checkpoint.",
     )
-    train_sft_sweep_parser.add_argument("--input", required=True, help="Path to chat SFT JSONL.")
+    train_sft_sweep_parser.add_argument(
+        "--dataset-pack",
+        "--pack",
+        dest="dataset_pack",
+        default=None,
+        help="Optional dataset pack. Uses its chat/eval files unless --input or --eval-input override them.",
+    )
+    train_sft_sweep_parser.add_argument("--input", default=None, help="Path to chat SFT JSONL.")
     train_sft_sweep_parser.add_argument("--eval-input", default=None, help="Optional held-out eval JSONL.")
     train_sft_sweep_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
     train_sft_sweep_parser.add_argument("--checkpoint", required=True, help="Base checkpoint directory.")
@@ -1893,13 +1900,24 @@ def run_train_sft(args: argparse.Namespace) -> int:
 
 
 def run_train_sft_sweep(args: argparse.Namespace) -> int:
+    input_path = args.input
+    eval_input_path = args.eval_input
+    support_corpus_path = args.support_corpus
+    if args.dataset_pack:
+        pack = load_dataset_pack(args.dataset_pack)
+        input_path = input_path or pack.chat_input
+        eval_input_path = eval_input_path or pack.eval_input
+        support_corpus_path = support_corpus_path or pack.corpus_input
+    if not input_path:
+        raise SystemExit("train sft-sweep requires --input or --dataset-pack")
+
     report = run_sft_sweep(SFTSweepConfig(
-        input_path=args.input,
-        eval_input_path=args.eval_input,
+        input_path=input_path,
+        eval_input_path=eval_input_path,
         tokenizer_path=args.tokenizer,
         checkpoint_path=args.checkpoint,
         out_dir=args.out_dir,
-        support_corpus_path=args.support_corpus,
+        support_corpus_path=support_corpus_path,
         learning_rates=_parse_float_csv(args.learning_rates, "learning-rates"),
         step_counts=_parse_int_csv(args.steps, "steps"),
         samplings=_parse_sampling_csv(args.samplings),
