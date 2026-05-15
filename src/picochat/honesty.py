@@ -20,6 +20,7 @@ GENERIC_REFUSAL_SUPPORT_PHRASES = {
     "cannot answer from the provided material",
     "not enough information in the provided material",
 }
+DEFAULT_FULL_CORPUS_MATRIX_CHAR_LIMIT = 10_000_000
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,7 @@ def inspect_data_honesty(
     near_threshold: float = 0.86,
     generated_texts: list[str] | None = None,
     ngram_size: int = 8,
+    full_corpus_matrix_char_limit: int = DEFAULT_FULL_CORPUS_MATRIX_CHAR_LIMIT,
 ) -> DataHonestyReport:
     """Check whether an eval is visibly contaminated by SFT or corpus text."""
     chat_rows = _read_chat_rows(chat_input)
@@ -223,6 +225,7 @@ def inspect_data_honesty(
         generated_texts=generated_texts or [],
         near_threshold=near_threshold,
         ngram_size=ngram_size,
+        full_corpus_matrix_char_limit=full_corpus_matrix_char_limit,
     )
     status = _status(findings)
     return DataHonestyReport(
@@ -380,11 +383,18 @@ def _build_contamination_matrix(
     generated_texts: list[str],
     near_threshold: float,
     ngram_size: int,
+    full_corpus_matrix_char_limit: int,
 ) -> dict[str, Any]:
     ngram_size = max(1, int(ngram_size))
+    full_corpus_matrix_char_limit = max(0, int(full_corpus_matrix_char_limit))
+    corpus_too_large_for_matrix = (
+        bool(corpus_text.strip())
+        and full_corpus_matrix_char_limit > 0
+        and len(corpus_text) > full_corpus_matrix_char_limit
+    )
     corpus_records = (
         [_make_record("base_corpus", "corpus", corpus_text, ngram_size)]
-        if corpus_text.strip()
+        if corpus_text.strip() and not corpus_too_large_for_matrix
         else []
     )
     sft_records = _chat_text_records(chat_rows, ngram_size)
@@ -441,9 +451,27 @@ def _build_contamination_matrix(
             ngram_size=ngram_size,
         ),
     ]
+    if corpus_too_large_for_matrix:
+        reason = (
+            f"base corpus has {len(corpus_text):,} chars, above the "
+            f"{full_corpus_matrix_char_limit:,} char full-matrix limit; "
+            "exact corpus prompt/support checks still ran separately"
+        )
+        pairs = [
+            {
+                **pair,
+                "checked": False,
+                "reason": reason,
+                "risk": "not_checked",
+            }
+            if pair.get("reference") == "base_corpus" else pair
+            for pair in pairs
+        ]
     return {
         "ngram_size": ngram_size,
         "near_threshold": near_threshold,
+        "full_corpus_matrix_char_limit": full_corpus_matrix_char_limit,
+        "corpus_matrix_mode": "skipped_large_corpus" if corpus_too_large_for_matrix else "full",
         "pairs": pairs,
     }
 

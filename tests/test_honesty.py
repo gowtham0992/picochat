@@ -99,6 +99,45 @@ def test_inspect_data_honesty_reports_contamination_matrix(tmp_path):
     assert matrix_pair(report, "generated_vs_sft")["checked"] is False
 
 
+def test_inspect_data_honesty_skips_full_corpus_matrix_for_large_corpus(tmp_path):
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    corpus_path = tmp_path / "corpus.txt"
+    prompt = "Which cue says to inspect the quiet ridge marker before moving?"
+    support = "inspect the quiet ridge marker"
+    write_jsonl(chat_path, [{
+        "user": "Explain a clean unrelated training prompt.",
+        "assistant": "Use simple local evidence.",
+    }])
+    write_jsonl(eval_path, [{
+        "user": prompt,
+        "must_include": [support],
+        "category": "domain_eval",
+    }])
+    corpus_path.write_text(
+        ("background field note " * 80)
+        + f"\n{prompt}\n{support}\n"
+        + ("additional corpus text " * 80),
+        encoding="utf-8",
+    )
+
+    report = inspect_data_honesty(
+        chat_path,
+        eval_path,
+        corpus_path,
+        full_corpus_matrix_char_limit=200,
+    )
+
+    assert report.corpus_prompt_hits == 1
+    assert report.corpus_support_phrase_hits == 1
+    assert report.contamination_matrix["corpus_matrix_mode"] == "skipped_large_corpus"
+    base_eval_pair = matrix_pair(report, "base_corpus_vs_eval")
+    assert base_eval_pair["checked"] is False
+    assert base_eval_pair["risk"] == "not_checked"
+    assert "exact corpus prompt/support checks still ran separately" in base_eval_pair["reason"]
+    assert matrix_pair(report, "sft_vs_eval")["checked"] is True
+
+
 def test_inspect_data_honesty_checks_generated_nearest_neighbors(tmp_path):
     chat_path = tmp_path / "chat.jsonl"
     eval_path = tmp_path / "eval.jsonl"
