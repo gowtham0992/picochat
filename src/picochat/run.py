@@ -71,8 +71,14 @@ class TinyRunConfig:
     sft_grad_accum_steps: int = 1
     base_optimizer: str = "adamw"
     sft_optimizer: str = "adamw"
+    base_weight_decay: float = 0.01
+    sft_weight_decay: float = 0.01
+    base_weight_decay_decay: str = "none"
+    sft_weight_decay_decay: str = "none"
     base_muon_learning_rate: float = 0.02
     sft_muon_learning_rate: float = 0.02
+    base_muon_momentum_schedule: str = "none"
+    sft_muon_momentum_schedule: str = "none"
     base_ema_decay: float = 0.0
     sft_ema_decay: float = 0.0
     sft_sampling: str = "uniform"
@@ -87,6 +93,11 @@ class TinyRunConfig:
     ddp: bool = False
     allow_unsafe_long_run: bool = False
     target_param_data_ratio: float = 20.0
+    auto_lr_scaling: bool = False
+    loss_spike_rollback: bool = False
+    loss_spike_threshold: float = 2.5
+    loss_spike_lr_decay: float = 0.5
+    loss_spike_min_lr_scale: float = 0.1
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -123,6 +134,15 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "run preflight blocked this plan; inspect "
             f"{preflight_markdown_path} or rerun with --allow-unsafe-long-run "
             "for a diagnostic-only run"
+        )
+    base_learning_rate = config.base_learning_rate
+    sft_learning_rate = config.sft_learning_rate
+    if config.auto_lr_scaling:
+        base_learning_rate *= preflight_report.budget.base_lr_sqrt_scale
+        sft_learning_rate *= preflight_report.budget.sft_lr_sqrt_scale
+        print(
+            "auto lr scaling: "
+            f"base {base_learning_rate:.6g}, sft {sft_learning_rate:.6g}"
         )
 
     if config.tokenizer_type not in TOKENIZER_TYPES:
@@ -166,7 +186,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         context_size=config.context_size,
         batch_size=config.base_batch_size,
         max_steps=config.base_steps,
-        learning_rate=config.base_learning_rate,
+        learning_rate=base_learning_rate,
         n_embd=config.n_embd,
         n_head=config.n_head,
         n_layer=config.n_layer,
@@ -190,7 +210,10 @@ def run_tiny(config: TinyRunConfig) -> dict:
         grad_clip=config.base_grad_clip,
         grad_accum_steps=config.base_grad_accum_steps,
         optimizer=config.base_optimizer,
+        weight_decay=config.base_weight_decay,
+        weight_decay_decay=config.base_weight_decay_decay,
         muon_learning_rate=config.base_muon_learning_rate,
+        muon_momentum_schedule=config.base_muon_momentum_schedule,
         ema_decay=config.base_ema_decay,
         logit_softcap=config.logit_softcap,
         precision=config.precision,
@@ -198,6 +221,10 @@ def run_tiny(config: TinyRunConfig) -> dict:
         torch_compile_mode=config.torch_compile_mode,
         gradient_checkpointing=config.gradient_checkpointing,
         ddp=config.ddp,
+        loss_spike_rollback=config.loss_spike_rollback,
+        loss_spike_threshold=config.loss_spike_threshold,
+        loss_spike_lr_decay=config.loss_spike_lr_decay,
+        loss_spike_min_lr_scale=config.loss_spike_min_lr_scale,
     ))
     base_eval_checkpoint = base_report.get("best_checkpoint", {}).get(
         "path",
@@ -212,7 +239,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         out_dir=str(out_dir / "sft"),
         batch_size=config.sft_batch_size,
         max_steps=config.sft_steps,
-        learning_rate=config.sft_learning_rate,
+        learning_rate=sft_learning_rate,
         seed=config.seed,
         device=config.device,
         log_every=_validation_log_every(config.sft_steps),
@@ -227,13 +254,20 @@ def run_tiny(config: TinyRunConfig) -> dict:
         sampling=config.sft_sampling,
         grad_accum_steps=config.sft_grad_accum_steps,
         optimizer=config.sft_optimizer,
+        weight_decay=config.sft_weight_decay,
+        weight_decay_decay=config.sft_weight_decay_decay,
         muon_learning_rate=config.sft_muon_learning_rate,
+        muon_momentum_schedule=config.sft_muon_momentum_schedule,
         ema_decay=config.sft_ema_decay,
         packing=config.sft_packing,
         precision=config.precision,
         torch_compile=config.torch_compile,
         torch_compile_mode=config.torch_compile_mode,
         ddp=config.ddp,
+        loss_spike_rollback=config.loss_spike_rollback,
+        loss_spike_threshold=config.loss_spike_threshold,
+        loss_spike_lr_decay=config.loss_spike_lr_decay,
+        loss_spike_min_lr_scale=config.loss_spike_min_lr_scale,
     ))
     sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",
@@ -300,6 +334,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
         "dataset_pack": corpus_build.dataset_pack,
         "chat_input": chat_input,
         "eval_input": eval_input,
+        "base_effective_learning_rate": base_learning_rate,
+        "sft_effective_learning_rate": sft_learning_rate,
     }
     summary = {
         "config": effective_config,

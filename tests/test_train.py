@@ -28,6 +28,8 @@ def test_train_base_writes_artifacts(tmp_path):
         lr_decay="cosine",
         min_lr_ratio=0.5,
         grad_clip=1.0,
+        weight_decay=0.02,
+        weight_decay_decay="cosine_to_zero",
     ))
 
     assert (out_dir / "checkpoint" / "model.pt").exists()
@@ -40,7 +42,10 @@ def test_train_base_writes_artifacts(tmp_path):
     assert "val_loss" in report["losses"][-1]
     assert "val_bpb" in report["losses"][-1]
     assert "learning_rate" in report["losses"][-1]
+    assert "weight_decay" in report["losses"][-1]
     assert "grad_norm" in report["losses"][-1]
+    assert report["config"]["weight_decay"] == 0.02
+    assert report["config"]["weight_decay_decay"] == "cosine_to_zero"
     assert report["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
     assert report["coverage"]["actual_steps"] == 2
     assert report["stop_reason"] == "max_steps"

@@ -10,6 +10,8 @@ import torch
 
 
 LR_DECAYS = ("none", "linear", "cosine")
+WEIGHT_DECAY_DECAYS = ("none", "cosine_to_zero")
+MUON_MOMENTUM_SCHEDULES = ("none", "nanochat")
 OPTIMIZER_TYPES = ("adamw", "muon")
 
 
@@ -148,6 +150,7 @@ def create_optimizer(
     *,
     optimizer_type: str = "adamw",
     learning_rate: float,
+    weight_decay: float = 0.01,
     muon_learning_rate: float = 0.02,
     muon_momentum: float = 0.95,
     muon_ns_steps: int = 5,
@@ -157,18 +160,26 @@ def create_optimizer(
         raise ValueError(f"optimizer must be one of: {', '.join(OPTIMIZER_TYPES)}")
     if learning_rate <= 0:
         raise ValueError("learning_rate must be positive")
+    if weight_decay < 0:
+        raise ValueError("weight_decay must be non-negative")
     if muon_learning_rate <= 0:
         raise ValueError("muon_learning_rate must be positive")
 
     if optimizer_type == "adamw":
-        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay,
+        )
         for group in optimizer.param_groups:
             group["lr_scale"] = 1.0
+            group["weight_decay_scale"] = 1.0
         return OptimizerBundle([optimizer], {
             "optimizer": "adamw",
             "adamw_parameters": sum(parameter.numel() for parameter in model.parameters()),
             "muon_parameters": 0,
             "muon_learning_rate": None,
+            "weight_decay": weight_decay,
         })
 
     matrix_params: list[torch.nn.Parameter] = []
@@ -190,15 +201,22 @@ def create_optimizer(
             lr=muon_learning_rate,
             momentum=muon_momentum,
             ns_steps=muon_ns_steps,
+            weight_decay=weight_decay,
         )
         muon_scale = muon_learning_rate / learning_rate
         for group in muon.param_groups:
             group["lr_scale"] = muon_scale
+            group["weight_decay_scale"] = 1.0
         optimizers.append(muon)
     if adamw_params:
-        adamw = torch.optim.AdamW(adamw_params, lr=learning_rate)
+        adamw = torch.optim.AdamW(
+            adamw_params,
+            lr=learning_rate,
+            weight_decay=weight_decay,
+        )
         for group in adamw.param_groups:
             group["lr_scale"] = 1.0
+            group["weight_decay_scale"] = 1.0
         optimizers.append(adamw)
 
     return OptimizerBundle(optimizers, {
@@ -206,8 +224,10 @@ def create_optimizer(
         "adamw_parameters": sum(parameter.numel() for parameter in adamw_params),
         "muon_parameters": sum(parameter.numel() for parameter in matrix_params),
         "muon_learning_rate": muon_learning_rate,
+        "muon_momentum": muon_momentum,
         "muon_matrix_count": len(matrix_params),
         "muon_matrix_names": matrix_names[:12],
+        "weight_decay": weight_decay,
     })
 
 
@@ -295,8 +315,14 @@ def validate_optim_controls(
     grad_clip: float,
     grad_accum_steps: int = 1,
     optimizer_type: str = "adamw",
+    weight_decay: float = 0.01,
+    weight_decay_decay: str = "none",
     muon_learning_rate: float = 0.02,
+    muon_momentum_schedule: str = "none",
     ema_decay: float = 0.0,
+    loss_spike_threshold: float = 2.5,
+    loss_spike_lr_decay: float = 0.5,
+    loss_spike_min_lr_scale: float = 0.1,
 ) -> None:
     if max_steps < 1:
         raise ValueError("max_steps must be at least 1")
@@ -312,10 +338,22 @@ def validate_optim_controls(
         raise ValueError("grad_accum_steps must be at least 1")
     if optimizer_type not in OPTIMIZER_TYPES:
         raise ValueError(f"optimizer must be one of: {', '.join(OPTIMIZER_TYPES)}")
+    if weight_decay < 0:
+        raise ValueError("weight_decay must be non-negative")
+    if weight_decay_decay not in WEIGHT_DECAY_DECAYS:
+        raise ValueError(f"weight_decay_decay must be one of: {', '.join(WEIGHT_DECAY_DECAYS)}")
     if muon_learning_rate <= 0:
         raise ValueError("muon_learning_rate must be positive")
+    if muon_momentum_schedule not in MUON_MOMENTUM_SCHEDULES:
+        raise ValueError(f"muon_momentum_schedule must be one of: {', '.join(MUON_MOMENTUM_SCHEDULES)}")
     if not 0.0 <= ema_decay < 1.0:
         raise ValueError("ema_decay must be in [0, 1)")
+    if loss_spike_threshold <= 1.0:
+        raise ValueError("loss_spike_threshold must be greater than 1")
+    if not 0.0 < loss_spike_lr_decay <= 1.0:
+        raise ValueError("loss_spike_lr_decay must be in (0, 1]")
+    if not 0.0 < loss_spike_min_lr_scale <= 1.0:
+        raise ValueError("loss_spike_min_lr_scale must be in (0, 1]")
 
 
 def learning_rate_for_step(
@@ -347,9 +385,62 @@ def learning_rate_for_step(
     return base_learning_rate * multiplier
 
 
+def weight_decay_for_step(
+    *,
+    base_weight_decay: float,
+    step: int,
+    max_steps: int,
+    decay: str = "none",
+) -> float:
+    """Return weight decay for a 1-indexed training step."""
+    if step < 1:
+        raise ValueError("step must be 1-indexed")
+    if base_weight_decay < 0:
+        raise ValueError("base_weight_decay must be non-negative")
+    if decay == "none" or base_weight_decay == 0:
+        return base_weight_decay
+    if decay != "cosine_to_zero":
+        raise ValueError(f"Unsupported weight decay schedule: {decay}")
+    progress = min(1.0, max(0.0, (step - 1) / max(1, max_steps - 1)))
+    return base_weight_decay * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
+def muon_momentum_for_step(
+    *,
+    schedule: str,
+    step: int,
+    max_steps: int,
+) -> float | None:
+    """Return scheduled Muon momentum, or None when fixed momentum is requested."""
+    if step < 1:
+        raise ValueError("step must be 1-indexed")
+    if schedule == "none":
+        return None
+    if schedule != "nanochat":
+        raise ValueError(f"Unsupported Muon momentum schedule: {schedule}")
+    progress = min(1.0, max(0.0, (step - 1) / max(1, max_steps - 1)))
+    if progress <= 0.5:
+        return _linear_interpolate(0.85, 0.97, progress / 0.5)
+    return _linear_interpolate(0.97, 0.90, (progress - 0.5) / 0.5)
+
+
 def set_optimizer_lr(optimizer: torch.optim.Optimizer, learning_rate: float) -> None:
     for group in optimizer.param_groups:
         group["lr"] = learning_rate * group.get("lr_scale", 1.0)
+
+
+def set_optimizer_weight_decay(optimizer: torch.optim.Optimizer, weight_decay: float) -> None:
+    for group in optimizer.param_groups:
+        if "weight_decay" in group:
+            group["weight_decay"] = weight_decay * group.get("weight_decay_scale", 1.0)
+
+
+def set_muon_momentum(optimizer: torch.optim.Optimizer, momentum: float | None) -> None:
+    if momentum is None:
+        return
+    for group in optimizer.param_groups:
+        if "momentum" in group and "ns_steps" in group:
+            group["momentum"] = momentum
 
 
 def maybe_clip_grad_norm(model: torch.nn.Module, grad_clip: float) -> float | None:
@@ -357,3 +448,7 @@ def maybe_clip_grad_norm(model: torch.nn.Module, grad_clip: float) -> float | No
         return None
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
     return float(norm.item())
+
+
+def _linear_interpolate(start: float, end: float, t: float) -> float:
+    return start + (end - start) * min(1.0, max(0.0, t))

@@ -21,9 +21,10 @@ def make_training_state(
     ema,
     batcher,
     device: torch.device,
+    extra_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Capture mutable training state needed to continue a run."""
-    return {
+    state = {
         "step": step,
         "losses": losses,
         "best_metric": best_metric,
@@ -37,6 +38,9 @@ def make_training_state(
         "batcher": batcher.state_dict(),
         "rng": capture_rng_state(device),
     }
+    if extra_state:
+        state.update(extra_state)
+    return state
 
 
 def restore_training_state(

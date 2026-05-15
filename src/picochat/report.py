@@ -177,6 +177,9 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Optimizer: `{config.get('optimizer', 'adamw')}`")
     if config.get("optimizer") == "muon":
         lines.append(f"- Muon matrix LR: {config.get('muon_learning_rate')}")
+        lines.append(f"- Muon momentum schedule: `{config.get('muon_momentum_schedule', 'none')}`")
+    lines.append(f"- Weight decay: {config.get('weight_decay', 0.01)}")
+    lines.append(f"- Weight decay schedule: `{config.get('weight_decay_decay', 'none')}`")
     lines.append(f"- EMA decay: {config.get('ema_decay', 0.0) or 'disabled'}")
     lines.append(f"- Learning rate: {config['learning_rate']}")
     lines.append(f"- LR decay: `{config.get('lr_decay', 'none')}`")
@@ -235,6 +238,7 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Max grad norm: {format_optional_float(stability.get('max_grad_norm'))}")
     lines.append(f"- Final grad norm: {format_optional_float(stability.get('final_grad_norm'))}")
     lines.append(f"- Loss spikes between checkpoints: {stability.get('loss_spikes', 0)}")
+    lines.append(f"- Rollbacks: {len(report.get('rollback_events', []))}")
     for warning in stability.get("warnings", []):
         lines.append(f"- Warning: {warning}")
     lines.append("")
@@ -418,6 +422,9 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Optimizer: `{config.get('optimizer', 'adamw')}`")
     if config.get("optimizer") == "muon":
         lines.append(f"- Muon matrix LR: {config.get('muon_learning_rate')}")
+        lines.append(f"- Muon momentum schedule: `{config.get('muon_momentum_schedule', 'none')}`")
+    lines.append(f"- Weight decay: {config.get('weight_decay', 0.01)}")
+    lines.append(f"- Weight decay schedule: `{config.get('weight_decay_decay', 'none')}`")
     lines.append(f"- EMA decay: {config.get('ema_decay', 0.0) or 'disabled'}")
     lines.append(f"- Learning rate: {config['learning_rate']}")
     lines.append(f"- LR decay: `{config.get('lr_decay', 'none')}`")
@@ -475,6 +482,7 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Max grad norm: {format_optional_float(stability.get('max_grad_norm'))}")
     lines.append(f"- Final grad norm: {format_optional_float(stability.get('final_grad_norm'))}")
     lines.append(f"- Loss spikes between checkpoints: {stability.get('loss_spikes', 0)}")
+    lines.append(f"- Rollbacks: {len(report.get('rollback_events', []))}")
     for warning in stability.get("warnings", []):
         lines.append(f"- Warning: {warning}")
     lines.append("")

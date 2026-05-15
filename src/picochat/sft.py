@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 import time
 
@@ -20,9 +21,13 @@ from picochat.optim import (
     create_optimizer,
     learning_rate_for_step,
     maybe_clip_grad_norm,
+    muon_momentum_for_step,
+    set_muon_momentum,
     set_optimizer_lr,
+    set_optimizer_weight_decay,
     using_ema_weights,
     validate_optim_controls,
+    weight_decay_for_step,
 )
 from picochat.precision import (
     autocast_context,
@@ -33,7 +38,12 @@ from picochat.precision import (
 from picochat.report import loss_diagnostics, optimization_stability, sft_report_markdown
 from picochat.resume import make_training_state, restore_training_state
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
-from picochat.train import evaluate_metrics
+from picochat.train import (
+    _capture_rollback_state,
+    _is_loss_spike,
+    _restore_rollback_state,
+    evaluate_metrics,
+)
 
 
 SFT_SAMPLING_MODES = ("uniform", "category_sqrt", "category_balanced")
@@ -113,7 +123,10 @@ class SFTConfig:
     sampling: str = "uniform"
     grad_accum_steps: int = 1
     optimizer: str = "adamw"
+    weight_decay: float = 0.01
+    weight_decay_decay: str = "none"
     muon_learning_rate: float = 0.02
+    muon_momentum_schedule: str = "none"
     ema_decay: float = 0.0
     packing: str = "separate"
     precision: str = "float32"
@@ -121,6 +134,10 @@ class SFTConfig:
     torch_compile_mode: str = "default"
     resume_from: str | None = None
     ddp: bool = False
+    loss_spike_rollback: bool = False
+    loss_spike_threshold: float = 2.5
+    loss_spike_lr_decay: float = 0.5
+    loss_spike_min_lr_scale: float = 0.1
 
 
 class ChatSFTDataset(torch.utils.data.Dataset):
@@ -650,8 +667,14 @@ def train_sft(config: SFTConfig) -> dict:
         grad_clip=config.grad_clip,
         grad_accum_steps=config.grad_accum_steps,
         optimizer_type=config.optimizer,
+        weight_decay=config.weight_decay,
+        weight_decay_decay=config.weight_decay_decay,
         muon_learning_rate=config.muon_learning_rate,
+        muon_momentum_schedule=config.muon_momentum_schedule,
         ema_decay=config.ema_decay,
+        loss_spike_threshold=config.loss_spike_threshold,
+        loss_spike_lr_decay=config.loss_spike_lr_decay,
+        loss_spike_min_lr_scale=config.loss_spike_min_lr_scale,
     )
     torch.manual_seed(config.seed)
     out_dir = Path(config.out_dir)
@@ -727,6 +750,7 @@ def train_sft(config: SFTConfig) -> dict:
         model,
         optimizer_type=config.optimizer,
         learning_rate=config.learning_rate,
+        weight_decay=config.weight_decay,
         muon_learning_rate=config.muon_learning_rate,
     )
     ema = ExponentialMovingAverage(model, config.ema_decay) if config.ema_decay > 0 else None
@@ -745,6 +769,9 @@ def train_sft(config: SFTConfig) -> dict:
     final_step = 0
     stop_reason = "max_steps"
     start_step = 1
+    rollback_events: list[dict[str, float | int | None]] = []
+    rollback_lr_scale = 1.0
+    loss_spike_baseline: float | None = None
     if resume_state is not None:
         restore_training_state(
             resume_state,
@@ -762,10 +789,21 @@ def train_sft(config: SFTConfig) -> dict:
         best_checkpoint = resume_state.get("best_checkpoint")
         evals_without_improvement = int(resume_state.get("evals_without_improvement", 0))
         elapsed_offset = float(resume_state.get("elapsed_sec", 0.0))
+        rollback_events = list(resume_state.get("rollback_events", []))
+        rollback_lr_scale = float(resume_state.get("rollback_lr_scale", rollback_lr_scale))
+        raw_baseline = resume_state.get("loss_spike_baseline")
+        loss_spike_baseline = float(raw_baseline) if raw_baseline is not None else None
+    if loss_spike_baseline is None and math.isfinite(last_loss) and last_loss > 0:
+        loss_spike_baseline = last_loss
 
     model.train()
     train_model.train()
     for step in range(start_step, config.max_steps + 1):
+        rollback_state = (
+            _capture_rollback_state(model, optimizer, scaler, ema)
+            if config.loss_spike_rollback and loss_spike_baseline is not None
+            else None
+        )
         learning_rate = learning_rate_for_step(
             base_learning_rate=config.learning_rate,
             step=step,
@@ -773,8 +811,21 @@ def train_sft(config: SFTConfig) -> dict:
             warmup_steps=config.lr_warmup_steps,
             decay=config.lr_decay,
             min_lr_ratio=config.min_lr_ratio,
+        ) * rollback_lr_scale
+        weight_decay = weight_decay_for_step(
+            base_weight_decay=config.weight_decay,
+            step=step,
+            max_steps=config.max_steps,
+            decay=config.weight_decay_decay,
+        )
+        muon_momentum = muon_momentum_for_step(
+            schedule=config.muon_momentum_schedule,
+            step=step,
+            max_steps=config.max_steps,
         )
         set_optimizer_lr(optimizer, learning_rate)
+        set_optimizer_weight_decay(optimizer, weight_decay)
+        set_muon_momentum(optimizer, muon_momentum)
         optimizer.zero_grad(set_to_none=True)
         micro_losses: list[float] = []
         for _ in range(config.grad_accum_steps):
@@ -802,6 +853,38 @@ def train_sft(config: SFTConfig) -> dict:
             ema.update(model)
 
         last_loss = sum(micro_losses) / len(micro_losses)
+        if (
+            config.loss_spike_rollback
+            and rollback_state is not None
+            and loss_spike_baseline is not None
+            and _is_loss_spike(last_loss, loss_spike_baseline, config.loss_spike_threshold)
+        ):
+            _restore_rollback_state(rollback_state, model, optimizer, scaler, ema)
+            rollback_lr_scale = max(
+                config.loss_spike_min_lr_scale,
+                rollback_lr_scale * config.loss_spike_lr_decay,
+            )
+            spike_ratio = (
+                last_loss / loss_spike_baseline
+                if math.isfinite(last_loss) and loss_spike_baseline > 0
+                else None
+            )
+            rollback_events.append({
+                "step": step,
+                "train_loss": last_loss,
+                "baseline_loss": loss_spike_baseline,
+                "spike_ratio": spike_ratio,
+                "lr_scale_after": rollback_lr_scale,
+            })
+            print(
+                f"sft loss spike rollback at step {step}: "
+                f"train {last_loss:.4f} vs baseline {loss_spike_baseline:.4f}; "
+                f"lr scale -> {rollback_lr_scale:.3f}"
+            )
+            last_loss = loss_spike_baseline
+            continue
+        if math.isfinite(last_loss) and last_loss > 0:
+            loss_spike_baseline = last_loss
         final_step = step
         if step == 1 or step % config.log_every == 0 or step == config.max_steps:
             train_metrics = evaluate_metrics(
@@ -841,6 +924,8 @@ def train_sft(config: SFTConfig) -> dict:
                 "train_bpb": train_metrics["bpb"],
                 "val_bpb": val_metrics["bpb"],
                 "learning_rate": learning_rate,
+                "weight_decay": weight_decay,
+                **({"muon_momentum": muon_momentum} if muon_momentum is not None else {}),
                 "grad_norm": grad_norm,
                 "grad_accum_steps": config.grad_accum_steps,
                 "effective_batch_size": effective_batch_size,
@@ -921,6 +1006,11 @@ def train_sft(config: SFTConfig) -> dict:
                     ema=ema,
                     batcher=train_batcher,
                     device=device,
+                    extra_state={
+                        "rollback_events": rollback_events,
+                        "rollback_lr_scale": rollback_lr_scale,
+                        "loss_spike_baseline": loss_spike_baseline,
+                    },
                 ),
             )
             if (
@@ -966,6 +1056,11 @@ def train_sft(config: SFTConfig) -> dict:
             ema=ema,
             batcher=train_batcher,
             device=device,
+            extra_state={
+                "rollback_events": rollback_events,
+                "rollback_lr_scale": rollback_lr_scale,
+                "loss_spike_baseline": loss_spike_baseline,
+            },
         ),
     )
     if ema is not None:
@@ -1087,6 +1182,7 @@ def train_sft(config: SFTConfig) -> dict:
         "losses": losses,
         "loss_diagnostics": loss_diagnostics(losses),
         "optimization_stability": optimization_stability(losses, config.grad_clip),
+        "rollback_events": rollback_events,
         "sample": sample,
         "checkpoint": str(checkpoint_dir),
         "resume_checkpoint": str(out_dir / "resume_checkpoint"),

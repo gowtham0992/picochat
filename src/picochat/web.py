@@ -868,7 +868,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     tokenizer_vocab_size = _optional_int(
         payload.get("tokenizer_vocab_size", preset.get("tokenizer_vocab_size")),
         minimum=4,
-        maximum=8192,
+        maximum=32768,
     )
     tokenizer_min_freq = _bounded_int(payload.get("tokenizer_min_freq", preset.get("tokenizer_min_freq", 1)), 1, 1000)
     base_learning_rate = _bounded_float(payload.get("base_learning_rate", preset.get("base_learning_rate", 3e-4)), 0.0, 1.0)

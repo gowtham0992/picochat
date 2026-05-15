@@ -39,7 +39,10 @@ class SFTSweepConfig:
     grad_clip: float = 1.0
     grad_accum_steps: int = 1
     optimizer: str = "adamw"
+    weight_decay: float = 0.01
+    weight_decay_decay: str = "none"
     muon_learning_rate: float = 0.02
+    muon_momentum_schedule: str = "none"
     ema_decay: float = 0.0
     packing: str = "separate"
 
@@ -172,7 +175,10 @@ def _run_candidate(
         sampling=sampling,
         grad_accum_steps=config.grad_accum_steps,
         optimizer=config.optimizer,
+        weight_decay=config.weight_decay,
+        weight_decay_decay=config.weight_decay_decay,
         muon_learning_rate=config.muon_learning_rate,
+        muon_momentum_schedule=config.muon_momentum_schedule,
         ema_decay=config.ema_decay,
         packing=config.packing,
     ))

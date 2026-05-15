@@ -37,7 +37,12 @@ from picochat.hf_export import HFExportConfig, export_hf_checkpoint
 from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
-from picochat.optim import LR_DECAYS, OPTIMIZER_TYPES
+from picochat.optim import (
+    LR_DECAYS,
+    MUON_MOMENTUM_SCHEDULES,
+    OPTIMIZER_TYPES,
+    WEIGHT_DECAY_DECAYS,
+)
 from picochat.precision import COMPILE_MODES, PRECISION_MODES
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep
@@ -434,8 +439,19 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--grad-clip", type=float, default=0.0)
     train_base_parser.add_argument("--grad-accum-steps", type=int, default=1)
     train_base_parser.add_argument("--optimizer", choices=OPTIMIZER_TYPES, default="adamw")
+    train_base_parser.add_argument("--weight-decay", type=float, default=0.01)
+    train_base_parser.add_argument("--weight-decay-decay", choices=WEIGHT_DECAY_DECAYS, default="none")
     train_base_parser.add_argument("--muon-learning-rate", type=float, default=0.02)
+    train_base_parser.add_argument("--muon-momentum-schedule", choices=MUON_MOMENTUM_SCHEDULES, default="none")
     train_base_parser.add_argument("--ema-decay", type=float, default=0.0)
+    train_base_parser.add_argument(
+        "--loss-spike-rollback",
+        action="store_true",
+        help="Restore the previous weights and reduce LR scale when train loss spikes.",
+    )
+    train_base_parser.add_argument("--loss-spike-threshold", type=float, default=2.5)
+    train_base_parser.add_argument("--loss-spike-lr-decay", type=float, default=0.5)
+    train_base_parser.add_argument("--loss-spike-min-lr-scale", type=float, default=0.1)
     train_base_parser.add_argument(
         "--precision",
         choices=PRECISION_MODES,
@@ -528,8 +544,19 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_parser.add_argument("--grad-clip", type=float, default=0.0)
     train_sft_parser.add_argument("--grad-accum-steps", type=int, default=1)
     train_sft_parser.add_argument("--optimizer", choices=OPTIMIZER_TYPES, default="adamw")
+    train_sft_parser.add_argument("--weight-decay", type=float, default=0.01)
+    train_sft_parser.add_argument("--weight-decay-decay", choices=WEIGHT_DECAY_DECAYS, default="none")
     train_sft_parser.add_argument("--muon-learning-rate", type=float, default=0.02)
+    train_sft_parser.add_argument("--muon-momentum-schedule", choices=MUON_MOMENTUM_SCHEDULES, default="none")
     train_sft_parser.add_argument("--ema-decay", type=float, default=0.0)
+    train_sft_parser.add_argument(
+        "--loss-spike-rollback",
+        action="store_true",
+        help="Restore the previous weights and reduce LR scale when train loss spikes.",
+    )
+    train_sft_parser.add_argument("--loss-spike-threshold", type=float, default=2.5)
+    train_sft_parser.add_argument("--loss-spike-lr-decay", type=float, default=0.5)
+    train_sft_parser.add_argument("--loss-spike-min-lr-scale", type=float, default=0.1)
     train_sft_parser.add_argument(
         "--precision",
         choices=PRECISION_MODES,
@@ -612,7 +639,10 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_sweep_parser.add_argument("--grad-clip", type=float, default=1.0)
     train_sft_sweep_parser.add_argument("--grad-accum-steps", type=int, default=1)
     train_sft_sweep_parser.add_argument("--optimizer", choices=OPTIMIZER_TYPES, default="adamw")
+    train_sft_sweep_parser.add_argument("--weight-decay", type=float, default=0.01)
+    train_sft_sweep_parser.add_argument("--weight-decay-decay", choices=WEIGHT_DECAY_DECAYS, default="none")
     train_sft_sweep_parser.add_argument("--muon-learning-rate", type=float, default=0.02)
+    train_sft_sweep_parser.add_argument("--muon-momentum-schedule", choices=MUON_MOMENTUM_SCHEDULES, default="none")
     train_sft_sweep_parser.add_argument("--ema-decay", type=float, default=0.0)
     train_sft_sweep_parser.add_argument(
         "--packing",
@@ -786,8 +816,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--sft-grad-accum-steps", type=int, default=None)
     run_tiny_parser.add_argument("--base-optimizer", choices=OPTIMIZER_TYPES, default=None)
     run_tiny_parser.add_argument("--sft-optimizer", choices=OPTIMIZER_TYPES, default=None)
+    run_tiny_parser.add_argument("--base-weight-decay", type=float, default=None)
+    run_tiny_parser.add_argument("--sft-weight-decay", type=float, default=None)
+    run_tiny_parser.add_argument("--base-weight-decay-decay", choices=WEIGHT_DECAY_DECAYS, default=None)
+    run_tiny_parser.add_argument("--sft-weight-decay-decay", choices=WEIGHT_DECAY_DECAYS, default=None)
     run_tiny_parser.add_argument("--base-muon-learning-rate", type=float, default=None)
     run_tiny_parser.add_argument("--sft-muon-learning-rate", type=float, default=None)
+    run_tiny_parser.add_argument("--base-muon-momentum-schedule", choices=MUON_MOMENTUM_SCHEDULES, default=None)
+    run_tiny_parser.add_argument("--sft-muon-momentum-schedule", choices=MUON_MOMENTUM_SCHEDULES, default=None)
     run_tiny_parser.add_argument("--base-ema-decay", type=float, default=None)
     run_tiny_parser.add_argument("--sft-ema-decay", type=float, default=None)
     run_tiny_parser.add_argument(
@@ -799,6 +835,19 @@ def build_parser() -> argparse.ArgumentParser:
             "Used by long-run preflight to recommend base steps."
         ),
     )
+    run_tiny_parser.add_argument(
+        "--auto-lr-scaling",
+        action="store_true",
+        help="Apply preflight sqrt effective-batch LR scaling to base and SFT learning rates.",
+    )
+    run_tiny_parser.add_argument(
+        "--loss-spike-rollback",
+        action="store_true",
+        help="Restore the previous weights and reduce LR scale when train loss spikes.",
+    )
+    run_tiny_parser.add_argument("--loss-spike-threshold", type=float, default=None)
+    run_tiny_parser.add_argument("--loss-spike-lr-decay", type=float, default=None)
+    run_tiny_parser.add_argument("--loss-spike-min-lr-scale", type=float, default=None)
     run_tiny_parser.add_argument(
         "--logit-softcap",
         type=float,
@@ -1462,7 +1511,10 @@ def run_train_base(args: argparse.Namespace) -> int:
         grad_clip=args.grad_clip,
         grad_accum_steps=args.grad_accum_steps,
         optimizer=args.optimizer,
+        weight_decay=args.weight_decay,
+        weight_decay_decay=args.weight_decay_decay,
         muon_learning_rate=args.muon_learning_rate,
+        muon_momentum_schedule=args.muon_momentum_schedule,
         ema_decay=args.ema_decay,
         logit_softcap=args.logit_softcap,
         precision=args.precision,
@@ -1471,6 +1523,10 @@ def run_train_base(args: argparse.Namespace) -> int:
         resume_from=args.resume_from,
         gradient_checkpointing=args.gradient_checkpointing,
         ddp=args.ddp,
+        loss_spike_rollback=args.loss_spike_rollback,
+        loss_spike_threshold=args.loss_spike_threshold,
+        loss_spike_lr_decay=args.loss_spike_lr_decay,
+        loss_spike_min_lr_scale=args.loss_spike_min_lr_scale,
     )
     report = train_base(config)
     print(f"saved checkpoint: {report['checkpoint']}")
@@ -1504,7 +1560,10 @@ def run_train_sft(args: argparse.Namespace) -> int:
         sampling=args.sampling,
         grad_accum_steps=args.grad_accum_steps,
         optimizer=args.optimizer,
+        weight_decay=args.weight_decay,
+        weight_decay_decay=args.weight_decay_decay,
         muon_learning_rate=args.muon_learning_rate,
+        muon_momentum_schedule=args.muon_momentum_schedule,
         ema_decay=args.ema_decay,
         packing=args.packing,
         precision=args.precision,
@@ -1512,6 +1571,10 @@ def run_train_sft(args: argparse.Namespace) -> int:
         torch_compile_mode=args.torch_compile_mode,
         resume_from=args.resume_from,
         ddp=args.ddp,
+        loss_spike_rollback=args.loss_spike_rollback,
+        loss_spike_threshold=args.loss_spike_threshold,
+        loss_spike_lr_decay=args.loss_spike_lr_decay,
+        loss_spike_min_lr_scale=args.loss_spike_min_lr_scale,
     )
     report = train_sft(config)
     print(f"saved sft checkpoint: {report['checkpoint']}")
@@ -1548,7 +1611,10 @@ def run_train_sft_sweep(args: argparse.Namespace) -> int:
         grad_clip=args.grad_clip,
         grad_accum_steps=args.grad_accum_steps,
         optimizer=args.optimizer,
+        weight_decay=args.weight_decay,
+        weight_decay_decay=args.weight_decay_decay,
         muon_learning_rate=args.muon_learning_rate,
+        muon_momentum_schedule=args.muon_momentum_schedule,
         ema_decay=args.ema_decay,
         packing=args.packing,
     ))
@@ -1798,8 +1864,14 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         sft_grad_accum_steps=_resolve_tiny_value(args, defaults, "sft_grad_accum_steps"),
         base_optimizer=_resolve_tiny_value(args, defaults, "base_optimizer"),
         sft_optimizer=_resolve_tiny_value(args, defaults, "sft_optimizer"),
+        base_weight_decay=_resolve_tiny_value(args, defaults, "base_weight_decay"),
+        sft_weight_decay=_resolve_tiny_value(args, defaults, "sft_weight_decay"),
+        base_weight_decay_decay=_resolve_tiny_value(args, defaults, "base_weight_decay_decay"),
+        sft_weight_decay_decay=_resolve_tiny_value(args, defaults, "sft_weight_decay_decay"),
         base_muon_learning_rate=_resolve_tiny_value(args, defaults, "base_muon_learning_rate"),
         sft_muon_learning_rate=_resolve_tiny_value(args, defaults, "sft_muon_learning_rate"),
+        base_muon_momentum_schedule=_resolve_tiny_value(args, defaults, "base_muon_momentum_schedule"),
+        sft_muon_momentum_schedule=_resolve_tiny_value(args, defaults, "sft_muon_momentum_schedule"),
         base_ema_decay=_resolve_tiny_value(args, defaults, "base_ema_decay"),
         sft_ema_decay=_resolve_tiny_value(args, defaults, "sft_ema_decay"),
         sft_sampling=_resolve_tiny_value(args, defaults, "sft_sampling"),
@@ -1814,6 +1886,11 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         ddp=bool(args.ddp or defaults.ddp),
         allow_unsafe_long_run=args.allow_unsafe_long_run,
         target_param_data_ratio=_resolve_tiny_value(args, defaults, "target_param_data_ratio"),
+        auto_lr_scaling=bool(args.auto_lr_scaling or defaults.auto_lr_scaling),
+        loss_spike_rollback=bool(args.loss_spike_rollback or defaults.loss_spike_rollback),
+        loss_spike_threshold=_resolve_tiny_value(args, defaults, "loss_spike_threshold"),
+        loss_spike_lr_decay=_resolve_tiny_value(args, defaults, "loss_spike_lr_decay"),
+        loss_spike_min_lr_scale=_resolve_tiny_value(args, defaults, "loss_spike_min_lr_scale"),
     )
 
 
