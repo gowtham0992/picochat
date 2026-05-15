@@ -189,6 +189,17 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Device: `{config['device']}`")
     if config.get("requested_device") and config.get("requested_device") != config.get("device"):
         lines.append(f"- Requested device: `{config['requested_device']}`")
+    precision = config.get("precision_runtime", {})
+    if precision:
+        lines.append(
+            f"- Precision: `{precision.get('requested', 'float32')}` "
+            f"-> `{precision.get('dtype_name', 'float32')}`"
+        )
+    compile_metadata = config.get("torch_compile_metadata", {})
+    lines.append(
+        f"- Torch compile: "
+        f"{'enabled' if compile_metadata.get('enabled') else 'disabled'}"
+    )
     lines.append("")
     has_ema = any("ema_val_loss" in item for item in losses)
     if has_ema:
@@ -418,6 +429,17 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Device: `{config['device']}`")
     if config.get("requested_device") and config.get("requested_device") != config.get("device"):
         lines.append(f"- Requested device: `{config['requested_device']}`")
+    precision = config.get("precision_runtime", {})
+    if precision:
+        lines.append(
+            f"- Precision: `{precision.get('requested', 'float32')}` "
+            f"-> `{precision.get('dtype_name', 'float32')}`"
+        )
+    compile_metadata = config.get("torch_compile_metadata", {})
+    lines.append(
+        f"- Torch compile: "
+        f"{'enabled' if compile_metadata.get('enabled') else 'disabled'}"
+    )
     lines.append("")
     has_ema = any("ema_val_loss" in item for item in losses)
     if has_ema:

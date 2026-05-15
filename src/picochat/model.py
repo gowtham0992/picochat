@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-import math
 
 import torch
 import torch.nn as nn
@@ -78,15 +77,13 @@ class CausalSelfAttention(nn.Module):
         if self.position_encoding == "rope":
             q, k = apply_rope(q, k, base=self.rope_base)
 
-        scores = q @ k.transpose(-2, -1)
-        scores = scores / math.sqrt(self.head_dim)
-
-        mask = torch.tril(torch.ones(seq_len, seq_len, device=x.device, dtype=torch.bool))
-        scores = scores.masked_fill(~mask, float("-inf"))
-        att = F.softmax(scores, dim=-1)
-        att = self.dropout(att)
-
-        y = att @ v
+        y = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            dropout_p=self.dropout.p if self.training else 0.0,
+            is_causal=True,
+        )
         y = y.transpose(1, 2).contiguous().view(batch_size, seq_len, embd_size)
         return self.dropout(self.proj(y))
 

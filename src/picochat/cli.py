@@ -37,6 +37,7 @@ from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
 from picochat.optim import LR_DECAYS, OPTIMIZER_TYPES
+from picochat.precision import COMPILE_MODES, PRECISION_MODES
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep
 from picochat.skills_corpus import generate_skills_corpus
@@ -430,6 +431,23 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--muon-learning-rate", type=float, default=0.02)
     train_base_parser.add_argument("--ema-decay", type=float, default=0.0)
     train_base_parser.add_argument(
+        "--precision",
+        choices=PRECISION_MODES,
+        default="float32",
+        help="Training precision. Use bf16/fp16/auto only on supported accelerators.",
+    )
+    train_base_parser.add_argument(
+        "--torch-compile",
+        action="store_true",
+        help="Compile the model forward path with torch.compile.",
+    )
+    train_base_parser.add_argument(
+        "--torch-compile-mode",
+        choices=COMPILE_MODES,
+        default="default",
+        help="torch.compile mode when --torch-compile is enabled.",
+    )
+    train_base_parser.add_argument(
         "--logit-softcap",
         type=float,
         default=0.0,
@@ -479,6 +497,23 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_parser.add_argument("--optimizer", choices=OPTIMIZER_TYPES, default="adamw")
     train_sft_parser.add_argument("--muon-learning-rate", type=float, default=0.02)
     train_sft_parser.add_argument("--ema-decay", type=float, default=0.0)
+    train_sft_parser.add_argument(
+        "--precision",
+        choices=PRECISION_MODES,
+        default="float32",
+        help="Training precision. Use bf16/fp16/auto only on supported accelerators.",
+    )
+    train_sft_parser.add_argument(
+        "--torch-compile",
+        action="store_true",
+        help="Compile the model forward path with torch.compile.",
+    )
+    train_sft_parser.add_argument(
+        "--torch-compile-mode",
+        choices=COMPILE_MODES,
+        default="default",
+        help="torch.compile mode when --torch-compile is enabled.",
+    )
     train_sft_parser.add_argument(
         "--sampling",
         choices=SFT_SAMPLING_MODES,
@@ -697,6 +732,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Optional tanh softcap applied to model logits. 0 disables it.",
+    )
+    run_tiny_parser.add_argument(
+        "--precision",
+        choices=PRECISION_MODES,
+        default=None,
+        help="Base and SFT training precision. Defaults to the selected scale.",
+    )
+    run_tiny_parser.add_argument(
+        "--torch-compile",
+        action="store_true",
+        help="Compile base and SFT model forward paths with torch.compile.",
+    )
+    run_tiny_parser.add_argument(
+        "--torch-compile-mode",
+        choices=COMPILE_MODES,
+        default=None,
+        help="torch.compile mode when --torch-compile is enabled.",
     )
     run_tiny_parser.add_argument(
         "--sft-sampling",
@@ -1329,6 +1381,9 @@ def run_train_base(args: argparse.Namespace) -> int:
         muon_learning_rate=args.muon_learning_rate,
         ema_decay=args.ema_decay,
         logit_softcap=args.logit_softcap,
+        precision=args.precision,
+        torch_compile=args.torch_compile,
+        torch_compile_mode=args.torch_compile_mode,
     )
     report = train_base(config)
     print(f"saved checkpoint: {report['checkpoint']}")
@@ -1365,6 +1420,9 @@ def run_train_sft(args: argparse.Namespace) -> int:
         muon_learning_rate=args.muon_learning_rate,
         ema_decay=args.ema_decay,
         packing=args.packing,
+        precision=args.precision,
+        torch_compile=args.torch_compile,
+        torch_compile_mode=args.torch_compile_mode,
     )
     report = train_sft(config)
     print(f"saved sft checkpoint: {report['checkpoint']}")
@@ -1640,6 +1698,9 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         sft_fit_max_rows=_resolve_tiny_value(args, defaults, "sft_fit_max_rows"),
         allow_default_tuning_data=args.allow_default_tuning_data,
         logit_softcap=_resolve_tiny_value(args, defaults, "logit_softcap"),
+        precision=_resolve_tiny_value(args, defaults, "precision"),
+        torch_compile=bool(args.torch_compile or defaults.torch_compile),
+        torch_compile_mode=_resolve_tiny_value(args, defaults, "torch_compile_mode"),
         allow_unsafe_long_run=args.allow_unsafe_long_run,
         target_param_data_ratio=_resolve_tiny_value(args, defaults, "target_param_data_ratio"),
     )

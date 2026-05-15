@@ -111,6 +111,32 @@ def test_model_can_softcap_logits():
     assert float(logits.detach().abs().max()) <= 2.0001
 
 
+def test_attention_uses_scaled_dot_product_attention(monkeypatch):
+    calls = []
+
+    def fake_sdpa(q, k, v, dropout_p=0.0, is_causal=False):
+        calls.append({
+            "shape": tuple(q.shape),
+            "dropout_p": dropout_p,
+            "is_causal": is_causal,
+        })
+        return torch.zeros_like(v)
+
+    monkeypatch.setattr(torch.nn.functional, "scaled_dot_product_attention", fake_sdpa)
+    config = GPTConfig(vocab_size=20, context_size=8, n_embd=16, n_head=4, n_layer=1)
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    logits, _ = model(x)
+
+    assert logits.shape == (2, config.context_size, config.vocab_size)
+    assert calls == [{
+        "shape": (2, 4, 8, 4),
+        "dropout_p": 0.0,
+        "is_causal": True,
+    }]
+
+
 def test_model_rejects_negative_logit_softcap():
     with pytest.raises(ValueError, match="logit_softcap"):
         TinyGPT(GPTConfig(vocab_size=20, context_size=8, logit_softcap=-1.0))

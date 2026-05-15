@@ -80,6 +80,9 @@ class TinyRunConfig:
     sft_fit_max_rows: int = 1000
     allow_default_tuning_data: bool = False
     logit_softcap: float = 0.0
+    precision: str = "float32"
+    torch_compile: bool = False
+    torch_compile_mode: str = "default"
     allow_unsafe_long_run: bool = False
     target_param_data_ratio: float = 20.0
 
@@ -188,6 +191,9 @@ def run_tiny(config: TinyRunConfig) -> dict:
         muon_learning_rate=config.base_muon_learning_rate,
         ema_decay=config.base_ema_decay,
         logit_softcap=config.logit_softcap,
+        precision=config.precision,
+        torch_compile=config.torch_compile,
+        torch_compile_mode=config.torch_compile_mode,
     ))
     base_eval_checkpoint = base_report.get("best_checkpoint", {}).get(
         "path",
@@ -220,6 +226,9 @@ def run_tiny(config: TinyRunConfig) -> dict:
         muon_learning_rate=config.sft_muon_learning_rate,
         ema_decay=config.sft_ema_decay,
         packing=config.sft_packing,
+        precision=config.precision,
+        torch_compile=config.torch_compile,
+        torch_compile_mode=config.torch_compile_mode,
     ))
     sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",

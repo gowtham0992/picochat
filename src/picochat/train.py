@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -23,6 +24,12 @@ from picochat.optim import (
     set_optimizer_lr,
     using_ema_weights,
     validate_optim_controls,
+)
+from picochat.precision import (
+    autocast_context,
+    make_grad_scaler,
+    maybe_compile_model,
+    resolve_precision,
 )
 from picochat.report import loss_diagnostics, optimization_stability, training_report_markdown
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
@@ -65,6 +72,9 @@ class TrainConfig:
     muon_learning_rate: float = 0.02
     ema_decay: float = 0.0
     logit_softcap: float = 0.0
+    precision: str = "float32"
+    torch_compile: bool = False
+    torch_compile_mode: str = "default"
 
 
 @torch.no_grad()
@@ -80,6 +90,7 @@ def evaluate_metrics(
     device: torch.device,
     max_batches: int,
     token_bytes: torch.Tensor | None = None,
+    precision_runtime=None,
 ) -> dict[str, float | None]:
     """Estimate loss and optional bits-per-byte over a limited number of batches."""
     model.eval()
@@ -91,7 +102,8 @@ def evaluate_metrics(
             break
         x = x.to(device)
         y = y.to(device)
-        logits, _ = model(x)
+        with autocast_context(precision_runtime) if precision_runtime else nullcontext():
+            logits, _ = model(x)
         flat_logits = logits.view(-1, logits.size(-1))
         flat_targets = y.view(-1)
         loss = F.cross_entropy(flat_logits, flat_targets, ignore_index=-100)
@@ -171,6 +183,13 @@ def train_base(config: TrainConfig) -> dict:
         logit_softcap=config.logit_softcap,
     )
     model = TinyGPT(model_config).to(device)
+    precision_runtime = resolve_precision(config.precision, device)
+    train_model, compile_metadata = maybe_compile_model(
+        model,
+        enabled=config.torch_compile,
+        mode=config.torch_compile_mode,
+    )
+    scaler = make_grad_scaler(precision_runtime)
     optimizer = create_optimizer(
         model,
         optimizer_type=config.optimizer,
@@ -192,6 +211,7 @@ def train_base(config: TrainConfig) -> dict:
     evals_without_improvement = 0
 
     model.train()
+    train_model.train()
     for step in range(1, config.max_steps + 1):
         learning_rate = learning_rate_for_step(
             base_learning_rate=config.learning_rate,
@@ -213,12 +233,23 @@ def train_base(config: TrainConfig) -> dict:
 
             x = x.to(device)
             y = y.to(device)
-            _, loss = model(x, y)
+            with autocast_context(precision_runtime):
+                _, loss = train_model(x, y)
             assert loss is not None
             micro_losses.append(float(loss.item()))
-            (loss / config.grad_accum_steps).backward()
+            scaled_loss = loss / config.grad_accum_steps
+            if scaler.is_enabled():
+                scaler.scale(scaled_loss).backward()
+            else:
+                scaled_loss.backward()
+        if scaler.is_enabled():
+            scaler.unscale_(optimizer)
         grad_norm = maybe_clip_grad_norm(model, config.grad_clip)
-        optimizer.step()
+        if scaler.is_enabled():
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            optimizer.step()
         if ema is not None:
             ema.update(model)
 
@@ -226,18 +257,20 @@ def train_base(config: TrainConfig) -> dict:
         final_step = step
         if step == 1 or step % config.log_every == 0 or step == config.max_steps:
             train_metrics = evaluate_metrics(
-                model,
+                train_model,
                 train_eval_loader,
                 device,
                 max_batches=config.eval_batches,
                 token_bytes=token_bytes,
+                precision_runtime=precision_runtime,
             )
             val_metrics = evaluate_metrics(
-                model,
+                train_model,
                 val_loader,
                 device,
                 max_batches=config.eval_batches,
                 token_bytes=token_bytes,
+                precision_runtime=precision_runtime,
             )
             elapsed = time.time() - start
             val_loss = float(val_metrics["loss"])
@@ -248,11 +281,12 @@ def train_base(config: TrainConfig) -> dict:
             if ema is not None:
                 with using_ema_weights(model, ema):
                     ema_val_metrics = evaluate_metrics(
-                        model,
+                        train_model,
                         val_loader,
                         device,
                         max_batches=config.eval_batches,
                         token_bytes=token_bytes,
+                        precision_runtime=precision_runtime,
                     )
             losses.append({
                 "step": step,
@@ -413,6 +447,8 @@ def train_base(config: TrainConfig) -> dict:
             "effective_batch_size": effective_batch_size,
             "effective_tokens_per_step": effective_tokens_per_step,
             "optimizer_metadata": optimizer.metadata,
+            "precision_runtime": precision_runtime.to_dict(),
+            "torch_compile_metadata": compile_metadata,
         },
         "dataset": {
             **split.stats,

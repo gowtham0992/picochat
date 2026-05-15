@@ -82,6 +82,36 @@ def test_train_base_reports_gradient_accumulation(tmp_path):
     assert report["losses"][-1]["effective_batch_size"] == 6
 
 
+def test_train_base_records_precision_runtime(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    out_dir = tmp_path / "run"
+    text = "precision runtime metadata\n" * 20
+    corpus_path.write_text(text, encoding="utf-8")
+    CharTokenizer.train([text]).save(tokenizer_path)
+
+    report = train_base(TrainConfig(
+        corpus_path=str(corpus_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir),
+        context_size=8,
+        batch_size=4,
+        max_steps=1,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        precision="bf16",
+    ))
+
+    assert report["config"]["precision"] == "bf16"
+    assert report["config"]["precision_runtime"]["requested"] == "bf16"
+    assert report["config"]["precision_runtime"]["dtype_name"] == "bfloat16"
+    assert report["config"]["torch_compile_metadata"]["enabled"] is False
+
+
 def test_train_base_uses_document_split_when_manifest_is_available(tmp_path):
     import json
 

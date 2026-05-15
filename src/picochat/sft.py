@@ -22,6 +22,12 @@ from picochat.optim import (
     using_ema_weights,
     validate_optim_controls,
 )
+from picochat.precision import (
+    autocast_context,
+    make_grad_scaler,
+    maybe_compile_model,
+    resolve_precision,
+)
 from picochat.report import loss_diagnostics, optimization_stability, sft_report_markdown
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 from picochat.train import evaluate_metrics
@@ -107,6 +113,9 @@ class SFTConfig:
     muon_learning_rate: float = 0.02
     ema_decay: float = 0.0
     packing: str = "separate"
+    precision: str = "float32"
+    torch_compile: bool = False
+    torch_compile_mode: str = "default"
 
 
 class ChatSFTDataset(torch.utils.data.Dataset):
@@ -691,6 +700,13 @@ def train_sft(config: SFTConfig) -> dict:
     data_iter = iter(train_loader)
 
     model = model.to(device)
+    precision_runtime = resolve_precision(config.precision, device)
+    train_model, compile_metadata = maybe_compile_model(
+        model,
+        enabled=config.torch_compile,
+        mode=config.torch_compile_mode,
+    )
+    scaler = make_grad_scaler(precision_runtime)
     optimizer = create_optimizer(
         model,
         optimizer_type=config.optimizer,
@@ -713,6 +729,7 @@ def train_sft(config: SFTConfig) -> dict:
     stop_reason = "max_steps"
 
     model.train()
+    train_model.train()
     for step in range(1, config.max_steps + 1):
         learning_rate = learning_rate_for_step(
             base_learning_rate=config.learning_rate,
@@ -734,12 +751,23 @@ def train_sft(config: SFTConfig) -> dict:
 
             x = x.to(device)
             y = y.to(device)
-            _, loss = model(x, y)
+            with autocast_context(precision_runtime):
+                _, loss = train_model(x, y)
             assert loss is not None
             micro_losses.append(float(loss.item()))
-            (loss / config.grad_accum_steps).backward()
+            scaled_loss = loss / config.grad_accum_steps
+            if scaler.is_enabled():
+                scaler.scale(scaled_loss).backward()
+            else:
+                scaled_loss.backward()
+        if scaler.is_enabled():
+            scaler.unscale_(optimizer)
         grad_norm = maybe_clip_grad_norm(model, config.grad_clip)
-        optimizer.step()
+        if scaler.is_enabled():
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            optimizer.step()
         if ema is not None:
             ema.update(model)
 
@@ -747,18 +775,20 @@ def train_sft(config: SFTConfig) -> dict:
         final_step = step
         if step == 1 or step % config.log_every == 0 or step == config.max_steps:
             train_metrics = evaluate_metrics(
-                model,
+                train_model,
                 train_eval_loader,
                 device,
                 max_batches=config.eval_batches,
                 token_bytes=token_bytes,
+                precision_runtime=precision_runtime,
             )
             val_metrics = evaluate_metrics(
-                model,
+                train_model,
                 val_loader,
                 device,
                 max_batches=config.eval_batches,
                 token_bytes=token_bytes,
+                precision_runtime=precision_runtime,
             )
             val_loss = float(val_metrics["loss"])
             elapsed = time.time() - start
@@ -766,11 +796,12 @@ def train_sft(config: SFTConfig) -> dict:
             if ema is not None:
                 with using_ema_weights(model, ema):
                     ema_val_metrics = evaluate_metrics(
-                        model,
+                        train_model,
                         val_loader,
                         device,
                         max_batches=config.eval_batches,
                         token_bytes=token_bytes,
+                        precision_runtime=precision_runtime,
                     )
             losses.append({
                 "step": step,
@@ -931,6 +962,8 @@ def train_sft(config: SFTConfig) -> dict:
             "effective_batch_size": effective_batch_size,
             "effective_tokens_per_step": effective_tokens_per_step,
             "optimizer_metadata": optimizer.metadata,
+            "precision_runtime": precision_runtime.to_dict(),
+            "torch_compile_metadata": compile_metadata,
         },
         "base_checkpoint": {
             "path": config.checkpoint_path,
