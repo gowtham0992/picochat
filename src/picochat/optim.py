@@ -323,6 +323,7 @@ def validate_optim_controls(
     loss_spike_threshold: float = 2.5,
     loss_spike_lr_decay: float = 0.5,
     loss_spike_min_lr_scale: float = 0.1,
+    loss_spike_snapshot_every: int = 10,
 ) -> None:
     if max_steps < 1:
         raise ValueError("max_steps must be at least 1")
@@ -354,6 +355,8 @@ def validate_optim_controls(
         raise ValueError("loss_spike_lr_decay must be in (0, 1]")
     if not 0.0 < loss_spike_min_lr_scale <= 1.0:
         raise ValueError("loss_spike_min_lr_scale must be in (0, 1]")
+    if loss_spike_snapshot_every < 1:
+        raise ValueError("loss_spike_snapshot_every must be at least 1")
 
 
 def learning_rate_for_step(

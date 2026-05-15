@@ -56,6 +56,15 @@ def test_validate_optim_controls_rejects_bad_decay():
             min_lr_ratio=1.0,
             grad_clip=0.0,
         )
+    with pytest.raises(ValueError, match="loss_spike_snapshot_every"):
+        validate_optim_controls(
+            max_steps=10,
+            lr_warmup_steps=0,
+            lr_decay="none",
+            min_lr_ratio=1.0,
+            grad_clip=0.0,
+            loss_spike_snapshot_every=0,
+        )
 
 
 def test_weight_decay_cosine_to_zero():

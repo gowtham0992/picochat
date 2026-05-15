@@ -33,6 +33,7 @@ def test_train_base_writes_artifacts(tmp_path):
         grad_clip=1.0,
         weight_decay=0.02,
         weight_decay_decay="cosine_to_zero",
+        loss_spike_snapshot_every=2,
     ))
 
     assert (out_dir / "checkpoint" / "model.pt").exists()
@@ -49,6 +50,7 @@ def test_train_base_writes_artifacts(tmp_path):
     assert "grad_norm" in report["losses"][-1]
     assert report["config"]["weight_decay"] == 0.02
     assert report["config"]["weight_decay_decay"] == "cosine_to_zero"
+    assert report["config"]["loss_spike_snapshot_every"] == 2
     assert report["config"]["artifacts_written"] is True
     assert report["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
     assert report["coverage"]["actual_steps"] == 2

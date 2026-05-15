@@ -452,6 +452,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--loss-spike-threshold", type=float, default=2.5)
     train_base_parser.add_argument("--loss-spike-lr-decay", type=float, default=0.5)
     train_base_parser.add_argument("--loss-spike-min-lr-scale", type=float, default=0.1)
+    train_base_parser.add_argument("--loss-spike-snapshot-every", type=int, default=10)
     train_base_parser.add_argument(
         "--precision",
         choices=PRECISION_MODES,
@@ -557,6 +558,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_parser.add_argument("--loss-spike-threshold", type=float, default=2.5)
     train_sft_parser.add_argument("--loss-spike-lr-decay", type=float, default=0.5)
     train_sft_parser.add_argument("--loss-spike-min-lr-scale", type=float, default=0.1)
+    train_sft_parser.add_argument("--loss-spike-snapshot-every", type=int, default=10)
     train_sft_parser.add_argument(
         "--precision",
         choices=PRECISION_MODES,
@@ -848,6 +850,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--loss-spike-threshold", type=float, default=None)
     run_tiny_parser.add_argument("--loss-spike-lr-decay", type=float, default=None)
     run_tiny_parser.add_argument("--loss-spike-min-lr-scale", type=float, default=None)
+    run_tiny_parser.add_argument("--loss-spike-snapshot-every", type=int, default=None)
     run_tiny_parser.add_argument(
         "--logit-softcap",
         type=float,
@@ -1527,6 +1530,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         loss_spike_threshold=args.loss_spike_threshold,
         loss_spike_lr_decay=args.loss_spike_lr_decay,
         loss_spike_min_lr_scale=args.loss_spike_min_lr_scale,
+        loss_spike_snapshot_every=args.loss_spike_snapshot_every,
     )
     report = train_base(config)
     if report.get("config", {}).get("artifacts_written", True):
@@ -1576,6 +1580,7 @@ def run_train_sft(args: argparse.Namespace) -> int:
         loss_spike_threshold=args.loss_spike_threshold,
         loss_spike_lr_decay=args.loss_spike_lr_decay,
         loss_spike_min_lr_scale=args.loss_spike_min_lr_scale,
+        loss_spike_snapshot_every=args.loss_spike_snapshot_every,
     )
     report = train_sft(config)
     if report.get("config", {}).get("artifacts_written", True):
@@ -1893,6 +1898,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         loss_spike_threshold=_resolve_tiny_value(args, defaults, "loss_spike_threshold"),
         loss_spike_lr_decay=_resolve_tiny_value(args, defaults, "loss_spike_lr_decay"),
         loss_spike_min_lr_scale=_resolve_tiny_value(args, defaults, "loss_spike_min_lr_scale"),
+        loss_spike_snapshot_every=_resolve_tiny_value(args, defaults, "loss_spike_snapshot_every"),
     )
 
 

@@ -105,6 +105,7 @@ class TrainConfig:
     loss_spike_threshold: float = 2.5
     loss_spike_lr_decay: float = 0.5
     loss_spike_min_lr_scale: float = 0.1
+    loss_spike_snapshot_every: int = 10
 
 
 @torch.no_grad()
@@ -182,6 +183,7 @@ def train_base(config: TrainConfig) -> dict:
         loss_spike_threshold=config.loss_spike_threshold,
         loss_spike_lr_decay=config.loss_spike_lr_decay,
         loss_spike_min_lr_scale=config.loss_spike_min_lr_scale,
+        loss_spike_snapshot_every=config.loss_spike_snapshot_every,
     )
     torch.manual_seed(config.seed)
     out_dir = Path(config.out_dir)
@@ -294,6 +296,8 @@ def train_base(config: TrainConfig) -> dict:
     rollback_events: list[dict[str, float | int | None]] = []
     rollback_lr_scale = 1.0
     loss_spike_baseline: float | None = None
+    rollback_state: dict | None = None
+    rollback_snapshot_step = 0
     if resume_state is not None:
         restore_training_state(
             resume_state,
@@ -321,11 +325,6 @@ def train_base(config: TrainConfig) -> dict:
     model.train()
     train_model.train()
     for step in range(start_step, config.max_steps + 1):
-        rollback_state = (
-            _capture_rollback_state(model, optimizer, scaler, ema)
-            if config.loss_spike_rollback and loss_spike_baseline is not None
-            else None
-        )
         learning_rate = learning_rate_for_step(
             base_learning_rate=config.learning_rate,
             step=step,
@@ -397,6 +396,7 @@ def train_base(config: TrainConfig) -> dict:
                 "baseline_loss": loss_spike_baseline,
                 "spike_ratio": spike_ratio,
                 "lr_scale_after": rollback_lr_scale,
+                "restored_snapshot_step": rollback_snapshot_step,
             })
             if main_process:
                 print(
@@ -407,7 +407,16 @@ def train_base(config: TrainConfig) -> dict:
             last_loss = loss_spike_baseline
             continue
         if math.isfinite(last_loss) and last_loss > 0:
-            loss_spike_baseline = last_loss
+            loss_spike_baseline = _update_loss_spike_baseline(loss_spike_baseline, last_loss)
+            if (
+                config.loss_spike_rollback
+                and (
+                    rollback_state is None
+                    or step - rollback_snapshot_step >= config.loss_spike_snapshot_every
+                )
+            ):
+                rollback_state = _capture_rollback_state(model, optimizer, scaler, ema)
+                rollback_snapshot_step = step
         final_step = step
         if step == 1 or step % config.log_every == 0 or step == config.max_steps:
             train_metrics = evaluate_metrics(
@@ -806,6 +815,16 @@ def _is_loss_spike(loss: float, baseline: float, threshold: float) -> bool:
     if not math.isfinite(loss):
         return True
     return loss > baseline * threshold
+
+
+def _update_loss_spike_baseline(
+    baseline: float | None,
+    loss: float,
+    beta: float = 0.95,
+) -> float:
+    if baseline is None or not math.isfinite(baseline) or baseline <= 0:
+        return loss
+    return beta * baseline + (1.0 - beta) * loss
 
 
 def _capture_rollback_state(model, optimizer, scaler, ema) -> dict:

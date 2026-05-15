@@ -98,6 +98,7 @@ class TinyRunConfig:
     loss_spike_threshold: float = 2.5
     loss_spike_lr_decay: float = 0.5
     loss_spike_min_lr_scale: float = 0.1
+    loss_spike_snapshot_every: int = 10
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -225,6 +226,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         loss_spike_threshold=config.loss_spike_threshold,
         loss_spike_lr_decay=config.loss_spike_lr_decay,
         loss_spike_min_lr_scale=config.loss_spike_min_lr_scale,
+        loss_spike_snapshot_every=config.loss_spike_snapshot_every,
     ))
     base_eval_checkpoint = base_report.get("best_checkpoint", {}).get(
         "path",
@@ -268,6 +270,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         loss_spike_threshold=config.loss_spike_threshold,
         loss_spike_lr_decay=config.loss_spike_lr_decay,
         loss_spike_min_lr_scale=config.loss_spike_min_lr_scale,
+        loss_spike_snapshot_every=config.loss_spike_snapshot_every,
     ))
     sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",
