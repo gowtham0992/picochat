@@ -1,6 +1,8 @@
 import json
 
-from picochat.checkpoint import save_checkpoint
+import pytest
+
+from picochat.checkpoint import load_training_state, save_checkpoint
 from picochat.model import GPTConfig, TinyGPT
 from picochat.sft import (
     ChatExample,
@@ -307,9 +309,63 @@ def test_train_sft_can_resume_from_training_state(tmp_path):
 
     assert (first_dir / "resume_checkpoint" / "training_state.pt").exists()
     assert (resumed_dir / "checkpoint" / "training_state.pt").exists()
+    assert "training_fingerprint" in load_training_state(first["resume_checkpoint"])
     assert resumed["coverage"]["actual_steps"] == 3
     assert [row["step"] for row in resumed["losses"]] == [1, 2, 3]
     assert resumed["config"]["resume_from"] == first["resume_checkpoint"]
+
+
+def test_sft_rejects_resume_with_different_input(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "base"
+    first_dir = tmp_path / "sft-first"
+    resumed_dir = tmp_path / "sft-resumed"
+    rows = [
+        {"user": "hi", "assistant": "hello"},
+        {"user": "bye", "assistant": "goodbye"},
+    ]
+    write_jsonl(input_path, rows)
+    tokenizer = CharTokenizer.train([
+        "User: hi\nAssistant: hello\n"
+        "User: bye\nAssistant: goodbye"
+    ])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=64,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    first = train_sft(SFTConfig(
+        input_path=str(input_path),
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=str(checkpoint_path),
+        out_dir=str(first_dir),
+        batch_size=2,
+        max_steps=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+    ))
+    write_jsonl(input_path, rows + [{"user": "new", "assistant": "row"}])
+
+    with pytest.raises(ValueError, match="fingerprint"):
+        train_sft(SFTConfig(
+            input_path=str(input_path),
+            tokenizer_path=str(tokenizer_path),
+            checkpoint_path=str(checkpoint_path),
+            out_dir=str(resumed_dir),
+            batch_size=2,
+            max_steps=2,
+            log_every=1,
+            eval_batches=1,
+            sample_tokens=4,
+            resume_from=first["resume_checkpoint"],
+        ))
 
 
 def test_train_sft_reports_gradient_accumulation(tmp_path):

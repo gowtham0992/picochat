@@ -43,7 +43,13 @@ from picochat.precision import (
     resolve_precision,
 )
 from picochat.report import loss_diagnostics, optimization_stability, training_report_markdown
-from picochat.resume import make_training_state, restore_training_state
+from picochat.resume import (
+    file_sha256,
+    make_training_fingerprint,
+    make_training_state,
+    restore_training_state,
+    validate_training_fingerprint,
+)
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 
 
@@ -230,6 +236,19 @@ def train_base(config: TrainConfig) -> dict:
         logit_softcap=config.logit_softcap,
         gradient_checkpointing=config.gradient_checkpointing,
     )
+    training_fingerprint = make_training_fingerprint({
+        "kind": "base",
+        "corpus_sha256": file_sha256(config.corpus_path),
+        "tokenizer_sha256": file_sha256(config.tokenizer_path),
+        "corpus_manifest_sha256": file_sha256(config.corpus_manifest_path),
+        "model_config": model_config.to_dict(),
+        "dataset_mode": config.dataset_mode,
+        "split_mode": config.split_mode,
+        "val_fraction": config.val_fraction,
+        "seed": config.seed,
+        "context_size": config.context_size,
+        "shard_token_size": config.shard_token_size if config.dataset_mode == "sharded" else None,
+    })
     resume_state = None
     resume_metadata = None
     if config.resume_from:
@@ -237,6 +256,7 @@ def train_base(config: TrainConfig) -> dict:
         if model.config.to_dict() != model_config.to_dict():
             raise ValueError("resume checkpoint model config does not match this train command")
         resume_state = load_training_state(config.resume_from, map_location=device)
+        validate_training_fingerprint(resume_state, training_fingerprint)
     else:
         model = TinyGPT(model_config)
     model = model.to(device)
@@ -517,11 +537,12 @@ def train_base(config: TrainConfig) -> dict:
                         optimizer=optimizer,
                         scaler=scaler,
                         ema=ema,
-                        batcher=train_batcher,
-                        device=device,
-                        extra_state={
-                            "rollback_events": rollback_events,
-                            "rollback_lr_scale": rollback_lr_scale,
+                    batcher=train_batcher,
+                    device=device,
+                    training_fingerprint=training_fingerprint,
+                    extra_state={
+                        "rollback_events": rollback_events,
+                        "rollback_lr_scale": rollback_lr_scale,
                             "loss_spike_baseline": loss_spike_baseline,
                         },
                     ),
@@ -573,6 +594,7 @@ def train_base(config: TrainConfig) -> dict:
                 ema=ema,
                 batcher=train_batcher,
                 device=device,
+                training_fingerprint=training_fingerprint,
                 extra_state={
                     "rollback_events": rollback_events,
                     "rollback_lr_scale": rollback_lr_scale,
@@ -649,6 +671,7 @@ def train_base(config: TrainConfig) -> dict:
             "torch_compile_metadata": compile_metadata,
             "ddp_metadata": ddp_metadata,
             "artifacts_written": main_process,
+            "training_fingerprint": training_fingerprint,
         },
         "dataset": {
             **split.stats,

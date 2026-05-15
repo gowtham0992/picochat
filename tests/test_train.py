@@ -1,3 +1,6 @@
+import pytest
+
+from picochat.checkpoint import load_training_state
 from picochat.tokenizer import CharTokenizer
 from picochat.train import TrainConfig, train_base
 
@@ -161,9 +164,53 @@ def test_train_base_can_resume_from_training_state(tmp_path):
 
     assert (first_dir / "resume_checkpoint" / "training_state.pt").exists()
     assert (resumed_dir / "checkpoint" / "training_state.pt").exists()
+    assert "training_fingerprint" in load_training_state(first["resume_checkpoint"])
     assert resumed["coverage"]["actual_steps"] == 3
     assert [row["step"] for row in resumed["losses"]] == [1, 2, 3]
     assert resumed["config"]["resume_from"] == first["resume_checkpoint"]
+
+
+def test_train_base_rejects_resume_with_different_corpus(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    first_dir = tmp_path / "first"
+    resumed_dir = tmp_path / "resumed"
+    text = "resume fingerprint protects data identity\n" * 30
+    corpus_path.write_text(text, encoding="utf-8")
+    CharTokenizer.train([text]).save(tokenizer_path)
+
+    first = train_base(TrainConfig(
+        corpus_path=str(corpus_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(first_dir),
+        context_size=8,
+        batch_size=4,
+        max_steps=1,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+    ))
+    corpus_path.write_text(text + "changed corpus\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="fingerprint"):
+        train_base(TrainConfig(
+            corpus_path=str(corpus_path),
+            tokenizer_path=str(tokenizer_path),
+            out_dir=str(resumed_dir),
+            context_size=8,
+            batch_size=4,
+            max_steps=2,
+            n_embd=16,
+            n_head=4,
+            n_layer=1,
+            log_every=1,
+            eval_batches=1,
+            sample_tokens=4,
+            resume_from=first["resume_checkpoint"],
+        ))
 
 
 def test_train_base_can_use_sharded_dataset_mode(tmp_path):

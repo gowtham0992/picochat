@@ -36,7 +36,13 @@ from picochat.precision import (
     resolve_precision,
 )
 from picochat.report import loss_diagnostics, optimization_stability, sft_report_markdown
-from picochat.resume import make_training_state, restore_training_state
+from picochat.resume import (
+    file_sha256,
+    make_training_fingerprint,
+    make_training_state,
+    restore_training_state,
+    validate_training_fingerprint,
+)
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 from picochat.train import (
     _capture_rollback_state,
@@ -686,11 +692,24 @@ def train_sft(config: SFTConfig) -> dict:
     model, metadata = load_checkpoint(checkpoint_source, map_location=device)
     if model.config.vocab_size != len(tokenizer):
         raise ValueError("tokenizer vocabulary size does not match checkpoint")
+    training_fingerprint = make_training_fingerprint({
+        "kind": "sft",
+        "input_sha256": file_sha256(config.input_path),
+        "tokenizer_sha256": file_sha256(config.tokenizer_path),
+        "model_config": model.config.to_dict(),
+        "val_fraction": config.val_fraction,
+        "seed": config.seed,
+        "context_size": model.config.context_size,
+        "sampling": config.sampling,
+        "packing": config.packing,
+    })
     resume_state = (
         load_training_state(config.resume_from, map_location=device)
         if config.resume_from
         else None
     )
+    if resume_state is not None:
+        validate_training_fingerprint(resume_state, training_fingerprint)
 
     source_dataset = ChatSFTDataset(
         load_chat_examples(config.input_path),
@@ -1011,6 +1030,7 @@ def train_sft(config: SFTConfig) -> dict:
                         ema=ema,
                         batcher=train_batcher,
                         device=device,
+                        training_fingerprint=training_fingerprint,
                         extra_state={
                             "rollback_events": rollback_events,
                             "rollback_lr_scale": rollback_lr_scale,
@@ -1065,6 +1085,7 @@ def train_sft(config: SFTConfig) -> dict:
                 ema=ema,
                 batcher=train_batcher,
                 device=device,
+                training_fingerprint=training_fingerprint,
                 extra_state={
                     "rollback_events": rollback_events,
                     "rollback_lr_scale": rollback_lr_scale,
@@ -1145,6 +1166,7 @@ def train_sft(config: SFTConfig) -> dict:
             "torch_compile_metadata": compile_metadata,
             "ddp_metadata": ddp_metadata,
             "artifacts_written": main_process,
+            "training_fingerprint": training_fingerprint,
         },
         "base_checkpoint": {
             "path": config.checkpoint_path,
