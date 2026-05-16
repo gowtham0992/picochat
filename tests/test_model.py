@@ -198,6 +198,33 @@ def test_model_can_tie_input_and_output_embeddings():
     assert model.lm_head.bias is None
 
 
+def test_tied_embedding_initialization_keeps_starting_loss_sane():
+    config = GPTConfig(
+        vocab_size=2048,
+        context_size=16,
+        n_embd=128,
+        n_head=8,
+        n_kv_head=2,
+        n_layer=2,
+        norm_type="rmsnorm",
+        position_encoding="rope",
+        activation="swiglu",
+        tie_embeddings=True,
+        qk_norm=True,
+        parallel_residual=True,
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+    y = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    _, loss = model(x, y)
+
+    assert loss is not None
+    assert 6.0 < float(loss.item()) < 9.5
+    assert model.token_embedding.weight.std().item() < 0.04
+    assert model.lm_head.weight is model.token_embedding.weight
+
+
 def test_model_supports_qk_norm():
     config = GPTConfig(
         vocab_size=20,

@@ -37,6 +37,7 @@ class GPTConfig:
     activation: str = "gelu"
     rope_base: float = 10000.0
     logit_softcap: float = 0.0
+    initializer_range: float = 0.02
     gradient_checkpointing: bool = False
     tie_embeddings: bool = False
     qk_norm: bool = False
@@ -279,6 +280,8 @@ class TinyGPT(nn.Module):
             raise ValueError("position_encoding must be 'learned' or 'rope'")
         if config.logit_softcap < 0:
             raise ValueError("logit_softcap must be non-negative")
+        if config.initializer_range <= 0:
+            raise ValueError("initializer_range must be positive")
         self.config = config
         self.token_embedding = nn.Embedding(config.vocab_size, config.n_embd)
         self.position_embedding = (
@@ -289,8 +292,17 @@ class TinyGPT(nn.Module):
         self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layer))
         self.ln_f = make_norm(config.norm_type, config.n_embd)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=not config.tie_embeddings)
+        self.apply(self._init_weights)
         if config.tie_embeddings:
             self.lm_head.weight = self.token_embedding.weight
+
+    def _init_weights(self, module: nn.Module) -> None:
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=self.config.initializer_range)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=self.config.initializer_range)
 
     def forward(
         self,
