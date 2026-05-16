@@ -1420,9 +1420,10 @@ def _skill_fit_fields(answer: str, skill_answer_style: str) -> dict[str, Any]:
     if skill_answer_style != "scratchpad":
         return {}
     return {
-        "fit_must_include": ["Scratchpad:", _final_answer_line(answer)],
+        "fit_must_include": ["Scratchpad:", "Final answer:"],
         "fit_reference_answer": answer,
         "fit_normalized_answer": answer,
+        "fit_normalized_answer_required": True,
         "fit_max_words": 80,
     }
 

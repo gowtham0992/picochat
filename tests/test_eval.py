@@ -143,8 +143,9 @@ def test_write_sft_fit_eval_uses_declared_fit_phrases(tmp_path):
             "user": "Solve 2 + 3 with scratchpad.",
             "assistant": "Scratchpad:\n- Compute: 2 + 3.\n- Result: 5.\nFinal answer: 5",
             "category": "bench_math_addition",
-            "fit_must_include": ["Scratchpad:", "Final answer: 5"],
+            "fit_must_include": ["Scratchpad:", "Final answer:"],
             "fit_reference_answer": "5",
+            "fit_normalized_answer_required": True,
             "fit_max_words": 80,
         },
     ])
@@ -153,9 +154,10 @@ def test_write_sft_fit_eval_uses_declared_fit_phrases(tmp_path):
     items = load_chat_eval_items(output_path)
 
     assert report["num_rows"] == 1
-    assert items[0].must_include == ("Scratchpad:", "Final answer: 5")
+    assert items[0].must_include == ("Scratchpad:", "Final answer:")
     assert items[0].reference_answer == "5"
     assert items[0].normalized_answers == ("5",)
+    assert items[0].normalized_answer_required is True
     assert items[0].max_words == 80
 
 

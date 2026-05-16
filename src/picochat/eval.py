@@ -139,6 +139,11 @@ def write_sft_fit_eval(
         fit_normalized_answer = record.get("fit_normalized_answer", fit_reference_answer)
         if not isinstance(fit_normalized_answer, str):
             raise ValueError(f"line {line_number} fit_normalized_answer field must be a string when present")
+        fit_normalized_answer_required = record.get("fit_normalized_answer_required", False)
+        if not isinstance(fit_normalized_answer_required, bool):
+            raise ValueError(
+                f"line {line_number} fit_normalized_answer_required field must be a boolean when present"
+            )
         fit_max_words = record.get("fit_max_words")
         max_words = (
             _sft_fit_max_words(answer)
@@ -157,6 +162,7 @@ def write_sft_fit_eval(
             "reference_answer": fit_reference_answer,
             "must_include": must_include,
             "normalized_answer": fit_normalized_answer,
+            "normalized_answer_required": fit_normalized_answer_required,
             "max_words": max_words,
         })
         selected_count += 1
