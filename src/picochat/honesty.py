@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 import json
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Iterable
 
 
 TEXT_EXTENSIONS = {".txt", ".text", ".md", ".jsonl", ".csv", ".py"}
@@ -89,7 +89,10 @@ def inspect_data_honesty(
     """Check whether an eval is visibly contaminated by SFT or corpus text."""
     chat_rows = _read_chat_rows(chat_input)
     eval_rows = _read_eval_rows(eval_input)
-    corpus_text = _read_corpus_text(corpus_path) if corpus_path else ""
+    corpus_text = (
+        _read_corpus_text_for_matrix(corpus_path, full_corpus_matrix_char_limit)
+        if corpus_path else ""
+    )
 
     findings: list[HonestyFinding] = []
     exact_prompt_leaks = 0
@@ -129,11 +132,7 @@ def inspect_data_honesty(
             support_rows.append((phrase, normalized_phrase))
             corpus_patterns.add(normalized_phrase)
         normalized_support_phrases[eval_row["line"]] = support_rows
-    corpus_hits = _find_corpus_phrase_hits_for_corpus(
-        corpus_text,
-        corpus_patterns,
-        full_corpus_matrix_char_limit,
-    )
+    corpus_hits = _find_corpus_phrase_hits_for_path(corpus_path, corpus_patterns) if corpus_path else set()
 
     seen_eval_prompts: dict[str, int] = {}
     for eval_row in eval_rows:
@@ -866,25 +865,45 @@ def _support_phrases(record: dict[str, Any]) -> list[str]:
     return phrases
 
 
-def _read_corpus_text(path: str | Path | None) -> str:
+def _read_corpus_text(path: str | Path | None, max_chars: int | None = None) -> str:
     if path is None:
         return ""
     source = Path(path)
     if not source.exists():
         return ""
+    max_chars = None if max_chars is None else max(0, int(max_chars))
     if source.is_file():
         try:
-            return source.read_text(encoding="utf-8")
+            if max_chars is None:
+                return source.read_text(encoding="utf-8")
+            with source.open("r", encoding="utf-8") as handle:
+                return handle.read(max_chars)
         except UnicodeDecodeError:
             return ""
     texts: list[str] = []
+    total_chars = 0
     for item in sorted(source.rglob("*")):
         if item.is_file() and item.suffix.lower() in TEXT_EXTENSIONS:
             try:
-                texts.append(item.read_text(encoding="utf-8"))
+                if max_chars is None:
+                    texts.append(item.read_text(encoding="utf-8"))
+                else:
+                    remaining = max_chars - total_chars
+                    if remaining <= 0:
+                        break
+                    with item.open("r", encoding="utf-8") as handle:
+                        text = handle.read(remaining)
+                    texts.append(text)
+                    total_chars += len(text)
             except UnicodeDecodeError:
                 continue
     return "\n\n".join(texts)
+
+
+def _read_corpus_text_for_matrix(path: str | Path, full_corpus_matrix_char_limit: int) -> str:
+    """Read only enough corpus text to decide whether full matrix comparison is safe."""
+    limit = max(0, int(full_corpus_matrix_char_limit))
+    return _read_corpus_text(path, max_chars=limit + 1)
 
 
 def _find_corpus_phrase_hits(normalized_corpus: str, phrases: set[str]) -> set[str]:
@@ -924,10 +943,26 @@ def _find_corpus_phrase_hits_for_corpus(
     return _find_corpus_phrase_hits_in_chunks(corpus_text, phrases)
 
 
+def _find_corpus_phrase_hits_for_path(path: str | Path, phrases: set[str]) -> set[str]:
+    if not phrases:
+        return set()
+    return _find_corpus_phrase_hits_in_stream(_iter_corpus_text_chunks(path), phrases)
+
+
 def _find_corpus_phrase_hits_in_chunks(
     corpus_text: str,
     phrases: set[str],
     chunk_chars: int = 1_000_000,
+) -> set[str]:
+    return _find_corpus_phrase_hits_in_stream(
+        (corpus_text[start:start + chunk_chars] for start in range(0, len(corpus_text), chunk_chars)),
+        phrases,
+    )
+
+
+def _find_corpus_phrase_hits_in_stream(
+    chunks: Iterable[str],
+    phrases: set[str],
 ) -> set[str]:
     candidates = sorted({phrase for phrase in phrases if phrase}, key=len, reverse=True)
     if not candidates:
@@ -936,8 +971,9 @@ def _find_corpus_phrase_hits_in_chunks(
     raw_hits: set[str] = set()
     max_tail_chars = max(8192, max(len(phrase) for phrase in candidates) * 4)
     tail = ""
-    for start in range(0, len(corpus_text), chunk_chars):
-        chunk = corpus_text[start:start + chunk_chars]
+    for chunk in chunks:
+        if not chunk:
+            continue
         normalized_chunk = _normalize(f"{tail} {chunk}" if tail else chunk)
         raw_hits.update(match.group(0) for match in matcher.finditer(normalized_chunk))
         if len(raw_hits) == len(candidates):
@@ -952,6 +988,27 @@ def _find_corpus_phrase_hits_in_chunks(
         if any(phrase in hit for hit in raw_hits):
             hits.add(phrase)
     return hits
+
+
+def _iter_corpus_text_chunks(path: str | Path, chunk_chars: int = 1_000_000) -> Iterable[str]:
+    source = Path(path)
+    if not source.exists():
+        return
+    files = [source] if source.is_file() else [
+        item
+        for item in sorted(source.rglob("*"))
+        if item.is_file() and item.suffix.lower() in TEXT_EXTENSIONS
+    ]
+    for item in files:
+        try:
+            with item.open("r", encoding="utf-8") as handle:
+                while True:
+                    chunk = handle.read(chunk_chars)
+                    if not chunk:
+                        break
+                    yield chunk
+        except UnicodeDecodeError:
+            continue
 
 
 def _normalize(text: str) -> str:
