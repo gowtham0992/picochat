@@ -90,6 +90,7 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "activation": model.config.activation,
         "rope_base": model.config.rope_base,
         "logit_softcap": model.config.logit_softcap,
+        "initializer_range": model.config.initializer_range,
         "gradient_checkpointing": model.config.gradient_checkpointing,
         "tie_embeddings": model.config.tie_embeddings,
         "qk_norm": model.config.qk_norm,
@@ -269,6 +270,7 @@ class PicochatConfig(PretrainedConfig):
         activation="gelu",
         rope_base=10000.0,
         logit_softcap=0.0,
+        initializer_range=0.02,
         gradient_checkpointing=False,
         tie_embeddings=False,
         qk_norm=False,
@@ -301,6 +303,7 @@ class PicochatConfig(PretrainedConfig):
         self.activation = activation
         self.rope_base = rope_base
         self.logit_softcap = logit_softcap
+        self.initializer_range = initializer_range
         self.gradient_checkpointing = gradient_checkpointing
         self.tie_embeddings = tie_embeddings
         self.qk_norm = qk_norm
@@ -324,6 +327,7 @@ class PicochatConfig(PretrainedConfig):
             activation=self.activation,
             rope_base=self.rope_base,
             logit_softcap=self.logit_softcap,
+            initializer_range=self.initializer_range,
             gradient_checkpointing=self.gradient_checkpointing,
             tie_embeddings=self.tie_embeddings,
             qk_norm=self.qk_norm,

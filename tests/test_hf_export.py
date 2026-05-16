@@ -21,6 +21,7 @@ def test_export_hf_checkpoint_writes_release_folder(tmp_path):
         n_head=4,
         n_kv_head=2,
         n_layer=1,
+        initializer_range=0.015,
         qk_norm=True,
         attn_backend="math",
         parallel_residual=True,
@@ -50,6 +51,10 @@ def test_export_hf_checkpoint_writes_release_folder(tmp_path):
     assert config["picochat_model_config"]["qk_norm"] is True
     assert config["picochat_model_config"]["attn_backend"] == "math"
     assert config["picochat_model_config"]["parallel_residual"] is True
+    assert config["initializer_range"] == 0.015
+    assert config["picochat_model_config"]["initializer_range"] == 0.015
+    assert "initializer_range=0.02" in (out_dir / "configuration_picochat.py").read_text(encoding="utf-8")
+    assert "initializer_range=self.initializer_range" in (out_dir / "configuration_picochat.py").read_text(encoding="utf-8")
     assert config["auto_map"]["AutoModelForCausalLM"] == "modeling_picochat.PicochatForCausalLM"
     assert manifest["files"]["weights"] == "pytorch_model.bin"
     assert manifest["files"]["dynamic_int8"] == "pytorch_model.dynamic_int8.bin"
