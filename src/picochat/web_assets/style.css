@@ -5,6 +5,7 @@
   --panel: #e6e6df;
   --raised: #d1d1cb;
   --field: #f1f1eb;
+  --paper: #f1f1eb;
   --ink: #1f1f1b;
   --inverse: #181816;
   --inverse-ink: #f2f2ec;
@@ -18,6 +19,7 @@
   --inverse-green: #9bd9b9;
   --inverse-red: #ffb0a6;
   --inverse-accent: #a9d1dc;
+  --font-xs: 11px;
 }
 
 body.paper-theme {
@@ -26,6 +28,7 @@ body.paper-theme {
   --panel: #fffdf8;
   --raised: #ece8dd;
   --field: #fffefa;
+  --paper: #fffefa;
   --ink: #1b1a17;
   --inverse: #191817;
   --inverse-ink: #fffdf6;

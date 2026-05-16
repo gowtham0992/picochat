@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -31,6 +32,14 @@ from picochat.web import (
 )
 from picochat.hf_import import HFSplitError
 from picochat.honesty import inspect_data_honesty
+
+
+def test_web_css_variables_are_defined():
+    css = Path("src/picochat/web_assets/style.css").read_text(encoding="utf-8")
+    used = set(re.findall(r"var\((--[a-z0-9-]+)", css))
+    defined = set(re.findall(r"(?m)^\s*(--[a-z0-9-]+)\s*:", css))
+
+    assert used <= defined
 
 
 def write_run(root, name):
