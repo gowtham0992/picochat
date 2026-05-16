@@ -110,6 +110,7 @@ const LAUNCH_CONTROL_IDS = [
   "launch-sft-sampling",
   "launch-sft-packing",
   "launch-eval-max-new-tokens",
+  "launch-target-param-data-ratio",
   "launch-seed",
   "launch-min-score",
 ];
