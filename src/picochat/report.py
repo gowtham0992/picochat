@@ -969,8 +969,23 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.append("")
         lines.append(f"- Status: `{long_run_gate.get('status', 'unknown')}`")
         lines.append(f"- Summary: {long_run_gate.get('summary', 'No long-run gate summary recorded.')}")
+        lines.append(f"- Gate profile: `{long_run_gate.get('profile', 'research')}`")
         lines.append(f"- SFT fit rate: {format_float(float(long_run_gate.get('sft_fit_rate', 0.0)) * 100)}%")
         lines.append(f"- Required SFT fit rate: {format_float(float(long_run_gate.get('sft_fit_threshold', 0.70)) * 100)}%")
+        if long_run_gate.get("sft_heldout_fit_rate") is not None:
+            lines.append(
+                f"- Held-out SFT fit rate: "
+                f"{format_float(float(long_run_gate.get('sft_heldout_fit_rate', 0.0)) * 100)}%"
+            )
+        if long_run_gate.get("first_release_eval_rate") is not None:
+            lines.append(
+                f"- First-release eval rate: "
+                f"{format_float(float(long_run_gate.get('first_release_eval_rate', 0.0)) * 100)}%"
+            )
+            lines.append(
+                f"- Required first-release eval rate: "
+                f"{format_float(float(long_run_gate.get('first_release_eval_threshold', 0.45)) * 100)}%"
+            )
         for issue in long_run_gate.get("issues", [])[:8]:
             lines.append(f"- {issue.get('severity', 'warn').upper()} `{issue.get('name')}`: {issue.get('message')}")
         lines.append("")

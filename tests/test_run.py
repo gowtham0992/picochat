@@ -55,6 +55,109 @@ def test_long_run_gate_blocks_weak_refusal_and_sft_heldout():
     assert any(issue["name"] == "refusal" for issue in gate["issues"])
 
 
+def test_long_run_gate_first_release_profile_focuses_release_categories():
+    gate = _long_run_gate(
+        preflight_report={"status": "warn", "budget": {"long_run": True}},
+        sft_fit_summary={
+            "pass_rate": 0.45,
+            "category_breakdown": {
+                "bench_choice_language": {"num_passed": 90, "num_examples": 100},
+                "identity": {"num_passed": 80, "num_examples": 100},
+                "refusal": {"num_passed": 30, "num_examples": 40},
+                "bench_math_addition": {"num_passed": 0, "num_examples": 100},
+                "bench_spelling_reverse": {"num_passed": 0, "num_examples": 100},
+            },
+        },
+        sft_fit_heldout_summary={
+            "pass_rate": 0.35,
+            "category_breakdown": {
+                "bench_choice_language": {"num_passed": 40, "num_examples": 50},
+                "identity": {"num_passed": 35, "num_examples": 50},
+                "refusal": {"num_passed": 20, "num_examples": 25},
+                "bench_math_addition": {"num_passed": 0, "num_examples": 100},
+            },
+        },
+        eval_summary={
+            "pass_rate": 0.30,
+            "non_choice_examples": 240,
+            "non_choice_pass_rate": 0.10,
+            "refusal_pass_rate": 0.82,
+            "prompt_echo_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+            "category_breakdown": {
+                "bench_choice_language": {"num_passed": 45, "num_examples": 50},
+                "identity": {"num_passed": 36, "num_examples": 50},
+                "refusal": {"num_passed": 24, "num_examples": 30},
+                "bench_math_addition": {"num_passed": 0, "num_examples": 120},
+                "bench_spelling_reverse": {"num_passed": 0, "num_examples": 120},
+            },
+        },
+        honesty={"status": "ready"},
+        profile="first_release",
+    )
+
+    assert gate["status"] == "approved"
+    assert gate["profile"] == "first_release"
+    assert gate["sft_fit_rate"] == pytest.approx(200 / 240)
+    assert gate["sft_heldout_fit_rate"] == pytest.approx(95 / 125)
+    assert gate["first_release_eval_rate"] == pytest.approx(105 / 130)
+    assert not any(issue["name"] == "eval_non_choice" for issue in gate["issues"])
+
+
+def test_long_run_gate_first_release_profile_blocks_weak_release_categories():
+    gate = _long_run_gate(
+        preflight_report={"status": "warn", "budget": {"long_run": True}},
+        sft_fit_summary={
+            "pass_rate": 0.85,
+            "category_breakdown": {
+                "bench_choice_language": {"num_passed": 10, "num_examples": 50},
+                "identity": {"num_passed": 12, "num_examples": 50},
+                "refusal": {"num_passed": 8, "num_examples": 25},
+                "bench_math_addition": {"num_passed": 100, "num_examples": 100},
+            },
+        },
+        sft_fit_heldout_summary={
+            "pass_rate": 0.80,
+            "category_breakdown": {
+                "bench_choice_language": {"num_passed": 8, "num_examples": 50},
+                "identity": {"num_passed": 10, "num_examples": 50},
+                "refusal": {"num_passed": 6, "num_examples": 25},
+            },
+        },
+        eval_summary={
+            "pass_rate": 0.80,
+            "non_choice_examples": 100,
+            "non_choice_pass_rate": 0.80,
+            "refusal_pass_rate": 0.80,
+            "prompt_echo_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+            "category_breakdown": {
+                "bench_choice_language": {"num_passed": 10, "num_examples": 50},
+                "identity": {"num_passed": 10, "num_examples": 50},
+                "refusal": {"num_passed": 8, "num_examples": 25},
+            },
+        },
+        honesty={"status": "ready"},
+        profile="first_release",
+    )
+
+    assert gate["status"] == "blocked"
+    assert any(issue["name"] == "sft_fit" for issue in gate["issues"])
+    assert any(issue["name"] == "sft_heldout_fit" for issue in gate["issues"])
+    assert any(issue["name"] == "first_release_eval" for issue in gate["issues"])
+
+
+def test_long_run_gate_rejects_unknown_profile():
+    with pytest.raises(ValueError, match="profile must be one of"):
+        _long_run_gate(
+            preflight_report={"status": "warn", "budget": {"long_run": True}},
+            sft_fit_summary={"pass_rate": 1.0},
+            eval_summary={"prompt_echo_rate": 0.0, "unsupported_claim_rate": 0.0},
+            honesty={"status": "ready"},
+            profile="demo",
+        )
+
+
 def test_run_tiny_multiseed_aggregates_seed_runs(tmp_path, monkeypatch):
     seen = []
 

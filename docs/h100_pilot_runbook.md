@@ -148,6 +148,13 @@ The `--auto-lr-scaling` flag makes the effective SFT LR `0.00002` at SFT
 effective batch 32. That is intentionally much lower than the earlier
 `0.0002` effective SFT LR that overfit within a few dozen H100 steps.
 
+The pilot uses the default `research` long-run gate unless you pass
+`--long-run-gate-profile first_release`. The `first_release` profile still
+reports math and spelling, but the approval gate focuses on the first releasable
+closed-book behaviors: identity, refusal/boundary handling, and choice-format
+knowledge. Use it only when math/spelling are research diagnostics rather than
+release claims.
+
 Optional comparable benchmarks can be attached directly to the run. Picochat
 will convert ARC/MMLU-style JSONL/JSON/CSV into internal choice-eval JSONL,
 score them with the same logprob evaluator, and record each result in

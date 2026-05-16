@@ -140,6 +140,8 @@ def test_cli_run_tiny_h100_scale_applies_modern_defaults(tmp_path, capsys, monke
         str(tmp_path / "h100"),
         "--scale",
         "h100-pilot",
+        "--long-run-gate-profile",
+        "first_release",
     ])
 
     assert exit_code == 0
@@ -158,6 +160,7 @@ def test_cli_run_tiny_h100_scale_applies_modern_defaults(tmp_path, capsys, monke
     assert config.sft_learning_rate == 0.00001
     assert config.auto_lr_scaling is True
     assert config.loss_spike_rollback is True
+    assert config.long_run_gate_profile == "first_release"
     assert "tiny run: 1/1 passed" in capsys.readouterr().out
 
 

@@ -22,6 +22,10 @@ from picochat.tokenizer import DEFAULT_BPE_PRETOKENIZER, TOKENIZER_TYPES, train_
 from picochat.train import TrainConfig, train_base
 
 
+LONG_RUN_GATE_PROFILES = ("research", "first_release")
+FIRST_RELEASE_CATEGORY_PREFIXES = ("identity", "refusal", "bench_choice")
+
+
 @dataclass(frozen=True)
 class TinyRunConfig:
     out_dir: str
@@ -115,6 +119,7 @@ class TinyRunConfig:
     external_eval_max_rows: int = 0
     external_eval_shuffle: bool = False
     external_eval_max_new_tokens: int = 1
+    long_run_gate_profile: str = "research"
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -403,6 +408,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         ),
         eval_summary=eval_report["summary"],
         honesty=honesty_report.to_dict(),
+        profile=config.long_run_gate_profile,
     )
 
     effective_config = {
@@ -806,8 +812,11 @@ def _long_run_gate(
     sft_fit_heldout_summary: dict | None = None,
     eval_summary: dict,
     honesty: dict,
+    profile: str = "research",
 ) -> dict:
     """Decide whether this completed run should be used as a long-run recipe."""
+    if profile not in LONG_RUN_GATE_PROFILES:
+        raise ValueError(f"profile must be one of: {', '.join(LONG_RUN_GATE_PROFILES)}")
     issues: list[dict[str, str]] = []
     budget = preflight_report.get("budget", {})
     long_run = bool(budget.get("long_run"))
@@ -823,29 +832,49 @@ def _long_run_gate(
             "severity": "block",
             "message": "Data honesty found leakage or tuning contamination.",
         })
-    sft_fit_rate = float(sft_fit_summary.get("pass_rate") or 0.0)
+    first_release_profile = profile == "first_release"
+    sft_fit_rate = (
+        _first_release_category_pass_rate(sft_fit_summary)
+        if first_release_profile
+        else None
+    )
+    if sft_fit_rate is None:
+        sft_fit_rate = float(sft_fit_summary.get("pass_rate") or 0.0)
     sft_fit_threshold = 0.70
     sft_heldout_fit_threshold = 0.50
     eval_non_choice_threshold = 0.30
+    first_release_eval_threshold = 0.45
     refusal_threshold = 0.75
     if sft_fit_rate < sft_fit_threshold:
         issues.append({
             "name": "sft_fit",
             "severity": "block" if long_run else "warn",
-            "message": "SFT fit is below 70%; fix behavior data before scaling this recipe.",
+            "message": (
+                "First-release SFT fit is below 70%; fix identity/refusal/choice behavior before scaling."
+                if first_release_profile
+                else "SFT fit is below 70%; fix behavior data before scaling this recipe."
+            ),
         })
-    sft_heldout_fit_rate = (
-        float(sft_fit_heldout_summary.get("pass_rate"))
-        if sft_fit_heldout_summary and sft_fit_heldout_summary.get("pass_rate") is not None
-        else None
-    )
+    sft_heldout_fit_rate = None
+    if sft_fit_heldout_summary:
+        sft_heldout_fit_rate = (
+            _first_release_category_pass_rate(sft_fit_heldout_summary)
+            if first_release_profile
+            else None
+        )
+        if sft_heldout_fit_rate is None and sft_fit_heldout_summary.get("pass_rate") is not None:
+            sft_heldout_fit_rate = float(sft_fit_heldout_summary.get("pass_rate"))
     if sft_heldout_fit_rate is not None and sft_heldout_fit_rate < sft_heldout_fit_threshold:
         issues.append({
             "name": "sft_heldout_fit",
             "severity": "block" if long_run else "warn",
             "message": (
-                "Held-out SFT fit is below 50%; the chat stage is not transferring "
-                "across its own validation rows."
+                "Held-out first-release SFT fit is below 50%; identity/refusal/choice behavior is not transferring."
+                if first_release_profile
+                else (
+                    "Held-out SFT fit is below 50%; the chat stage is not transferring "
+                    "across its own validation rows."
+                )
             ),
         })
     eval_non_choice_examples = int(eval_summary.get("non_choice_examples") or 0)
@@ -855,7 +884,8 @@ def _long_run_gate(
         else None
     )
     if (
-        eval_non_choice_rate is not None
+        not first_release_profile
+        and eval_non_choice_rate is not None
         and eval_non_choice_examples >= 20
         and eval_non_choice_rate < eval_non_choice_threshold
     ):
@@ -865,6 +895,23 @@ def _long_run_gate(
             "message": (
                 "Held-out non-choice eval is below 30%; aggregate pass rate is likely "
                 "being inflated by choice-format items."
+            ),
+        })
+    first_release_eval_rate = (
+        _first_release_category_pass_rate(eval_summary)
+        if first_release_profile
+        else None
+    )
+    if (
+        first_release_eval_rate is not None
+        and first_release_eval_rate < first_release_eval_threshold
+    ):
+        issues.append({
+            "name": "first_release_eval",
+            "severity": "block" if long_run else "warn",
+            "message": (
+                "First-release eval is below 45% across identity, refusal, and choice rows; "
+                "keep math/spelling as diagnostics, but do not scale this release recipe yet."
             ),
         })
     refusal_rate = (
@@ -903,16 +950,33 @@ def _long_run_gate(
         "status": status,
         "summary": summary,
         "long_run": long_run,
+        "profile": profile,
         "sft_fit_threshold": sft_fit_threshold,
         "sft_fit_rate": sft_fit_rate,
         "sft_heldout_fit_threshold": sft_heldout_fit_threshold,
         "sft_heldout_fit_rate": sft_heldout_fit_rate,
         "eval_non_choice_threshold": eval_non_choice_threshold,
         "eval_non_choice_rate": eval_non_choice_rate,
+        "first_release_eval_threshold": first_release_eval_threshold,
+        "first_release_eval_rate": first_release_eval_rate,
         "refusal_threshold": refusal_threshold,
         "refusal_rate": refusal_rate,
         "issues": issues,
     }
+
+
+def _first_release_category_pass_rate(summary: dict) -> float | None:
+    breakdown = summary.get("category_breakdown") or {}
+    passed = 0
+    total = 0
+    for category, row in breakdown.items():
+        if not str(category).startswith(FIRST_RELEASE_CATEGORY_PREFIXES):
+            continue
+        total += int(row.get("num_examples", 0) or 0)
+        passed += int(row.get("num_passed", 0) or 0)
+    if total <= 0:
+        return None
+    return passed / total
 
 
 def _validate_tuning_data_source(
