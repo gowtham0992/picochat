@@ -80,7 +80,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
   --dataset-pack runs/h100-climbmix-16shard-80k-pack-v1/dataset_pack.json \
   --sft-rows 1600 \
   --eval-rows 320 \
-  --profile behavior \
+  --profile release_behavior \
   --skill-answer-style direct \
   --source offline \
   --force 2>&1 | tee logs/benchmark-pack-h100.log
@@ -139,6 +139,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --sft-packing bos_bestfit \
   --sft-sampling category_sqrt \
   --eval-max-new-tokens 120 \
+  --long-run-gate-profile first_release \
   --loss-spike-rollback \
   --auto-lr-scaling \
   --preflight-only 2>&1 | tee logs/preflight-h100-pilot.log
@@ -148,12 +149,14 @@ The `--auto-lr-scaling` flag makes the effective SFT LR `0.00002` at SFT
 effective batch 32. That is intentionally much lower than the earlier
 `0.0002` effective SFT LR that overfit within a few dozen H100 steps.
 
-The pilot uses the default `research` long-run gate unless you pass
-`--long-run-gate-profile first_release`. The `first_release` profile still
-reports math and spelling, but the approval gate focuses on the first releasable
-closed-book behaviors: identity, refusal/boundary handling, and choice-format
-knowledge. Use it only when math/spelling are research diagnostics rather than
-release claims.
+The pilot pack uses `--profile release_behavior`: only identity and
+refusal/boundary rows are used for first-release SFT and held-out eval. Keep
+math, spelling, and choice as separate diagnostic sweeps until the narrow
+release behavior gate is healthy. Pass `--long-run-gate-profile first_release`
+on the train command when evaluating this release pack; it still reports all
+categories present in the eval file, but it approves only the first releasable
+closed-book behaviors instead of silently turning hard skill failures into a
+product claim.
 
 Optional comparable benchmarks can be attached directly to the run. Picochat
 will convert ARC/MMLU-style JSONL/JSON/CSV into internal choice-eval JSONL,
@@ -218,6 +221,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --sft-packing bos_bestfit \
   --sft-sampling category_sqrt \
   --eval-max-new-tokens 120 \
+  --long-run-gate-profile first_release \
   --loss-spike-rollback \
   --auto-lr-scaling 2>&1 | tee logs/train-h100-pilot.log
 ```

@@ -26,10 +26,14 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 DEFAULT_BENCHMARK_SFT_ROWS = 300
 DEFAULT_BENCHMARK_EVAL_ROWS = 80
 BENCHMARK_SOURCES = ("offline", "auto", "hf")
-BENCHMARK_PROFILES = ("full", "behavior", "weak_skills")
+BENCHMARK_PROFILES = ("full", "release_behavior", "behavior", "weak_skills")
 BENCHMARK_SKILL_ANSWER_STYLES = ("direct", "scratchpad")
 SFT_CHAR_BUDGET = 900
 BEHAVIOR_PROFILE_WEIGHTS = {
+    "release_behavior": (
+        ("identity", 0.85),
+        ("refusal", 0.15),
+    ),
     "behavior": (
         ("choice", 0.25),
         ("math", 0.25),
@@ -214,7 +218,15 @@ def generate_benchmark_tuning_pack(
             f"Skill answer style: {skill_answer_style}.",
             "Eval prompts are generated from a held-out stream and are not copied into SFT.",
             "Synthetic behavior rows use separate train/eval templates and held-out word pools.",
-            "Behavior curriculum now intentionally over-samples identity, short math, spelling, and choice-format drills because these are the first fragile closed-book skills.",
+            (
+                "Release-behavior curriculum intentionally limits SFT/eval to identity and refusal "
+                "so first-release gates do not claim math, spelling, or choice skills."
+                if profile == "release_behavior"
+                else (
+                    "Behavior curriculum now intentionally over-samples identity, short math, spelling, "
+                    "and choice-format drills because these are the first fragile closed-book skills."
+                )
+            ),
             f"HF chat SFT rows are length-budgeted to about {SFT_CHAR_BUDGET} characters for local 512-context runs.",
             "Choice eval facts use a held-out fact pool separate from SFT choice facts.",
             "Multiple-choice eval rows include choice labels so Picochat can score next-token choice likelihood.",
@@ -426,11 +438,11 @@ def _behavior_profile_result(
         else _build_local_behavior_rows
     )
     rows = row_builder(
-        choice=quotas["choice"],
-        math=quotas["math"],
-        spelling=quotas["spelling"],
-        identity=quotas["identity"],
-        refusal=quotas["refusal"],
+        choice=quotas.get("choice", 0),
+        math=quotas.get("math", 0),
+        spelling=quotas.get("spelling", 0),
+        identity=quotas.get("identity", 0),
+        refusal=quotas.get("refusal", 0),
         seed=seed,
         split=split,
         eval_rows=eval_rows,
@@ -455,6 +467,12 @@ def _behavior_profile_result(
 
 
 def _behavior_profile_notes(profile: str) -> tuple[str, ...]:
+    if profile == "release_behavior":
+        return (
+            "Release-behavior profile was used: only identity and refusal rows are generated.",
+            "Use this for first-release SFT when math, spelling, and choice are diagnostics rather than release claims.",
+            "Run weak_skills and external benchmarks separately after the release-behavior gate is healthy.",
+        )
     if profile == "weak_skills":
         return (
             "Weak-skills profile was used: math and spelling are deliberately over-sampled with staged ladders.",
@@ -1859,7 +1877,43 @@ def _identity_prompt_variant(prompt: str, *, variant_index: int, eval_rows: bool
         "State the Picochat answer plainly: {prompt}",
     )
     templates = eval_templates if eval_rows else train_templates
-    return templates[variant_index % len(templates)].format(prompt=prompt)
+    return _expanded_prompt_variant(
+        prompt,
+        variant_index=variant_index,
+        templates=templates,
+        prefixes=(
+            "Release behavior drill.",
+            "First-release identity check.",
+            "Domain-model factory behavior.",
+            "Audit-friendly assistant behavior.",
+            "Closed-book release prompt.",
+            "Local SLM identity training.",
+        ),
+        suffixes=(
+            "Answer with the expected Picochat behavior.",
+            "Keep the answer concise and grounded.",
+            "Do not add facts beyond the project framing.",
+            "Use the release behavior target.",
+        ),
+    )
+
+
+def _expanded_prompt_variant(
+    prompt: str,
+    *,
+    variant_index: int,
+    templates: tuple[str, ...],
+    prefixes: tuple[str, ...],
+    suffixes: tuple[str, ...],
+) -> str:
+    """Expand a finite prompt template set without reusing exact prompts."""
+    if variant_index < len(templates):
+        return templates[variant_index].format(prompt=prompt)
+    offset = variant_index - len(templates)
+    rendered = templates[offset % len(templates)].format(prompt=prompt)
+    prefix = prefixes[(offset // len(templates)) % len(prefixes)]
+    suffix = suffixes[(offset // (len(templates) * len(prefixes))) % len(suffixes)]
+    return f"{prefix} {rendered} {suffix}"
 
 
 _TRAIN_REFUSAL_PROMPTS = (

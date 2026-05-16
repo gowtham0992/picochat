@@ -309,8 +309,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=BENCHMARK_PROFILES,
         default="full",
         help=(
-            "Curriculum profile. behavior excludes broad long-form chat rows for first-stage SFT fit; "
-            "weak_skills over-samples math and spelling after behavior fit is healthy."
+            "Curriculum profile. release_behavior focuses identity/refusal for first-release gates; "
+            "behavior excludes broad long-form chat rows for first-stage SFT fit; weak_skills "
+            "over-samples math and spelling after behavior fit is healthy."
         ),
     )
     data_benchmark_pack.add_argument(

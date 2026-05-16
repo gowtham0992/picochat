@@ -90,6 +90,41 @@ def test_behavior_profile_excludes_broad_long_form_chat_rows(tmp_path):
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
 
 
+def test_release_behavior_profile_is_narrow_first_release_pack(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=1600,
+        eval_rows=320,
+        profile="release_behavior",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    chat_categories = Counter(row["category"] for row in chat_rows)
+    eval_categories = Counter(row["category"] for row in eval_rows)
+
+    assert report.profile == "release_behavior"
+    assert report.source_status == "release_behavior"
+    assert set(chat_categories) == {"identity", "refusal"}
+    assert set(eval_categories) == {"identity", "refusal"}
+    assert chat_categories["identity"] == 1360
+    assert chat_categories["refusal"] == 240
+    assert eval_categories["identity"] == 272
+    assert eval_categories["refusal"] == 48
+    assert len({row["user"] for row in chat_rows}) == len(chat_rows)
+    assert len({row["user"] for row in eval_rows}) == len(eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
 def test_behavior_profile_supports_max_local_curriculum_size(tmp_path):
     pack = write_pack(tmp_path)
 
