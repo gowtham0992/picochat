@@ -463,6 +463,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "checkpoint": base_report["checkpoint"],
             "best_checkpoint": base_report.get("best_checkpoint", {}),
             "eval_checkpoint": base_eval_checkpoint,
+            "best_val_loss": base_report.get("best_checkpoint", {}).get("val_loss"),
+            "best_val_bpb": base_report.get("best_checkpoint", {}).get("val_bpb"),
             "final_train_loss": base_report["losses"][-1]["train_loss"],
             "final_val_loss": base_report["losses"][-1]["val_loss"],
             "final_val_bpb": base_report["losses"][-1].get("val_bpb"),
@@ -482,6 +484,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
         },
         "sft": {
             "checkpoint": sft_report["checkpoint"],
+            "best_val_loss": sft_report.get("best_checkpoint", {}).get("val_loss"),
+            "best_val_bpb": sft_report.get("best_checkpoint", {}).get("val_bpb"),
             "final_train_loss": sft_report["losses"][-1]["train_loss"],
             "final_val_loss": sft_report["losses"][-1]["val_loss"],
             "final_val_bpb": sft_report["losses"][-1].get("val_bpb"),

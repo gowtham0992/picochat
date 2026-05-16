@@ -878,10 +878,26 @@ def tiny_run_summary_markdown(summary: dict) -> str:
 
     lines.append("## Result")
     lines.append("")
-    if base.get("final_val_bpb") is not None:
-        lines.append(f"- Primary base metric: {format_optional_float(base.get('final_val_bpb'))} validation BPB")
-    if sft.get("final_val_bpb") is not None:
-        lines.append(f"- Primary SFT metric: {format_optional_float(sft.get('final_val_bpb'))} validation BPB")
+    base_primary_bpb = base.get("best_val_bpb")
+    base_primary_label = "best-checkpoint"
+    if base_primary_bpb is None:
+        base_primary_bpb = base.get("final_val_bpb")
+        base_primary_label = "final"
+    if base_primary_bpb is not None:
+        lines.append(
+            f"- Primary base metric: {format_optional_float(base_primary_bpb)} "
+            f"validation BPB ({base_primary_label})"
+        )
+    sft_primary_bpb = sft.get("best_val_bpb")
+    sft_primary_label = "best-checkpoint"
+    if sft_primary_bpb is None:
+        sft_primary_bpb = sft.get("final_val_bpb")
+        sft_primary_label = "final"
+    if sft_primary_bpb is not None:
+        lines.append(
+            f"- Primary SFT metric: {format_optional_float(sft_primary_bpb)} "
+            f"validation BPB ({sft_primary_label})"
+        )
     lines.append(f"- Eval passed: {eval_summary['num_passed']} / {eval_summary['num_examples']}")
     lines.append(f"- Eval pass rate: {format_float(eval_summary['pass_rate'] * 100)}%")
     if eval_summary.get("pass_rate_ci"):
@@ -1141,12 +1157,16 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append("")
     lines.append(f"- Base final train loss: {format_float(base['final_train_loss'])}")
     lines.append(f"- Base final val loss: {format_float(base['final_val_loss'])}")
+    if base.get("best_val_bpb") is not None:
+        lines.append(f"- Base best val BPB: {format_optional_float(base.get('best_val_bpb'))}")
     if base.get("final_val_bpb") is not None:
         lines.append(f"- Base final val BPB: {format_optional_float(base.get('final_val_bpb'))}")
     if base.get("final_ema_val_bpb") is not None:
         lines.append(f"- Base final EMA val BPB: {format_optional_float(base.get('final_ema_val_bpb'))}")
     lines.append(f"- SFT final train loss: {format_float(sft['final_train_loss'])}")
     lines.append(f"- SFT final val loss: {format_float(sft['final_val_loss'])}")
+    if sft.get("best_val_bpb") is not None:
+        lines.append(f"- SFT best val BPB: {format_optional_float(sft.get('best_val_bpb'))}")
     if sft.get("final_val_bpb") is not None:
         lines.append(f"- SFT final val BPB: {format_optional_float(sft.get('final_val_bpb'))}")
     if sft.get("final_ema_val_bpb") is not None:

@@ -279,9 +279,13 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert summary["artifacts"]["sft_eval_checkpoint"] == str(out_dir / "sft" / "best_checkpoint")
     assert summary["artifacts"]["base_eval_checkpoint"] == str(out_dir / "base" / "best_checkpoint")
     assert summary["base"]["eval_checkpoint"] == str(out_dir / "base" / "best_checkpoint")
+    assert summary["base"]["best_val_loss"] is not None
+    assert "best_val_bpb" in summary["base"]
     assert summary["base"]["coverage"]["actual_steps"] == 1
     assert summary["base"]["stop_reason"] == "max_steps"
     assert summary["sft"]["eval_checkpoint"] == str(out_dir / "sft" / "best_checkpoint")
+    assert summary["sft"]["best_val_loss"] is not None
+    assert "best_val_bpb" in summary["sft"]
     assert summary["sft_fit"]["num_examples"] == 1
     assert summary["external_evals"][0]["name"] == "arc-mini"
     assert summary["external_evals"][0]["summary"]["num_examples"] == 1
