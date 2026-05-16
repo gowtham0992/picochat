@@ -160,6 +160,9 @@ Longer runs add guardrails instead of blind optimism:
 - every `run tiny` writes a data honesty report that checks obvious SFT/eval
   leakage before you trust the score; blocking leakage stops the run unless
   you explicitly pass `--allow-leaky-eval` for a diagnostic-only experiment
+- corpus reports estimate near-duplicate document pressure with deterministic
+  MinHash/LSH buckets, so exact-dedup-clean corpora can still warn before a
+  large run wastes tokens on repeated sources
 - base training reports validation BPB, a tokenizer-fair bits-per-byte metric
 - long runs can use `hf_bpe`, a compiled Hugging Face BPE backend for tokenizer
   training; the pure-Python `bpe` path remains available for inspection and
@@ -325,7 +328,8 @@ one-off notebook results.
 For the current single-H100 pilot recipe, use
 [`docs/h100_pilot_runbook.md`](docs/h100_pilot_runbook.md). It includes the
 CUDA-compatible PyTorch install, `preh100` sanity command, ClimbMix import,
-modern H100 preflight/run commands, monitoring, and artifact packaging.
+modern H100 preflight/run commands, optional ARC/MMLU external eval hooks,
+monitoring, and artifact packaging.
 
 Before a serious run, check that the eval is not accidentally copied from the
 SFT file or base corpus:

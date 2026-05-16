@@ -56,6 +56,11 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli sanity preh100 \
 
 Do not continue if this fails.
 
+The sanity output should include `modern_init_loss: pass`. For an 8k tokenizer,
+a fresh model should start near `log(vocab)` loss, roughly 9.0. If the first
+base-training line shows a loss in the hundreds, stop: that indicates a model
+initialization or checkpoint compatibility bug, not learning.
+
 ## 3. Import ClimbMix Data
 
 Start with 16 shards / 80k rows. This is large enough to expose throughput and
@@ -143,6 +148,19 @@ The `--auto-lr-scaling` flag makes the effective SFT LR `0.00002` at SFT
 effective batch 32. That is intentionally much lower than the earlier
 `0.0002` effective SFT LR that overfit within a few dozen H100 steps.
 
+Optional comparable benchmarks can be attached directly to the run. Picochat
+will convert ARC/MMLU-style JSONL/JSON/CSV into internal choice-eval JSONL,
+score them with the same logprob evaluator, and record each result in
+`summary.json` and `summary.md`.
+
+```bash
+# Append one or more of these to the preflight/run commands when files exist:
+--external-eval arc-easy=/path/to/arc_easy.jsonl \
+--external-eval mmlu-mini=/path/to/mmlu_mini.csv \
+--external-eval-format auto \
+--external-eval-max-rows 200
+```
+
 ## 5. Run The Pilot
 
 Only remove `--preflight-only` after the preflight is clean or only warning on
@@ -209,6 +227,10 @@ tail -f logs/train-h100-pilot.log
 The eval stages print an immediate `eval 0000/N` line and ETA-bearing progress
 rows. If a stage is silent, inspect `ps`, `nvidia-smi`, and run directory
 timestamps before terminating.
+
+During base training, the first loss should be near the tokenizer log-vocab
+baseline and then fall quickly. For an 8,192-token vocabulary, seeing the first
+base loss around 8-10 is normal; seeing hundreds is a stop condition.
 
 Before terminating the instance:
 
