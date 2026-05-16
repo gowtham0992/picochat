@@ -20,6 +20,7 @@ MIN_LONG_RUN_SFT_ROWS = 300
 MIN_LONG_RUN_EVAL_ROWS = 80
 DEFAULT_TARGET_PARAM_DATA_RATIO = 20.0
 BASE_LR_REFERENCE_EFFECTIVE_BATCH = 8
+FIRST_RELEASE_SFT_CATEGORY_PREFIXES = ("identity", "refusal", "bench_choice")
 
 
 @dataclass(frozen=True)
@@ -459,6 +460,23 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
 def _sft_checks(config: Any, corpus: CorpusBuildReport | CorpusPreviewReport, budget: RunBudgetPlan) -> list[RunPreflightCheck]:
     chat = corpus.chat_data
     epochs = budget.estimated_sft_example_epochs
+    categories = tuple(str(category) for category in chat.categories)
+    first_release_focus = _is_first_release_sft_focus(config, categories)
+    category_balance_status = (
+        "pass"
+        if not budget.long_run or len(categories) >= 4 or first_release_focus
+        else "warn"
+    )
+    category_balance_threshold = (
+        ">= 2 first-release behavior categories"
+        if first_release_focus
+        else ">= 4 categories preferred"
+    )
+    category_balance_message = (
+        "First-release SFT intentionally focuses on identity/refusal/choice behavior; keep other skills as separate diagnostics."
+        if first_release_focus
+        else "Category coverage helps reveal which behavior the SFT stage actually teaches."
+    )
     checks = [
         _check(
             "chat_sft_readiness",
@@ -490,10 +508,10 @@ def _sft_checks(config: Any, corpus: CorpusBuildReport | CorpusPreviewReport, bu
         ),
         _check(
             "sft_category_balance",
-            "warn" if budget.long_run and len(chat.categories) < 4 else "pass",
-            str(len(chat.categories)),
-            ">= 4 categories preferred",
-            "Category coverage helps reveal which behavior the SFT stage actually teaches.",
+            category_balance_status,
+            str(len(categories)),
+            category_balance_threshold,
+            category_balance_message,
         ),
     ]
     avg_assistant_words = _safe_float((chat.assistant_length_distribution or {}).get("avg_words"))
@@ -720,6 +738,14 @@ def _safe_ratio(numerator: int | float, denominator: int | float | None) -> floa
     if denominator is None or denominator <= 0:
         return None
     return float(numerator) / float(denominator)
+
+
+def _is_first_release_sft_focus(config: Any, categories: tuple[str, ...]) -> bool:
+    if str(_value(config, "long_run_gate_profile", "research")) != "first_release":
+        return False
+    if len(categories) < 2:
+        return False
+    return all(category.startswith(FIRST_RELEASE_SFT_CATEGORY_PREFIXES) for category in categories)
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:

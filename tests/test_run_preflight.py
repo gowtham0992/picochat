@@ -62,6 +62,30 @@ def test_preflight_warns_for_terse_long_run_sft_answers():
     assert "Very terse SFT answers" in checks["sft_answer_length"].message
 
 
+def test_preflight_accepts_narrow_first_release_sft_focus():
+    report = assess_run_preflight(
+        _h100_like_config(long_run_gate_profile="first_release"),
+        _ready_large_corpus(categories={"identity": 1360, "refusal": 240}),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["sft_category_balance"].status == "pass"
+    assert checks["sft_category_balance"].metric == "2"
+    assert checks["sft_category_balance"].threshold == ">= 2 first-release behavior categories"
+    assert "separate diagnostics" in checks["sft_category_balance"].message
+
+
+def test_preflight_still_warns_for_narrow_research_sft_focus():
+    report = assess_run_preflight(
+        _h100_like_config(),
+        _ready_large_corpus(categories={"identity": 1360, "refusal": 240}),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["sft_category_balance"].status == "warn"
+    assert checks["sft_category_balance"].threshold == ">= 4 categories preferred"
+
+
 def _h100_like_config(**overrides) -> TinyRunConfig:
     values = {
         "out_dir": "runs/test-preflight",
@@ -92,7 +116,12 @@ def _h100_like_config(**overrides) -> TinyRunConfig:
     return TinyRunConfig(**values)
 
 
-def _ready_large_corpus(*, assistant_avg_words: float = 8.0) -> CorpusPreviewReport:
+def _ready_large_corpus(
+    *,
+    assistant_avg_words: float = 8.0,
+    categories: dict[str, int] | None = None,
+) -> CorpusPreviewReport:
+    categories = categories or {"choice": 400, "math": 400, "spelling": 400, "refusal": 400}
     return CorpusPreviewReport(
         input_path="corpus_recipe.json",
         recipe_path="corpus_recipe.json",
@@ -156,7 +185,7 @@ def _ready_large_corpus(*, assistant_avg_words: float = 8.0) -> CorpusPreviewRep
             duplicate_user_samples=(),
             near_duplicate_user_pairs=0,
             near_duplicate_user_samples=(),
-            categories={"choice": 400, "math": 400, "spelling": 400, "refusal": 400},
+            categories=categories,
             category_entropy=2.0,
             category_entropy_normalized=1.0,
             assistant_length_distribution={
