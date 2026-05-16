@@ -317,6 +317,7 @@ The web workbench also has a **Scale Up** view. It generates:
 - a local Mac MPS command for the selected dataset pack
 - a Colab setup command
 - a Colab ClimbMix import command
+- a release-behavior benchmark-pack command for the first releasable chat gate
 - a Colab CUDA training command
 - a zip/download return command
 - an import-back action that copies a completed run folder into `runs/` so it
@@ -329,7 +330,7 @@ For the current single-H100 pilot recipe, use
 [`docs/h100_pilot_runbook.md`](docs/h100_pilot_runbook.md). It includes the
 CUDA-compatible PyTorch install, `preh100` sanity command, ClimbMix import,
 modern H100 preflight/run commands, optional ARC/MMLU external eval hooks,
-monitoring, and artifact packaging.
+release-behavior SFT sweep commands, monitoring, and artifact packaging.
 
 Before a serious run, check that the eval is not accidentally copied from the
 SFT file or base corpus:
