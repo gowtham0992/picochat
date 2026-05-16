@@ -77,6 +77,7 @@ const LAUNCH_CONTROL_IDS = [
   "launch-activation",
   "launch-tie-embeddings",
   "launch-qk-norm",
+  "launch-parallel-residual",
   "launch-base-batch-size",
   "launch-sft-batch-size",
   "launch-base-learning-rate",
@@ -96,6 +97,14 @@ const LAUNCH_CONTROL_IDS = [
   "launch-base-ema-decay",
   "launch-sft-ema-decay",
   "launch-device",
+  "launch-precision",
+  "launch-matmul-precision",
+  "launch-attn-backend",
+  "launch-torch-compile",
+  "launch-torch-compile-mode",
+  "launch-gradient-checkpointing",
+  "launch-auto-lr-scaling",
+  "launch-loss-spike-rollback",
   "launch-base-early-stop-patience",
   "launch-sft-early-stop-patience",
   "launch-sft-sampling",
@@ -3331,6 +3340,7 @@ function applyLaunchPreset(quiet = false) {
   $("launch-activation").value = values.activation || "gelu";
   $("launch-tie-embeddings").checked = Boolean(values.tie_embeddings);
   $("launch-qk-norm").checked = Boolean(values.qk_norm);
+  $("launch-parallel-residual").checked = Boolean(values.parallel_residual);
   $("launch-base-steps").value = values.base_steps;
   $("launch-sft-steps").value = values.sft_steps;
   $("launch-base-batch-size").value = values.base_batch_size;
@@ -3352,6 +3362,14 @@ function applyLaunchPreset(quiet = false) {
   $("launch-base-ema-decay").value = values.base_ema_decay || 0;
   $("launch-sft-ema-decay").value = values.sft_ema_decay || 0;
   $("launch-device").value = values.device || "cpu";
+  $("launch-precision").value = values.precision || "float32";
+  $("launch-matmul-precision").value = values.matmul_precision || "default";
+  $("launch-attn-backend").value = values.attn_backend || "auto";
+  $("launch-torch-compile").checked = Boolean(values.torch_compile);
+  $("launch-torch-compile-mode").value = values.torch_compile_mode || "default";
+  $("launch-gradient-checkpointing").checked = Boolean(values.gradient_checkpointing);
+  $("launch-auto-lr-scaling").checked = Boolean(values.auto_lr_scaling);
+  $("launch-loss-spike-rollback").checked = Boolean(values.loss_spike_rollback);
   $("launch-base-early-stop-patience").value = values.base_early_stop_patience;
   $("launch-sft-early-stop-patience").value = values.sft_early_stop_patience;
   $("launch-sft-sampling").value = values.sft_sampling || "uniform";
@@ -3411,6 +3429,7 @@ function launchConfig() {
     activation: $("launch-activation").value,
     tie_embeddings: $("launch-tie-embeddings").checked,
     qk_norm: $("launch-qk-norm").checked,
+    parallel_residual: $("launch-parallel-residual").checked,
     base_steps: launchNumber("launch-base-steps"),
     sft_steps: launchNumber("launch-sft-steps"),
     base_batch_size: launchNumber("launch-base-batch-size"),
@@ -3432,6 +3451,14 @@ function launchConfig() {
     base_ema_decay: launchNumber("launch-base-ema-decay"),
     sft_ema_decay: launchNumber("launch-sft-ema-decay"),
     device: $("launch-device").value,
+    precision: $("launch-precision").value,
+    matmul_precision: $("launch-matmul-precision").value,
+    attn_backend: $("launch-attn-backend").value,
+    torch_compile: $("launch-torch-compile").checked,
+    torch_compile_mode: $("launch-torch-compile-mode").value,
+    gradient_checkpointing: $("launch-gradient-checkpointing").checked,
+    auto_lr_scaling: $("launch-auto-lr-scaling").checked,
+    loss_spike_rollback: $("launch-loss-spike-rollback").checked,
     base_early_stop_patience: launchNumber("launch-base-early-stop-patience"),
     sft_early_stop_patience: launchNumber("launch-sft-early-stop-patience"),
     sft_sampling: $("launch-sft-sampling").value,
@@ -3470,6 +3497,13 @@ function launchReadiness(config = launchConfig()) {
   if (!["adamw", "muon"].includes(config.base_optimizer) || !["adamw", "muon"].includes(config.sft_optimizer)) {
     blockers.push("Optimizer must be ADAMW or MUON.");
   }
+  if (!["float32", "bf16", "fp16", "auto"].includes(config.precision)) blockers.push("Precision mode is invalid.");
+  if (!["default", "highest", "high", "medium"].includes(config.matmul_precision)) blockers.push("Matmul precision mode is invalid.");
+  if (!["auto", "flash", "efficient", "math", "cudnn"].includes(config.attn_backend)) blockers.push("Attention backend is invalid.");
+  if (!["default", "reduce-overhead", "max-autotune"].includes(config.torch_compile_mode)) blockers.push("Torch compile mode is invalid.");
+  if (config.attn_backend === "flash" && !["auto", "cuda"].includes(config.device)) {
+    blockers.push("Flash attention requires CUDA or AUTO device selection.");
+  }
   if (!["separate", "bos_bestfit"].includes(config.sft_packing)) blockers.push("SFT packing mode is invalid.");
   if (config.base_muon_learning_rate <= 0 || config.sft_muon_learning_rate <= 0) blockers.push("Muon learning rates must be above zero.");
   if (config.base_ema_decay < 0 || config.base_ema_decay >= 1 || config.sft_ema_decay < 0 || config.sft_ema_decay >= 1) {
@@ -3493,6 +3527,12 @@ function launchReadiness(config = launchConfig()) {
   if (config.base_optimizer === "muon" || config.sft_optimizer === "muon") {
     cautions.push("Muon is experimental here; compare against an AdamW baseline before trusting a win.");
   }
+  if (config.torch_compile && config.device === "cpu") {
+    cautions.push("torch.compile can be slow to warm up on CPU; reserve it for CUDA/MPS timing checks.");
+  }
+  if (config.gradient_checkpointing && config.context_size <= 512) {
+    cautions.push("Gradient checkpointing saves memory but can slow small local runs.");
+  }
   const usingBenchmarkPack = Boolean(state.benchmarkPack && state.benchmarkPack.dataset_pack === config.dataset_pack);
   if (usingBenchmarkPack && config.sft_steps > 500) {
     cautions.push("Curated benchmark SFT usually overfits past a few hundred steps; start near 300, then compare.");
@@ -3500,6 +3540,13 @@ function launchReadiness(config = launchConfig()) {
   if (config.sft_steps > config.base_steps * 2) cautions.push("SFT is much longer than base; watch eval leakage and overfitting.");
   notes.push(`${config.n_layer}L x ${config.n_embd} embd / ${config.n_head} heads / ${config.n_kv_head} kv`);
   notes.push(`${config.norm_type} / ${config.position_encoding} / ${config.activation}`);
+  if (config.tie_embeddings || config.qk_norm || config.parallel_residual) {
+    notes.push(`modern flags ${[
+      config.tie_embeddings ? "tied" : null,
+      config.qk_norm ? "qk-norm" : null,
+      config.parallel_residual ? "parallel" : null,
+    ].filter(Boolean).join("/")}`);
+  }
   notes.push(`${String(config.tokenizer_type).toUpperCase()} tokenizer${config.tokenizer_vocab_size ? ` vocab ${config.tokenizer_vocab_size}` : ""}`);
   if (usesBpe) notes.push(`BPE split ${config.bpe_pretokenizer}`);
   notes.push(`base ${config.base_steps} / sft ${config.sft_steps}`);
@@ -3509,6 +3556,11 @@ function launchReadiness(config = launchConfig()) {
   notes.push(`effective batch ${config.base_batch_size * config.base_grad_accum_steps} / ${config.sft_batch_size * config.sft_grad_accum_steps}`);
   notes.push(`target ${config.target_param_data_ratio} tok/param`);
   notes.push(`device ${String(config.device || "cpu").toUpperCase()}`);
+  notes.push(`${config.precision} / matmul ${config.matmul_precision} / attn ${config.attn_backend}`);
+  if (config.torch_compile) notes.push(`compile ${config.torch_compile_mode}`);
+  if (config.gradient_checkpointing) notes.push("gradient checkpointing");
+  if (config.auto_lr_scaling) notes.push("auto LR scaling");
+  if (config.loss_spike_rollback) notes.push("loss rollback");
   notes.push(`LR ${config.base_learning_rate} -> ${config.sft_learning_rate}`);
   notes.push(`SFT ${config.sft_sampling.replace("_", " ")}`);
   notes.push(`packing ${config.sft_packing.replace("_", " ")}`);
@@ -3559,6 +3611,8 @@ function launchPreviewCommand(config = launchConfig()) {
     config.position_encoding,
     "--activation",
     config.activation,
+    "--attn-backend",
+    config.attn_backend,
     "--base-steps",
     config.base_steps,
     "--sft-steps",
@@ -3575,6 +3629,10 @@ function launchPreviewCommand(config = launchConfig()) {
     config.seed,
     "--eval-max-new-tokens",
     config.eval_max_new_tokens,
+    "--precision",
+    config.precision,
+    "--matmul-precision",
+    config.matmul_precision,
     "--tokenizer-type",
     config.tokenizer_type,
     "--bpe-pretokenizer",
@@ -3627,6 +3685,11 @@ function launchPreviewCommand(config = launchConfig()) {
   if (state.runPresets[config.preset]) parts.push("--scale", config.preset);
   if (config.tie_embeddings) parts.push("--tie-embeddings");
   if (config.qk_norm) parts.push("--qk-norm");
+  if (config.parallel_residual) parts.push("--parallel-residual");
+  if (config.torch_compile) parts.push("--torch-compile", "--torch-compile-mode", config.torch_compile_mode);
+  if (config.gradient_checkpointing) parts.push("--gradient-checkpointing");
+  if (config.auto_lr_scaling) parts.push("--auto-lr-scaling");
+  if (config.loss_spike_rollback) parts.push("--loss-spike-rollback");
   if (config.tokenizer_vocab_size) parts.push("--tokenizer-vocab-size", config.tokenizer_vocab_size);
   return shellCommand(parts);
 }
@@ -3707,6 +3770,7 @@ function runStartPayload(config) {
     activation: config.activation,
     tie_embeddings: config.tie_embeddings,
     qk_norm: config.qk_norm,
+    parallel_residual: config.parallel_residual,
     base_steps: config.base_steps,
     sft_steps: config.sft_steps,
     base_batch_size: config.base_batch_size,
@@ -3727,6 +3791,14 @@ function runStartPayload(config) {
     sft_muon_learning_rate: config.sft_muon_learning_rate,
     base_ema_decay: config.base_ema_decay,
     sft_ema_decay: config.sft_ema_decay,
+    precision: config.precision,
+    matmul_precision: config.matmul_precision,
+    attn_backend: config.attn_backend,
+    torch_compile: config.torch_compile,
+    torch_compile_mode: config.torch_compile_mode,
+    gradient_checkpointing: config.gradient_checkpointing,
+    auto_lr_scaling: config.auto_lr_scaling,
+    loss_spike_rollback: config.loss_spike_rollback,
     base_early_stop_patience: config.base_early_stop_patience,
     sft_early_stop_patience: config.sft_early_stop_patience,
     sft_sampling: config.sft_sampling,
@@ -6017,6 +6089,17 @@ function importantConfigChanges(before, after) {
     ["norm_type", "Norm"],
     ["position_encoding", "Position"],
     ["activation", "Activation"],
+    ["tie_embeddings", "Tied embeddings"],
+    ["qk_norm", "QK norm"],
+    ["parallel_residual", "Parallel residual"],
+    ["precision", "Precision"],
+    ["matmul_precision", "Matmul precision"],
+    ["attn_backend", "Attention backend"],
+    ["torch_compile", "Torch compile"],
+    ["torch_compile_mode", "Compile mode"],
+    ["gradient_checkpointing", "Gradient checkpointing"],
+    ["auto_lr_scaling", "Auto LR scaling"],
+    ["loss_spike_rollback", "Loss rollback"],
     ["base_steps", "Base steps"],
     ["sft_steps", "SFT steps"],
     ["base_learning_rate", "Base LR"],
@@ -6041,7 +6124,10 @@ function changeTeachingNote(key) {
   if (key.includes("tokenizer")) return "Changes compression and model vocabulary.";
   if (key === "context_size") return "Changes how much text the model sees at once.";
   if (["n_embd", "n_layer", "n_head", "n_kv_head"].includes(key)) return "Changes model capacity and compute cost.";
-  if (["norm_type", "position_encoding", "activation"].includes(key)) return "Changes the Transformer architecture.";
+  if (["norm_type", "position_encoding", "activation", "tie_embeddings", "qk_norm", "parallel_residual"].includes(key)) return "Changes the Transformer architecture.";
+  if (["precision", "matmul_precision", "attn_backend", "torch_compile", "torch_compile_mode", "gradient_checkpointing"].includes(key)) return "Changes GPU/runtime behavior.";
+  if (key === "auto_lr_scaling") return "Changes automatic optimizer scaling from effective batch.";
+  if (key === "loss_spike_rollback") return "Changes training stability recovery.";
   if (key.includes("steps")) return "Changes optimization time.";
   if (key.includes("learning_rate") || key.includes("lr_")) return "Changes optimizer behavior.";
   if (key.includes("data") || key.includes("input") || key.includes("corpus")) return "Changes what behavior/data the run can learn.";

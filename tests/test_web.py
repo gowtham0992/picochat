@@ -1284,6 +1284,15 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
         "bpe_pretokenizer": "regex",
         "tie_embeddings": True,
         "qk_norm": True,
+        "parallel_residual": True,
+        "precision": "bf16",
+        "matmul_precision": "high",
+        "attn_backend": "math",
+        "torch_compile": True,
+        "torch_compile_mode": "reduce-overhead",
+        "gradient_checkpointing": True,
+        "auto_lr_scaling": True,
+        "loss_spike_rollback": True,
     })
 
     assert "--activation swiglu" in started["job"]["command"]
@@ -1291,10 +1300,49 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
     assert "--bpe-pretokenizer regex" in started["job"]["command"]
     assert "--tie-embeddings" in started["job"]["command"]
     assert "--qk-norm" in started["job"]["command"]
+    assert "--parallel-residual" in started["job"]["command"]
+    assert "--precision bf16" in started["job"]["command"]
+    assert "--matmul-precision high" in started["job"]["command"]
+    assert "--attn-backend math" in started["job"]["command"]
+    assert "--torch-compile" in started["job"]["command"]
+    assert "--torch-compile-mode reduce-overhead" in started["job"]["command"]
+    assert "--gradient-checkpointing" in started["job"]["command"]
+    assert "--auto-lr-scaling" in started["job"]["command"]
+    assert "--loss-spike-rollback" in started["job"]["command"]
     assert started["job"]["launch_config"]["n_kv_head"] == 2
     assert started["job"]["launch_config"]["bpe_pretokenizer"] == "regex"
     assert started["job"]["launch_config"]["tie_embeddings"] is True
     assert started["job"]["launch_config"]["qk_norm"] is True
+    assert started["job"]["launch_config"]["parallel_residual"] is True
+    assert started["job"]["launch_config"]["precision"] == "bf16"
+    assert started["job"]["launch_config"]["matmul_precision"] == "high"
+    assert started["job"]["launch_config"]["attn_backend"] == "math"
+    assert started["job"]["launch_config"]["torch_compile"] is True
+    assert started["job"]["launch_config"]["torch_compile_mode"] == "reduce-overhead"
+    assert started["job"]["launch_config"]["gradient_checkpointing"] is True
+    assert started["job"]["launch_config"]["auto_lr_scaling"] is True
+    assert started["job"]["launch_config"]["loss_spike_rollback"] is True
+
+
+def test_start_run_plan_rejects_invalid_runtime_knob(tmp_path):
+    pack_path = tmp_path / "dataset_pack.json"
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+    (tmp_path / "lesson.txt").write_text("lesson text", encoding="utf-8")
+    (tmp_path / "chat.jsonl").write_text(json.dumps({"user": "hi", "assistant": "hello"}) + "\n", encoding="utf-8")
+    (tmp_path / "eval.jsonl").write_text(json.dumps({"user": "hi", "must_include": ["hello"]}) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="attn_backend"):
+        start_run_plan(tmp_path / "runs", {
+            "dataset_pack": str(pack_path),
+            "run_name": "bad-runtime",
+            "base_steps": 1,
+            "sft_steps": 1,
+            "attn_backend": "imaginary",
+        })
 
 
 def test_run_presets_are_exposed_for_web_launcher():

@@ -34,7 +34,9 @@ from picochat.benchmark_pack import (
 )
 from picochat.generate import GenerateConfig, generate_text_with_trace
 from picochat.hf_import import HFImportConfig, HFSplitError, import_hf_dataset
+from picochat.model import SDPA_BACKENDS
 from picochat.optim import LR_DECAYS, OPTIMIZER_TYPES
+from picochat.precision import COMPILE_MODES, MATMUL_PRECISION_MODES, PRECISION_MODES
 from picochat.run import TinyRunConfig
 from picochat.run_preflight import assess_run_preflight
 from picochat.scales import RUN_SCALES
@@ -874,6 +876,23 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         raise ValueError("activation must be gelu, relu2, or swiglu")
     tie_embeddings = bool(payload.get("tie_embeddings", preset.get("tie_embeddings", False)))
     qk_norm = bool(payload.get("qk_norm", preset.get("qk_norm", False)))
+    parallel_residual = bool(payload.get("parallel_residual", preset.get("parallel_residual", False)))
+    precision = str(payload.get("precision", preset.get("precision", "float32")))
+    if precision not in PRECISION_MODES:
+        raise ValueError(f"precision must be one of {', '.join(PRECISION_MODES)}")
+    matmul_precision = str(payload.get("matmul_precision", preset.get("matmul_precision", "default")))
+    if matmul_precision not in MATMUL_PRECISION_MODES:
+        raise ValueError(f"matmul_precision must be one of {', '.join(MATMUL_PRECISION_MODES)}")
+    attn_backend = str(payload.get("attn_backend", preset.get("attn_backend", "auto")))
+    if attn_backend not in SDPA_BACKENDS:
+        raise ValueError(f"attn_backend must be one of {', '.join(SDPA_BACKENDS)}")
+    torch_compile = bool(payload.get("torch_compile", preset.get("torch_compile", False)))
+    torch_compile_mode = str(payload.get("torch_compile_mode", preset.get("torch_compile_mode", "default")))
+    if torch_compile_mode not in COMPILE_MODES:
+        raise ValueError(f"torch_compile_mode must be one of {', '.join(COMPILE_MODES)}")
+    gradient_checkpointing = bool(payload.get("gradient_checkpointing", preset.get("gradient_checkpointing", False)))
+    auto_lr_scaling = bool(payload.get("auto_lr_scaling", preset.get("auto_lr_scaling", False)))
+    loss_spike_rollback = bool(payload.get("loss_spike_rollback", preset.get("loss_spike_rollback", False)))
     tokenizer_type = str(payload.get("tokenizer_type", preset.get("tokenizer_type", "char")))
     if tokenizer_type not in TOKENIZER_TYPES:
         raise ValueError(f"tokenizer_type must be one of {', '.join(TOKENIZER_TYPES)}")
@@ -964,6 +983,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         activation=activation,
         tie_embeddings=tie_embeddings,
         qk_norm=qk_norm,
+        parallel_residual=parallel_residual,
+        attn_backend=attn_backend,
         base_steps=base_steps,
         sft_steps=sft_steps,
         base_batch_size=base_batch_size,
@@ -972,6 +993,11 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         sft_learning_rate=sft_learning_rate,
         seed=seed,
         device=device,
+        precision=precision,
+        matmul_precision=matmul_precision,
+        torch_compile=torch_compile,
+        torch_compile_mode=torch_compile_mode,
+        gradient_checkpointing=gradient_checkpointing,
         eval_max_new_tokens=eval_max_new_tokens,
         min_quality_score=min_quality_score,
         split_mode="document",
@@ -999,6 +1025,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         sft_ema_decay=sft_ema_decay,
         sft_sampling=sft_sampling,
         sft_packing=sft_packing,
+        auto_lr_scaling=auto_lr_scaling,
+        loss_spike_rollback=loss_spike_rollback,
         allow_unsafe_long_run=allow_unsafe_long_run,
         target_param_data_ratio=target_param_data_ratio,
     )
@@ -1039,6 +1067,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         position_encoding,
         "--activation",
         activation,
+        "--attn-backend",
+        attn_backend,
         "--base-steps",
         str(base_steps),
         "--sft-steps",
@@ -1055,6 +1085,10 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(seed),
         "--eval-max-new-tokens",
         str(eval_max_new_tokens),
+        "--precision",
+        precision,
+        "--matmul-precision",
+        matmul_precision,
         "--tokenizer-type",
         tokenizer_type,
         "--tokenizer-min-freq",
@@ -1116,6 +1150,17 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         command.append("--tie-embeddings")
     if qk_norm:
         command.append("--qk-norm")
+    if parallel_residual:
+        command.append("--parallel-residual")
+    if torch_compile:
+        command.append("--torch-compile")
+        command.extend(["--torch-compile-mode", torch_compile_mode])
+    if gradient_checkpointing:
+        command.append("--gradient-checkpointing")
+    if auto_lr_scaling:
+        command.append("--auto-lr-scaling")
+    if loss_spike_rollback:
+        command.append("--loss-spike-rollback")
     if tokenizer_vocab_size is not None:
         command.extend(["--tokenizer-vocab-size", str(tokenizer_vocab_size)])
     if allow_unsafe_long_run:
@@ -1159,6 +1204,15 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "activation": activation,
             "tie_embeddings": tie_embeddings,
             "qk_norm": qk_norm,
+            "parallel_residual": parallel_residual,
+            "attn_backend": attn_backend,
+            "precision": precision,
+            "matmul_precision": matmul_precision,
+            "torch_compile": torch_compile,
+            "torch_compile_mode": torch_compile_mode,
+            "gradient_checkpointing": gradient_checkpointing,
+            "auto_lr_scaling": auto_lr_scaling,
+            "loss_spike_rollback": loss_spike_rollback,
             "tokenizer_type": tokenizer_type,
             "tokenizer_vocab_size": tokenizer_vocab_size,
             "bpe_pretokenizer": bpe_pretokenizer,

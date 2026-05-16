@@ -643,6 +643,10 @@
                       <input id="launch-qk-norm" type="checkbox">
                     </div>
                     <div>
+                      <label for="launch-parallel-residual">PARALLEL</label>
+                      <input id="launch-parallel-residual" type="checkbox">
+                    </div>
+                    <div>
                       <label for="launch-base-batch-size">BASE BATCH</label>
                       <input id="launch-base-batch-size" type="number" min="1" max="64" value="4">
                     </div>
@@ -736,6 +740,58 @@
                         <option value="mps">MPS</option>
                         <option value="cuda">CUDA</option>
                       </select>
+                    </div>
+                    <div>
+                      <label for="launch-precision">PRECISION</label>
+                      <select id="launch-precision">
+                        <option value="float32">FLOAT32</option>
+                        <option value="bf16">BF16</option>
+                        <option value="fp16">FP16</option>
+                        <option value="auto">AUTO</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label for="launch-matmul-precision">MATMUL</label>
+                      <select id="launch-matmul-precision">
+                        <option value="default">DEFAULT</option>
+                        <option value="highest">HIGHEST</option>
+                        <option value="high">HIGH</option>
+                        <option value="medium">MEDIUM</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label for="launch-attn-backend">ATTN</label>
+                      <select id="launch-attn-backend">
+                        <option value="auto">AUTO</option>
+                        <option value="flash">FLASH</option>
+                        <option value="efficient">EFFICIENT</option>
+                        <option value="math">MATH</option>
+                        <option value="cudnn">CUDNN</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label for="launch-torch-compile">COMPILE</label>
+                      <input id="launch-torch-compile" type="checkbox">
+                    </div>
+                    <div>
+                      <label for="launch-torch-compile-mode">COMPILE MODE</label>
+                      <select id="launch-torch-compile-mode">
+                        <option value="default">DEFAULT</option>
+                        <option value="reduce-overhead">REDUCE OVERHEAD</option>
+                        <option value="max-autotune">MAX AUTOTUNE</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label for="launch-gradient-checkpointing">CHECKPOINT</label>
+                      <input id="launch-gradient-checkpointing" type="checkbox">
+                    </div>
+                    <div>
+                      <label for="launch-auto-lr-scaling">AUTO LR</label>
+                      <input id="launch-auto-lr-scaling" type="checkbox">
+                    </div>
+                    <div>
+                      <label for="launch-loss-spike-rollback">ROLLBACK</label>
+                      <input id="launch-loss-spike-rollback" type="checkbox">
                     </div>
                     <div>
                       <label for="launch-base-early-stop-patience">BASE PATIENCE</label>
