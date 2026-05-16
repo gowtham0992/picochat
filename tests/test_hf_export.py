@@ -67,11 +67,16 @@ def test_export_hf_checkpoint_writes_release_folder(tmp_path):
         assert report["safetensors_error"]
     assert serving_manifest["supports_kv_cache"] is True
     assert serving_manifest["transformers"]["requires_trust_remote_code"] is True
+    assert serving_manifest["transformers"]["supports_padded_attention_mask"] is False
     assert serving_manifest["artifacts"]["dynamic_int8_weights"] == "pytorch_model.dynamic_int8.bin"
+    assert "padded attention masks" in manifest["limitations"][2]
+    assert "padded attention masks" in serving_manifest["limitations"][2]
     assert "token_embedding.weight" in state
     assert (out_dir / "pytorch_model.dynamic_int8.bin").exists()
     assert (out_dir / "configuration_picochat.py").exists()
     assert (out_dir / "modeling_picochat.py").exists()
     assert (out_dir / "tokenization_picochat.py").exists()
+    assert 'model_input_names = ["input_ids"]' in (out_dir / "tokenization_picochat.py").read_text(encoding="utf-8")
     assert "transformers>=4.40" in (out_dir / "requirements.txt").read_text(encoding="utf-8")
     assert "Synthetic unit-test data." in (out_dir / "README.md").read_text(encoding="utf-8")
+    assert "rejects padded attention masks" in (out_dir / "README.md").read_text(encoding="utf-8")

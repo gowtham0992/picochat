@@ -146,6 +146,7 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "limitations": [
             "This is a HF-style release folder for Picochat's custom TinyGPT architecture.",
             "Transformers loading requires trust_remote_code=True and the Picochat package installed.",
+            "The Transformers adapter accepts only unpadded attention masks; batch serving with padding needs a native adapter or uniform-length batches.",
             "vLLM/TGI/llama.cpp still require native adapters or conversion work.",
         ],
     }
@@ -173,10 +174,12 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
             "adapter": config.transformers_adapter,
             "requires_trust_remote_code": config.transformers_adapter,
             "requires_picochat_package": config.transformers_adapter,
+            "supports_padded_attention_mask": False,
         },
         "limitations": [
             "Dynamic int8 weights are for Picochat/PyTorch CPU serving experiments.",
             "Load dynamic int8 by constructing TinyGPT, applying torch dynamic quantization to Linear layers, then loading the quantized state dict.",
+            "The Transformers adapter rejects padded attention masks; use unpadded batches or a serving adapter that implements padding-aware attention.",
             "This export does not create GGUF, TensorRT-LLM, vLLM, or TGI-native artifacts.",
         ],
     }
@@ -453,7 +456,7 @@ from picochat.tokenizer import load_tokenizer
 
 class PicochatTokenizer(PreTrainedTokenizer):
     vocab_files_names = {"tokenizer_file": "tokenizer.json"}
-    model_input_names = ["input_ids", "attention_mask"]
+    model_input_names = ["input_ids"]
 
     def __init__(self, tokenizer_file=None, **kwargs):
         if tokenizer_file is None:
@@ -566,7 +569,9 @@ def _model_card(config: HFExportConfig, model, tokenizer, metadata: dict) -> str
         "",
         "Picochat generation uses KV-cache decoding when the prompt plus requested "
         "completion fits inside the configured context window. See `serving_manifest.json` "
-        "for runtime artifacts and limitations.",
+        "for runtime artifacts and limitations. The Transformers adapter rejects padded "
+        "attention masks, so batch padded serving needs a native adapter before it should "
+        "be presented as production-ready.",
         "",
     ])
 

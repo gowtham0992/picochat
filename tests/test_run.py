@@ -173,8 +173,20 @@ def test_run_tiny_multiseed_aggregates_seed_runs(tmp_path, monkeypatch):
                 "pass_rate_ci": {"low": pass_rate, "high": pass_rate, "confidence": 0.95},
             },
             "sft_fit": {"pass_rate": pass_rate / 2},
-            "base": {"final_val_bpb": 2.0 + pass_rate, "final_val_loss": 3.0 + pass_rate},
-            "sft": {"final_val_bpb": 1.0 + pass_rate, "final_val_loss": 2.0 + pass_rate},
+            "base": {
+                "best_val_bpb": 1.5 + pass_rate,
+                "best_val_loss": 2.5 + pass_rate,
+                "final_val_bpb": 2.0 + pass_rate,
+                "final_val_loss": 3.0 + pass_rate,
+            },
+            "sft": {
+                "best_checkpoint": {
+                    "val_bpb": 0.5 + pass_rate,
+                    "val_loss": 1.5 + pass_rate,
+                },
+                "final_val_bpb": 1.0 + pass_rate,
+                "final_val_loss": 2.0 + pass_rate,
+            },
             "long_run_gate": {"status": "blocked"},
         }
 
@@ -191,6 +203,8 @@ def test_run_tiny_multiseed_aggregates_seed_runs(tmp_path, monkeypatch):
     assert summary["config"]["seeds"] == [42, 43]
     assert summary["aggregate"]["eval_pass_rate"]["mean"] == 0.5
     assert summary["aggregate"]["eval_non_choice_pass_rate"]["mean"] == 0.25
+    assert summary["aggregate"]["base_val_bpb"]["mean"] == 2.0
+    assert summary["aggregate"]["sft_val_bpb"]["mean"] == 1.0
     assert round(summary["aggregate"]["eval_pass_rate"]["std"], 4) == 0.3536
     assert (out_dir / "summary.json").exists()
     assert "Picochat Multi-Seed Tiny Run" in (out_dir / "summary.md").read_text(encoding="utf-8")

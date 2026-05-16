@@ -706,10 +706,10 @@ def _multi_seed_row(summary: dict, *, seed: int, out_dir: Path) -> dict:
         "eval_non_choice_pass_rate_ci": eval_summary.get("non_choice_pass_rate_ci"),
         "sft_fit_rate": _optional_float(sft_fit.get("pass_rate")),
         "sft_fit_rate_ci": sft_fit.get("pass_rate_ci"),
-        "base_val_bpb": _optional_float(base.get("final_val_bpb")),
-        "sft_val_bpb": _optional_float(sft.get("final_val_bpb")),
-        "base_val_loss": _optional_float(base.get("final_val_loss")),
-        "sft_val_loss": _optional_float(sft.get("final_val_loss")),
+        "base_val_bpb": _optional_float(_stage_metric(base, "best_val_bpb", "val_bpb", "final_val_bpb")),
+        "sft_val_bpb": _optional_float(_stage_metric(sft, "best_val_bpb", "val_bpb", "final_val_bpb")),
+        "base_val_loss": _optional_float(_stage_metric(base, "best_val_loss", "val_loss", "final_val_loss")),
+        "sft_val_loss": _optional_float(_stage_metric(sft, "best_val_loss", "val_loss", "final_val_loss")),
         "long_run_gate": summary.get("long_run_gate", {}).get("status"),
     }
 
@@ -788,6 +788,15 @@ def _optional_float(value) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _stage_metric(stage: dict, summary_key: str, checkpoint_key: str, final_key: str):
+    if stage.get(summary_key) is not None:
+        return stage.get(summary_key)
+    checkpoint = stage.get("best_checkpoint") or {}
+    if checkpoint.get(checkpoint_key) is not None:
+        return checkpoint.get(checkpoint_key)
+    return stage.get(final_key)
 
 
 def _format_stat(value) -> str:

@@ -73,10 +73,10 @@ def load_compare_row(run_dir: str | Path) -> CompareRow:
         support_match_rate=_optional_float(eval_summary.get("support_match_rate")),
         prompt_echo_rate=_optional_float(eval_summary.get("prompt_echo_rate")),
         sft_fit_rate=_optional_float(sft_fit_summary.get("pass_rate")),
-        base_val_loss=float(base["final_val_loss"]),
-        sft_val_loss=float(sft["final_val_loss"]),
-        base_val_bpb=_optional_float(base.get("final_val_bpb")),
-        sft_val_bpb=_optional_float(sft.get("final_val_bpb")),
+        base_val_loss=float(_stage_metric(base, "best_val_loss", "val_loss", "final_val_loss")),
+        sft_val_loss=float(_stage_metric(sft, "best_val_loss", "val_loss", "final_val_loss")),
+        base_val_bpb=_optional_float(_stage_metric(base, "best_val_bpb", "val_bpb", "final_val_bpb")),
+        sft_val_bpb=_optional_float(_stage_metric(sft, "best_val_bpb", "val_bpb", "final_val_bpb")),
         base_best_step=_best_step(base),
         sft_best_step=_best_step(sft),
         base_stop_reason=str(base.get("stop_reason") or "unknown"),
@@ -467,6 +467,15 @@ def _optional_int(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _stage_metric(stage: dict, summary_key: str, checkpoint_key: str, final_key: str):
+    if stage.get(summary_key) is not None:
+        return stage.get(summary_key)
+    checkpoint = stage.get("best_checkpoint") or {}
+    if checkpoint.get(checkpoint_key) is not None:
+        return checkpoint.get(checkpoint_key)
+    return stage.get(final_key)
 
 
 def _best_step(stage: dict) -> int | None:

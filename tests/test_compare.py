@@ -13,6 +13,10 @@ def write_summary(
     sft_val=4.0,
     base_bpb=1.5,
     sft_bpb=2.5,
+    base_best_val=None,
+    sft_best_val=None,
+    base_best_bpb=None,
+    sft_best_bpb=None,
     params=1234,
 ):
     path.mkdir()
@@ -22,7 +26,9 @@ def write_summary(
         "base": {
             "final_val_loss": base_val,
             "final_val_bpb": base_bpb,
-            "best_checkpoint": {"step": 10},
+            "best_val_loss": base_best_val,
+            "best_val_bpb": base_best_bpb,
+            "best_checkpoint": {"step": 10, "val_loss": base_best_val, "val_bpb": base_best_bpb},
             "stop_reason": "max_steps",
             "loss_diagnostics": {"status": "stable"},
             "memorization": {"status": "low"},
@@ -31,7 +37,9 @@ def write_summary(
         "sft": {
             "final_val_loss": sft_val,
             "final_val_bpb": sft_bpb,
-            "best_checkpoint": {"step": 20},
+            "best_val_loss": sft_best_val,
+            "best_val_bpb": sft_best_bpb,
+            "best_checkpoint": {"step": 20, "val_loss": sft_best_val, "val_bpb": sft_best_bpb},
             "stop_reason": "early_stop",
             "loss_diagnostics": {"status": "watch-gap"},
             "truncated_examples": 0,
@@ -95,6 +103,30 @@ def test_compare_runs_selects_best_eval_run(tmp_path):
     assert comparison["decision"]["champion_title"] == "Promote as reference"
     assert comparison["decision"]["next_title"] == "Separate compression from behavior"
     assert len(comparison["rows"]) == 2
+
+
+def test_compare_uses_best_checkpoint_metrics_when_available(tmp_path):
+    run_dir = tmp_path / "tiny-best"
+    write_summary(
+        run_dir,
+        passed=3,
+        total=4,
+        base_val=3.0,
+        sft_val=5.0,
+        base_bpb=1.8,
+        sft_bpb=2.8,
+        base_best_val=2.5,
+        sft_best_val=3.5,
+        base_best_bpb=1.3,
+        sft_best_bpb=2.1,
+    )
+
+    row = load_compare_row(run_dir)
+
+    assert row.base_val_loss == 2.5
+    assert row.sft_val_loss == 3.5
+    assert row.base_val_bpb == 1.3
+    assert row.sft_val_bpb == 2.1
 
 
 def test_comparison_table_and_markdown_include_metrics(tmp_path):
