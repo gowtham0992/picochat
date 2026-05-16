@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 import time
 from typing import Any, Callable
@@ -45,6 +46,7 @@ def run_preh100_sanity(config: PreH100SanityConfig) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     for name, check in [
         ("attention_backend", _check_attention_backend),
+        ("modern_init_loss", _check_modern_init_loss),
         ("precision_backward", _check_precision_backward),
         ("kv_cache_equivalence", _check_kv_cache_equivalence),
         ("resume_fingerprint_guard", _check_resume_fingerprint_guard),
@@ -162,6 +164,50 @@ def _check_attention_backend(config: PreH100SanityConfig, work_dir: Path) -> dic
     return {
         "detail": f"attn_backend={config.attn_backend}, device={device.type}",
         "attn_backend": config.attn_backend,
+    }
+
+
+def _check_modern_init_loss(config: PreH100SanityConfig, work_dir: Path) -> dict[str, Any]:
+    work_dir.mkdir(parents=True, exist_ok=True)
+    torch.manual_seed(123)
+    device = resolve_device(config.device)
+    runtime = resolve_precision(config.precision, device)
+    model_config = GPTConfig(
+        vocab_size=2048,
+        context_size=16,
+        n_embd=128,
+        n_head=8,
+        n_kv_head=2,
+        n_layer=2,
+        norm_type="rmsnorm",
+        position_encoding="rope",
+        activation="swiglu",
+        tie_embeddings=True,
+        qk_norm=True,
+        parallel_residual=True,
+        attn_backend=config.attn_backend,
+    )
+    model = TinyGPT(model_config).to(device)
+    x = torch.randint(0, model_config.vocab_size, (2, model_config.context_size), device=device)
+    y = torch.randint(0, model_config.vocab_size, (2, model_config.context_size), device=device)
+    with torch.no_grad(), autocast_context(runtime):
+        _, loss = model(x, y)
+    if loss is None or not torch.isfinite(loss):
+        raise AssertionError("modern initialized loss is not finite")
+    loss_value = float(loss.detach().cpu())
+    expected = math.log(model_config.vocab_size)
+    if abs(loss_value - expected) > 2.0:
+        raise AssertionError(
+            f"modern initialized loss {loss_value:.4f} is too far from log(vocab) {expected:.4f}"
+        )
+    embedding_std = float(model.token_embedding.weight.detach().float().std().cpu())
+    if embedding_std > model_config.initializer_range * 2:
+        raise AssertionError(f"embedding init std is too large: {embedding_std:.4f}")
+    return {
+        "detail": f"loss={loss_value:.4f}, log_vocab={expected:.4f}, emb_std={embedding_std:.4f}",
+        "loss": loss_value,
+        "log_vocab": expected,
+        "embedding_std": embedding_std,
     }
 
 
