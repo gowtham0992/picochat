@@ -347,6 +347,20 @@ def _bestfit_pack_examples(
     return packs
 
 
+def _bestfit_pack_examples_by_category(
+    examples: list[TokenizedChatExample],
+    *,
+    max_ids: int,
+) -> list[list[TokenizedChatExample]]:
+    categories: dict[str, list[TokenizedChatExample]] = {}
+    for example in examples:
+        categories.setdefault(example.category, []).append(example)
+    packs: list[list[TokenizedChatExample]] = []
+    for category_examples in categories.values():
+        packs.extend(_bestfit_pack_examples(category_examples, max_ids=max_ids))
+    return packs
+
+
 class PackedChatSFTDataset(torch.utils.data.Dataset):
     """Best-fit packed chat sequences with assistant-only loss masking."""
 
@@ -374,7 +388,7 @@ class PackedChatSFTDataset(torch.utils.data.Dataset):
         packed_tokens = 0
         mixed_category_sequences = 0
 
-        for pack in _bestfit_pack_examples(self.examples, max_ids=context_size + 1):
+        for pack in _bestfit_pack_examples_by_category(self.examples, max_ids=context_size + 1):
             x, labels, row_stats = _packed_row(pack, tokenizer, context_size)
             categories = [example.category for example in pack]
             groups = {example.group for example in pack if example.group is not None}

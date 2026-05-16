@@ -110,6 +110,36 @@ def test_packed_chat_sft_dataset_bestfit_packs_examples():
     assert packed.stats().supervised_tokens == source.stats().supervised_tokens
 
 
+def test_packed_chat_sft_dataset_preserves_category_sampling_keys():
+    tokenizer = CharTokenizer.train([
+        "User: a\nAssistant: x\n"
+        "User: b\nAssistant: y\n"
+        "User: c\nAssistant: z\n"
+        "User: d\nAssistant: w\n"
+    ])
+    source = ChatSFTDataset(
+        [
+            ChatExample(user="a", assistant="x", category="math"),
+            ChatExample(user="b", assistant="y", category="math"),
+            ChatExample(user="c", assistant="z", category="spelling"),
+            ChatExample(user="d", assistant="w", category="spelling"),
+        ],
+        tokenizer=tokenizer,
+        context_size=48,
+    )
+    packed = PackedChatSFTDataset(
+        [source.tokenized_example(index) for index in range(len(source))],
+        tokenizer=tokenizer,
+        context_size=48,
+    )
+
+    packed_categories = {packed.category_key(index) for index in range(len(packed))}
+
+    assert packed_categories == {"math", "spelling"}
+    assert packed.stats().mixed_category_sequences == 0
+    assert category_sqrt_weights(packed).numel() == len(packed)
+
+
 def test_split_chat_dataset_keeps_groups_out_of_both_sides():
     tokenizer = CharTokenizer.train([
         "User: a\nAssistant: one\n"
