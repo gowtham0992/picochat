@@ -18,6 +18,9 @@ _SDPA_BACKEND_NAMES = {
     "math": "MATH",
     "cudnn": "CUDNN_ATTENTION",
 }
+_SDPA_SUPPORTS_ENABLE_GQA = "enable_gqa" in (
+    getattr(F.scaled_dot_product_attention, "__doc__", "") or ""
+)
 
 
 @dataclass(frozen=True)
@@ -146,7 +149,8 @@ class CausalSelfAttention(nn.Module):
             k = torch.cat((past_k, k), dim=-2)
             v = torch.cat((past_v, v), dim=-2)
         cache_k, cache_v = k, v
-        if self.n_kv_head != self.n_head:
+        use_native_gqa = self.n_kv_head != self.n_head and _SDPA_SUPPORTS_ENABLE_GQA
+        if self.n_kv_head != self.n_head and not use_native_gqa:
             k = _repeat_kv(k, self.n_head // self.n_kv_head)
             v = _repeat_kv(v, self.n_head // self.n_kv_head)
 
@@ -168,6 +172,8 @@ class CausalSelfAttention(nn.Module):
             "dropout_p": self.dropout.p if self.training else 0.0,
             "is_causal": is_causal,
         }
+        if use_native_gqa:
+            sdpa_kwargs["enable_gqa"] = True
         if attn_mask is not None:
             sdpa_kwargs["attn_mask"] = attn_mask
 

@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import pytest
 import torch
 
+import picochat.model as model_module
 from picochat.model import GPTConfig, RMSNorm, TinyGPT, sdpa_backend_context
 
 
@@ -237,6 +238,75 @@ def test_model_supports_grouped_query_attention_cache():
         config.n_embd // config.n_head
     )
     assert past_kv[0][0].shape == (2, 1, 3, config.n_embd // config.n_head)
+
+
+def test_grouped_query_attention_uses_native_sdpa_gqa_when_available(monkeypatch):
+    if not model_module._SDPA_SUPPORTS_ENABLE_GQA:
+        pytest.skip("PyTorch build does not expose native SDPA GQA")
+    calls = []
+
+    def fake_sdpa(q, k, v, **kwargs):
+        calls.append({
+            "q_shape": tuple(q.shape),
+            "k_shape": tuple(k.shape),
+            "enable_gqa": kwargs.get("enable_gqa"),
+        })
+        return torch.zeros_like(q)
+
+    monkeypatch.setattr(torch.nn.functional, "scaled_dot_product_attention", fake_sdpa)
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_kv_head=1,
+        n_layer=1,
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    logits, _ = model(x)
+
+    assert logits.shape == (2, config.context_size, config.vocab_size)
+    assert calls == [{
+        "q_shape": (2, 4, 8, 4),
+        "k_shape": (2, 1, 8, 4),
+        "enable_gqa": True,
+    }]
+
+
+def test_grouped_query_attention_repeats_kv_when_native_gqa_is_unavailable(monkeypatch):
+    calls = []
+
+    def fake_sdpa(q, k, v, **kwargs):
+        calls.append({
+            "q_shape": tuple(q.shape),
+            "k_shape": tuple(k.shape),
+            "enable_gqa": kwargs.get("enable_gqa"),
+        })
+        return torch.zeros_like(q)
+
+    monkeypatch.setattr(model_module, "_SDPA_SUPPORTS_ENABLE_GQA", False)
+    monkeypatch.setattr(torch.nn.functional, "scaled_dot_product_attention", fake_sdpa)
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_kv_head=1,
+        n_layer=1,
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    logits, _ = model(x)
+
+    assert logits.shape == (2, config.context_size, config.vocab_size)
+    assert calls == [{
+        "q_shape": (2, 4, 8, 4),
+        "k_shape": (2, 4, 8, 4),
+        "enable_gqa": None,
+    }]
 
 
 def test_model_supports_parallel_residual_blocks():
