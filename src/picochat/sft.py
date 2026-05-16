@@ -78,12 +78,14 @@ class TokenizedChatExample:
 
 @dataclass(frozen=True)
 class ChatDatasetStats:
+    source_rows: int
     num_examples: int
     context_size: int
     supervised_tokens: int
     masked_prompt_tokens: int
     truncated_examples: int
     skipped_long_examples: int
+    skipped_long_category_counts: dict[str, int]
     num_groups: int
     category_counts: dict[str, int]
     packing: str = "separate"
@@ -165,7 +167,8 @@ class ChatSFTDataset(torch.utils.data.Dataset):
             raise ValueError("context_size must be at least 2")
 
         self.context_size = context_size
-        self.examples, skipped_long_examples = _tokenize_chat_examples(
+        source_rows = len(examples)
+        self.examples, skipped_long_examples, skipped_long_category_counts = _tokenize_chat_examples(
             examples,
             tokenizer=tokenizer,
             context_size=context_size,
@@ -196,12 +199,14 @@ class ChatSFTDataset(torch.utils.data.Dataset):
 
         explicit_groups = {group for group in self.groups if group is not None}
         self._stats = ChatDatasetStats(
+            source_rows=source_rows,
             num_examples=len(self.examples),
             context_size=context_size,
             supervised_tokens=supervised_tokens,
             masked_prompt_tokens=masked_prompt_tokens,
             truncated_examples=0,
             skipped_long_examples=skipped_long_examples,
+            skipped_long_category_counts=skipped_long_category_counts,
             num_groups=len(explicit_groups),
             category_counts=dict(sorted(Counter(self.categories).items())),
             packing="separate",
@@ -246,9 +251,10 @@ def _tokenize_chat_examples(
     *,
     tokenizer: Tokenizer,
     context_size: int,
-) -> tuple[list[TokenizedChatExample], int]:
+) -> tuple[list[TokenizedChatExample], int, dict[str, int]]:
     tokenized: list[TokenizedChatExample] = []
     skipped_long_examples = 0
+    skipped_long_categories: Counter[str] = Counter()
     max_ids = context_size + 1
     for example in examples:
         prompt = render_chat_prompt([], example.user)
@@ -256,6 +262,7 @@ def _tokenize_chat_examples(
         answer_ids = tokenizer.encode(example.assistant, add_eos=True)
         if len(prompt_ids) + len(answer_ids) > max_ids:
             skipped_long_examples += 1
+            skipped_long_categories[example.category] += 1
             continue
         full_ids = prompt_ids + answer_ids
         if len(full_ids) < 2 or not answer_ids:
@@ -266,7 +273,7 @@ def _tokenize_chat_examples(
             category=example.category,
             group=example.group,
         ))
-    return tokenized, skipped_long_examples
+    return tokenized, skipped_long_examples, dict(sorted(skipped_long_categories.items()))
 
 
 def _packed_row(
@@ -410,12 +417,14 @@ class PackedChatSFTDataset(torch.utils.data.Dataset):
 
         explicit_groups = {group for group in self.groups if group is not None}
         self._stats = ChatDatasetStats(
+            source_rows=len(self.examples),
             num_examples=len(self.examples),
             context_size=context_size,
             supervised_tokens=supervised_tokens,
             masked_prompt_tokens=masked_prompt_tokens,
             truncated_examples=0,
             skipped_long_examples=0,
+            skipped_long_category_counts={},
             num_groups=len(explicit_groups),
             category_counts=dict(sorted(Counter(example.category for example in self.examples).items())),
             packing="bos_bestfit",
@@ -675,6 +684,52 @@ def category_counts(dataset) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+def label_audit(dataset) -> dict:
+    """Summarize SFT label coverage for a dataset or subset.
+
+    This is a guard against silent assistant-mask failures. Every trainable
+    sequence should contain at least one non-ignored label.
+    """
+    sequences = len(dataset)
+    total_positions = 0
+    supervised_tokens = 0
+    zero_supervised_sequences = 0
+    active_counts: list[int] = []
+    category_sequences: Counter[str] = Counter()
+    category_supervised: Counter[str] = Counter()
+    category_zero_sequences: Counter[str] = Counter()
+    for index in range(sequences):
+        _, labels = dataset[index]
+        if not isinstance(labels, torch.Tensor):
+            labels = torch.tensor(labels)
+        active = int((labels != -100).sum().item())
+        total = int(labels.numel())
+        category = _category_key(dataset, index)
+        total_positions += total
+        supervised_tokens += active
+        active_counts.append(active)
+        category_sequences[category] += 1
+        category_supervised[category] += active
+        if active == 0:
+            zero_supervised_sequences += 1
+            category_zero_sequences[category] += 1
+    ignored_tokens = total_positions - supervised_tokens
+    return {
+        "sequences": sequences,
+        "total_label_positions": total_positions,
+        "supervised_tokens": supervised_tokens,
+        "ignored_tokens": ignored_tokens,
+        "active_label_fraction": _safe_ratio(supervised_tokens, total_positions) or 0.0,
+        "zero_supervised_sequences": zero_supervised_sequences,
+        "min_supervised_tokens_per_sequence": min(active_counts) if active_counts else 0,
+        "max_supervised_tokens_per_sequence": max(active_counts) if active_counts else 0,
+        "avg_supervised_tokens_per_sequence": _safe_ratio(supervised_tokens, sequences) or 0.0,
+        "category_sequences": dict(sorted(category_sequences.items())),
+        "category_supervised_tokens": dict(sorted(category_supervised.items())),
+        "category_zero_supervised_sequences": dict(sorted(category_zero_sequences.items())),
+    }
+
+
 def _category_key(dataset, index: int) -> str:
     if isinstance(dataset, torch.utils.data.Subset):
         return _category_key(dataset.dataset, dataset.indices[index])
@@ -766,6 +821,17 @@ def train_sft(config: SFTConfig) -> dict:
         dataset = source_dataset
         train_dataset = split.train
         val_dataset = split.val
+    label_audit_report = {
+        "full": label_audit(dataset),
+        "train": label_audit(train_dataset),
+        "validation": label_audit(val_dataset),
+        "skipped_long_examples": source_dataset.stats().skipped_long_examples,
+        "skipped_long_category_counts": source_dataset.stats().skipped_long_category_counts,
+    }
+    if label_audit_report["train"]["zero_supervised_sequences"]:
+        raise ValueError("SFT train split contains sequences with no supervised assistant labels")
+    if label_audit_report["validation"]["zero_supervised_sequences"]:
+        raise ValueError("SFT validation split contains sequences with no supervised assistant labels")
     train_weights = None
     if config.sampling == "category_balanced":
         train_weights = category_balanced_weights(train_dataset)
@@ -1237,7 +1303,9 @@ def train_sft(config: SFTConfig) -> dict:
         },
         "dataset": {
             **dataset.stats().__dict__,
+            "source_rows": source_dataset.stats().source_rows,
             "skipped_long_examples": source_dataset.stats().skipped_long_examples,
+            "skipped_long_category_counts": source_dataset.stats().skipped_long_category_counts,
             "truncated_examples": source_dataset.stats().truncated_examples,
             "num_groups": source_dataset.stats().num_groups,
             "train_examples": train_source_examples,
@@ -1282,6 +1350,7 @@ def train_sft(config: SFTConfig) -> dict:
         "losses": losses,
         "loss_diagnostics": loss_diagnostics(losses),
         "optimization_stability": optimization_stability(losses, config.grad_clip),
+        "label_audit": label_audit_report,
         "throughput": _throughput_summary(losses),
         "rollback_events": rollback_events,
         "sample": sample,
@@ -1293,6 +1362,10 @@ def train_sft(config: SFTConfig) -> dict:
     }
     if main_process:
         (out_dir / "sft_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        (out_dir / "sft_label_audit.json").write_text(
+            json.dumps(label_audit_report, indent=2),
+            encoding="utf-8",
+        )
         (out_dir / "report.md").write_text(sft_report_markdown(report), encoding="utf-8")
         (out_dir / "sample.txt").write_text(sample, encoding="utf-8")
     barrier_if_distributed(ddp_metadata)

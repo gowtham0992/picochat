@@ -408,6 +408,34 @@ def sft_report_markdown(report: dict) -> str:
         lines.append(f"- Validation categories: {_format_counts(dataset['val_category_counts'])}")
     lines.append("")
 
+    label_audit = report.get("label_audit") or {}
+    if label_audit:
+        lines.append("## SFT Label Audit")
+        lines.append("")
+        lines.append(
+            "This checks the actual training labels after assistant-only masking. "
+            "A healthy SFT run has non-zero supervised labels in every train and validation sequence."
+        )
+        lines.append("")
+        lines.append("| Split | Sequences | Supervised Tokens | Active Labels | Zero-Supervised Sequences | Avg Supervised/Seq |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+        for split_name in ("full", "train", "validation"):
+            audit = label_audit.get(split_name) or {}
+            lines.append(
+                f"| `{split_name}` | {audit.get('sequences', 0)} | "
+                f"{audit.get('supervised_tokens', 0)} | "
+                f"{format_float(float(audit.get('active_label_fraction', 0.0)) * 100)}% | "
+                f"{audit.get('zero_supervised_sequences', 0)} | "
+                f"{format_float(float(audit.get('avg_supervised_tokens_per_sequence', 0.0)))} |"
+            )
+        if label_audit.get("skipped_long_examples"):
+            lines.append("")
+            lines.append(f"- Skipped too-long source rows: {label_audit.get('skipped_long_examples')}")
+            skipped_counts = label_audit.get("skipped_long_category_counts") or {}
+            if skipped_counts:
+                lines.append(f"- Skipped too-long categories: {_format_counts(skipped_counts)}")
+        lines.append("")
+
     lines.append("## Base Checkpoint")
     lines.append("")
     lines.append(f"- Path: `{base_checkpoint['path']}`")
@@ -567,6 +595,8 @@ def sft_report_markdown(report: dict) -> str:
             f"bpb {format_optional_float(best_checkpoint.get('val_bpb'))})"
         )
     lines.append("- Machine-readable report: `sft_report.json`")
+    if report.get("label_audit"):
+        lines.append("- SFT label audit: `sft_label_audit.json`")
     lines.append("- Generated sample: `sample.txt`")
     lines.append("")
 

@@ -72,6 +72,7 @@ def test_chat_sft_dataset_skips_rows_that_do_not_fit_context():
     assert len(dataset) == 1
     assert dataset.stats().truncated_examples == 0
     assert dataset.stats().skipped_long_examples == 1
+    assert dataset.stats().skipped_long_category_counts == {"chat": 1}
     assert dataset.stats().supervised_tokens > 0
 
 
@@ -259,6 +260,7 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert (out_dir / "checkpoint" / "metadata.json").exists()
     assert (out_dir / "best_checkpoint" / "model.pt").exists()
     assert (out_dir / "sft_report.json").exists()
+    assert (out_dir / "sft_label_audit.json").exists()
     assert (out_dir / "report.md").exists()
     assert (out_dir / "sample.txt").exists()
     assert report["dataset"]["num_examples"] == 2
@@ -279,11 +281,16 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert report["dataset"]["packed_sequences"] <= 2
     assert report["dataset"]["padded_tokens"] >= 0
     assert report["dataset"]["category_counts"] == {"chat": 2}
+    assert report["label_audit"]["full"]["zero_supervised_sequences"] == 0
+    assert report["label_audit"]["train"]["active_label_fraction"] > 0
+    audit = json.loads((out_dir / "sft_label_audit.json").read_text(encoding="utf-8"))
+    assert audit["validation"]["zero_supervised_sequences"] == 0
     report_text = (out_dir / "report.md").read_text(encoding="utf-8")
     assert "Loss Diagnostics" in report_text
     assert "Best validation checkpoint" in report_text
     assert "SFT sampling" in report_text
     assert "Packing" in report_text
+    assert "SFT Label Audit" in report_text
 
 
 def test_train_sft_can_resume_from_training_state(tmp_path):

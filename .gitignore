@@ -33,6 +33,8 @@ checkpoints/
 *.pth
 *.safetensors
 *.onnx
+*.tgz
+*.tar.gz
 
 # Local scratch dataset packs
 my_pack/
