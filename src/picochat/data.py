@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass
 from fnmatch import fnmatch
 import json
 from pathlib import Path
+import re
+import zlib
 
 from picochat.dataset_pack import DatasetPack, load_dataset_pack
 from picochat.tuning_data import (
@@ -34,6 +36,13 @@ SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | DOCUMENT_EXTENSIONS
 DEFAULT_CHAT_INPUT = "examples/tiny_chat.jsonl"
 DEFAULT_EVAL_INPUT = "examples/tiny_eval.jsonl"
 DEFAULT_CORPUS_INPUT = "examples/tiny_corpus.txt"
+NEAR_DUPLICATE_THRESHOLD = 0.82
+NEAR_DUPLICATE_MAX_DOCUMENTS = 50_000
+NEAR_DUPLICATE_MAX_TOKENS = 768
+NEAR_DUPLICATE_SIGNATURE_SIZE = 32
+NEAR_DUPLICATE_BAND_SIZE = 4
+NEAR_DUPLICATE_BUCKET_LIMIT = 64
+_NEAR_DUPLICATE_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 class DocumentExtractionError(RuntimeError):
@@ -55,6 +64,9 @@ class CorpusStats:
     duplicate_line_rate: float
     non_ascii_rate: float
     empty_line_rate: float
+    near_duplicate_document_rate: float = 0.0
+    near_duplicate_document_pairs: int = 0
+    near_duplicate_documents_checked: int = 0
 
     def to_dict(self) -> dict[str, float | int]:
         return asdict(self)
@@ -321,6 +333,9 @@ def inspect_documents(documents: list[str], num_files: int | None = None) -> Cor
             duplicate_line_rate=0.0,
             non_ascii_rate=0.0,
             empty_line_rate=0.0,
+            near_duplicate_document_rate=0.0,
+            near_duplicate_document_pairs=0,
+            near_duplicate_documents_checked=0,
         )
 
     all_text = "\n".join(documents)
@@ -331,6 +346,9 @@ def inspect_documents(documents: list[str], num_files: int | None = None) -> Cor
     duplicate_documents = len(normalized_documents) - len(set(normalized_documents))
     non_ascii_chars = sum(1 for char in all_text if ord(char) > 127)
     empty_lines = sum(1 for line in lines if not line.strip())
+    near_duplicate_rate, near_duplicate_pairs, near_duplicate_checked = (
+        _near_duplicate_document_stats(documents)
+    )
 
     return CorpusStats(
         num_files=num_files if num_files is not None else len(documents),
@@ -342,6 +360,9 @@ def inspect_documents(documents: list[str], num_files: int | None = None) -> Cor
         duplicate_line_rate=duplicate_lines / max(1, len(non_empty_lines)),
         non_ascii_rate=non_ascii_chars / max(1, len(all_text)),
         empty_line_rate=empty_lines / max(1, len(lines)),
+        near_duplicate_document_rate=near_duplicate_rate,
+        near_duplicate_document_pairs=near_duplicate_pairs,
+        near_duplicate_documents_checked=near_duplicate_checked,
     )
 
 
@@ -353,6 +374,70 @@ def inspect_path(path: str | Path) -> CorpusStats:
 
 def _normalize_document_for_duplicate_check(text: str) -> str:
     return " ".join(text.lower().split())
+
+
+def _near_duplicate_document_stats(documents: list[str]) -> tuple[float, int, int]:
+    """Estimate near-duplicate document rate with deterministic bottom-k MinHash LSH."""
+    if len(documents) < 2:
+        return 0.0, 0, len(documents)
+
+    selected_indices = _evenly_spaced_indices(len(documents), NEAR_DUPLICATE_MAX_DOCUMENTS)
+    signatures: list[frozenset[int]] = []
+    buckets: dict[tuple[int, tuple[int, ...]], list[int]] = {}
+    near_duplicate_docs: set[int] = set()
+    near_duplicate_pairs = 0
+    seen_pairs: set[tuple[int, int]] = set()
+
+    for selected_position, doc_index in enumerate(selected_indices):
+        signature = _document_minhash_signature(documents[doc_index])
+        signatures.append(signature)
+        if len(signature) < NEAR_DUPLICATE_BAND_SIZE * 2:
+            continue
+        ordered = tuple(sorted(signature))
+        for band_start in range(0, len(ordered), NEAR_DUPLICATE_BAND_SIZE):
+            band = ordered[band_start:band_start + NEAR_DUPLICATE_BAND_SIZE]
+            if len(band) < NEAR_DUPLICATE_BAND_SIZE:
+                continue
+            bucket_key = (band_start, band)
+            bucket = buckets.setdefault(bucket_key, [])
+            for other_position in bucket[-NEAR_DUPLICATE_BUCKET_LIMIT:]:
+                pair = (other_position, selected_position)
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                if _signature_jaccard(signatures[other_position], signature) >= NEAR_DUPLICATE_THRESHOLD:
+                    near_duplicate_pairs += 1
+                    near_duplicate_docs.add(other_position)
+                    near_duplicate_docs.add(selected_position)
+            bucket.append(selected_position)
+
+    checked = len(selected_indices)
+    return len(near_duplicate_docs) / max(1, checked), near_duplicate_pairs, checked
+
+
+def _evenly_spaced_indices(total: int, limit: int) -> list[int]:
+    if total <= limit:
+        return list(range(total))
+    return sorted({round(index * (total - 1) / (limit - 1)) for index in range(limit)})
+
+
+def _document_minhash_signature(text: str) -> frozenset[int]:
+    tokens = _NEAR_DUPLICATE_TOKEN_RE.findall(text.lower())[:NEAR_DUPLICATE_MAX_TOKENS]
+    if len(tokens) < 5:
+        return frozenset()
+    hashes = {
+        zlib.crc32(" ".join(tokens[index:index + 5]).encode("utf-8"))
+        for index in range(len(tokens) - 4)
+    }
+    if len(hashes) <= NEAR_DUPLICATE_SIGNATURE_SIZE:
+        return frozenset(hashes)
+    return frozenset(sorted(hashes)[:NEAR_DUPLICATE_SIGNATURE_SIZE])
+
+
+def _signature_jaccard(left: frozenset[int], right: frozenset[int]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
 
 
 def assess_corpus_readiness(
@@ -396,6 +481,14 @@ def assess_corpus_readiness(
             f"{stats.duplicate_line_rate * 100:.2f}%",
             "<= 15%",
             "Repeated lines can make a tiny model memorize phrasing instead of learning patterns.",
+        ),
+        _readiness_check(
+            "near_duplicate_documents",
+            "warn" if stats.near_duplicate_document_rate > 0.05 else "pass",
+            f"{stats.near_duplicate_document_rate * 100:.2f}% over "
+            f"{stats.near_duplicate_documents_checked:,} checked",
+            "<= 5%",
+            "Near-duplicate sources reduce effective data diversity even when exact dedup looks clean.",
         ),
         _readiness_check(
             "empty_lines",
@@ -738,6 +831,9 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         f"- Characters: {stats.num_characters:,}",
         f"- Lines: {stats.num_lines:,}",
         f"- Duplicate document rate: {stats.duplicate_document_rate * 100:.2f}%",
+        f"- Near-duplicate document rate: {stats.near_duplicate_document_rate * 100:.2f}% "
+        f"({stats.near_duplicate_document_pairs:,} pair(s), "
+        f"{stats.near_duplicate_documents_checked:,} checked)",
         f"- Duplicate line rate: {stats.duplicate_line_rate * 100:.2f}%",
         f"- Empty line rate: {stats.empty_line_rate * 100:.2f}%",
         f"- Non-ASCII rate: {stats.non_ascii_rate * 100:.2f}%",
@@ -1258,6 +1354,8 @@ def _corpus_warnings(stats: CorpusStats, records: list[CorpusFileRecord]) -> lis
         warnings.append("Duplicate line rate is high; repeated text can encourage memorization.")
     if stats.duplicate_document_rate > 0.05:
         warnings.append("Duplicate document rate is high; deduplicate sources before a serious run.")
+    if stats.near_duplicate_document_rate > 0.05:
+        warnings.append("Near-duplicate document rate is high; add dedup or sampling before scaling.")
     if stats.empty_line_rate > 0.35:
         warnings.append("Empty line rate is high; context windows may be wasted.")
     if stats.non_ascii_rate > 0.05:

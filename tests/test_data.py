@@ -5,6 +5,7 @@ from picochat.data import (
     build_corpus,
     build_corpus_artifacts,
     find_text_files,
+    inspect_documents,
     inspect_path,
     preview_corpus_sources,
     read_documents,
@@ -46,6 +47,19 @@ def test_inspect_path_tracks_duplicate_documents(tmp_path):
 
     assert stats.num_documents == 3
     assert round(stats.duplicate_document_rate, 2) == 0.33
+
+
+def test_inspect_documents_tracks_near_duplicate_documents():
+    template = " ".join(f"token{index}" for index in range(120))
+    near_copy = template.replace("token55", "replacement55")
+    unrelated = " ".join(f"other{index}" for index in range(120))
+
+    stats = inspect_documents([template, near_copy, unrelated])
+
+    assert stats.duplicate_document_rate == 0
+    assert stats.near_duplicate_document_pairs >= 1
+    assert stats.near_duplicate_document_rate > 0
+    assert stats.near_duplicate_documents_checked == 3
 
 
 def test_build_corpus_combines_documents(tmp_path):

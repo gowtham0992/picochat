@@ -264,6 +264,14 @@ def _data_source_checks(
             "Duplicate documents inflate apparent progress and can leak eval-like text.",
         ),
         _check(
+            "near_duplicate_documents",
+            "block" if long_run and stats.near_duplicate_document_rate > 0.15 else "warn" if stats.near_duplicate_document_rate > 0.05 else "pass",
+            f"{_percent(stats.near_duplicate_document_rate)} over "
+            f"{stats.near_duplicate_documents_checked:,} checked",
+            "<= 5% preferred",
+            "Near-duplicate documents shrink effective data diversity even when exact document hashes look clean.",
+        ),
+        _check(
             "duplicate_lines",
             "block" if long_run and stats.duplicate_line_rate > 0.30 else "warn" if stats.duplicate_line_rate > 0.15 else "pass",
             _percent(stats.duplicate_line_rate),
