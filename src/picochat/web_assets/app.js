@@ -3869,11 +3869,15 @@ function seedScaleFromLauncher() {
 function scaleConfig() {
   const datasetPack = $("scale-dataset-pack")?.value.trim() || state.hfImport?.dataset_pack || $("launch-pack-path")?.value.trim() || "";
   const runName = $("scale-run-name")?.value.trim() || $("launch-run-name")?.value.trim() || suggestedRunName(datasetPack || "climbmix");
+  const preset = $("scale-preset")?.value || "h100-pilot";
   return {
     dataset_pack: datasetPack,
     run_name: runName,
-    preset: $("scale-preset")?.value || "h100-pilot",
+    preset,
     device: $("scale-device")?.value || "auto",
+    long_run_gate_profile: preset === "h100-pilot"
+      ? "first_release"
+      : $("launch-long-run-gate-profile")?.value || "research",
     shards: boundedScaleNumber("scale-climbmix-shards", 1, 1, 6543),
     max_rows: boundedScaleNumber("scale-max-rows", 1000, 1, 1000000),
   };
@@ -3918,7 +3922,7 @@ function renderScalePlan() {
     <span>${escapeHtml(blockers.join(" | ") || `${config.preset} | ${config.device.toUpperCase()} | ${config.dataset_pack}${localProofNote}`)}</span>
   `;
 
-  const mpsCommand = shellCommand([
+  const mpsParts = [
     "PYTHONPATH=src",
     "python",
     "-m",
@@ -3933,7 +3937,11 @@ function renderScalePlan() {
     localProofPreset,
     "--device",
     config.device === "cuda" ? "auto" : config.device,
-  ]);
+  ];
+  if (config.long_run_gate_profile === "first_release") {
+    mpsParts.push("--long-run-gate-profile", "first_release");
+  }
+  const mpsCommand = shellCommand(mpsParts);
   const colabSetup = [
     `!git clone ${PICOCHAT_REPO_URL}`,
     "%cd picochat",
@@ -3954,7 +3962,28 @@ function renderScalePlan() {
     config.max_rows,
     "--force",
   ])}`;
-  const colabRun = `!${shellCommand([
+  const colabBenchmark = `!${shellCommand([
+    "PYTHONPATH=src",
+    "python",
+    "-m",
+    "picochat.cli",
+    "data",
+    "benchmark-pack",
+    "--dataset-pack",
+    "runs/climbmix-colab/dataset_pack.json",
+    "--sft-rows",
+    1600,
+    "--eval-rows",
+    320,
+    "--profile",
+    "release_behavior",
+    "--skill-answer-style",
+    "direct",
+    "--source",
+    "offline",
+    "--force",
+  ])}`;
+  const colabRunParts = [
     "PYTHONPATH=src",
     "python",
     "-m",
@@ -3969,7 +3998,11 @@ function renderScalePlan() {
     config.preset,
     "--device",
     "cuda",
-  ])}`;
+  ];
+  if (config.long_run_gate_profile === "first_release") {
+    colabRunParts.push("--long-run-gate-profile", "first_release");
+  }
+  const colabRun = `!${shellCommand(colabRunParts)}`;
   const colabReturn = [
     `!zip -r /content/${config.run_name}.zip runs/${config.run_name}`,
     `# Download ${config.run_name}.zip from Colab, unzip it on this Mac, then paste the unzipped run folder below.`,
@@ -3981,6 +4014,7 @@ function renderScalePlan() {
   );
   renderScaleCommand("scale-colab-setup-command", "COLAB SETUP", colabSetup);
   renderScaleCommand("scale-colab-import-command", "COLAB CLIMBMIX IMPORT", colabImport);
+  renderScaleCommand("scale-colab-benchmark-command", "COLAB RELEASE BEHAVIOR PACK", colabBenchmark);
   renderScaleCommand("scale-colab-run-command", "COLAB TRAIN", colabRun);
   renderScaleCommand("scale-colab-return-command", "COLAB RETURN", colabReturn);
 }
