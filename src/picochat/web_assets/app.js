@@ -89,6 +89,9 @@ const LAUNCH_CONTROL_IDS = [
   "launch-base-grad-clip",
   "launch-sft-grad-clip",
   "launch-base-grad-accum-steps",
+  "launch-base-dataset-mode",
+  "launch-base-shard-token-size",
+  "launch-base-shard-cache-size",
   "launch-sft-grad-accum-steps",
   "launch-base-optimizer",
   "launch-sft-optimizer",
@@ -3355,6 +3358,9 @@ function applyLaunchPreset(quiet = false) {
   $("launch-base-grad-clip").value = values.base_grad_clip;
   $("launch-sft-grad-clip").value = values.sft_grad_clip;
   $("launch-base-grad-accum-steps").value = values.base_grad_accum_steps || 1;
+  $("launch-base-dataset-mode").value = values.base_dataset_mode || "memory";
+  $("launch-base-shard-token-size").value = values.base_shard_token_size || 1000000;
+  $("launch-base-shard-cache-size").value = values.base_shard_cache_size || 2;
   $("launch-sft-grad-accum-steps").value = values.sft_grad_accum_steps || 1;
   $("launch-base-optimizer").value = values.base_optimizer || "adamw";
   $("launch-sft-optimizer").value = values.sft_optimizer || "adamw";
@@ -3444,6 +3450,9 @@ function launchConfig() {
     base_grad_clip: launchNumber("launch-base-grad-clip"),
     sft_grad_clip: launchNumber("launch-sft-grad-clip"),
     base_grad_accum_steps: boundedNumberInput("launch-base-grad-accum-steps", 1, 1, 128),
+    base_dataset_mode: $("launch-base-dataset-mode").value,
+    base_shard_token_size: boundedNumberInput("launch-base-shard-token-size", 1000000, 1000, 50000000),
+    base_shard_cache_size: boundedNumberInput("launch-base-shard-cache-size", 2, 1, 16),
     sft_grad_accum_steps: boundedNumberInput("launch-sft-grad-accum-steps", 1, 1, 128),
     base_optimizer: $("launch-base-optimizer").value,
     sft_optimizer: $("launch-sft-optimizer").value,
@@ -3494,6 +3503,10 @@ function launchReadiness(config = launchConfig()) {
   if (config.base_steps < 1 || config.sft_steps < 1) blockers.push("Base and SFT steps must be at least 1.");
   if (config.base_batch_size < 1 || config.sft_batch_size < 1) blockers.push("Batch sizes must be at least 1.");
   if (config.base_grad_accum_steps < 1 || config.sft_grad_accum_steps < 1) blockers.push("Gradient accumulation must be at least 1.");
+  if (!["memory", "sharded"].includes(config.base_dataset_mode)) blockers.push("Base data mode is invalid.");
+  if (config.base_dataset_mode === "sharded" && config.base_shard_token_size < config.context_size * 4) {
+    blockers.push("Sharded token size should be at least 4x context size.");
+  }
   if (config.base_learning_rate <= 0 || config.sft_learning_rate <= 0) blockers.push("Learning rates must be above zero.");
   if (!["adamw", "muon"].includes(config.base_optimizer) || !["adamw", "muon"].includes(config.sft_optimizer)) {
     blockers.push("Optimizer must be ADAMW or MUON.");
@@ -3534,6 +3547,9 @@ function launchReadiness(config = launchConfig()) {
   if (config.gradient_checkpointing && config.context_size <= 512) {
     cautions.push("Gradient checkpointing saves memory but can slow small local runs.");
   }
+  if (config.base_dataset_mode === "sharded") {
+    cautions.push("Sharded base data avoids giant token tensors but validates by token shard, not complete source document.");
+  }
   const usingBenchmarkPack = Boolean(state.benchmarkPack && state.benchmarkPack.dataset_pack === config.dataset_pack);
   if (usingBenchmarkPack && config.sft_steps > 500) {
     cautions.push("Curated benchmark SFT usually overfits past a few hundred steps; start near 300, then compare.");
@@ -3555,6 +3571,7 @@ function launchReadiness(config = launchConfig()) {
   notes.push(`optimizer ${config.base_optimizer}/${config.sft_optimizer}`);
   if (config.base_ema_decay > 0 || config.sft_ema_decay > 0) notes.push(`EMA ${config.base_ema_decay}/${config.sft_ema_decay}`);
   notes.push(`effective batch ${config.base_batch_size * config.base_grad_accum_steps} / ${config.sft_batch_size * config.sft_grad_accum_steps}`);
+  notes.push(`base data ${config.base_dataset_mode}`);
   notes.push(`target ${config.target_param_data_ratio} tok/param`);
   notes.push(`device ${String(config.device || "cpu").toUpperCase()}`);
   notes.push(`${config.precision} / matmul ${config.matmul_precision} / attn ${config.attn_backend}`);
@@ -3652,6 +3669,8 @@ function launchPreviewCommand(config = launchConfig()) {
     config.sft_grad_clip,
     "--base-grad-accum-steps",
     config.base_grad_accum_steps,
+    "--base-dataset-mode",
+    config.base_dataset_mode,
     "--sft-grad-accum-steps",
     config.sft_grad_accum_steps,
     "--base-optimizer",
@@ -3692,6 +3711,10 @@ function launchPreviewCommand(config = launchConfig()) {
   if (config.auto_lr_scaling) parts.push("--auto-lr-scaling");
   if (config.loss_spike_rollback) parts.push("--loss-spike-rollback");
   if (config.tokenizer_vocab_size) parts.push("--tokenizer-vocab-size", config.tokenizer_vocab_size);
+  if (config.base_dataset_mode === "sharded") {
+    parts.push("--base-shard-token-size", config.base_shard_token_size);
+    parts.push("--base-shard-cache-size", config.base_shard_cache_size);
+  }
   return shellCommand(parts);
 }
 
@@ -3785,6 +3808,9 @@ function runStartPayload(config) {
     base_grad_clip: config.base_grad_clip,
     sft_grad_clip: config.sft_grad_clip,
     base_grad_accum_steps: config.base_grad_accum_steps,
+    base_dataset_mode: config.base_dataset_mode,
+    base_shard_token_size: config.base_shard_token_size,
+    base_shard_cache_size: config.base_shard_cache_size,
     sft_grad_accum_steps: config.sft_grad_accum_steps,
     base_optimizer: config.base_optimizer,
     sft_optimizer: config.sft_optimizer,

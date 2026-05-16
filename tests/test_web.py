@@ -908,6 +908,9 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
         "sft_optimizer": "adamw",
         "base_muon_learning_rate": 0.01,
         "base_ema_decay": 0.5,
+        "base_dataset_mode": "sharded",
+        "base_shard_token_size": 64000,
+        "base_shard_cache_size": 3,
         "sft_packing": "bos_bestfit",
         "preset": "smoke",
         "tokenizer_type": "bpe",
@@ -929,6 +932,9 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert "--sft-learning-rate" in captured["command"]
     assert "--base-optimizer" in captured["command"]
     assert "--base-ema-decay" in captured["command"]
+    assert "--base-dataset-mode" in captured["command"]
+    assert "--base-shard-token-size" in captured["command"]
+    assert "--base-shard-cache-size" in captured["command"]
     assert "--base-early-stop-patience" in captured["command"]
     assert "--sft-early-stop-patience" in captured["command"]
     assert "--sft-sampling" in captured["command"]
@@ -942,6 +948,9 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert status["job"]["launch_config"]["sft_learning_rate"] == 0.0004
     assert status["job"]["launch_config"]["base_optimizer"] == "muon"
     assert status["job"]["launch_config"]["base_ema_decay"] == 0.5
+    assert status["job"]["launch_config"]["base_dataset_mode"] == "sharded"
+    assert status["job"]["launch_config"]["base_shard_token_size"] == 64000
+    assert status["job"]["launch_config"]["base_shard_cache_size"] == 3
     assert status["job"]["launch_config"]["sft_packing"] == "bos_bestfit"
     assert status["job"]["launch_config"]["base_early_stop_patience"] == 4
     assert status["job"]["launch_config"]["sft_early_stop_patience"] == 4

@@ -699,6 +699,21 @@
                       <input id="launch-base-grad-accum-steps" type="number" min="1" max="128" value="1">
                     </div>
                     <div>
+                      <label for="launch-base-dataset-mode">BASE DATA</label>
+                      <select id="launch-base-dataset-mode">
+                        <option value="memory">MEMORY</option>
+                        <option value="sharded">SHARDED</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label for="launch-base-shard-token-size">SHARD TOKENS</label>
+                      <input id="launch-base-shard-token-size" type="number" min="1000" max="50000000" step="1000" value="1000000">
+                    </div>
+                    <div>
+                      <label for="launch-base-shard-cache-size">SHARD CACHE</label>
+                      <input id="launch-base-shard-cache-size" type="number" min="1" max="16" value="2">
+                    </div>
+                    <div>
                       <label for="launch-sft-grad-accum-steps">SFT ACCUM</label>
                       <input id="launch-sft-grad-accum-steps" type="number" min="1" max="128" value="1">
                     </div>

@@ -922,6 +922,19 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         1,
         128,
     )
+    base_dataset_mode = str(payload.get("base_dataset_mode", preset.get("base_dataset_mode", "memory")))
+    if base_dataset_mode not in {"memory", "sharded"}:
+        raise ValueError("base_dataset_mode must be memory or sharded")
+    base_shard_token_size = _bounded_int(
+        payload.get("base_shard_token_size", preset.get("base_shard_token_size", 1_000_000)),
+        1_000,
+        50_000_000,
+    )
+    base_shard_cache_size = _bounded_int(
+        payload.get("base_shard_cache_size", preset.get("base_shard_cache_size", 2)),
+        1,
+        16,
+    )
     sft_grad_accum_steps = _bounded_int(
         payload.get("sft_grad_accum_steps", preset.get("sft_grad_accum_steps", 1)),
         1,
@@ -1016,6 +1029,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         base_grad_clip=base_grad_clip,
         sft_grad_clip=sft_grad_clip,
         base_grad_accum_steps=base_grad_accum_steps,
+        base_dataset_mode=base_dataset_mode,
+        base_shard_token_size=base_shard_token_size,
+        base_shard_cache_size=base_shard_cache_size,
         sft_grad_accum_steps=sft_grad_accum_steps,
         base_optimizer=base_optimizer,
         sft_optimizer=sft_optimizer,
@@ -1113,6 +1129,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(sft_grad_clip),
         "--base-grad-accum-steps",
         str(base_grad_accum_steps),
+        "--base-dataset-mode",
+        base_dataset_mode,
         "--sft-grad-accum-steps",
         str(sft_grad_accum_steps),
         "--base-optimizer",
@@ -1163,6 +1181,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         command.append("--loss-spike-rollback")
     if tokenizer_vocab_size is not None:
         command.extend(["--tokenizer-vocab-size", str(tokenizer_vocab_size)])
+    if base_dataset_mode == "sharded":
+        command.extend(["--base-shard-token-size", str(base_shard_token_size)])
+        command.extend(["--base-shard-cache-size", str(base_shard_cache_size)])
     if allow_unsafe_long_run:
         command.append("--allow-unsafe-long-run")
     log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
@@ -1223,6 +1244,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "base_grad_clip": base_grad_clip,
             "sft_grad_clip": sft_grad_clip,
             "base_grad_accum_steps": base_grad_accum_steps,
+            "base_dataset_mode": base_dataset_mode,
+            "base_shard_token_size": base_shard_token_size,
+            "base_shard_cache_size": base_shard_cache_size,
             "sft_grad_accum_steps": sft_grad_accum_steps,
             "base_optimizer": base_optimizer,
             "sft_optimizer": sft_optimizer,
