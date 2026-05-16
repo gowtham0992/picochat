@@ -1186,6 +1186,7 @@ function guideCreateSftContent() {
           <div>
             <label for="guide-benchmark-profile">CURATED PROFILE</label>
             <select id="guide-benchmark-profile">
+              <option value="release_behavior" ${curriculumProfile === "release_behavior" ? "selected" : ""}>RELEASE BEHAVIOR</option>
               <option value="behavior" ${curriculumProfile === "behavior" ? "selected" : ""}>BEHAVIOR FIRST</option>
               <option value="weak_skills" ${curriculumProfile === "weak_skills" ? "selected" : ""}>WEAK SKILLS</option>
               <option value="full" ${curriculumProfile === "full" ? "selected" : ""}>FULL MIX</option>
@@ -1244,6 +1245,7 @@ function guideCreateEvalContent() {
           <div>
             <label for="guide-benchmark-profile">CURATED PROFILE</label>
             <select id="guide-benchmark-profile">
+              <option value="release_behavior" ${curriculumProfile === "release_behavior" ? "selected" : ""}>RELEASE BEHAVIOR</option>
               <option value="behavior" ${curriculumProfile === "behavior" ? "selected" : ""}>BEHAVIOR FIRST</option>
               <option value="weak_skills" ${curriculumProfile === "weak_skills" ? "selected" : ""}>WEAK SKILLS</option>
               <option value="full" ${curriculumProfile === "full" ? "selected" : ""}>FULL MIX</option>
@@ -1587,11 +1589,12 @@ function resetGuidedWorkflow() {
   $("flight-sft-max-items").value = String(STARTER_ROW_TARGETS.sft);
   $("flight-eval-max-items").value = String(STARTER_ROW_TARGETS.eval);
   if ($("flight-benchmark-source")) $("flight-benchmark-source").value = "offline";
-  if ($("flight-benchmark-profile")) $("flight-benchmark-profile").value = "behavior";
+  if ($("flight-benchmark-profile")) $("flight-benchmark-profile").value = "release_behavior";
   if ($("flight-skill-answer-style")) $("flight-skill-answer-style").value = "direct";
   $("flight-starter-force").checked = false;
   $("flight-min-score").value = "0";
   $("launch-run-name").value = "";
+  if ($("launch-long-run-gate-profile")) $("launch-long-run-gate-profile").value = "research";
   renderDatasetFlightPlan(null);
   renderHfImport(null);
   renderSftStarter(null);
@@ -3384,6 +3387,7 @@ function applyLaunchPreset(quiet = false) {
   $("launch-sft-packing").value = values.sft_packing || "separate";
   $("launch-eval-max-new-tokens").value = values.eval_max_new_tokens;
   $("launch-target-param-data-ratio").value = values.target_param_data_ratio || 20;
+  $("launch-long-run-gate-profile").value = values.long_run_gate_profile || (preset === "h100-pilot" ? "first_release" : "research");
   if (values.tokenizer_type) $("launch-tokenizer-type").value = values.tokenizer_type;
   $("launch-bpe-pretokenizer").value = values.bpe_pretokenizer || "regex";
   $("launch-tokenizer-vocab-size").value = values.tokenizer_vocab_size || "";
@@ -3476,6 +3480,7 @@ function launchConfig() {
     sft_packing: $("launch-sft-packing").value,
     eval_max_new_tokens: launchNumber("launch-eval-max-new-tokens"),
     target_param_data_ratio: launchNumber("launch-target-param-data-ratio"),
+    long_run_gate_profile: $("launch-long-run-gate-profile").value,
     seed: launchNumber("launch-seed"),
     tokenizer_type: $("launch-tokenizer-type").value,
     bpe_pretokenizer: $("launch-bpe-pretokenizer").value,
@@ -3516,6 +3521,7 @@ function launchReadiness(config = launchConfig()) {
   if (!["default", "highest", "high", "medium"].includes(config.matmul_precision)) blockers.push("Matmul precision mode is invalid.");
   if (!["auto", "flash", "efficient", "math", "cudnn"].includes(config.attn_backend)) blockers.push("Attention backend is invalid.");
   if (!["default", "reduce-overhead", "max-autotune"].includes(config.torch_compile_mode)) blockers.push("Torch compile mode is invalid.");
+  if (!["research", "first_release"].includes(config.long_run_gate_profile)) blockers.push("Gate profile is invalid.");
   if (config.attn_backend === "flash" && !["auto", "cuda"].includes(config.device)) {
     blockers.push("Flash attention requires CUDA or AUTO device selection.");
   }
@@ -3552,6 +3558,10 @@ function launchReadiness(config = launchConfig()) {
     cautions.push("Sharded base data avoids giant token tensors but validates by token shard, not complete source document.");
   }
   const usingBenchmarkPack = Boolean(state.benchmarkPack && state.benchmarkPack.dataset_pack === config.dataset_pack);
+  const benchmarkProfile = state.benchmarkPack?.profile || "";
+  if (config.long_run_gate_profile === "first_release" && usingBenchmarkPack && benchmarkProfile && benchmarkProfile !== "release_behavior") {
+    cautions.push("FIRST RELEASE gate should normally use a RELEASE BEHAVIOR benchmark pack.");
+  }
   if (usingBenchmarkPack && config.sft_steps > 500) {
     cautions.push("Curated benchmark SFT usually overfits past a few hundred steps; start near 300, then compare.");
   }
@@ -3574,6 +3584,7 @@ function launchReadiness(config = launchConfig()) {
   notes.push(`effective batch ${config.base_batch_size * config.base_grad_accum_steps} / ${config.sft_batch_size * config.sft_grad_accum_steps}`);
   notes.push(`base data ${config.base_dataset_mode}`);
   notes.push(`target ${config.target_param_data_ratio} tok/param`);
+  notes.push(`gate ${config.long_run_gate_profile.replace("_", " ")}`);
   notes.push(`device ${String(config.device || "cpu").toUpperCase()}`);
   notes.push(`${config.precision} / matmul ${config.matmul_precision} / attn ${config.attn_backend}`);
   if (config.torch_compile) notes.push(`compile ${config.torch_compile_mode}`);
@@ -3696,6 +3707,8 @@ function launchPreviewCommand(config = launchConfig()) {
     config.sft_packing,
     "--target-param-data-ratio",
     config.target_param_data_ratio,
+    "--long-run-gate-profile",
+    config.long_run_gate_profile,
     "--split-mode",
     "document",
     "--min-score",
@@ -3832,6 +3845,7 @@ function runStartPayload(config) {
     sft_sampling: config.sft_sampling,
     sft_packing: config.sft_packing,
     target_param_data_ratio: config.target_param_data_ratio,
+    long_run_gate_profile: config.long_run_gate_profile,
     eval_max_new_tokens: config.eval_max_new_tokens,
     seed: config.seed,
     tokenizer_type: config.tokenizer_type,
@@ -4951,6 +4965,11 @@ async function createBenchmarkTuningPack() {
     $("editor-chat-path").value = "";
     $("editor-eval-path").value = "";
     $("launch-pack-path").value = packPath;
+    if ($("launch-long-run-gate-profile") && report.profile === "release_behavior") {
+      $("launch-long-run-gate-profile").value = "first_release";
+    } else if ($("launch-long-run-gate-profile")?.value === "first_release") {
+      $("launch-long-run-gate-profile").value = "research";
+    }
     renderBenchmarkTuningPack(report);
     await refreshDatasetFlightPlanAfterChange();
     loadPackEditor().catch((error) => renderPackEditorError(error));

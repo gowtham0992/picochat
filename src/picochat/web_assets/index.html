@@ -323,7 +323,8 @@
                 <div>
                   <label for="flight-benchmark-profile">CURRICULUM PROFILE</label>
                   <select id="flight-benchmark-profile">
-                    <option value="behavior" selected>BEHAVIOR FIRST</option>
+                    <option value="release_behavior" selected>RELEASE BEHAVIOR</option>
+                    <option value="behavior">BEHAVIOR FIRST</option>
                     <option value="weak_skills">WEAK SKILLS</option>
                     <option value="full">FULL MIX</option>
                   </select>
@@ -839,6 +840,13 @@
                     <div>
                       <label for="launch-target-param-data-ratio">TOKENS / PARAM</label>
                       <input id="launch-target-param-data-ratio" type="number" min="1" max="200" step="1" value="20">
+                    </div>
+                    <div>
+                      <label for="launch-long-run-gate-profile">GATE PROFILE</label>
+                      <select id="launch-long-run-gate-profile">
+                        <option value="research">RESEARCH</option>
+                        <option value="first_release">FIRST RELEASE</option>
+                      </select>
                     </div>
                   </div>
                 </details>

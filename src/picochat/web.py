@@ -37,7 +37,7 @@ from picochat.hf_import import HFImportConfig, HFSplitError, import_hf_dataset
 from picochat.model import SDPA_BACKENDS
 from picochat.optim import LR_DECAYS, OPTIMIZER_TYPES
 from picochat.precision import COMPILE_MODES, MATMUL_PRECISION_MODES, PRECISION_MODES
-from picochat.run import TinyRunConfig
+from picochat.run import LONG_RUN_GATE_PROFILES, TinyRunConfig
 from picochat.run_preflight import assess_run_preflight
 from picochat.scales import RUN_SCALES
 from picochat.sft_starter import generate_sft_starter
@@ -179,7 +179,7 @@ RUN_PRESETS = {
     "medium": RUN_SCALES["medium"].to_dict(),
     "mps-local": {**RUN_SCALES["mps-local"].to_dict(), "device": "auto"},
     "climbmix-pilot": {**RUN_SCALES["climbmix-pilot"].to_dict(), "device": "auto"},
-    "h100-pilot": {**RUN_SCALES["h100-pilot"].to_dict(), "device": "cuda"},
+    "h100-pilot": {**RUN_SCALES["h100-pilot"].to_dict(), "device": "cuda", "long_run_gate_profile": "first_release"},
 }
 
 
@@ -978,6 +978,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         1.0,
         200.0,
     )
+    long_run_gate_profile = str(payload.get("long_run_gate_profile", preset.get("long_run_gate_profile", "research")))
+    if long_run_gate_profile not in LONG_RUN_GATE_PROFILES:
+        raise ValueError(f"long_run_gate_profile must be one of: {', '.join(LONG_RUN_GATE_PROFILES)}")
     device = str(payload.get("device", preset.get("device", "cpu"))).strip().lower()
     if device not in DEVICE_CHOICES:
         raise ValueError(f"device must be one of {', '.join(DEVICE_CHOICES)}")
@@ -1046,6 +1049,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         loss_spike_rollback=loss_spike_rollback,
         allow_unsafe_long_run=allow_unsafe_long_run,
         target_param_data_ratio=target_param_data_ratio,
+        long_run_gate_profile=long_run_gate_profile,
     )
     launch_preflight = assess_run_preflight(preflight_config, launch_preview)
     if launch_preflight.status == "blocked" and not allow_unsafe_long_run:
@@ -1156,6 +1160,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         sft_packing,
         "--target-param-data-ratio",
         str(target_param_data_ratio),
+        "--long-run-gate-profile",
+        long_run_gate_profile,
         "--split-mode",
         "document",
         "--min-score",
@@ -1260,6 +1266,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "sft_sampling": sft_sampling,
             "sft_packing": sft_packing,
             "target_param_data_ratio": target_param_data_ratio,
+            "long_run_gate_profile": long_run_gate_profile,
             "device": device,
             "allow_unsafe_long_run": allow_unsafe_long_run,
         },

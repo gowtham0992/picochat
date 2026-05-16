@@ -921,6 +921,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
         "base_shard_token_size": 64000,
         "base_shard_cache_size": 3,
         "sft_packing": "bos_bestfit",
+        "long_run_gate_profile": "first_release",
         "preset": "smoke",
         "tokenizer_type": "bpe",
         "min_quality_score": 0,
@@ -949,6 +950,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert "--sft-sampling" in captured["command"]
     assert "--sft-packing" in captured["command"]
     assert "--target-param-data-ratio" in captured["command"]
+    assert "--long-run-gate-profile" in captured["command"]
     assert "bpe" in captured["command"]
     assert "0.0002" in captured["command"]
     assert "0.0004" in captured["command"]
@@ -961,6 +963,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert status["job"]["launch_config"]["base_shard_token_size"] == 64000
     assert status["job"]["launch_config"]["base_shard_cache_size"] == 3
     assert status["job"]["launch_config"]["sft_packing"] == "bos_bestfit"
+    assert status["job"]["launch_config"]["long_run_gate_profile"] == "first_release"
     assert status["job"]["launch_config"]["base_early_stop_patience"] == 4
     assert status["job"]["launch_config"]["sft_early_stop_patience"] == 4
     assert captured["kwargs"]["cwd"].name == "picochat"
@@ -1311,6 +1314,7 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
         "gradient_checkpointing": True,
         "auto_lr_scaling": True,
         "loss_spike_rollback": True,
+        "long_run_gate_profile": "first_release",
     })
 
     assert "--activation swiglu" in started["job"]["command"]
@@ -1327,6 +1331,7 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
     assert "--gradient-checkpointing" in started["job"]["command"]
     assert "--auto-lr-scaling" in started["job"]["command"]
     assert "--loss-spike-rollback" in started["job"]["command"]
+    assert "--long-run-gate-profile first_release" in started["job"]["command"]
     assert started["job"]["launch_config"]["n_kv_head"] == 2
     assert started["job"]["launch_config"]["bpe_pretokenizer"] == "regex"
     assert started["job"]["launch_config"]["tie_embeddings"] is True
@@ -1340,6 +1345,7 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
     assert started["job"]["launch_config"]["gradient_checkpointing"] is True
     assert started["job"]["launch_config"]["auto_lr_scaling"] is True
     assert started["job"]["launch_config"]["loss_spike_rollback"] is True
+    assert started["job"]["launch_config"]["long_run_gate_profile"] == "first_release"
 
 
 def test_start_run_plan_rejects_invalid_runtime_knob(tmp_path):
@@ -1360,6 +1366,15 @@ def test_start_run_plan_rejects_invalid_runtime_knob(tmp_path):
             "base_steps": 1,
             "sft_steps": 1,
             "attn_backend": "imaginary",
+        })
+
+    with pytest.raises(ValueError, match="long_run_gate_profile"):
+        start_run_plan(tmp_path / "runs", {
+            "dataset_pack": str(pack_path),
+            "run_name": "bad-gate-profile",
+            "base_steps": 1,
+            "sft_steps": 1,
+            "long_run_gate_profile": "marketing",
         })
 
 

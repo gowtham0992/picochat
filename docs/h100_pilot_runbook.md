@@ -226,7 +226,45 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --auto-lr-scaling 2>&1 | tee logs/train-h100-pilot.log
 ```
 
-## 6. Monitor And Package
+## 6. If SFT Misses, Sweep The Release Behavior Lane
+
+If the base BPB is healthy but first-release SFT fit is below the gate, do not
+scale the model yet and do not mix math/spelling into the release checkpoint.
+Sweep a narrow release-behavior SFT schedule from the best base checkpoint with
+the same CUDA runtime settings. This isolates behavior tuning from base
+learning.
+
+```bash
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli train sft-sweep \
+  --dataset-pack runs/h100-climbmix-16shard-80k-pack-v1/dataset_pack.json \
+  --tokenizer runs/h100-climbmix-16shard-80k-modern-pilot-v1/tokenizer.json \
+  --checkpoint runs/h100-climbmix-16shard-80k-modern-pilot-v1/base/best_checkpoint \
+  --out-dir runs/h100-release-behavior-sft-sweep-v1 \
+  --device cuda \
+  --precision bf16 \
+  --matmul-precision high \
+  --learning-rates 0.000005,0.00001,0.00002,0.00004 \
+  --steps 120,240,400 \
+  --samplings category_sqrt,category_balanced \
+  --batch-size 8 \
+  --grad-accum-steps 4 \
+  --packing bos_bestfit \
+  --lr-warmup-steps 40 \
+  --lr-decay cosine \
+  --min-lr-ratio 0.1 \
+  --grad-clip 1.0 \
+  --early-stop-patience 4 \
+  --fit-max-rows 1000 \
+  --eval-max-new-tokens 120 \
+  --support-corpus runs/h100-climbmix-16shard-80k-modern-pilot-v1/corpus.txt \
+  2>&1 | tee logs/sft-sweep-h100-release-behavior-v1.log
+```
+
+Promote only a candidate that clears the first-release gate. Keep weak-skills
+sweeps separate, because they are diagnostics for future capability work, not a
+license to claim the first chat release can do arithmetic or spelling reliably.
+
+## 7. Monitor And Package
 
 Use another SSH pane:
 
