@@ -455,14 +455,14 @@ def test_run_chat_eval_indexes_support_corpus_once(tmp_path, monkeypatch):
     save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
 
     calls = 0
-    original = eval_module._corpus_support_token_set
+    original = eval_module._read_optional_support_token_set
 
-    def counted(corpus_text):
+    def counted(path):
         nonlocal calls
         calls += 1
-        return original(corpus_text)
+        return original(path)
 
-    monkeypatch.setattr(eval_module, "_corpus_support_token_set", counted)
+    monkeypatch.setattr(eval_module, "_read_optional_support_token_set", counted)
 
     report = run_chat_eval(ChatEvalConfig(
         input_path=str(input_path),
@@ -480,3 +480,20 @@ def test_run_chat_eval_indexes_support_corpus_once(tmp_path, monkeypatch):
     assert report["examples"][0]["split"] == "default"
     assert "analysis" in report
     assert report["analysis"]["recommendations"]
+
+
+def test_support_corpus_token_set_is_streamed(tmp_path, monkeypatch):
+    support_path = tmp_path / "support.txt"
+    support_path.write_text("Pico Cafe was founded by Mira Chen.", encoding="utf-8")
+
+    def fail_read_text(*args, **kwargs):
+        raise AssertionError("support corpus should be streamed, not read into memory")
+
+    monkeypatch.setattr(type(support_path), "read_text", fail_read_text)
+
+    tokens = eval_module._read_optional_support_token_set(str(support_path), read_chars=8)
+
+    assert tokens is not None
+    assert "pico" in tokens
+    assert "cafe" in tokens
+    assert "mira" in tokens

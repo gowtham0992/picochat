@@ -451,8 +451,8 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     model.eval()
     matmul_precision_runtime = configure_float32_matmul_precision(config.matmul_precision)
     precision_runtime = resolve_precision(config.precision, device)
-    support_corpus_text = _read_optional_text(config.support_corpus_path)
-    support_corpus_tokens = _corpus_support_token_set(support_corpus_text)
+    support_corpus_text = None
+    support_corpus_tokens = _read_optional_support_token_set(config.support_corpus_path)
 
     items = load_chat_eval_items(config.input_path)
     rows = []
@@ -1385,6 +1385,32 @@ def _read_optional_text(path: str | None) -> str | None:
     if not source.exists() or not source.is_file():
         return None
     return source.read_text(encoding="utf-8")
+
+
+def _read_optional_support_token_set(path: str | None, read_chars: int = 1_000_000) -> frozenset[str] | None:
+    if not path:
+        return None
+    source = Path(path)
+    if not source.exists() or not source.is_file():
+        return None
+    tokens: set[str] = set()
+    carry = ""
+    with source.open("r", encoding="utf-8", errors="replace") as handle:
+        while True:
+            chunk = handle.read(read_chars)
+            if not chunk:
+                break
+            text = carry + chunk
+            carry = ""
+            if text and text[-1].isalnum():
+                tail = re.search(r"[A-Za-z0-9]+$", text)
+                if tail is not None:
+                    carry = tail.group(0)
+                    text = text[:tail.start()]
+            tokens.update(_content_tokens(text))
+    if carry:
+        tokens.update(_content_tokens(carry))
+    return frozenset(tokens) if tokens else None
 
 
 def _safe_rate(numerator: int, denominator: int) -> float:
