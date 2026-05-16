@@ -2282,6 +2282,16 @@ def _resolve_tiny_value(args: argparse.Namespace, defaults: TinyRunConfig, field
     return getattr(defaults, field)
 
 
+def _resolve_tiny_bool(args: argparse.Namespace, defaults: TinyRunConfig, field: str) -> bool:
+    if bool(getattr(args, field)):
+        return True
+    if args.scale != "custom":
+        preset = RUN_SCALES[args.scale].tiny_run_values()
+        if field in preset:
+            return bool(preset[field])
+    return bool(getattr(defaults, field))
+
+
 def run_tiny_command(args: argparse.Namespace) -> int:
     config = _tiny_config_from_args(args)
     if args.n_seeds < 1:
@@ -2337,10 +2347,10 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         norm_type=_resolve_tiny_value(args, defaults, "norm_type"),
         position_encoding=_resolve_tiny_value(args, defaults, "position_encoding"),
         activation=_resolve_tiny_value(args, defaults, "activation"),
-        tie_embeddings=bool(args.tie_embeddings or defaults.tie_embeddings),
-        qk_norm=bool(args.qk_norm or defaults.qk_norm),
+        tie_embeddings=_resolve_tiny_bool(args, defaults, "tie_embeddings"),
+        qk_norm=_resolve_tiny_bool(args, defaults, "qk_norm"),
         attn_backend=_resolve_tiny_value(args, defaults, "attn_backend"),
-        parallel_residual=bool(args.parallel_residual or getattr(defaults, "parallel_residual", False)),
+        parallel_residual=_resolve_tiny_bool(args, defaults, "parallel_residual"),
         base_steps=_resolve_tiny_value(args, defaults, "base_steps"),
         sft_steps=_resolve_tiny_value(args, defaults, "sft_steps"),
         base_batch_size=_resolve_tiny_value(args, defaults, "base_batch_size"),
@@ -2395,14 +2405,14 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         logit_softcap=_resolve_tiny_value(args, defaults, "logit_softcap"),
         precision=_resolve_tiny_value(args, defaults, "precision"),
         matmul_precision=_resolve_tiny_value(args, defaults, "matmul_precision"),
-        torch_compile=bool(args.torch_compile or defaults.torch_compile),
+        torch_compile=_resolve_tiny_bool(args, defaults, "torch_compile"),
         torch_compile_mode=_resolve_tiny_value(args, defaults, "torch_compile_mode"),
-        gradient_checkpointing=bool(args.gradient_checkpointing or defaults.gradient_checkpointing),
-        ddp=bool(args.ddp or defaults.ddp),
+        gradient_checkpointing=_resolve_tiny_bool(args, defaults, "gradient_checkpointing"),
+        ddp=_resolve_tiny_bool(args, defaults, "ddp"),
         allow_unsafe_long_run=args.allow_unsafe_long_run,
         target_param_data_ratio=_resolve_tiny_value(args, defaults, "target_param_data_ratio"),
-        auto_lr_scaling=bool(args.auto_lr_scaling or defaults.auto_lr_scaling),
-        loss_spike_rollback=bool(args.loss_spike_rollback or defaults.loss_spike_rollback),
+        auto_lr_scaling=_resolve_tiny_bool(args, defaults, "auto_lr_scaling"),
+        loss_spike_rollback=_resolve_tiny_bool(args, defaults, "loss_spike_rollback"),
         loss_spike_threshold=_resolve_tiny_value(args, defaults, "loss_spike_threshold"),
         loss_spike_lr_decay=_resolve_tiny_value(args, defaults, "loss_spike_lr_decay"),
         loss_spike_min_lr_scale=_resolve_tiny_value(args, defaults, "loss_spike_min_lr_scale"),

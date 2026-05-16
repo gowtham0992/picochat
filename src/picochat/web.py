@@ -179,6 +179,7 @@ RUN_PRESETS = {
     "medium": RUN_SCALES["medium"].to_dict(),
     "mps-local": {**RUN_SCALES["mps-local"].to_dict(), "device": "auto"},
     "climbmix-pilot": {**RUN_SCALES["climbmix-pilot"].to_dict(), "device": "auto"},
+    "h100-pilot": {**RUN_SCALES["h100-pilot"].to_dict(), "device": "cuda"},
 }
 
 

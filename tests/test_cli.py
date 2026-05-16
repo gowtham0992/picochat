@@ -118,6 +118,49 @@ def test_cli_run_tiny_multiseed(tmp_path, capsys, monkeypatch):
     assert "multi-seed tiny run: n=3 eval pass mean 25.00% std 5.00%" in output
 
 
+def test_cli_run_tiny_h100_scale_applies_modern_defaults(tmp_path, capsys, monkeypatch):
+    captured = {}
+
+    def fake_run(config):
+        captured["config"] = config
+        return {
+            "eval": {
+                "num_passed": 1,
+                "num_examples": 1,
+                "pass_rate": 1.0,
+            },
+        }
+
+    monkeypatch.setattr("picochat.cli.run_tiny", fake_run)
+
+    exit_code = main([
+        "run",
+        "tiny",
+        "--out-dir",
+        str(tmp_path / "h100"),
+        "--scale",
+        "h100-pilot",
+    ])
+
+    assert exit_code == 0
+    config = captured["config"]
+    assert config.tokenizer_type == "hf_bpe"
+    assert config.activation == "swiglu"
+    assert config.n_kv_head == 2
+    assert config.tie_embeddings is True
+    assert config.qk_norm is True
+    assert config.parallel_residual is True
+    assert config.attn_backend == "flash"
+    assert config.precision == "bf16"
+    assert config.matmul_precision == "high"
+    assert config.torch_compile is True
+    assert config.base_dataset_mode == "sharded"
+    assert config.sft_learning_rate == 0.00001
+    assert config.auto_lr_scaling is True
+    assert config.loss_spike_rollback is True
+    assert "tiny run: 1/1 passed" in capsys.readouterr().out
+
+
 def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
     import json
 

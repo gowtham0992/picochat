@@ -15,3 +15,19 @@ def test_pico_scale_uses_bpe_and_training_controls():
     assert scale.base_lr_decay == "cosine"
     assert scale.base_grad_clip == 1.0
     assert scale.sft_sampling == "category_sqrt"
+
+
+def test_h100_scale_uses_modern_runtime_defaults():
+    scale = RUN_SCALES["h100-pilot"]
+
+    assert scale.tokenizer_type == "hf_bpe"
+    assert scale.activation == "swiglu"
+    assert scale.n_kv_head == 2
+    assert scale.tie_embeddings is True
+    assert scale.qk_norm is True
+    assert scale.attn_backend == "flash"
+    assert scale.base_dataset_mode == "sharded"
+    assert scale.precision == "bf16"
+    assert scale.matmul_precision == "high"
+    assert scale.torch_compile is True
+    assert scale.sft_learning_rate == 0.00001

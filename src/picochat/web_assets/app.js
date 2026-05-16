@@ -57,6 +57,7 @@ const MUON_EMA_TRIAL_DEFAULTS = {
 };
 const APP_VIEWS = ["home", "guide", "workbench", "scale"];
 const PICOCHAT_REPO_URL = "https://github.com/gowtham0992/picochat.git";
+const SCALE_PRESETS = ["h100-pilot", "climbmix-pilot", "mps-local", "medium", "small"];
 
 const LAUNCH_CONTROL_IDS = [
   "launch-pack-path",
@@ -3845,7 +3846,7 @@ function seedScaleFromLauncher() {
   const config = launchConfig();
   if ($("scale-dataset-pack")) $("scale-dataset-pack").value = config.dataset_pack || "";
   if ($("scale-run-name")) $("scale-run-name").value = config.run_name || suggestedRunName(config.dataset_pack || "climbmix");
-  if ($("scale-preset")) $("scale-preset").value = state.runPresets[config.preset] ? config.preset : "climbmix-pilot";
+  if ($("scale-preset")) $("scale-preset").value = SCALE_PRESETS.includes(config.preset) ? config.preset : "h100-pilot";
   if ($("scale-device")) $("scale-device").value = config.device === "cpu" ? "auto" : config.device || "auto";
   renderScalePlan();
   flashStatus("SCALE PLAN SEEDED. | Commands now mirror the launcher where possible.");
@@ -3857,7 +3858,7 @@ function scaleConfig() {
   return {
     dataset_pack: datasetPack,
     run_name: runName,
-    preset: $("scale-preset")?.value || "climbmix-pilot",
+    preset: $("scale-preset")?.value || "h100-pilot",
     device: $("scale-device")?.value || "auto",
     shards: boundedScaleNumber("scale-climbmix-shards", 1, 1, 6543),
     max_rows: boundedScaleNumber("scale-max-rows", 1000, 1, 1000000),

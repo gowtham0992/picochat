@@ -85,7 +85,9 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
 
 This recipe uses hf BPE, regex pretokenization, RoPE/RMSNorm/SwiGLU, GQA, tied
 embeddings, QK norm, optional parallel residual, bf16, `torch.compile`,
-FlashAttention, and high matmul precision.
+FlashAttention, high matmul precision, and sharded base-token data. The same
+defaults are also available as `--scale h100-pilot`; the expanded command below
+keeps every important knob visible for auditability.
 
 ```bash
 PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
@@ -114,6 +116,9 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --sft-steps 700 \
   --base-batch-size 8 \
   --base-grad-accum-steps 16 \
+  --base-dataset-mode sharded \
+  --base-shard-token-size 1000000 \
+  --base-shard-cache-size 2 \
   --sft-batch-size 8 \
   --sft-grad-accum-steps 4 \
   --base-learning-rate 0.0001 \
@@ -170,6 +175,9 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --sft-steps 700 \
   --base-batch-size 8 \
   --base-grad-accum-steps 16 \
+  --base-dataset-mode sharded \
+  --base-shard-token-size 1000000 \
+  --base-shard-cache-size 2 \
   --sft-batch-size 8 \
   --sft-grad-accum-steps 4 \
   --base-learning-rate 0.0001 \

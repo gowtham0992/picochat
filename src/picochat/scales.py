@@ -47,6 +47,24 @@ class RunScale:
     sft_muon_learning_rate: float = 0.02
     base_ema_decay: float = 0.0
     sft_ema_decay: float = 0.0
+    n_kv_head: int | None = None
+    tie_embeddings: bool = False
+    qk_norm: bool = False
+    attn_backend: str = "auto"
+    parallel_residual: bool = False
+    bpe_pretokenizer: str = "regex"
+    sft_packing: str = "separate"
+    base_dataset_mode: str = "memory"
+    base_shard_token_size: int = 1_000_000
+    base_shard_cache_size: int = 2
+    precision: str = "float32"
+    matmul_precision: str = "default"
+    torch_compile: bool = False
+    torch_compile_mode: str = "default"
+    gradient_checkpointing: bool = False
+    auto_lr_scaling: bool = False
+    loss_spike_rollback: bool = False
+    target_param_data_ratio: float = 20.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -275,6 +293,57 @@ RUN_SCALES: dict[str, RunScale] = {
         sft_early_stop_patience=4,
         canary_count=5,
         eval_max_new_tokens=160,
+    ),
+    "h100-pilot": RunScale(
+        name="h100-pilot",
+        label="H100 Pilot",
+        description="Single-H100 modern pilot with HF BPE, GQA, SwiGLU, FlashAttention, and sharded base data.",
+        tokenizer_type="hf_bpe",
+        tokenizer_vocab_size=8192,
+        tokenizer_min_freq=2,
+        context_size=512,
+        n_embd=384,
+        n_head=8,
+        n_kv_head=2,
+        n_layer=8,
+        norm_type="rmsnorm",
+        position_encoding="rope",
+        activation="swiglu",
+        tie_embeddings=True,
+        qk_norm=True,
+        attn_backend="flash",
+        parallel_residual=True,
+        base_steps=5000,
+        sft_steps=700,
+        base_batch_size=8,
+        sft_batch_size=8,
+        base_learning_rate=1e-4,
+        sft_learning_rate=1e-5,
+        base_lr_warmup_steps=500,
+        sft_lr_warmup_steps=100,
+        base_lr_decay="cosine",
+        sft_lr_decay="cosine",
+        base_min_lr_ratio=0.1,
+        sft_min_lr_ratio=0.1,
+        base_grad_clip=1.0,
+        sft_grad_clip=1.0,
+        base_grad_accum_steps=16,
+        sft_grad_accum_steps=4,
+        sft_sampling="category_sqrt",
+        sft_packing="bos_bestfit",
+        base_dataset_mode="sharded",
+        base_shard_token_size=1_000_000,
+        base_shard_cache_size=2,
+        base_early_stop_patience=4,
+        sft_early_stop_patience=4,
+        canary_count=1,
+        eval_max_new_tokens=120,
+        precision="bf16",
+        matmul_precision="high",
+        torch_compile=True,
+        torch_compile_mode="default",
+        auto_lr_scaling=True,
+        loss_spike_rollback=True,
     ),
 }
 
