@@ -496,6 +496,17 @@ def _sft_checks(config: Any, corpus: CorpusBuildReport | CorpusPreviewReport, bu
             "Category coverage helps reveal which behavior the SFT stage actually teaches.",
         ),
     ]
+    avg_assistant_words = _safe_float((chat.assistant_length_distribution or {}).get("avg_words"))
+    checks.append(_check(
+        "sft_answer_length",
+        "warn" if budget.long_run and avg_assistant_words < 6.0 else "pass",
+        _format_optional_float(avg_assistant_words),
+        ">= 6 avg assistant words preferred",
+        (
+            "Very terse SFT answers can fit labels without teaching reply format or reasoning style. "
+            "Use scratchpad or richer behavior rows when this is not intentional."
+        ),
+    ))
     if epochs is None:
         checks.append(_check("sft_exposure", "block", "--", "<= 25 preferred", "No usable SFT rows means SFT cannot be budgeted."))
     else:
@@ -709,6 +720,13 @@ def _safe_ratio(numerator: int | float, denominator: int | float | None) -> floa
     if denominator is None or denominator <= 0:
         return None
     return float(numerator) / float(denominator)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _percent(value: float) -> str:

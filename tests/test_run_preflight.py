@@ -50,6 +50,18 @@ def test_preflight_does_not_claim_boundaries_for_window_split():
     assert checks["document_boundaries"].metric == "disabled"
 
 
+def test_preflight_warns_for_terse_long_run_sft_answers():
+    report = assess_run_preflight(
+        _h100_like_config(),
+        _ready_large_corpus(assistant_avg_words=2.5),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["sft_answer_length"].status == "warn"
+    assert checks["sft_answer_length"].metric == "2.50"
+    assert "Very terse SFT answers" in checks["sft_answer_length"].message
+
+
 def _h100_like_config(**overrides) -> TinyRunConfig:
     values = {
         "out_dir": "runs/test-preflight",
@@ -80,7 +92,7 @@ def _h100_like_config(**overrides) -> TinyRunConfig:
     return TinyRunConfig(**values)
 
 
-def _ready_large_corpus() -> CorpusPreviewReport:
+def _ready_large_corpus(*, assistant_avg_words: float = 8.0) -> CorpusPreviewReport:
     return CorpusPreviewReport(
         input_path="corpus_recipe.json",
         recipe_path="corpus_recipe.json",
@@ -147,7 +159,15 @@ def _ready_large_corpus() -> CorpusPreviewReport:
             categories={"choice": 400, "math": 400, "spelling": 400, "refusal": 400},
             category_entropy=2.0,
             category_entropy_normalized=1.0,
-            assistant_length_distribution={},
+            assistant_length_distribution={
+                "count": 1600,
+                "min_chars": 2,
+                "max_chars": 120,
+                "avg_chars": 40.0,
+                "min_words": 1,
+                "max_words": 24,
+                "avg_words": assistant_avg_words,
+            },
             template_families={},
             answer_styles={},
             curriculum_label="mixed_sft",
