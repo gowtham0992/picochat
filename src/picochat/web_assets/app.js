@@ -3891,10 +3891,17 @@ function renderScalePlan() {
   if (!config.dataset_pack) blockers.push("Choose or import a dataset pack first.");
   if (!config.run_name) blockers.push("Name the GPU run.");
   const status = blockers.length ? "blocked" : "ready";
+  const localProofPreset = config.preset === "h100-pilot" ? "mps-local" : config.preset;
+  const localProofRunName = config.preset === "h100-pilot"
+    ? `${config.run_name}-local-proof`
+    : config.run_name;
+  const localProofNote = config.preset === "h100-pilot"
+    ? " | local proof uses MPS LOCAL to avoid H100-only FlashAttention settings"
+    : "";
   $("scale-readiness").className = `readiness-summary ${status}`;
   $("scale-readiness").innerHTML = `
     <strong>${status === "ready" ? "GPU PLAN READY" : "GPU PLAN BLOCKED"}</strong>
-    <span>${escapeHtml(blockers.join(" | ") || `${config.preset} | ${config.device.toUpperCase()} | ${config.dataset_pack}`)}</span>
+    <span>${escapeHtml(blockers.join(" | ") || `${config.preset} | ${config.device.toUpperCase()} | ${config.dataset_pack}${localProofNote}`)}</span>
   `;
 
   const mpsCommand = shellCommand([
@@ -3905,11 +3912,11 @@ function renderScalePlan() {
     "run",
     "tiny",
     "--out-dir",
-    `runs/${config.run_name}`,
+    `runs/${localProofRunName}`,
     "--dataset-pack",
     config.dataset_pack || "<dataset-pack>",
     "--scale",
-    config.preset,
+    localProofPreset,
     "--device",
     config.device === "cuda" ? "auto" : config.device,
   ]);
@@ -3953,7 +3960,11 @@ function renderScalePlan() {
     `!zip -r /content/${config.run_name}.zip runs/${config.run_name}`,
     `# Download ${config.run_name}.zip from Colab, unzip it on this Mac, then paste the unzipped run folder below.`,
   ].join("\n");
-  renderScaleCommand("scale-mps-command", "MPS / LOCAL COMMAND", mpsCommand);
+  renderScaleCommand(
+    "scale-mps-command",
+    config.preset === "h100-pilot" ? "LOCAL PROOF COMMAND" : "MPS / LOCAL COMMAND",
+    mpsCommand,
+  );
   renderScaleCommand("scale-colab-setup-command", "COLAB SETUP", colabSetup);
   renderScaleCommand("scale-colab-import-command", "COLAB CLIMBMIX IMPORT", colabImport);
   renderScaleCommand("scale-colab-run-command", "COLAB TRAIN", colabRun);
