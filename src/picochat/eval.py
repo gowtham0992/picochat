@@ -1439,6 +1439,13 @@ def _predict_choice_reply(
 ) -> tuple[str, dict[str, float], dict[str, dict]]:
     """Predict a categorical answer by scoring each choice continuation."""
     prompt_ids = tokenizer.encode(render_chat_prompt([], item.user), add_bos=True)
+    prefix_logits = None
+    prefix_past_kv = None
+    if len(prompt_ids) < model.config.context_size:
+        device = next(model.parameters()).device
+        prompt_tensor = torch.tensor([prompt_ids], dtype=torch.long, device=device)
+        with autocast_context(precision_runtime) if precision_runtime else torch.no_grad():
+            prefix_logits, _, prefix_past_kv = model(prompt_tensor, use_cache=True)
     scores: dict[str, float] = {}
     details: dict[str, dict] = {}
     for label in item.choice_labels:
@@ -1460,6 +1467,8 @@ def _predict_choice_reply(
                 prompt_ids,
                 list(candidate.token_ids),
                 precision_runtime=precision_runtime,
+                prefix_logits=prefix_logits,
+                prefix_past_kv=prefix_past_kv,
             )
             avg_logprob = raw_logprob / len(candidate.token_ids)
             variant_scores.append({
@@ -1513,9 +1522,33 @@ def _sequence_logprob(
     prompt_ids: list[int],
     continuation_ids: list[int],
     precision_runtime=None,
+    prefix_logits=None,
+    prefix_past_kv=None,
 ) -> float:
     """Score a short continuation under the model."""
     device = next(model.parameters()).device
+    if (
+        prefix_logits is not None
+        and prefix_past_kv is not None
+        and len(prompt_ids) + len(continuation_ids) <= model.config.context_size
+    ):
+        logits = prefix_logits
+        past_kv = prefix_past_kv
+        total = 0.0
+        for index, token_id in enumerate(continuation_ids):
+            log_probs = torch.log_softmax(logits[0, -1], dim=-1)
+            total += float(log_probs[token_id].item())
+            if index == len(continuation_ids) - 1:
+                break
+            token_tensor = torch.tensor([[token_id]], dtype=torch.long, device=device)
+            with autocast_context(precision_runtime) if precision_runtime else torch.no_grad():
+                logits, _, past_kv = model(
+                    token_tensor,
+                    past_kv=past_kv,
+                    use_cache=True,
+                )
+        return total
+
     context = list(prompt_ids)
     total = 0.0
     context_size = model.config.context_size

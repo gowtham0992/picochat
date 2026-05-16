@@ -153,6 +153,33 @@ def test_choice_continuation_candidates_cover_sft_and_bare_styles():
     assert len({candidate.token_ids for candidate in candidates}) == len(candidates)
 
 
+def test_sequence_logprob_cache_path_matches_uncached_path():
+    tokenizer = CharTokenizer.train(["User: choice\nAssistant: A"])
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=64,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    prompt_ids = tokenizer.encode("User: choice\nAssistant:", add_bos=True)
+    continuation_ids = tokenizer.encode(" A", add_bos=False) + [tokenizer.eos_id]
+    prompt = eval_module.torch.tensor([prompt_ids], dtype=eval_module.torch.long)
+
+    logits, _, past_kv = model(prompt, use_cache=True)
+
+    uncached = eval_module._sequence_logprob(model, prompt_ids, continuation_ids)
+    cached = eval_module._sequence_logprob(
+        model,
+        prompt_ids,
+        continuation_ids,
+        prefix_logits=logits,
+        prefix_past_kv=past_kv,
+    )
+
+    assert abs(uncached - cached) < 1e-5
+
+
 def test_score_reply_checks_required_and_forbidden_phrases():
     item = ChatEvalItem(
         user="What is Picochat?",
