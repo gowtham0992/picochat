@@ -63,6 +63,21 @@ def test_load_chat_eval_items_supports_choice_eval_fields(tmp_path):
     assert items[0].correct_choice == "B"
 
 
+def test_load_chat_eval_items_supports_normalized_answer_fields(tmp_path):
+    input_path = tmp_path / "eval.jsonl"
+    write_jsonl(input_path, [{
+        "user": "What is 47 + 83?",
+        "final_answer": "130",
+        "answer_aliases": ["one hundred thirty"],
+        "normalized_answer_required": True,
+    }])
+
+    item = load_chat_eval_items(input_path)[0]
+
+    assert item.normalized_answers == ("130", "one hundred thirty")
+    assert item.normalized_answer_required is True
+
+
 def test_write_sft_fit_eval_converts_chat_rows(tmp_path):
     input_path = tmp_path / "chat.jsonl"
     output_path = tmp_path / "fit.jsonl"
@@ -90,6 +105,7 @@ def test_write_sft_fit_eval_converts_chat_rows(tmp_path):
     assert items[0].level == "identity"
     assert items[0].curriculum_stage == "identity_l1_name"
     assert items[0].must_include == ("Picochat is a tiny local model.",)
+    assert items[0].normalized_answers == ("Picochat is a tiny local model.",)
     assert items[0].max_words == 14
     assert items[1].answerable is False
 
@@ -139,6 +155,7 @@ def test_write_sft_fit_eval_uses_declared_fit_phrases(tmp_path):
     assert report["num_rows"] == 1
     assert items[0].must_include == ("Scratchpad:", "Final answer: 5")
     assert items[0].reference_answer == "5"
+    assert items[0].normalized_answers == ("5",)
     assert items[0].max_words == 80
 
 
@@ -275,6 +292,38 @@ def test_score_reply_tracks_richer_diagnostics():
     assert score["length_violations"] == []
     assert score["corpus_support_failed"] is False
     assert score["corpus_support_rate"] > 0
+
+
+def test_score_reply_tracks_normalized_final_answer_without_replacing_phrase_rules():
+    item = ChatEvalItem(
+        user="What is 47 + 83?",
+        must_include=("Final answer: 130",),
+        reference_answer="130",
+        normalized_answers=("130",),
+    )
+
+    score = score_reply("47 + 83 = 130. The answer is 130.", item)
+
+    assert score["passed"] is False
+    assert score["missing"] == ["Final answer: 130"]
+    assert score["normalized_answer_match"] is True
+    assert "130" in score["normalized_answer_candidates"]
+
+
+def test_score_reply_can_require_normalized_final_answer():
+    item = ChatEvalItem(
+        user="What is 47 + 83?",
+        normalized_answers=("130",),
+        normalized_answer_required=True,
+    )
+
+    passing = score_reply("Work: 47 + 83 = 130.\nFinal answer: 130", item)
+    failing = score_reply("Work: 47 + 83 = 120.\nFinal answer: 120", item)
+
+    assert passing["passed"] is True
+    assert passing["normalized_answer_failed"] is False
+    assert failing["passed"] is False
+    assert failing["normalized_answer_failed"] is True
 
 
 def test_score_reply_can_fail_entity_length_and_corpus_support():

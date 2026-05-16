@@ -44,6 +44,8 @@ class ChatEvalItem:
     require_corpus_support: bool = False
     choice_labels: tuple[str, ...] = ()
     correct_choice: str | None = None
+    normalized_answers: tuple[str, ...] = ()
+    normalized_answer_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -134,6 +136,9 @@ def write_sft_fit_eval(
         fit_reference_answer = record.get("fit_reference_answer", answer)
         if not isinstance(fit_reference_answer, str):
             raise ValueError(f"line {line_number} fit_reference_answer field must be a string when present")
+        fit_normalized_answer = record.get("fit_normalized_answer", fit_reference_answer)
+        if not isinstance(fit_normalized_answer, str):
+            raise ValueError(f"line {line_number} fit_normalized_answer field must be a string when present")
         fit_max_words = record.get("fit_max_words")
         max_words = (
             _sft_fit_max_words(answer)
@@ -151,6 +156,7 @@ def write_sft_fit_eval(
             "level": category,
             "reference_answer": fit_reference_answer,
             "must_include": must_include,
+            "normalized_answer": fit_normalized_answer,
             "max_words": max_words,
         })
         selected_count += 1
@@ -241,6 +247,10 @@ def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
                 raise ValueError(f"line {line_number} correct_choice requires choice_labels")
             if correct_choice not in choice_labels:
                 raise ValueError(f"line {line_number} correct_choice must be present in choice_labels")
+        normalized_answers = _normalized_answer_values(record, line_number)
+        normalized_answer_required = record.get("normalized_answer_required", False)
+        if not isinstance(normalized_answer_required, bool):
+            raise ValueError(f"line {line_number} normalized_answer_required field must be a boolean")
         items.append(ChatEvalItem(
             user=user,
             must_include=_as_string_tuple(must_include, line_number, "must_include"),
@@ -260,6 +270,8 @@ def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
             require_corpus_support=require_corpus_support,
             choice_labels=choice_labels,
             correct_choice=correct_choice,
+            normalized_answers=normalized_answers,
+            normalized_answer_required=normalized_answer_required,
         ))
 
     if not items:
@@ -273,6 +285,32 @@ def _as_string_tuple(value, line_number: int, field: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ValueError(f"line {line_number} {field} field must be a list of strings")
     return tuple(value)
+
+
+def _normalized_answer_values(record: dict, line_number: int) -> tuple[str, ...]:
+    values: list[str] = []
+    for field in ("normalized_answer", "final_answer", "expected_answer"):
+        value = record.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"line {line_number} {field} field must be a string when present")
+        if value.strip():
+            values.append(value.strip())
+    for field in ("normalized_answers", "answer_aliases", "final_answer_aliases"):
+        value = record.get(field)
+        if value in (None, ()):
+            continue
+        values.extend(_as_string_tuple(value, line_number, field))
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        key = _normalize_answer_text(value)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(value)
+    return tuple(deduped)
 
 
 def _as_phrase_groups(value, line_number: int, field: str) -> tuple[tuple[str, ...], ...]:
@@ -352,6 +390,7 @@ def score_reply(
     ]
     length_violations = _length_violations(reply, item)
     reference_metrics = _reference_metrics(reply, item.reference_answer)
+    normalized_answer = _normalized_answer_diagnostics(reply, item.normalized_answers)
     repetition = _repetition_diagnostics(reply)
     refusal_match = _detect_refusal(reply, case_sensitive=case_sensitive)
     corpus_support = _corpus_support_diagnostics(
@@ -364,6 +403,10 @@ def score_reply(
         and corpus_support["rate"] is not None
         and corpus_support["rate"] < corpus_support_threshold
     )
+    normalized_answer_failed = (
+        item.normalized_answer_required
+        and normalized_answer["matched"] is not True
+    )
     support_total = len(item.must_include) + len(item.must_include_any)
     support_matched = support_total - len(missing) - len(missing_any)
     return {
@@ -375,6 +418,7 @@ def score_reply(
             and not missing_entities
             and not length_violations
             and not corpus_support_failed
+            and not normalized_answer_failed
         ),
         "missing": missing,
         "missing_any": missing_any,
@@ -388,6 +432,12 @@ def score_reply(
         "support_match_rate": support_matched / support_total if support_total else 1.0,
         "reference_token_f1": reference_metrics["token_f1"],
         "reference_rouge_l": reference_metrics["rouge_l"],
+        "normalized_answers": list(item.normalized_answers),
+        "normalized_answer_required": item.normalized_answer_required,
+        "normalized_answer_match": normalized_answer["matched"],
+        "normalized_answer_expected": normalized_answer["expected"],
+        "normalized_answer_candidates": normalized_answer["candidates"],
+        "normalized_answer_failed": normalized_answer_failed,
         "entity_total": len(item.required_entities),
         "entity_matched": len(item.required_entities) - len(missing_entities),
         "entity_match_rate": _safe_rate(len(item.required_entities) - len(missing_entities), len(item.required_entities)),
@@ -512,6 +562,8 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "require_corpus_support": item.require_corpus_support,
             "choice_labels": list(item.choice_labels),
             "correct_choice": item.correct_choice,
+            "normalized_answers": list(item.normalized_answers),
+            "normalized_answer_required": item.normalized_answer_required,
             "choice_logprobs": choice_scores,
             "choice_score_details": choice_details,
             "choice_eval_method": (
@@ -542,6 +594,9 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     length_violations = sum(1 for row in rows if row.get("length_violations"))
     missing_entities = sum(1 for row in rows if row.get("missing_entities"))
     corpus_support_failures = sum(1 for row in rows if row.get("corpus_support_failed"))
+    normalized_answer_rows = [row for row in rows if row.get("normalized_answer_match") is not None]
+    normalized_answer_correct = sum(1 for row in normalized_answer_rows if row.get("normalized_answer_match"))
+    normalized_answer_failures = sum(1 for row in rows if row.get("normalized_answer_failed"))
     support_total = sum(int(row["support_total"]) for row in rows)
     support_matched = sum(int(row["support_matched"]) for row in rows)
     answerable_support_total = sum(int(row["support_total"]) for row in rows if row["answerable"])
@@ -679,6 +734,14 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "length_violation_rate": length_violations / len(rows),
             "corpus_support_failures": corpus_support_failures,
             "corpus_support_failure_rate": corpus_support_failures / len(rows),
+            "normalized_answer_examples": len(normalized_answer_rows),
+            "normalized_answer_correct": normalized_answer_correct,
+            "normalized_answer_accuracy": (
+                _safe_rate(normalized_answer_correct, len(normalized_answer_rows))
+                if normalized_answer_rows else None
+            ),
+            "normalized_answer_failures": normalized_answer_failures,
+            "normalized_answer_failure_rate": normalized_answer_failures / len(rows),
             "support_requirements": support_total,
             "support_matches": support_matched,
             "support_match_rate": _safe_rate(support_matched, support_total),
@@ -760,6 +823,9 @@ def analyze_eval_failures(
                 "length_violations": list(row.get("length_violations", [])),
                 "found_forbidden": list(row.get("found_forbidden", [])),
                 "prompt_echo_reasons": list(row.get("prompt_echo_reasons", [])),
+                "normalized_answer_match": row.get("normalized_answer_match"),
+                "normalized_answer_expected": list(row.get("normalized_answer_expected", [])),
+                "normalized_answer_candidates": list(row.get("normalized_answer_candidates", [])),
                 "reply_preview": _preview_text(str(row.get("reply", ""))),
             })
 
@@ -827,6 +893,11 @@ def _breakdown(
                 "length_violation_rate": 0.0,
                 "corpus_support_failures": 0,
                 "corpus_support_failure_rate": 0.0,
+                "normalized_answer_examples": 0,
+                "normalized_answer_correct": 0,
+                "normalized_answer_accuracy": None,
+                "normalized_answer_failures": 0,
+                "normalized_answer_failure_rate": 0.0,
                 "support_requirements": 0,
                 "support_matches": 0,
                 "support_match_rate": 1.0,
@@ -850,6 +921,10 @@ def _breakdown(
         bucket["missing_entities"] += int(bool(row.get("missing_entities")))
         bucket["length_violations"] += int(bool(row.get("length_violations")))
         bucket["corpus_support_failures"] += int(bool(row.get("corpus_support_failed")))
+        if row.get("normalized_answer_match") is not None:
+            bucket["normalized_answer_examples"] += 1
+            bucket["normalized_answer_correct"] += int(bool(row.get("normalized_answer_match")))
+        bucket["normalized_answer_failures"] += int(bool(row.get("normalized_answer_failed")))
         bucket["support_requirements"] += int(row.get("support_total", 0))
         bucket["support_matches"] += int(row.get("support_matched", 0))
         _append_metric(bucket, "_reference_token_f1_values", row.get("reference_token_f1"))
@@ -873,6 +948,11 @@ def _breakdown(
         bucket["missing_entity_rate"] = bucket["missing_entities"] / total
         bucket["length_violation_rate"] = bucket["length_violations"] / total
         bucket["corpus_support_failure_rate"] = bucket["corpus_support_failures"] / total
+        bucket["normalized_answer_accuracy"] = _safe_rate(
+            bucket["normalized_answer_correct"],
+            bucket["normalized_answer_examples"],
+        )
+        bucket["normalized_answer_failure_rate"] = bucket["normalized_answer_failures"] / total
         bucket["support_match_rate"] = _safe_rate(
             bucket["support_matches"],
             bucket["support_requirements"],
@@ -936,6 +1016,8 @@ def _failure_reasons(row: dict) -> list[str]:
         reasons.append("prompt_echo")
     if row.get("corpus_support_failed"):
         reasons.append("weak_corpus_support")
+    if row.get("normalized_answer_failed"):
+        reasons.append("normalized_answer_mismatch")
     if (
         row.get("correct_choice")
         and row.get("choice_predicted") != row.get("correct_choice")
@@ -955,7 +1037,13 @@ def _failure_reasons(row: dict) -> list[str]:
 def _failure_clusters(row: dict, reasons: list[str]) -> list[str]:
     clusters: list[str] = []
     reason_set = set(reasons)
-    if reason_set & {"missing_required", "missing_any_group", "missing_entity", "low_reference_overlap"}:
+    if reason_set & {
+        "missing_required",
+        "missing_any_group",
+        "missing_entity",
+        "low_reference_overlap",
+        "normalized_answer_mismatch",
+    }:
         clusters.append("content_mismatch")
     if "wrong_choice" in reason_set:
         clusters.append("choice_mismatch")
@@ -1105,6 +1193,13 @@ def _eval_recommendations(
             "message": "Some replies had low token overlap with reference answers.",
             "action": "Use this as a soft diagnostic, then inspect whether the reply is genuinely wrong or just phrased differently.",
         })
+    if failure_counts.get("normalized_answer_mismatch"):
+        recommendations.append({
+            "priority": "high",
+            "area": "answer_extraction",
+            "message": "Some replies missed the declared normalized final answer.",
+            "action": "Use a consistent `Final answer:` format in SFT/eval rows and inspect extracted-answer candidates before changing model scale.",
+        })
     if failure_counts.get("repetitive_reply"):
         recommendations.append({
             "priority": "medium",
@@ -1217,6 +1312,63 @@ def _contains_token_sequence(tokens: list[str], phrase_tokens: list[str]) -> boo
         if tokens[index:index + len(phrase_tokens)] == phrase_tokens:
             return True
     return False
+
+
+def _normalized_answer_diagnostics(reply: str, expected_answers: tuple[str, ...]) -> dict:
+    expected = tuple(
+        normalized
+        for answer in expected_answers
+        if (normalized := _normalize_answer_text(answer))
+    )
+    if not expected:
+        return {"matched": None, "expected": [], "candidates": []}
+    candidates = _normalized_answer_candidates(reply)
+    return {
+        "matched": any(candidate in expected for candidate in candidates),
+        "expected": list(expected),
+        "candidates": list(candidates),
+    }
+
+
+def _normalized_answer_candidates(reply: str) -> tuple[str, ...]:
+    values: list[str] = []
+    stripped = reply.strip()
+    if stripped:
+        values.append(stripped)
+    for line in reversed([line.strip() for line in reply.splitlines() if line.strip()]):
+        values.append(line)
+        match = re.search(
+            r"(?:final\s+answer|answer|result|therefore)\s*[:=]\s*(.+)$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            values.append(match.group(1).strip())
+            break
+    numbers = re.findall(r"[-+]?\d+(?:[.,]\d+)*(?:\.\d+)?%?", reply)
+    if numbers:
+        values.append(numbers[-1])
+    tokens = _match_tokens(reply)
+    if tokens:
+        values.append(tokens[-1])
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = _normalize_answer_text(value)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            candidates.append(normalized)
+    return tuple(candidates)
+
+
+def _normalize_answer_text(text: str) -> str:
+    compact = text.strip().lower()
+    if not compact:
+        return ""
+    compact = compact.replace(",", "")
+    tokens = re.findall(r"[-+]?\d+(?:\.\d+)?%?|[a-z0-9]+", compact)
+    return " ".join(tokens)
 
 
 def _length_violations(reply: str, item: ChatEvalItem) -> list[str]:

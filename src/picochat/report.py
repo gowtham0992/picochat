@@ -701,6 +701,14 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.append(f"- Missing entity rate: {format_float(summary.get('missing_entity_rate', 0.0) * 100)}%")
         lines.append(f"- Length violation rate: {format_float(summary.get('length_violation_rate', 0.0) * 100)}%")
         lines.append(f"- Corpus support failure rate: {format_float(summary.get('corpus_support_failure_rate', 0.0) * 100)}%")
+        if summary.get("normalized_answer_accuracy") is not None:
+            lines.append(
+                f"- Normalized final-answer accuracy: "
+                f"{_format_percent_or_dash(summary.get('normalized_answer_accuracy'))} "
+                f"over {summary.get('normalized_answer_examples', 0)} example(s)"
+            )
+        if summary.get("normalized_answer_failures"):
+            lines.append(f"- Normalized final-answer failures: {summary.get('normalized_answer_failures', 0)}")
         lines.append(f"- Support match rate: {format_float(summary.get('support_match_rate', 0.0) * 100)}%")
         if summary.get("answerable_support_match_rate") is not None:
             lines.append(
@@ -920,6 +928,11 @@ def tiny_run_summary_markdown(summary: dict) -> str:
             lines.append(f"- Refusal/boundary pass rate: {_format_percent_or_dash(eval_summary.get('refusal_pass_rate'))}")
         lines.append(f"- Prompt echo rate: {format_float(eval_summary.get('prompt_echo_rate', 0.0) * 100)}%")
         lines.append(f"- Missing support rate: {format_float(eval_summary.get('missing_support_rate', 0.0) * 100)}%")
+        if eval_summary.get("normalized_answer_accuracy") is not None:
+            lines.append(
+                f"- Normalized final-answer accuracy: "
+                f"{_format_percent_or_dash(eval_summary.get('normalized_answer_accuracy'))}"
+            )
         lines.append(f"- Support match rate: {format_float(eval_summary.get('support_match_rate', 0.0) * 100)}%")
     lines.append("")
 
@@ -1333,6 +1346,14 @@ def _eval_metric_lines(item: dict) -> list[str]:
             f"{item.get('corpus_support_total', 0)} content tokens "
             f"({_format_percent_or_dash(item.get('corpus_support_rate'))})"
         )
+    if item.get("normalized_answer_match") is not None:
+        lines.append(f"- Normalized final answer match: `{bool(item.get('normalized_answer_match'))}`")
+        expected = item.get("normalized_answer_expected") or []
+        candidates = item.get("normalized_answer_candidates") or []
+        if expected:
+            lines.append(f"- Normalized expected: {_inline_list(expected)}")
+        if candidates:
+            lines.append(f"- Normalized candidates: {_inline_list(candidates[:4])}")
     if item.get("repetition_ngram_rate") is not None:
         lines.append(f"- Repeated trigram rate: {_format_percent_or_dash(item.get('repetition_ngram_rate'))}")
     if item.get("word_count") is not None:
