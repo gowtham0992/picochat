@@ -171,6 +171,13 @@ def test_weak_skills_profile_overweights_math_and_spelling(tmp_path):
     assert _prefix_count(eval_categories, "bench_spelling_") >= 22
     assert len([name for name in chat_categories if name.startswith("bench_math_")]) >= 4
     assert len([name for name in chat_categories if name.startswith("bench_spelling_")]) >= 5
+    skill_eval_rows = [
+        row for row in eval_rows
+        if row["category"].startswith(("bench_math_", "bench_spelling_"))
+    ]
+    assert skill_eval_rows
+    assert all(row["normalized_answer_required"] is True for row in skill_eval_rows)
+    assert all(row.get("normalized_answer") for row in skill_eval_rows)
     assert chat_stages["math_l1_addition_single_digit"] >= chat_stages["math_l3_addition_carry"]
     assert chat_stages["spelling_l1_first_letter"] >= chat_stages["spelling_l3_reverse"]
     assert eval_stages["spelling_l1_last_letter"] > 0
@@ -251,7 +258,10 @@ def test_weak_skills_can_use_scratchpad_final_answer_style(tmp_path):
     assert all("Scratchpad:" in row["assistant"] for row in skill_chat_rows)
     assert all("Final answer:" in row["assistant"] for row in skill_chat_rows)
     assert all(row["fit_must_include"][0] == "Scratchpad:" for row in skill_chat_rows)
-    assert all(row["must_include"][0].startswith("Final answer:") for row in skill_eval_rows)
+    assert all(row["fit_normalized_answer"] for row in skill_chat_rows)
+    assert all(row["must_include"] == ["Final answer:"] for row in skill_eval_rows)
+    assert all(row["normalized_answer"] for row in skill_eval_rows)
+    assert all(row["normalized_answer_required"] is True for row in skill_eval_rows)
     assert all(row["max_words"] == 80 for row in skill_eval_rows)
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
 

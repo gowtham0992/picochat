@@ -1380,16 +1380,21 @@ def _final_answer_line(answer: str) -> str:
 
 
 def _skill_eval_fields(answer: str, skill_answer_style: str, direct_max_words: int) -> dict[str, Any]:
+    answer_fields = {
+        "reference_answer": answer,
+        "normalized_answer": answer,
+        "normalized_answer_required": True,
+    }
     if skill_answer_style == "scratchpad":
         return {
-            "must_include": [_final_answer_line(answer)],
+            "must_include": ["Final answer:"],
             "max_words": 80,
-            "reference_answer": answer,
+            **answer_fields,
         }
     return {
         "must_include": [answer],
         "max_words": direct_max_words,
-        "reference_answer": answer,
+        **answer_fields,
     }
 
 
@@ -1399,6 +1404,7 @@ def _skill_fit_fields(answer: str, skill_answer_style: str) -> dict[str, Any]:
     return {
         "fit_must_include": ["Scratchpad:", _final_answer_line(answer)],
         "fit_reference_answer": answer,
+        "fit_normalized_answer": answer,
         "fit_max_words": 80,
     }
 
