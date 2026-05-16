@@ -94,6 +94,7 @@ def run_sft_sweep(config: SFTSweepConfig) -> dict:
         "config": asdict(config),
         "rows": rows,
         "best_sft_fit": _best_row(rows, "sft_fit_pass_rate"),
+        "best_sft_heldout_fit": _best_row(rows, "sft_fit_heldout_pass_rate"),
         "best_eval": _best_row(rows, "eval_pass_rate"),
         "best_non_choice_eval": _best_row(rows, "eval_non_choice_pass_rate"),
     }
@@ -125,13 +126,14 @@ def sft_sweep_markdown(report: dict) -> str:
         "",
         "## Results",
         "",
-        "| Candidate | LR | Steps | Sampling | Packing | SFT Fit | Eval | NonChoice | Choice | Refusal | SFT Val BPB | Stop | Path |",
-        "| --- | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Candidate | LR | Steps | Sampling | Packing | SFT Fit | Heldout Fit | Eval | NonChoice | Choice | Refusal | SFT Val BPB | Stop | Path |",
+        "| --- | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     for row in rows:
         lines.append(
             f"| `{row['candidate']}` | {row['learning_rate']:g} | {row['step_count']} | "
             f"`{row['sampling']}` | `{row.get('packing', 'separate')}` | {_percent(row.get('sft_fit_pass_rate'))} | "
+            f"{_percent(row.get('sft_fit_heldout_pass_rate'))} | "
             f"{_percent(row.get('eval_pass_rate'))} | {_percent(row.get('eval_non_choice_pass_rate'))} | "
             f"{_percent(row.get('eval_choice_pass_rate'))} | {_percent(row.get('eval_refusal_pass_rate'))} | "
             f"{_float_or_dash(row.get('sft_final_val_bpb'))} | "
@@ -142,6 +144,7 @@ def sft_sweep_markdown(report: dict) -> str:
         "## Verdict",
         "",
         f"- Best SFT fit: `{_best_name(report.get('best_sft_fit'))}`",
+        f"- Best held-out SFT fit: `{_best_name(report.get('best_sft_heldout_fit'))}`",
         f"- Best held-out eval: `{_best_name(report.get('best_eval'))}`",
         f"- Best non-choice held-out eval: `{_best_name(report.get('best_non_choice_eval'))}`",
         "",
@@ -229,6 +232,33 @@ def _run_candidate(
         log_every=config.eval_log_every,
     ))
 
+    heldout_fit_report = None
+    heldout_fit_dataset = None
+    val_indices = sft_report.get("dataset", {}).get("val_indices")
+    if isinstance(val_indices, list) and val_indices:
+        heldout_fit_dir = candidate_dir / "sft_fit_heldout"
+        heldout_fit_input = heldout_fit_dir / "sft_fit_eval.jsonl"
+        heldout_fit_dataset = write_sft_fit_eval(
+            config.input_path,
+            heldout_fit_input,
+            max_rows=None if config.fit_max_rows <= 0 else config.fit_max_rows,
+            include_indices=val_indices,
+            split_label="sft_heldout",
+        )
+        heldout_fit_report = run_chat_eval(ChatEvalConfig(
+            input_path=str(heldout_fit_input),
+            checkpoint_path=eval_checkpoint,
+            tokenizer_path=config.tokenizer_path,
+            out_dir=str(heldout_fit_dir),
+            max_new_tokens=config.eval_max_new_tokens,
+            seed=config.seed,
+            device=config.device,
+            precision=config.precision,
+            matmul_precision=config.matmul_precision,
+            support_corpus_path=config.support_corpus_path,
+            log_every=config.eval_log_every,
+        ))
+
     eval_report = None
     if config.eval_input_path:
         eval_report = run_chat_eval(ChatEvalConfig(
@@ -265,6 +295,17 @@ def _run_candidate(
         "sft_fit_pass_rate": fit_report["summary"]["pass_rate"],
         "sft_fit_score": (
             f"{fit_report['summary']['num_passed']}/{fit_report['summary']['num_examples']}"
+        ),
+        "sft_fit_heldout_examples": (
+            heldout_fit_dataset["num_rows"] if heldout_fit_dataset is not None else None
+        ),
+        "sft_fit_heldout_pass_rate": (
+            heldout_fit_report["summary"]["pass_rate"] if heldout_fit_report is not None else None
+        ),
+        "sft_fit_heldout_score": (
+            f"{heldout_fit_report['summary']['num_passed']}/"
+            f"{heldout_fit_report['summary']['num_examples']}"
+            if heldout_fit_report is not None else None
         ),
         "eval_pass_rate": eval_report["summary"]["pass_rate"] if eval_report else None,
         "eval_score": (

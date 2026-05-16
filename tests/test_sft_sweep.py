@@ -62,17 +62,21 @@ def test_run_sft_sweep_writes_candidate_and_summary_artifacts(tmp_path):
     assert (out_dir / "sft_sweep.md").exists()
     assert (candidate_dir / "sft" / "best_checkpoint" / "model.pt").exists()
     assert (candidate_dir / "sft_fit" / "eval_report.json").exists()
+    assert (candidate_dir / "sft_fit_heldout" / "eval_report.json").exists()
     assert (candidate_dir / "eval" / "eval_report.json").exists()
     assert (candidate_dir / "candidate_summary.json").exists()
     assert row["sft_fit_examples"] == 1
     assert row["sft_fit_split"] == "sft_train"
     assert row["sft_fit_selected_from_indices"] is True
+    assert row["sft_fit_heldout_examples"] == 1
+    assert row["sft_fit_heldout_pass_rate"] is not None
     assert row["packing"] == "bos_bestfit"
     assert report["config"]["precision"] == "float32"
     assert report["config"]["torch_compile"] is False
     assert row["eval_score"] is not None
     assert "eval_non_choice_pass_rate" in row
     assert report["best_sft_fit"]["candidate"] == row["candidate"]
+    assert report["best_sft_heldout_fit"]["candidate"] == row["candidate"]
     assert report["best_non_choice_eval"]["candidate"] == row["candidate"]
 
 
@@ -107,6 +111,7 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
             "sampling": "uniform",
             "packing": "bos_bestfit",
             "sft_fit_pass_rate": 0.5,
+            "sft_fit_heldout_pass_rate": 0.4,
             "eval_pass_rate": 0.25,
             "eval_non_choice_pass_rate": 0.20,
             "eval_choice_pass_rate": 1.0,
@@ -115,6 +120,7 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
             "stop_reason": "max_steps",
         }],
         "best_sft_fit": {"candidate": "uniform-lr1em04-steps1"},
+        "best_sft_heldout_fit": {"candidate": "uniform-lr1em04-steps1"},
         "best_eval": {"candidate": "uniform-lr1em04-steps1"},
         "best_non_choice_eval": {"candidate": "uniform-lr1em04-steps1"},
     })
@@ -125,5 +131,7 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
     assert "Precision: `bf16`" in markdown
     assert "Matmul precision: `high`" in markdown
     assert "torch.compile: `True`" in markdown
+    assert "Heldout Fit" in markdown
+    assert "Best held-out SFT fit" in markdown
     assert "Best non-choice held-out eval" in markdown
     assert "uniform-lr1em04-steps1" in markdown
