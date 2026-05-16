@@ -932,6 +932,28 @@ def tiny_run_summary_markdown(summary: dict) -> str:
             lines.append(f"- {issue.get('severity', 'warn').upper()} `{issue.get('name')}`: {issue.get('message')}")
         lines.append("")
 
+    external_evals = summary.get("external_evals") or []
+    if external_evals:
+        lines.append("## External Benchmarks")
+        lines.append("")
+        lines.append("| Benchmark | Passed | Pass Rate | Choice Accuracy | Report |")
+        lines.append("| --- | ---: | ---: | ---: | --- |")
+        for item in external_evals:
+            eval_summary_item = item.get("summary", {})
+            passed = (
+                f"{int(eval_summary_item.get('num_passed', 0))} / "
+                f"{int(eval_summary_item.get('num_examples', 0))}"
+            )
+            report_path = item.get("artifacts", {}).get("eval_report", "")
+            report_text = f"`{report_path}`" if report_path else "--"
+            lines.append(
+                f"| `{item.get('name', 'external')}` | {passed} | "
+                f"{_format_percent_or_dash(eval_summary_item.get('pass_rate'))} | "
+                f"{_format_percent_or_dash(eval_summary_item.get('choice_accuracy'))} | "
+                f"{report_text} |"
+            )
+        lines.append("")
+
     if honesty:
         lines.append("## Data Honesty")
         lines.append("")

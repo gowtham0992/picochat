@@ -13,6 +13,7 @@ from picochat.data import (
     build_corpus_artifacts,
 )
 from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
+from picochat.external_benchmark import ExternalBenchmarkConvertConfig, convert_external_benchmark
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.report import tiny_run_summary_markdown
 from picochat.run_preflight import assess_run_preflight, preflight_markdown
@@ -109,6 +110,11 @@ class TinyRunConfig:
     loss_spike_lr_decay: float = 0.5
     loss_spike_min_lr_scale: float = 0.1
     loss_spike_snapshot_every: int = 10
+    external_eval_inputs: tuple[str, ...] = ()
+    external_eval_format: str = "auto"
+    external_eval_max_rows: int = 0
+    external_eval_shuffle: bool = False
+    external_eval_max_new_tokens: int = 1
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -133,6 +139,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
     chat_input = corpus_build.training_command.chat_input
     eval_input = corpus_build.training_command.eval_input
     _validate_tuning_data_source(config, chat_input=chat_input, eval_input=eval_input)
+    external_eval_specs = _validate_external_eval_inputs(config.external_eval_inputs)
 
     preflight_report = assess_run_preflight(config, corpus_build)
     preflight_json_path = out_dir / "preflight.json"
@@ -371,6 +378,13 @@ def run_tiny(config: TinyRunConfig) -> dict:
         for row in eval_report.get("examples", [])
         if isinstance(row, dict) and str(row.get("reply", "")).strip()
     ]
+    external_eval_reports = _run_external_evals(
+        config,
+        external_eval_specs,
+        tokenizer_path=tokenizer_path,
+        checkpoint_path=sft_eval_checkpoint,
+        out_dir=out_dir,
+    )
     honesty_report = inspect_data_honesty(
         corpus_path=corpus_path,
         chat_input=chat_input,
@@ -430,6 +444,10 @@ def run_tiny(config: TinyRunConfig) -> dict:
                 else None
             ),
             "eval_report": str(out_dir / "eval" / "report.md"),
+            "external_eval_reports": {
+                report["name"]: report["artifacts"]["eval_report"]
+                for report in external_eval_reports
+            },
         },
         "corpus": corpus_build.stats.to_dict(),
         "preflight": preflight_report.to_dict(),
@@ -494,6 +512,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         ),
         "eval": eval_report["summary"],
         "eval_analysis": eval_report.get("analysis", {}),
+        "external_evals": external_eval_reports,
         "long_run_gate": long_run_gate,
     }
 
@@ -515,6 +534,103 @@ def _iter_text_chunks(path: Path, chunk_chars: int = 1_000_000):
             if not chunk:
                 break
             yield chunk
+
+
+def _validate_external_eval_inputs(specs: tuple[str, ...]) -> list[dict[str, str]]:
+    parsed = []
+    names_seen: set[str] = set()
+    for index, spec in enumerate(specs):
+        name, input_path = _parse_external_eval_spec(spec, index)
+        if name in names_seen:
+            raise ValueError(f"duplicate external eval name: {name}")
+        names_seen.add(name)
+        if not Path(input_path).exists():
+            raise FileNotFoundError(input_path)
+        parsed.append({"name": name, "input_path": input_path})
+    return parsed
+
+
+def _parse_external_eval_spec(spec: str, index: int) -> tuple[str, str]:
+    spec = spec.strip()
+    if not spec:
+        raise ValueError("external eval spec cannot be empty")
+    if "=" in spec:
+        name, input_path = spec.split("=", 1)
+        name = _slugify_external_eval_name(name)
+        input_path = input_path.strip()
+        if not input_path:
+            raise ValueError("external eval spec path cannot be empty")
+        return name, input_path
+    path = Path(spec)
+    name = _slugify_external_eval_name(path.stem or f"external-{index + 1}")
+    return name, spec
+
+
+def _slugify_external_eval_name(value: str) -> str:
+    cleaned = "".join(
+        char.lower() if char.isalnum() else "-"
+        for char in value.strip()
+    ).strip("-")
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    if not cleaned:
+        raise ValueError("external eval name cannot be empty")
+    return cleaned
+
+
+def _run_external_evals(
+    config: TinyRunConfig,
+    specs: list[dict[str, str]],
+    *,
+    tokenizer_path: Path,
+    checkpoint_path: str,
+    out_dir: Path,
+) -> list[dict]:
+    if not specs:
+        return []
+    print(f"[7b/7] run {len(specs)} external benchmark eval(s)")
+    reports = []
+    for spec in specs:
+        name = spec["name"]
+        benchmark_out_dir = out_dir / "external_eval" / name
+        converted_path = benchmark_out_dir / "external_eval.jsonl"
+        convert_report = convert_external_benchmark(ExternalBenchmarkConvertConfig(
+            input_path=spec["input_path"],
+            output_path=str(converted_path),
+            source_format=config.external_eval_format,
+            benchmark_name=name,
+            split="external",
+            max_rows=None if config.external_eval_max_rows <= 0 else config.external_eval_max_rows,
+            seed=config.seed,
+            shuffle=config.external_eval_shuffle,
+        ))
+        eval_report = run_chat_eval(ChatEvalConfig(
+            input_path=str(converted_path),
+            checkpoint_path=checkpoint_path,
+            tokenizer_path=str(tokenizer_path),
+            out_dir=str(benchmark_out_dir),
+            max_new_tokens=config.external_eval_max_new_tokens,
+            seed=config.seed,
+            device=config.device,
+            precision=config.precision,
+            matmul_precision=config.matmul_precision,
+            log_every=_eval_log_every(int(convert_report.get("num_rows") or 0)),
+        ))
+        reports.append({
+            "name": name,
+            "input_path": spec["input_path"],
+            "converted_eval": str(converted_path),
+            "convert_report": convert_report,
+            "summary": eval_report["summary"],
+            "analysis": eval_report.get("analysis", {}),
+            "artifacts": {
+                "eval_report": str(benchmark_out_dir / "report.md"),
+                "eval_json": str(benchmark_out_dir / "eval_report.json"),
+                "converted_eval": str(converted_path),
+                "convert_report": convert_report.get("report_path"),
+            },
+        })
+    return reports
 
 
 def _eval_log_every(num_rows: int) -> int:

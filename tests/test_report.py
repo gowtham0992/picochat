@@ -472,6 +472,18 @@ def test_tiny_run_summary_markdown_contains_key_sections():
                 "action": "Add more varied SFT rows.",
             }],
         },
+        "external_evals": [{
+            "name": "arc-mini",
+            "summary": {
+                "num_examples": 10,
+                "num_passed": 6,
+                "pass_rate": 0.6,
+                "choice_accuracy": 0.7,
+            },
+            "artifacts": {
+                "eval_report": "external_eval/arc-mini/report.md",
+            },
+        }],
         "honesty": {
             "status": "ready",
             "summary": "No obvious eval leakage was detected.",
@@ -490,6 +502,9 @@ def test_tiny_run_summary_markdown_contains_key_sections():
     assert "SFT fit passed: 4 / 5" in markdown
     assert "## SFT Fit Categories" in markdown
     assert "## Data Honesty" in markdown
+    assert "## External Benchmarks" in markdown
+    assert "`arc-mini`" in markdown
+    assert "70.0000%" in markdown
     assert "Data honesty report" in markdown
     assert "## Eval Categories" in markdown
     assert "## Eval Curriculum Stages" in markdown

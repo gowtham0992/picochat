@@ -1030,6 +1030,38 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--corpus-recipe", default=None)
     run_tiny_parser.add_argument("--chat-input", default="examples/tiny_chat.jsonl")
     run_tiny_parser.add_argument("--eval-input", default="examples/tiny_eval.jsonl")
+    run_tiny_parser.add_argument(
+        "--external-eval",
+        action="append",
+        default=None,
+        help=(
+            "Optional ARC/MMLU-style external benchmark file to run after the main eval. "
+            "Repeat for multiple files. Use name=path to control the summary label."
+        ),
+    )
+    run_tiny_parser.add_argument(
+        "--external-eval-format",
+        choices=EXTERNAL_BENCHMARK_FORMATS,
+        default=None,
+        help="Format for --external-eval files. auto detects ARC or MMLU records.",
+    )
+    run_tiny_parser.add_argument(
+        "--external-eval-max-rows",
+        type=int,
+        default=None,
+        help="Optional row limit per external benchmark. 0 means all rows.",
+    )
+    run_tiny_parser.add_argument(
+        "--external-eval-shuffle",
+        action="store_true",
+        help="Shuffle external benchmark rows before applying --external-eval-max-rows.",
+    )
+    run_tiny_parser.add_argument(
+        "--external-eval-max-new-tokens",
+        type=int,
+        default=None,
+        help="Max generated tokens for external choice evals. Choice scoring uses logprobs; 1 is usually enough.",
+    )
     run_tiny_parser.add_argument("--context-size", type=int, default=None)
     run_tiny_parser.add_argument("--n-embd", type=int, default=None)
     run_tiny_parser.add_argument("--n-head", type=int, default=None)
@@ -2338,6 +2370,11 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         corpus_recipe=args.corpus_recipe,
         chat_input=args.chat_input,
         eval_input=args.eval_input,
+        external_eval_inputs=tuple(args.external_eval or ()),
+        external_eval_format=_resolve_tiny_value(args, defaults, "external_eval_format"),
+        external_eval_max_rows=_resolve_tiny_value(args, defaults, "external_eval_max_rows"),
+        external_eval_shuffle=bool(args.external_eval_shuffle),
+        external_eval_max_new_tokens=_resolve_tiny_value(args, defaults, "external_eval_max_new_tokens"),
         context_size=_resolve_tiny_value(args, defaults, "context_size"),
         n_embd=_resolve_tiny_value(args, defaults, "n_embd"),
         n_head=_resolve_tiny_value(args, defaults, "n_head"),

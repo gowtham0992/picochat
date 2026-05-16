@@ -97,6 +97,7 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     corpus_path = tmp_path / "corpus.txt"
     chat_path = tmp_path / "chat.jsonl"
     eval_path = tmp_path / "eval.jsonl"
+    external_path = tmp_path / "arc_mini.jsonl"
     pack_path = tmp_path / "dataset_pack.json"
     out_dir = tmp_path / "run"
     corpus_path.write_text(
@@ -108,6 +109,12 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
         encoding="utf-8",
     )
     eval_path.write_text(json.dumps({"user": "hi"}), encoding="utf-8")
+    external_path.write_text(json.dumps({
+        "question": "Which option says hello?",
+        "choices": {"label": ["A", "B"], "text": ["hello", "bye"]},
+        "answerKey": "A",
+        "category": "arc_easy_mini",
+    }), encoding="utf-8")
     pack_path.write_text(json.dumps({
         "corpus": "corpus.txt",
         "chat": "chat.jsonl",
@@ -126,6 +133,7 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
         base_batch_size=2,
         sft_batch_size=1,
         eval_max_new_tokens=0,
+        external_eval_inputs=(f"arc-mini={external_path}",),
         allow_leaky_eval=True,
     ))
 
@@ -142,6 +150,8 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert (out_dir / "sft_fit" / "sft_fit_eval.jsonl").exists()
     assert (out_dir / "sft_fit" / "eval_report.json").exists()
     assert (out_dir / "eval" / "eval_report.json").exists()
+    assert (out_dir / "external_eval" / "arc-mini" / "external_eval.jsonl").exists()
+    assert (out_dir / "external_eval" / "arc-mini" / "eval_report.json").exists()
     assert (out_dir / "honesty" / "honesty_report.json").exists()
     assert (out_dir / "honesty" / "report.md").exists()
     assert (out_dir / "summary.json").exists()
@@ -170,6 +180,9 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert summary["base"]["stop_reason"] == "max_steps"
     assert summary["sft"]["eval_checkpoint"] == str(out_dir / "sft" / "best_checkpoint")
     assert summary["sft_fit"]["num_examples"] == 1
+    assert summary["external_evals"][0]["name"] == "arc-mini"
+    assert summary["external_evals"][0]["summary"]["num_examples"] == 1
+    assert "external_eval_reports" in summary["artifacts"]
     assert summary["sft_fit_dataset"]["num_rows"] == 1
     assert summary["config"]["dataset_pack"] == str(pack_path)
     assert summary["config"]["chat_input"] == str(chat_path)
