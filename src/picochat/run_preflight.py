@@ -294,14 +294,28 @@ def _tokenizer_checks(config: Any, stats: CorpusStats, long_run: bool) -> list[R
     tokenizer_type = str(_value(config, "tokenizer_type", "char"))
     vocab_size = _value(config, "tokenizer_vocab_size", None)
     split_mode = str(_value(config, "split_mode", "window"))
-    checks = [
-        _check(
+    base_dataset_mode = str(_value(config, "base_dataset_mode", "memory"))
+    if base_dataset_mode == "sharded":
+        document_split_check = _check(
+            "document_split",
+            "warn",
+            "sharded",
+            "document holdout or explicit sharded tradeoff",
+            (
+                "Sharded base data validates by token shard, not complete source document. "
+                "Use memory mode for strict document holdout."
+            ),
+        )
+    else:
+        document_split_check = _check(
             "document_split",
             "pass" if split_mode == "document" else "block" if long_run else "warn",
             split_mode,
             "document",
             "Document split keeps validation text held out by source document.",
-        ),
+        )
+    checks = [
+        document_split_check,
     ]
     if _is_bpe_tokenizer(tokenizer_type):
         target = _tokenizer_vocab_estimate(config)
@@ -340,6 +354,8 @@ def _tokenizer_checks(config: Any, stats: CorpusStats, long_run: bool) -> list[R
 
 
 def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) -> list[RunPreflightCheck]:
+    base_dataset_mode = str(_value(config, "base_dataset_mode", "memory"))
+    split_mode = str(_value(config, "split_mode", "window"))
     epochs = budget.estimated_base_epochs
     status = "pass"
     if epochs is None:
@@ -402,13 +418,32 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
             f"{base_lr * budget.base_lr_sqrt_scale:.6g}."
         ),
     ))
-    if stats.num_documents > 1:
+    if base_dataset_mode == "sharded":
+        checks.append(_check(
+            "document_boundaries",
+            "warn",
+            "disabled in sharded mode",
+            "memory document split",
+            (
+                "Sharded token data does not preserve per-document BOS/EOS validation boundaries; "
+                "treat validation BPB as token-shard holdout."
+            ),
+        ))
+    elif stats.num_documents > 1 and split_mode == "document":
         checks.append(_check(
             "document_boundaries",
             "pass",
             "bos/eos per document",
             "enabled with document split",
             "Picochat packs document split corpora with BOS/EOS around each document.",
+        ))
+    elif stats.num_documents > 1:
+        checks.append(_check(
+            "document_boundaries",
+            "warn",
+            "disabled",
+            "document split",
+            "Window-split base training does not preserve per-document BOS/EOS validation boundaries.",
         ))
     return checks
 

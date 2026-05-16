@@ -1,0 +1,197 @@
+from picochat.data import (
+    CorpusPreviewReport,
+    CorpusReadiness,
+    CorpusReadinessCheck,
+    CorpusStats,
+    CorpusTrainingBudget,
+    CorpusTrainingCommand,
+)
+from picochat.run import TinyRunConfig
+from picochat.run_preflight import assess_run_preflight
+from picochat.tuning_data import ChatEvalDataReport, ChatSFTDataReport
+
+
+def test_preflight_warns_that_sharded_base_mode_is_not_document_holdout():
+    report = assess_run_preflight(
+        _h100_like_config(base_dataset_mode="sharded"),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert report.status == "warn"
+    assert checks["document_split"].status == "warn"
+    assert checks["document_split"].metric == "sharded"
+    assert "token shard" in checks["document_split"].message
+    assert checks["document_boundaries"].status == "warn"
+    assert checks["document_boundaries"].metric == "disabled in sharded mode"
+    assert "token-shard holdout" in checks["document_boundaries"].message
+
+
+def test_preflight_reports_document_boundaries_for_memory_document_split():
+    report = assess_run_preflight(
+        _h100_like_config(base_dataset_mode="memory"),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["document_split"].status == "pass"
+    assert checks["document_split"].metric == "document"
+    assert checks["document_boundaries"].status == "pass"
+    assert checks["document_boundaries"].metric == "bos/eos per document"
+
+
+def test_preflight_does_not_claim_boundaries_for_window_split():
+    config = _h100_like_config(base_dataset_mode="memory", split_mode="window")
+    report = assess_run_preflight(config, _ready_large_corpus())
+    checks = _checks_by_name(report)
+
+    assert checks["document_split"].status == "block"
+    assert checks["document_boundaries"].status == "warn"
+    assert checks["document_boundaries"].metric == "disabled"
+
+
+def _h100_like_config(**overrides) -> TinyRunConfig:
+    values = {
+        "out_dir": "runs/test-preflight",
+        "tokenizer_type": "hf_bpe",
+        "tokenizer_vocab_size": 8192,
+        "context_size": 512,
+        "n_embd": 384,
+        "n_head": 8,
+        "n_kv_head": 2,
+        "n_layer": 8,
+        "norm_type": "rmsnorm",
+        "position_encoding": "rope",
+        "activation": "swiglu",
+        "tie_embeddings": True,
+        "qk_norm": True,
+        "base_steps": 5000,
+        "sft_steps": 700,
+        "base_batch_size": 8,
+        "base_grad_accum_steps": 16,
+        "sft_batch_size": 8,
+        "sft_grad_accum_steps": 4,
+        "base_learning_rate": 0.0001,
+        "sft_learning_rate": 0.00001,
+        "split_mode": "document",
+        "base_dataset_mode": "memory",
+    }
+    values.update(overrides)
+    return TinyRunConfig(**values)
+
+
+def _ready_large_corpus() -> CorpusPreviewReport:
+    return CorpusPreviewReport(
+        input_path="corpus_recipe.json",
+        recipe_path="corpus_recipe.json",
+        dataset_pack="dataset_pack.json",
+        stats=CorpusStats(
+            num_files=80_000,
+            num_documents=79_651,
+            num_characters=235_000_000,
+            num_lines=5_000_000,
+            average_document_chars=2950.0,
+            duplicate_document_rate=0.0,
+            duplicate_line_rate=0.06,
+            non_ascii_rate=0.001,
+            empty_line_rate=0.2,
+        ),
+        files=(),
+        readiness=CorpusReadiness(
+            status="ready",
+            summary="Corpus looks ready for a long run.",
+            checks=(
+                CorpusReadinessCheck(
+                    name="usable_documents",
+                    status="pass",
+                    metric="79651",
+                    threshold=">= 1",
+                    message="At least one source has usable text.",
+                ),
+            ),
+        ),
+        budget=CorpusTrainingBudget(
+            preset="test",
+            estimated_tokens=65_800_000,
+            suggested_context_size=512,
+            estimated_windows=65_799_488,
+            suggested_batch_size=8,
+            suggested_base_steps=5000,
+            estimated_tokens_per_step=4096,
+            estimated_passes=4.9,
+            note="test",
+        ),
+        training_command=CorpusTrainingCommand(
+            out_dir="runs/test",
+            chat_input="chat.jsonl",
+            eval_input="eval.jsonl",
+            dataset_pack="dataset_pack.json",
+            command="picochat",
+            note="test",
+        ),
+        chat_data=ChatSFTDataReport(
+            path="chat.jsonl",
+            status="ready",
+            summary="Chat SFT file looks usable.",
+            num_rows=1600,
+            num_examples=1600,
+            empty_rows=0,
+            invalid_rows=0,
+            average_user_chars=60.0,
+            average_assistant_chars=40.0,
+            duplicate_user_rate=0.0,
+            duplicate_user_prompts=0,
+            duplicate_user_samples=(),
+            near_duplicate_user_pairs=0,
+            near_duplicate_user_samples=(),
+            categories={"choice": 400, "math": 400, "spelling": 400, "refusal": 400},
+            category_entropy=2.0,
+            category_entropy_normalized=1.0,
+            assistant_length_distribution={},
+            template_families={},
+            answer_styles={},
+            curriculum_label="mixed_sft",
+            curriculum_breakdown={},
+            quality_warnings=(),
+            issues=(),
+            preview=(),
+        ),
+        eval_data=ChatEvalDataReport(
+            path="eval.jsonl",
+            status="ready",
+            summary="Eval file looks usable.",
+            num_rows=320,
+            num_items=320,
+            empty_rows=0,
+            invalid_rows=0,
+            answerable_items=288,
+            unanswerable_items=32,
+            must_include_rules=320,
+            must_include_any_groups=160,
+            must_not_include_rules=32,
+            duplicate_user_rate=0.0,
+            duplicate_user_prompts=0,
+            duplicate_user_samples=(),
+            near_duplicate_user_pairs=0,
+            near_duplicate_user_samples=(),
+            categories={"choice": 80, "math": 80, "spelling": 80, "refusal": 80},
+            category_entropy=2.0,
+            category_entropy_normalized=1.0,
+            splits={"benchmark": 240, "behavior": 48, "adversarial": 32},
+            levels={"choice": 80, "math": 80, "spelling": 80, "refusal": 80},
+            heldout_categories={"choice": 80, "math": 80, "spelling": 80, "refusal": 80},
+            answer_length_distribution={},
+            template_families={},
+            curriculum_label="mixed_eval",
+            curriculum_breakdown={},
+            quality_warnings=(),
+            issues=(),
+            preview=(),
+        ),
+        warnings=(),
+        preview="sample",
+    )
+
+
+def _checks_by_name(report):
+    return {check.name: check for check in report.checks}
