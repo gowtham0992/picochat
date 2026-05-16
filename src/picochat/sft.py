@@ -1204,14 +1204,15 @@ def train_sft(config: SFTConfig) -> dict:
         dtype=torch.long,
         device=device,
     )
-    generated = model.generate(
-        prompt,
-        max_new_tokens=config.sample_tokens,
-        temperature=0.8,
-        top_k=20,
-        seed=config.seed,
-        eos_id=tokenizer.eos_id,
-    )
+    with autocast_context(precision_runtime):
+        generated = model.generate(
+            prompt,
+            max_new_tokens=config.sample_tokens,
+            temperature=0.8,
+            top_k=20,
+            seed=config.seed,
+            eos_id=tokenizer.eos_id,
+        )
     sample = tokenizer.decode(generated[0].tolist())
 
     report = {

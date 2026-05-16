@@ -717,7 +717,14 @@ def train_base(config: TrainConfig) -> dict:
             "weights": "ema" if ema is not None else "raw",
         }
 
-    sample = _generate_sample(model, tokenizer, device, config.sample_tokens, config.seed)
+    sample = _generate_sample(
+        model,
+        tokenizer,
+        device,
+        config.sample_tokens,
+        config.seed,
+        precision_runtime=precision_runtime,
+    )
     canary_probe = ""
     if split.canary_values:
         canary_probe = _generate_sample(
@@ -727,6 +734,7 @@ def train_base(config: TrainConfig) -> dict:
             min(config.sample_tokens, 80),
             config.seed + 17,
             prompt_text="Memorization canary phrase:",
+            precision_runtime=precision_runtime,
         )
     memorization_text = f"{sample}\n{canary_probe}" if canary_probe else sample
 
@@ -792,6 +800,7 @@ def _generate_sample(
     sample_tokens: int,
     seed: int,
     prompt_text: str | None = None,
+    precision_runtime=None,
 ) -> str:
     model.eval()
     if prompt_text:
@@ -799,14 +808,15 @@ def _generate_sample(
     else:
         prompt_ids = [tokenizer.bos_id]
     prompt = torch.tensor([prompt_ids], dtype=torch.long, device=device)
-    generated = model.generate(
-        prompt,
-        max_new_tokens=sample_tokens,
-        temperature=0.8,
-        top_k=20,
-        seed=seed,
-        eos_id=tokenizer.eos_id,
-    )
+    with autocast_context(precision_runtime) if precision_runtime is not None else nullcontext():
+        generated = model.generate(
+            prompt,
+            max_new_tokens=sample_tokens,
+            temperature=0.8,
+            top_k=20,
+            seed=seed,
+            eos_id=tokenizer.eos_id,
+        )
     return tokenizer.decode(generated[0].tolist())
 
 

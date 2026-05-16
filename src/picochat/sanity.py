@@ -154,16 +154,21 @@ def _check_precision_backward(config: PreH100SanityConfig, work_dir: Path) -> di
 def _check_attention_backend(config: PreH100SanityConfig, work_dir: Path) -> dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
     device = resolve_device(config.device)
+    runtime = resolve_precision(config.precision, device)
     model = TinyGPT(_tiny_model_config(vocab_size=32, attn_backend=config.attn_backend)).to(device)
     model.eval()
     x = torch.randint(0, model.config.vocab_size, (1, 8), device=device)
-    with torch.no_grad():
+    with torch.no_grad(), autocast_context(runtime):
         logits, _ = model(x)
     if logits.shape != (1, 8, model.config.vocab_size):
         raise AssertionError("attention backend returned bad logits shape")
     return {
-        "detail": f"attn_backend={config.attn_backend}, device={device.type}",
+        "detail": (
+            f"attn_backend={config.attn_backend}, device={device.type}, "
+            f"precision={runtime.dtype_name}"
+        ),
         "attn_backend": config.attn_backend,
+        "precision_runtime": runtime.to_dict(),
     }
 
 
@@ -378,16 +383,18 @@ def _check_torch_compile(config: PreH100SanityConfig, work_dir: Path) -> dict[st
         }
     work_dir.mkdir(parents=True, exist_ok=True)
     device = resolve_device(config.device)
+    runtime = resolve_precision(config.precision, device)
     model = TinyGPT(_tiny_model_config(vocab_size=32, attn_backend=config.attn_backend)).to(device)
     compiled, metadata = maybe_compile_model(model, enabled=True)
     x = torch.randint(0, model.config.vocab_size, (1, 8), device=device)
-    with torch.no_grad():
+    with torch.no_grad(), autocast_context(runtime):
         logits, _ = compiled(x)
     if logits.shape != (1, 8, model.config.vocab_size):
         raise AssertionError("compiled model returned bad logits shape")
     return {
-        "detail": "compiled forward pass succeeded",
+        "detail": f"compiled forward pass succeeded, precision={runtime.dtype_name}",
         "compile": metadata,
+        "precision_runtime": runtime.to_dict(),
     }
 
 
