@@ -348,10 +348,15 @@ def test_run_chat_eval_writes_artifacts(tmp_path):
         tokenizer_path=str(tokenizer_path),
         out_dir=str(out_dir),
         max_new_tokens=0,
+        precision="float32",
+        matmul_precision="default",
     ))
 
     assert (out_dir / "eval_report.json").exists()
     assert (out_dir / "report.md").exists()
+    assert report["config"]["precision"] == "float32"
+    assert report["config"]["precision_runtime"]["dtype_name"] == "float32"
+    assert report["config"]["matmul_precision_runtime"]["requested"] == "default"
     assert report["summary"]["num_examples"] == 1
     assert report["summary"]["num_passed"] == 1
     assert report["summary"]["unsupported_claim_rate"] == 0.0

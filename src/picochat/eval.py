@@ -15,6 +15,11 @@ import torch
 from picochat.chat import extract_assistant_reply, render_chat_prompt
 from picochat.checkpoint import load_checkpoint
 from picochat.device import resolve_device
+from picochat.precision import (
+    autocast_context,
+    configure_float32_matmul_precision,
+    resolve_precision,
+)
 from picochat.report import chat_eval_report_markdown
 from picochat.tokenizer import Tokenizer, load_tokenizer
 
@@ -60,6 +65,8 @@ class ChatEvalConfig:
     ci_bootstrap_samples: int = 1000
     ci_confidence: float = 0.95
     log_every: int = 0
+    precision: str = "float32"
+    matmul_precision: str = "default"
 
 
 @dataclass(frozen=True)
@@ -442,6 +449,8 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
 
     model = model.to(device)
     model.eval()
+    matmul_precision_runtime = configure_float32_matmul_precision(config.matmul_precision)
+    precision_runtime = resolve_precision(config.precision, device)
     support_corpus_text = _read_optional_text(config.support_corpus_path)
     support_corpus_tokens = _corpus_support_token_set(support_corpus_text)
 
@@ -458,7 +467,13 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
         choice_details = None
         generation_max_new_tokens = None
         if item.correct_choice:
-            reply, choice_scores, choice_details = _predict_choice_reply(model, tokenizer, config, item)
+            reply, choice_scores, choice_details = _predict_choice_reply(
+                model,
+                tokenizer,
+                config,
+                item,
+                precision_runtime=precision_runtime,
+            )
         else:
             reply, generation_max_new_tokens = _generate_eval_reply(
                 model,
@@ -466,6 +481,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
                 config,
                 item,
                 seed=config.seed + index,
+                precision_runtime=precision_runtime,
             )
         score = score_reply(
             reply,
@@ -582,6 +598,8 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             **config.__dict__,
             "requested_device": config.device,
             "device": device.type,
+            "precision_runtime": precision_runtime.to_dict(),
+            "matmul_precision_runtime": matmul_precision_runtime,
         },
         "checkpoint": {
             "path": config.checkpoint_path,
@@ -1391,6 +1409,7 @@ def _predict_choice_reply(
     tokenizer: Tokenizer,
     config: ChatEvalConfig,
     item: ChatEvalItem,
+    precision_runtime=None,
 ) -> tuple[str, dict[str, float], dict[str, dict]]:
     """Predict a categorical answer by scoring each choice continuation."""
     prompt_ids = tokenizer.encode(render_chat_prompt([], item.user), add_bos=True)
@@ -1410,7 +1429,12 @@ def _predict_choice_reply(
             continue
         variant_scores = []
         for candidate in variants:
-            raw_logprob = _sequence_logprob(model, prompt_ids, list(candidate.token_ids))
+            raw_logprob = _sequence_logprob(
+                model,
+                prompt_ids,
+                list(candidate.token_ids),
+                precision_runtime=precision_runtime,
+            )
             avg_logprob = raw_logprob / len(candidate.token_ids)
             variant_scores.append({
                 "variant": candidate.variant,
@@ -1458,7 +1482,12 @@ def _choice_continuation_candidates(tokenizer: Tokenizer, label: str) -> list[_C
 
 
 @torch.no_grad()
-def _sequence_logprob(model, prompt_ids: list[int], continuation_ids: list[int]) -> float:
+def _sequence_logprob(
+    model,
+    prompt_ids: list[int],
+    continuation_ids: list[int],
+    precision_runtime=None,
+) -> float:
     """Score a short continuation under the model."""
     device = next(model.parameters()).device
     context = list(prompt_ids)
@@ -1470,7 +1499,8 @@ def _sequence_logprob(model, prompt_ids: list[int], continuation_ids: list[int])
             dtype=torch.long,
             device=device,
         )
-        logits, _ = model(input_ids)
+        with autocast_context(precision_runtime) if precision_runtime else torch.no_grad():
+            logits, _ = model(input_ids)
         log_probs = torch.log_softmax(logits[0, -1], dim=-1)
         total += float(log_probs[token_id].item())
         context.append(token_id)
@@ -1484,6 +1514,7 @@ def _generate_eval_reply(
     config: ChatEvalConfig,
     item: ChatEvalItem,
     seed: int,
+    precision_runtime=None,
 ) -> tuple[str, int]:
     prompt = render_chat_prompt([], item.user)
     input_ids = torch.tensor(
@@ -1492,16 +1523,17 @@ def _generate_eval_reply(
         device=next(model.parameters()).device,
     )
     max_new_tokens = _generation_max_new_tokens(config, tokenizer, item)
-    generated = model.generate(
-        input_ids,
-        max_new_tokens=max_new_tokens,
-        temperature=config.temperature,
-        top_k=config.top_k,
-        top_p=config.top_p,
-        repetition_penalty=config.repetition_penalty,
-        seed=seed,
-        eos_id=tokenizer.eos_id,
-    )
+    with autocast_context(precision_runtime) if precision_runtime else torch.no_grad():
+        generated = model.generate(
+            input_ids,
+            max_new_tokens=max_new_tokens,
+            temperature=config.temperature,
+            top_k=config.top_k,
+            top_p=config.top_p,
+            repetition_penalty=config.repetition_penalty,
+            seed=seed,
+            eos_id=tokenizer.eos_id,
+        )
     new_token_ids = generated[0, input_ids.shape[1]:].tolist()
     generated_text = tokenizer.decode(new_token_ids)
     return extract_assistant_reply("", generated_text), max_new_tokens

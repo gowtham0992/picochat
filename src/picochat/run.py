@@ -322,6 +322,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
         max_new_tokens=config.eval_max_new_tokens,
         seed=config.seed,
         device=config.device,
+        precision=config.precision,
+        matmul_precision=config.matmul_precision,
         support_corpus_path=str(corpus_path),
         log_every=_eval_log_every(sft_fit_dataset["num_rows"]),
     ))
@@ -344,6 +346,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
             max_new_tokens=config.eval_max_new_tokens,
             seed=config.seed,
             device=config.device,
+            precision=config.precision,
+            matmul_precision=config.matmul_precision,
             support_corpus_path=str(corpus_path),
             log_every=_eval_log_every(sft_fit_heldout_dataset["num_rows"]),
         ))
@@ -357,6 +361,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
         max_new_tokens=config.eval_max_new_tokens,
         seed=config.seed,
         device=config.device,
+        precision=config.precision,
+        matmul_precision=config.matmul_precision,
         support_corpus_path=str(corpus_path),
         log_every=50,
     ))

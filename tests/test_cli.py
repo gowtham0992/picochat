@@ -46,6 +46,45 @@ def test_cli_sanity_preh100(tmp_path, capsys, monkeypatch):
     assert "precision_backward: pass ok" in output
 
 
+def test_cli_eval_chat_accepts_runtime_precision(tmp_path, capsys, monkeypatch):
+    def fake_run(config):
+        assert config.precision == "bf16"
+        assert config.matmul_precision == "high"
+        assert config.device == "cuda"
+        return {
+            "summary": {
+                "num_passed": 1,
+                "num_examples": 2,
+                "pass_rate": 0.5,
+            },
+        }
+
+    monkeypatch.setattr("picochat.cli.run_chat_eval", fake_run)
+
+    exit_code = main([
+        "eval",
+        "chat",
+        "--input",
+        "eval.jsonl",
+        "--checkpoint",
+        "checkpoint",
+        "--tokenizer",
+        "tokenizer.json",
+        "--out-dir",
+        str(tmp_path / "eval"),
+        "--device",
+        "cuda",
+        "--precision",
+        "bf16",
+        "--matmul-precision",
+        "high",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "chat eval: 1/2 passed (50.00%)" in output
+
+
 def test_cli_run_tiny_multiseed(tmp_path, capsys, monkeypatch):
     def fake_run(config, n_seeds):
         assert config.out_dir == str(tmp_path / "multi")

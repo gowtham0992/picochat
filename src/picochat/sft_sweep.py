@@ -223,6 +223,8 @@ def _run_candidate(
         max_new_tokens=config.eval_max_new_tokens,
         seed=config.seed,
         device=config.device,
+        precision=config.precision,
+        matmul_precision=config.matmul_precision,
         support_corpus_path=config.support_corpus_path,
         log_every=config.eval_log_every,
     ))
@@ -237,6 +239,8 @@ def _run_candidate(
             max_new_tokens=config.eval_max_new_tokens,
             seed=config.seed,
             device=config.device,
+            precision=config.precision,
+            matmul_precision=config.matmul_precision,
             support_corpus_path=config.support_corpus_path,
             log_every=config.eval_log_every,
         ))

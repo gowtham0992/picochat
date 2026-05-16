@@ -76,6 +76,21 @@ CLIMBMIX_DATASET = "karpathy/climbmix-400b-shuffle"
 CLIMBMIX_MAX_SHARD = 6542
 
 
+def _add_eval_runtime_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--precision",
+        choices=PRECISION_MODES,
+        default="float32",
+        help="Eval precision. Use bf16 on H100/CUDA to speed SFT-fit and chat eval.",
+    )
+    parser.add_argument(
+        "--matmul-precision",
+        choices=MATMUL_PRECISION_MODES,
+        default="default",
+        help="torch.set_float32_matmul_precision setting for eval forward passes.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pico",
@@ -928,6 +943,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_chat_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     eval_chat_parser.add_argument("--seed", type=int, default=42)
     eval_chat_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    _add_eval_runtime_args(eval_chat_parser)
     eval_chat_parser.add_argument("--log-every", type=int, default=0, help="Print progress every N eval rows. 0 disables progress logs.")
     eval_chat_parser.add_argument("--case-sensitive", action="store_true")
     eval_chat_parser.add_argument("--support-corpus", default=None, help="Optional corpus text file for support-overlap diagnostics.")
@@ -960,6 +976,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_external_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     eval_external_parser.add_argument("--seed", type=int, default=42)
     eval_external_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    _add_eval_runtime_args(eval_external_parser)
     eval_external_parser.add_argument("--log-every", type=int, default=0, help="Print progress every N eval rows. 0 disables progress logs.")
     eval_external_parser.add_argument(
         "--ci-bootstrap-samples",
@@ -985,6 +1002,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_sft_fit_parser.add_argument("--repetition-penalty", type=float, default=1.0)
     eval_sft_fit_parser.add_argument("--seed", type=int, default=42)
     eval_sft_fit_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    _add_eval_runtime_args(eval_sft_fit_parser)
     eval_sft_fit_parser.add_argument("--log-every", type=int, default=50, help="Print progress every N eval rows. 0 disables progress logs.")
     eval_sft_fit_parser.add_argument("--case-sensitive", action="store_true")
     eval_sft_fit_parser.add_argument("--support-corpus", default=None, help="Optional corpus text file for support-overlap diagnostics.")
@@ -2151,6 +2169,8 @@ def run_eval_chat(args: argparse.Namespace) -> int:
         repetition_penalty=args.repetition_penalty,
         seed=args.seed,
         device=args.device,
+        precision=args.precision,
+        matmul_precision=args.matmul_precision,
         case_sensitive=args.case_sensitive,
         support_corpus_path=args.support_corpus,
         corpus_support_threshold=args.corpus_support_threshold,
@@ -2193,6 +2213,8 @@ def run_eval_external(args: argparse.Namespace) -> int:
         repetition_penalty=args.repetition_penalty,
         seed=args.seed,
         device=args.device,
+        precision=args.precision,
+        matmul_precision=args.matmul_precision,
         ci_bootstrap_samples=args.ci_bootstrap_samples,
         ci_confidence=args.ci_confidence,
         log_every=args.log_every,
@@ -2230,6 +2252,8 @@ def run_eval_sft_fit(args: argparse.Namespace) -> int:
         repetition_penalty=args.repetition_penalty,
         seed=args.seed,
         device=args.device,
+        precision=args.precision,
+        matmul_precision=args.matmul_precision,
         case_sensitive=args.case_sensitive,
         support_corpus_path=args.support_corpus,
         corpus_support_threshold=args.corpus_support_threshold,
