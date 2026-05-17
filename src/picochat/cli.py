@@ -79,6 +79,8 @@ from picochat.web import WebConfig, serve_web
 SOURCE_PLAN_PREVIEW_LIMIT = 25
 CLIMBMIX_DATASET = "karpathy/climbmix-400b-shuffle"
 CLIMBMIX_MAX_SHARD = 6542
+CLIMBMIX_LARGE_IMPORT_ROWS = 100_000
+CLIMBMIX_LARGE_IMPORT_DOCUMENT_SHARD_ROWS = 1000
 
 
 def _add_eval_runtime_args(parser: argparse.ArgumentParser) -> None:
@@ -463,10 +465,10 @@ def build_parser() -> argparse.ArgumentParser:
     data_climbmix_import.add_argument(
         "--document-shard-rows",
         type=int,
-        default=1,
+        default=None,
         help=(
-            "Accepted rows per local document file. Use 1000 for H100-scale imports to "
-            "keep auditability without creating one file per dataset row."
+            "Accepted rows per local document file. Defaults to 1 for small imports and "
+            "1000 for H100-scale imports to avoid hundreds of thousands of tiny files."
         ),
     )
     data_climbmix_import.add_argument("--force", action="store_true", help="Overwrite existing import/pack artifacts.")
@@ -1800,6 +1802,11 @@ def climbmix_import_data(args: argparse.Namespace) -> int:
     data_files = tuple(f"shard_{index:05d}.parquet" for index in range(args.shards))
     corpus_path = out_dir / "corpus.txt"
     documents_dir = out_dir / "documents"
+    document_shard_rows = (
+        args.document_shard_rows
+        if args.document_shard_rows is not None
+        else _default_climbmix_document_shard_rows(args.max_rows)
+    )
     report = import_hf_dataset(HFImportConfig(
         dataset=CLIMBMIX_DATASET,
         split="train",
@@ -1807,7 +1814,7 @@ def climbmix_import_data(args: argparse.Namespace) -> int:
         out_path=str(corpus_path),
         report_path=str(out_dir / "hf_import_report.json"),
         documents_dir=str(documents_dir),
-        document_shard_rows=args.document_shard_rows,
+        document_shard_rows=document_shard_rows,
         max_rows=args.max_rows,
         min_chars=args.min_chars,
         streaming=not args.no_streaming,
@@ -1837,6 +1844,12 @@ def climbmix_import_data(args: argparse.Namespace) -> int:
     print("\nnext:")
     print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {pack_report.dataset_pack}")
     return 0
+
+
+def _default_climbmix_document_shard_rows(max_rows: int) -> int:
+    if max_rows >= CLIMBMIX_LARGE_IMPORT_ROWS:
+        return CLIMBMIX_LARGE_IMPORT_DOCUMENT_SHARD_ROWS
+    return 1
 
 
 def honesty_data(args: argparse.Namespace) -> int:

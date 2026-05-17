@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from picochat.cli import main
 
 
@@ -838,6 +840,118 @@ def test_cli_data_hf_import_uses_importer(tmp_path, capsys, monkeypatch):
     assert "rows_written: 2" in output
     assert f"documents_dir: {tmp_path / 'docs'}" in output
     assert "document_files_written: 2" in output
+
+
+def test_cli_climbmix_import_auto_shards_large_imports(tmp_path, capsys, monkeypatch):
+    from picochat.hf_import import HFImportReport
+
+    captured = {}
+
+    def fake_import(config):
+        captured["config"] = config
+        return HFImportReport(
+            dataset=config.dataset,
+            config_name=config.config_name,
+            split=config.split,
+            text_column=config.text_column,
+            streaming=config.streaming,
+            max_rows=config.max_rows,
+            min_chars=config.min_chars,
+            out_path=config.out_path,
+            report_path=config.report_path,
+            documents_dir=config.documents_dir,
+            document_shard_rows=config.document_shard_rows,
+            document_files_written=800,
+            rows_seen=800000,
+            rows_written=796000,
+            rows_skipped=4000,
+            characters_written=123,
+            rows=(),
+            data_files=tuple(config.data_files),
+        )
+
+    def fake_pack(**kwargs):
+        return SimpleNamespace(
+            dataset_pack=str(tmp_path / "climbmix" / "dataset_pack.json"),
+            corpus_recipe=str(tmp_path / "climbmix" / "corpus_recipe.json"),
+        )
+
+    monkeypatch.setattr("picochat.cli.import_hf_dataset", fake_import)
+    monkeypatch.setattr("picochat.cli.init_dataset_pack", fake_pack)
+
+    exit_code = main([
+        "data",
+        "climbmix-import",
+        "--out-dir",
+        str(tmp_path / "climbmix"),
+        "--shards",
+        "170",
+        "--max-rows",
+        "800000",
+        "--min-chars",
+        "100",
+        "--force",
+    ])
+
+    assert exit_code == 0
+    assert captured["config"].document_shard_rows == 1000
+    assert len(captured["config"].data_files) == 170
+    output = capsys.readouterr().out
+    assert "document_shard_rows: 1000" in output
+    assert "document_files_written: 800" in output
+
+
+def test_cli_climbmix_import_preserves_explicit_row_documents(tmp_path, monkeypatch):
+    from picochat.hf_import import HFImportReport
+
+    captured = {}
+
+    def fake_import(config):
+        captured["config"] = config
+        return HFImportReport(
+            dataset=config.dataset,
+            config_name=config.config_name,
+            split=config.split,
+            text_column=config.text_column,
+            streaming=config.streaming,
+            max_rows=config.max_rows,
+            min_chars=config.min_chars,
+            out_path=config.out_path,
+            report_path=config.report_path,
+            documents_dir=config.documents_dir,
+            document_shard_rows=config.document_shard_rows,
+            document_files_written=2,
+            rows_seen=2,
+            rows_written=2,
+            rows_skipped=0,
+            characters_written=42,
+            rows=(),
+            data_files=tuple(config.data_files),
+        )
+
+    monkeypatch.setattr("picochat.cli.import_hf_dataset", fake_import)
+    monkeypatch.setattr(
+        "picochat.cli.init_dataset_pack",
+        lambda **_kwargs: SimpleNamespace(
+            dataset_pack=str(tmp_path / "climbmix" / "dataset_pack.json"),
+            corpus_recipe=str(tmp_path / "climbmix" / "corpus_recipe.json"),
+        ),
+    )
+
+    exit_code = main([
+        "data",
+        "climbmix-import",
+        "--out-dir",
+        str(tmp_path / "climbmix"),
+        "--max-rows",
+        "800000",
+        "--document-shard-rows",
+        "1",
+        "--force",
+    ])
+
+    assert exit_code == 0
+    assert captured["config"].document_shard_rows == 1
 
 
 def test_cli_demo_uses_default_pipeline(tmp_path, capsys, monkeypatch):

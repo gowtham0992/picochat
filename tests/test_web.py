@@ -2,6 +2,7 @@ import json
 import re
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -492,6 +493,69 @@ def test_hf_import_plan_accepts_dataset_url_and_creates_pack(tmp_path, monkeypat
     assert report["dataset_pack"] == str(tmp_path / "hf-out" / "dataset_pack.json")
     assert report["preview"]["dataset_pack"] == report["dataset_pack"]
     assert "--dataset demo/stories" in report["command"]
+    assert captured["config"].document_shard_rows == 1
+    assert "--document-shard-rows 1" in report["command"]
+
+
+def test_hf_import_plan_auto_shards_large_climbmix_imports(tmp_path, monkeypatch):
+    from picochat.hf_import import HFImportReport
+
+    captured = {}
+
+    def fake_import(config):
+        captured["config"] = config
+        return HFImportReport(
+            dataset=config.dataset,
+            config_name=config.config_name,
+            split=config.split,
+            text_column=config.text_column,
+            streaming=config.streaming,
+            max_rows=config.max_rows,
+            min_chars=config.min_chars,
+            out_path=config.out_path,
+            report_path=config.report_path,
+            documents_dir=config.documents_dir,
+            document_shard_rows=config.document_shard_rows,
+            document_files_written=800,
+            rows_seen=800000,
+            rows_written=796000,
+            rows_skipped=4000,
+            characters_written=123,
+            rows=(),
+            data_files=tuple(config.data_files),
+        )
+
+    monkeypatch.setattr("picochat.web.import_hf_dataset", fake_import)
+    monkeypatch.setattr(
+        "picochat.web.init_dataset_pack",
+        lambda **_kwargs: SimpleNamespace(
+            dataset_pack=str(tmp_path / "climbmix" / "dataset_pack.json"),
+            corpus_recipe=str(tmp_path / "climbmix" / "corpus_recipe.json"),
+            chat_input=str(tmp_path / "climbmix" / "chat.jsonl"),
+            eval_input=str(tmp_path / "climbmix" / "eval.jsonl"),
+        ),
+    )
+    monkeypatch.setattr(
+        "picochat.web.preview_corpus_sources",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {"dataset_pack": str(tmp_path / "climbmix" / "dataset_pack.json")}),
+    )
+
+    report = hf_import_plan({
+        "dataset_url": "nvidia/Nemotron-ClimbMix",
+        "out_dir": str(tmp_path / "climbmix"),
+        "max_rows": 800000,
+        "shards": 170,
+        "min_chars": 100,
+        "force": True,
+    }, runs_dir=tmp_path)
+
+    assert captured["config"].dataset == "karpathy/climbmix-400b-shuffle"
+    assert captured["config"].max_rows == 800000
+    assert captured["config"].document_shard_rows == 1000
+    assert len(captured["config"].data_files) == 170
+    assert report["document_shard_rows"] == 1000
+    assert report["document_files_written"] == 800
+    assert "--document-shard-rows 1000" in report["command"]
 
 
 def test_hf_import_plan_refuses_existing_output_without_force(tmp_path):

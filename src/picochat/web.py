@@ -48,6 +48,8 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 _RUN_JOBS: dict[str, dict] = {}
 _RUN_JOBS_LOCK = threading.Lock()
 CLIMBMIX_DATASET = "karpathy/climbmix-400b-shuffle"
+CLIMBMIX_LARGE_IMPORT_ROWS = 100_000
+CLIMBMIX_LARGE_IMPORT_DOCUMENT_SHARD_ROWS = 1000
 RUN_PRESETS = {
     "smoke": {
         "label": "Smoke",
@@ -416,7 +418,7 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
     config_name = _optional_string(payload.get("config_name"))
     split = _optional_string(payload.get("split")) or "train"
     text_column = _optional_string(payload.get("text_column")) or "text"
-    max_rows = _bounded_int(payload.get("max_rows", 1000), 1, 100000)
+    max_rows = _bounded_int(payload.get("max_rows", 1000), 1, 1_000_000)
     shard_count = _bounded_int(payload.get("shards", 1), 1, 6543)
     min_chars = _bounded_int(payload.get("min_chars", 20), 1, 10000)
     streaming = payload.get("streaming", True)
@@ -435,6 +437,7 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
     documents_dir = out_dir / "documents"
     report_path = out_dir / "hf_import_report.json"
     data_files = tuple(f"shard_{index:05d}.parquet" for index in range(shard_count)) if dataset == CLIMBMIX_DATASET else ()
+    document_shard_rows = _hf_import_document_shard_rows(payload, dataset, max_rows)
     import_report = import_hf_dataset(HFImportConfig(
         dataset=dataset,
         config_name=config_name,
@@ -443,6 +446,7 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
         out_path=str(corpus_path),
         report_path=str(report_path),
         documents_dir=str(documents_dir),
+        document_shard_rows=document_shard_rows,
         max_rows=max_rows,
         min_chars=min_chars,
         streaming=streaming,
@@ -475,6 +479,8 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
             str(max_rows),
             "--min-chars",
             str(min_chars),
+            "--document-shard-rows",
+            str(document_shard_rows),
         ]
         if not streaming:
             command_parts.append("--no-streaming")
@@ -500,6 +506,8 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
             str(max_rows),
             "--min-chars",
             str(min_chars),
+            "--document-shard-rows",
+            str(document_shard_rows),
         ]
         if config_name:
             command_parts.extend(["--config", config_name])
@@ -524,6 +532,8 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
         "rows_written": import_report.rows_written,
         "rows_skipped": import_report.rows_skipped,
         "characters_written": import_report.characters_written,
+        "document_shard_rows": import_report.document_shard_rows,
+        "document_files_written": import_report.document_files_written,
         "dataset_pack": pack_report.dataset_pack,
         "corpus_recipe": pack_report.corpus_recipe,
         "chat_input": pack_report.chat_input,
@@ -1626,6 +1636,15 @@ def _optional_int(value: object, minimum: int, maximum: int) -> int | None:
     if value is None or value == "":
         return None
     return _bounded_int(value, minimum, maximum)
+
+
+def _hf_import_document_shard_rows(payload: dict, dataset: str, max_rows: int) -> int:
+    explicit = _optional_int(payload.get("document_shard_rows"), 1, 100_000)
+    if explicit is not None:
+        return explicit
+    if dataset == CLIMBMIX_DATASET and max_rows >= CLIMBMIX_LARGE_IMPORT_ROWS:
+        return CLIMBMIX_LARGE_IMPORT_DOCUMENT_SHARD_ROWS
+    return 1
 
 
 def _bounded_float(value: object, minimum: float, maximum: float) -> float:
