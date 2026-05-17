@@ -856,7 +856,15 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
 
     run_name = _slug(_optional_string(payload.get("run_name")) or _default_run_name(dataset_pack))
     out_dir = _safe_child(Path(runs_dir), run_name)
-    if out_dir.exists() and any(out_dir.iterdir()):
+    base_resume_from = _optional_string(payload.get("base_resume_from"))
+    sft_resume_from = _optional_string(payload.get("sft_resume_from"))
+    if sft_resume_from and not base_resume_from:
+        raise ValueError("sft_resume_from requires base_resume_from so the base phase is not retrained first")
+    for label, resume_path in (("base_resume_from", base_resume_from), ("sft_resume_from", sft_resume_from)):
+        if resume_path and not Path(resume_path).is_dir():
+            raise FileNotFoundError(f"{label} must point to a checkpoint directory: {resume_path}")
+    is_resume_launch = bool(base_resume_from or sft_resume_from)
+    if out_dir.exists() and any(out_dir.iterdir()) and not is_resume_launch:
         raise FileExistsError(f"run output already exists: {out_dir}")
 
     preset_name = _optional_string(payload.get("preset")) or "smoke"
@@ -1069,6 +1077,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         auto_lr_scaling=auto_lr_scaling,
         loss_spike_rollback=loss_spike_rollback,
         allow_unsafe_long_run=allow_unsafe_long_run,
+        base_resume_from=base_resume_from,
+        sft_resume_from=sft_resume_from,
         target_param_data_ratio=target_param_data_ratio,
         long_run_gate_profile=long_run_gate_profile,
     )
@@ -1219,6 +1229,10 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     if ddp:
         command.append("--ddp")
         command.extend(["--ddp-world-size", str(ddp_world_size)])
+    if base_resume_from:
+        command.extend(["--base-resume-from", base_resume_from])
+    if sft_resume_from:
+        command.extend(["--sft-resume-from", sft_resume_from])
     if tokenizer_vocab_size is not None:
         command.extend(["--tokenizer-vocab-size", str(tokenizer_vocab_size)])
     if base_dataset_mode == "sharded":
@@ -1303,6 +1317,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "device": device,
             "ddp": ddp,
             "ddp_world_size": ddp_world_size,
+            "base_resume_from": base_resume_from,
+            "sft_resume_from": sft_resume_from,
             "allow_unsafe_long_run": allow_unsafe_long_run,
         },
         "launch_readiness": launch_preview.readiness.to_dict(),

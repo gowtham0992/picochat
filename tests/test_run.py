@@ -210,6 +210,14 @@ def test_run_tiny_multiseed_aggregates_seed_runs(tmp_path, monkeypatch):
     assert "Picochat Multi-Seed Tiny Run" in (out_dir / "summary.md").read_text(encoding="utf-8")
 
 
+def test_run_tiny_rejects_sft_resume_without_base_resume(tmp_path):
+    with pytest.raises(ValueError, match="sft_resume_from requires base_resume_from"):
+        run_tiny(TinyRunConfig(
+            out_dir=str(tmp_path / "run"),
+            sft_resume_from=str(tmp_path / "run" / "sft" / "resume_checkpoint"),
+        ))
+
+
 def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     corpus_path = tmp_path / "corpus.txt"
     chat_path = tmp_path / "chat.jsonl"

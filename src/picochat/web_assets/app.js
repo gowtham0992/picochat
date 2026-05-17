@@ -73,6 +73,8 @@ const SCALE_IMPORT_DEFAULTS = {
 const LAUNCH_CONTROL_IDS = [
   "launch-pack-path",
   "launch-run-name",
+  "launch-base-resume-from",
+  "launch-sft-resume-from",
   "launch-preset",
   "launch-tokenizer-type",
   "launch-bpe-pretokenizer",
@@ -3446,6 +3448,8 @@ function launchConfig() {
   return {
     dataset_pack: $("launch-pack-path").value.trim(),
     run_name: $("launch-run-name").value.trim(),
+    base_resume_from: $("launch-base-resume-from").value.trim(),
+    sft_resume_from: $("launch-sft-resume-from").value.trim(),
     preset,
     ddp,
     ddp_world_size: ddp ? 8 : 1,
@@ -3513,6 +3517,9 @@ function launchReadiness(config = launchConfig()) {
   const notes = [];
   if (!config.dataset_pack) blockers.push("Choose or import a dataset pack first.");
   if (!config.run_name) blockers.push("Name the run so artifacts land in a unique folder.");
+  if (config.sft_resume_from && !config.base_resume_from) {
+    blockers.push("SFT resume also needs BASE RESUME so Picochat does not retrain the base phase first.");
+  }
   if (config.context_size < 8) blockers.push("Context size must be at least 8.");
   if (config.n_embd < 1 || config.n_head < 1 || config.n_layer < 1) blockers.push("Model shape needs positive embed, heads, and layers.");
   if (config.n_head > 0 && config.n_embd % config.n_head !== 0) {
@@ -3612,6 +3619,8 @@ function launchReadiness(config = launchConfig()) {
   if (config.gradient_checkpointing) notes.push("gradient checkpointing");
   if (config.auto_lr_scaling) notes.push("auto LR scaling");
   if (config.loss_spike_rollback && !config.ddp) notes.push("loss rollback");
+  if (config.base_resume_from) notes.push("base resume active");
+  if (config.sft_resume_from) notes.push("sft resume active");
   notes.push(`LR ${config.base_learning_rate} -> ${config.sft_learning_rate}`);
   notes.push(`SFT ${config.sft_sampling.replace("_", " ")}`);
   notes.push(`packing ${config.sft_packing.replace("_", " ")}`);
@@ -3763,7 +3772,9 @@ function launchPreviewCommand(config = launchConfig()) {
   if (config.gradient_checkpointing) parts.push("--gradient-checkpointing");
   if (config.auto_lr_scaling) parts.push("--auto-lr-scaling");
   if (config.loss_spike_rollback) parts.push("--loss-spike-rollback");
-  if (usesDdp) parts.push("--ddp");
+  if (usesDdp) parts.push("--ddp", "--ddp-world-size", ddpWorldSize);
+  if (config.base_resume_from) parts.push("--base-resume-from", config.base_resume_from);
+  if (config.sft_resume_from) parts.push("--sft-resume-from", config.sft_resume_from);
   if (config.tokenizer_vocab_size) parts.push("--tokenizer-vocab-size", config.tokenizer_vocab_size);
   if (config.base_dataset_mode === "sharded") {
     parts.push("--base-shard-token-size", config.base_shard_token_size);

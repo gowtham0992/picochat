@@ -421,9 +421,22 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   2>&1 | tee logs/train-h100-100m-resume.log
 ```
 
-If only chat SFT was interrupted after base training completed, use
-`--sft-resume-from runs/<run>/sft/resume_checkpoint` with the same rule:
-identical SFT data, tokenizer, checkpoint, seed, sampling, and packing.
+If only chat SFT was interrupted after base training completed, pass both
+resume flags. The base resume checkpoint should already be at the planned
+base step, so the base phase validates and exits without spending another full
+base run before SFT resumes.
+
+```bash
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+  --out-dir runs/h100-climbmix-100m-release-v1 \
+  --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
+  --scale h100-100m \
+  --device cuda \
+  --long-run-gate-profile first_release \
+  --base-resume-from runs/h100-climbmix-100m-release-v1/base/resume_checkpoint \
+  --sft-resume-from runs/h100-climbmix-100m-release-v1/sft/resume_checkpoint \
+  2>&1 | tee logs/train-h100-100m-sft-resume.log
+```
 
 For model release tests, export the best SFT checkpoint after the run:
 

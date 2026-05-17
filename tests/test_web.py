@@ -49,6 +49,8 @@ def test_web_scale_lane_exposes_ddp8_recipe():
 
     assert 'id="launch-n-embd" type="number" min="16" max="4096"' in html
     assert 'id="launch-n-layer" type="number" min="1" max="128"' in html
+    assert 'id="launch-base-resume-from"' in html
+    assert 'id="launch-sft-resume-from"' in html
     assert 'option value="h100-100m-ddp8"' in html
     assert '"h100-100m-ddp8"' in js
     assert "const DDP_SCALE_PRESETS" in js
@@ -57,6 +59,8 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert "ddp_world_size" in js
     assert '"--ddp-world-size"' in js
     assert '"--ddp"' in js
+    assert '"--base-resume-from"' in js
+    assert '"--sft-resume-from"' in js
     assert '"OMP_NUM_THREADS=1"' in js
     assert '"PICOCHAT_DDP_TIMEOUT_MINUTES=120"' in js
     assert '"PYTORCH_ALLOC_CONF=expandable_segments:True"' in js
@@ -1063,6 +1067,81 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert captured["kwargs"]["env"]["PYTHONUNBUFFERED"] == "1"
     assert (tmp_path / "runs" / "ui-run" / "web_run.log").exists()
     assert run_status_plan(job["id"], tmp_path / "runs")["job"]["pid"] == 4321
+
+
+def test_start_run_plan_accepts_resume_paths_for_existing_run_dir(tmp_path, monkeypatch):
+    source_path = tmp_path / "lesson.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    source_path.write_text("lesson", encoding="utf-8")
+    chat_path.write_text(json.dumps({"user": "hi", "assistant": "hello"}), encoding="utf-8")
+    eval_path.write_text(json.dumps({"user": "hi", "must_include": ["hello"]}), encoding="utf-8")
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+    run_dir = tmp_path / "runs" / "resume-run"
+    base_resume = run_dir / "base" / "resume_checkpoint"
+    sft_resume = run_dir / "sft" / "resume_checkpoint"
+    base_resume.mkdir(parents=True)
+    sft_resume.mkdir(parents=True)
+    (run_dir / "existing.txt").write_text("partial run", encoding="utf-8")
+    captured = {}
+
+    class FakeProcess:
+        pid = 9876
+
+        def __init__(self, command, **kwargs):
+            captured["command"] = command
+            captured["kwargs"] = kwargs
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr("picochat.web.subprocess.Popen", FakeProcess)
+
+    status = start_run_plan(tmp_path / "runs", {
+        "dataset_pack": str(pack_path),
+        "run_name": "resume run",
+        "preset": "smoke",
+        "base_resume_from": str(base_resume),
+        "sft_resume_from": str(sft_resume),
+    })
+
+    assert status["job"]["state"] == "running"
+    assert "--base-resume-from" in captured["command"]
+    assert "--sft-resume-from" in captured["command"]
+    assert str(base_resume) in captured["command"]
+    assert str(sft_resume) in captured["command"]
+    assert status["job"]["launch_config"]["base_resume_from"] == str(base_resume)
+    assert status["job"]["launch_config"]["sft_resume_from"] == str(sft_resume)
+
+
+def test_start_run_plan_rejects_sft_resume_without_base_resume(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    source_path.write_text("lesson", encoding="utf-8")
+    chat_path.write_text(json.dumps({"user": "hi", "assistant": "hello"}), encoding="utf-8")
+    eval_path.write_text(json.dumps({"user": "hi", "must_include": ["hello"]}), encoding="utf-8")
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+    sft_resume = tmp_path / "runs" / "resume-run" / "sft" / "resume_checkpoint"
+    sft_resume.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="sft_resume_from requires base_resume_from"):
+        start_run_plan(tmp_path / "runs", {
+            "dataset_pack": str(pack_path),
+            "run_name": "resume run",
+            "preset": "smoke",
+            "sft_resume_from": str(sft_resume),
+        })
 
 
 def test_start_run_plan_preserves_h100_100m_ddp8_preset(tmp_path, monkeypatch):

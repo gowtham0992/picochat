@@ -133,6 +133,11 @@ def run_tiny(config: TinyRunConfig) -> dict:
     run_started = time.perf_counter()
     stage_timings: list[dict[str, object]] = []
     out_dir = Path(config.out_dir)
+    if config.sft_resume_from and not config.base_resume_from:
+        raise ValueError(
+            "sft_resume_from requires base_resume_from so run tiny does not retrain "
+            "or overwrite the base phase before resuming SFT"
+        )
     out_dir.mkdir(parents=True, exist_ok=True)
     ddp_metadata = initialize_ddp(resolve_device(config.device), enabled=config.ddp)
     main_process = is_main_process(ddp_metadata)
