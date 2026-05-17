@@ -55,6 +55,7 @@ from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
 from picochat.model import SDPA_BACKENDS
+from picochat.artifacts import RunBundleConfig, create_run_bundle
 from picochat.optim import (
     LR_DECAYS,
     MUON_MOMENTUM_SCHEDULES,
@@ -1346,6 +1347,32 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Inspect the long-run checklist and exit without training.",
     )
+    run_bundle_parser = run_subparsers.add_parser(
+        "bundle",
+        help="Package completed or interrupted run artifacts for copying off a GPU box.",
+    )
+    run_bundle_parser.add_argument("--run-dir", required=True, help="Run directory to package.")
+    run_bundle_parser.add_argument("--out", default=None, help="Output .tgz path. Defaults to <run>-bundle.tgz.")
+    run_bundle_parser.add_argument(
+        "--logs-dir",
+        default=None,
+        help="Optional logs directory to include in the bundle.",
+    )
+    run_bundle_parser.add_argument(
+        "--include-corpus",
+        action="store_true",
+        help="Also include corpus.txt and corpus_manifest.json. This can make very large bundles.",
+    )
+    run_bundle_parser.add_argument(
+        "--include-token-shards",
+        action="store_true",
+        help="Also include base token-shard caches. Usually unnecessary when the corpus can be rebuilt.",
+    )
+    run_bundle_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail if no checkpoint payload exists in the run directory.",
+    )
 
     compare_parser = subparsers.add_parser("compare", help="Compare completed run summaries.")
     compare_parser.add_argument("runs", nargs="+", help="Run directories containing summary.json.")
@@ -2214,6 +2241,25 @@ def run_export_hf(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_bundle(args: argparse.Namespace) -> int:
+    report = create_run_bundle(RunBundleConfig(
+        run_dir=args.run_dir,
+        out_path=args.out,
+        logs_dir=args.logs_dir,
+        include_corpus=args.include_corpus,
+        include_token_shards=args.include_token_shards,
+        strict=args.strict,
+    ))
+    print(f"bundle: {report['bundle']}")
+    print(f"manifest_json: {report['manifest_json']}")
+    print(f"manifest_md: {report['manifest_md']}")
+    if report.get("excluded_large"):
+        print("excluded_large: " + ", ".join(report["excluded_large"]))
+    if report.get("missing_expected"):
+        print("missing_optional: " + ", ".join(report["missing_expected"]))
+    return 0
+
+
 def run_sanity_preh100(args: argparse.Namespace) -> int:
     report = run_preh100_sanity(PreH100SanityConfig(
         out_dir=args.out_dir,
@@ -2651,6 +2697,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run" and args.run_command == "tiny":
         return run_tiny_command(args)
+
+    if args.command == "run" and args.run_command == "bundle":
+        return run_bundle(args)
 
     if args.command == "compare":
         return run_compare(args)

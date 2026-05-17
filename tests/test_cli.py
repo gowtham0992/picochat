@@ -1,3 +1,5 @@
+import json
+import tarfile
 from types import SimpleNamespace
 
 from picochat.cli import main
@@ -205,9 +207,55 @@ def test_cli_run_tiny_accepts_ddp_world_size_for_preflight(tmp_path, monkeypatch
     assert captured["config"].ddp_world_size == 8
 
 
-def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
-    import json
+def test_cli_run_bundle_packages_partial_checkpoint_without_corpus(tmp_path, capsys):
+    run_dir = tmp_path / "runs" / "partial-run"
+    resume = run_dir / "base" / "resume_checkpoint"
+    best = run_dir / "base" / "best_checkpoint"
+    resume.mkdir(parents=True)
+    best.mkdir(parents=True)
+    (resume / "model.pt").write_text("weights", encoding="utf-8")
+    (resume / "training_state.pt").write_text("state", encoding="utf-8")
+    (resume / "progress.md").write_text("# progress", encoding="utf-8")
+    (best / "model.pt").write_text("best", encoding="utf-8")
+    (run_dir / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (run_dir / "preflight.md").write_text("# preflight", encoding="utf-8")
+    (run_dir / "corpus.txt").write_text("large corpus", encoding="utf-8")
+    (run_dir / "corpus_manifest.json").write_text("{}", encoding="utf-8")
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    (logs_dir / "train.log").write_text("step 1", encoding="utf-8")
+    bundle = tmp_path / "partial.tgz"
 
+    exit_code = main([
+        "run",
+        "bundle",
+        "--run-dir",
+        str(run_dir),
+        "--out",
+        str(bundle),
+        "--logs-dir",
+        str(logs_dir),
+        "--strict",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "bundle:" in output
+    assert "excluded_large: corpus.txt, corpus_manifest.json" in output
+    manifest_path = tmp_path / "partial.tgz.manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["included_file_count"] >= 5
+    assert manifest["excluded_large"] == ["corpus.txt", "corpus_manifest.json"]
+    with tarfile.open(bundle, "r:gz") as archive:
+        names = set(archive.getnames())
+    assert "partial-run/base/resume_checkpoint/model.pt" in names
+    assert "partial-run/base/resume_checkpoint/training_state.pt" in names
+    assert "partial-run/base/best_checkpoint/model.pt" in names
+    assert "partial-run/corpus.txt" not in names
+    assert "partial.tgz.manifest.json" in names
+
+
+def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
     corpus = tmp_path / "corpus.txt"
     chat = tmp_path / "chat.jsonl"
     eval_path = tmp_path / "eval.jsonl"
