@@ -180,6 +180,7 @@ def test_long_run_gate_skill_release_blocks_missing_and_weak_skills():
 
     assert gate["status"] == "blocked"
     assert gate["skill_release_sft_rates"]["math"] == pytest.approx(0.20)
+    assert gate["skill_release_sft_rates"]["refusal"] == pytest.approx(0.90)
     assert gate["skill_release_eval_rates"]["spelling"] is None
     assert any(issue["name"] == "skill_release_sft_math" for issue in gate["issues"])
     assert any(issue["name"] == "skill_release_eval_math" for issue in gate["issues"])
@@ -220,6 +221,7 @@ def test_long_run_gate_skill_release_approves_when_all_groups_clear():
     )
 
     assert gate["status"] == "approved"
+    assert gate["skill_release_eval_rates"]["refusal"] == pytest.approx(0.90)
     assert gate["skill_release_eval_rates"]["math"] == pytest.approx(0.45)
     assert gate["skill_release_eval_thresholds"]["spelling"] == 0.40
 

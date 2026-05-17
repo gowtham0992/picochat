@@ -31,6 +31,7 @@ LONG_RUN_GATE_PROFILES = ("research", "first_release", "skill_release")
 FIRST_RELEASE_CATEGORY_PREFIXES = ("identity", "refusal", "bench_choice")
 SKILL_RELEASE_CATEGORY_GATES = (
     ("identity", ("identity",), 0.60),
+    ("refusal", ("refusal",), 0.75),
     ("choice", ("bench_choice", "mmlu_", "arc_"), 0.50),
     ("math", ("bench_math_", "gsm8k"), 0.30),
     ("spelling", ("bench_spelling_",), 0.40),
