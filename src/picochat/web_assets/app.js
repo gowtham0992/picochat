@@ -126,6 +126,11 @@ const LAUNCH_CONTROL_IDS = [
   "launch-sft-early-stop-patience",
   "launch-sft-sampling",
   "launch-sft-packing",
+  "launch-sft-peft",
+  "launch-sft-lora-rank",
+  "launch-sft-lora-alpha",
+  "launch-sft-lora-dropout",
+  "launch-sft-lora-targets",
   "launch-eval-max-new-tokens",
   "launch-target-param-data-ratio",
   "launch-seed",
@@ -3401,6 +3406,13 @@ function applyLaunchPreset(quiet = false) {
   $("launch-sft-early-stop-patience").value = values.sft_early_stop_patience;
   $("launch-sft-sampling").value = values.sft_sampling || "uniform";
   $("launch-sft-packing").value = values.sft_packing || "separate";
+  $("launch-sft-peft").value = values.sft_peft || "none";
+  $("launch-sft-lora-rank").value = values.sft_lora_rank || 8;
+  $("launch-sft-lora-alpha").value = values.sft_lora_alpha || 16;
+  $("launch-sft-lora-dropout").value = values.sft_lora_dropout || 0;
+  $("launch-sft-lora-targets").value = Array.isArray(values.sft_lora_targets)
+    ? values.sft_lora_targets.join(",")
+    : (values.sft_lora_targets || "attn_qkv,attn_proj");
   $("launch-eval-max-new-tokens").value = values.eval_max_new_tokens;
   $("launch-target-param-data-ratio").value = values.target_param_data_ratio || 20;
   $("launch-long-run-gate-profile").value = values.long_run_gate_profile || (preset === "h100-pilot" ? "first_release" : "research");
@@ -3500,6 +3512,11 @@ function launchConfig() {
     sft_early_stop_patience: launchNumber("launch-sft-early-stop-patience"),
     sft_sampling: $("launch-sft-sampling").value,
     sft_packing: $("launch-sft-packing").value,
+    sft_peft: $("launch-sft-peft").value,
+    sft_lora_rank: boundedNumberInput("launch-sft-lora-rank", 8, 1, 256),
+    sft_lora_alpha: launchNumber("launch-sft-lora-alpha"),
+    sft_lora_dropout: launchNumber("launch-sft-lora-dropout"),
+    sft_lora_targets: $("launch-sft-lora-targets").value.trim() || "attn_qkv,attn_proj",
     eval_max_new_tokens: launchNumber("launch-eval-max-new-tokens"),
     target_param_data_ratio: launchNumber("launch-target-param-data-ratio"),
     long_run_gate_profile: $("launch-long-run-gate-profile").value,
@@ -3554,6 +3571,24 @@ function launchReadiness(config = launchConfig()) {
     blockers.push("Loss spike rollback is single-process only; disable it for DDP.");
   }
   if (!["separate", "bos_bestfit"].includes(config.sft_packing)) blockers.push("SFT packing mode is invalid.");
+  if (!["none", "lora"].includes(config.sft_peft)) blockers.push("SFT PEFT mode is invalid.");
+  if (config.sft_lora_rank < 1) blockers.push("LoRA rank must be at least 1.");
+  if (config.sft_lora_alpha <= 0) blockers.push("LoRA alpha must be above zero.");
+  if (config.sft_lora_dropout < 0 || config.sft_lora_dropout >= 1) blockers.push("LoRA dropout must be at least 0 and below 1.");
+  const loraTargets = config.sft_lora_targets.split(",").map((target) => target.trim()).filter(Boolean);
+  const validLoraTargets = new Set(["attn_qkv", "attn_proj", "mlp_fc", "mlp_proj", "all_linear"]);
+  const invalidLoraTargets = loraTargets.filter((target) => !validLoraTargets.has(target));
+  if (!loraTargets.length) blockers.push("LoRA needs at least one target.");
+  if (invalidLoraTargets.length) blockers.push(`LoRA target is invalid: ${invalidLoraTargets.join(", ")}.`);
+  if (loraTargets.includes("all_linear") && loraTargets.length > 1) blockers.push("LoRA all_linear must be used alone.");
+  if (config.sft_peft === "none" && (
+    config.sft_lora_rank !== 8
+    || config.sft_lora_alpha !== 16
+    || config.sft_lora_dropout !== 0
+    || loraTargets.join(",") !== "attn_qkv,attn_proj"
+  )) {
+    blockers.push("LoRA settings require SFT PEFT set to LORA.");
+  }
   if (config.base_muon_learning_rate <= 0 || config.sft_muon_learning_rate <= 0) blockers.push("Muon learning rates must be above zero.");
   if (config.base_ema_decay < 0 || config.base_ema_decay >= 1 || config.sft_ema_decay < 0 || config.sft_ema_decay >= 1) {
     blockers.push("EMA decay must be at least 0 and below 1.");
@@ -3608,6 +3643,9 @@ function launchReadiness(config = launchConfig()) {
   notes.push(`base ${config.base_steps} / sft ${config.sft_steps}`);
   if (usingBenchmarkPack) notes.push("clean benchmark pack active");
   notes.push(`optimizer ${config.base_optimizer}/${config.sft_optimizer}`);
+  if (config.sft_peft === "lora") {
+    notes.push(`LoRA r${config.sft_lora_rank} alpha ${config.sft_lora_alpha} targets ${loraTargets.join("/")}`);
+  }
   if (config.base_ema_decay > 0 || config.sft_ema_decay > 0) notes.push(`EMA ${config.base_ema_decay}/${config.sft_ema_decay}`);
   notes.push(`effective batch ${config.base_batch_size * config.base_grad_accum_steps} / ${config.sft_batch_size * config.sft_grad_accum_steps}`);
   notes.push(`base data ${config.base_dataset_mode}`);
@@ -3753,6 +3791,16 @@ function launchPreviewCommand(config = launchConfig()) {
     config.sft_sampling,
     "--sft-packing",
     config.sft_packing,
+    "--sft-peft",
+    config.sft_peft,
+    "--sft-lora-rank",
+    config.sft_lora_rank,
+    "--sft-lora-alpha",
+    config.sft_lora_alpha,
+    "--sft-lora-dropout",
+    config.sft_lora_dropout,
+    "--sft-lora-targets",
+    config.sft_lora_targets,
     "--target-param-data-ratio",
     config.target_param_data_ratio,
     "--long-run-gate-profile",

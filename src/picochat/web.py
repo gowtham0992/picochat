@@ -34,6 +34,7 @@ from picochat.benchmark_pack import (
 )
 from picochat.generate import GenerateConfig, generate_text_with_trace
 from picochat.hf_import import HFImportConfig, HFSplitError, import_hf_dataset
+from picochat.lora import DEFAULT_LORA_TARGETS, PEFT_MODES, parse_lora_targets
 from picochat.model import SDPA_BACKENDS
 from picochat.optim import LR_DECAYS, OPTIMIZER_TYPES
 from picochat.precision import COMPILE_MODES, MATMUL_PRECISION_MODES, PRECISION_MODES
@@ -993,6 +994,22 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     sft_packing = str(payload.get("sft_packing", preset.get("sft_packing", "separate")))
     if sft_packing not in SFT_PACKING_MODES:
         raise ValueError(f"sft_packing must be one of {', '.join(SFT_PACKING_MODES)}")
+    sft_peft = str(payload.get("sft_peft", preset.get("sft_peft", "none")))
+    if sft_peft not in PEFT_MODES:
+        raise ValueError(f"sft_peft must be one of {', '.join(PEFT_MODES)}")
+    sft_lora_rank = _bounded_int(payload.get("sft_lora_rank", preset.get("sft_lora_rank", 8)), 1, 256)
+    sft_lora_alpha = _bounded_float(payload.get("sft_lora_alpha", preset.get("sft_lora_alpha", 16.0)), 0.000001, 1024.0)
+    sft_lora_dropout = _bounded_float(payload.get("sft_lora_dropout", preset.get("sft_lora_dropout", 0.0)), 0.0, 0.9999)
+    sft_lora_targets = parse_lora_targets(
+        payload.get("sft_lora_targets", preset.get("sft_lora_targets", DEFAULT_LORA_TARGETS))
+    )
+    if sft_peft == "none" and (
+        sft_lora_rank != 8
+        or sft_lora_alpha != 16.0
+        or sft_lora_dropout != 0.0
+        or sft_lora_targets != DEFAULT_LORA_TARGETS
+    ):
+        raise ValueError("LoRA options require sft_peft=lora")
     target_param_data_ratio = _bounded_float(
         payload.get("target_param_data_ratio", preset.get("target_param_data_ratio", 20.0)),
         1.0,
@@ -1074,6 +1091,11 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         sft_ema_decay=sft_ema_decay,
         sft_sampling=sft_sampling,
         sft_packing=sft_packing,
+        sft_peft=sft_peft,
+        sft_lora_rank=sft_lora_rank,
+        sft_lora_alpha=sft_lora_alpha,
+        sft_lora_dropout=sft_lora_dropout,
+        sft_lora_targets=sft_lora_targets,
         auto_lr_scaling=auto_lr_scaling,
         loss_spike_rollback=loss_spike_rollback,
         allow_unsafe_long_run=allow_unsafe_long_run,
@@ -1198,6 +1220,16 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         sft_sampling,
         "--sft-packing",
         sft_packing,
+        "--sft-peft",
+        sft_peft,
+        "--sft-lora-rank",
+        str(sft_lora_rank),
+        "--sft-lora-alpha",
+        str(sft_lora_alpha),
+        "--sft-lora-dropout",
+        str(sft_lora_dropout),
+        "--sft-lora-targets",
+        ",".join(sft_lora_targets),
         "--target-param-data-ratio",
         str(target_param_data_ratio),
         "--long-run-gate-profile",
@@ -1312,6 +1344,11 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "sft_early_stop_patience": sft_early_stop_patience,
             "sft_sampling": sft_sampling,
             "sft_packing": sft_packing,
+            "sft_peft": sft_peft,
+            "sft_lora_rank": sft_lora_rank,
+            "sft_lora_alpha": sft_lora_alpha,
+            "sft_lora_dropout": sft_lora_dropout,
+            "sft_lora_targets": list(sft_lora_targets),
             "target_param_data_ratio": target_param_data_ratio,
             "long_run_gate_profile": long_run_gate_profile,
             "device": device,

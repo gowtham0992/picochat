@@ -847,6 +847,29 @@
                       </select>
                     </div>
                     <div>
+                      <label for="launch-sft-peft">SFT PEFT</label>
+                      <select id="launch-sft-peft">
+                        <option value="none">FULL</option>
+                        <option value="lora">LORA</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label for="launch-sft-lora-rank">LORA RANK</label>
+                      <input id="launch-sft-lora-rank" type="number" min="1" max="256" value="8">
+                    </div>
+                    <div>
+                      <label for="launch-sft-lora-alpha">LORA ALPHA</label>
+                      <input id="launch-sft-lora-alpha" type="number" min="0.000001" max="1024" step="0.1" value="16">
+                    </div>
+                    <div>
+                      <label for="launch-sft-lora-dropout">LORA DROPOUT</label>
+                      <input id="launch-sft-lora-dropout" type="number" min="0" max="0.9999" step="0.01" value="0">
+                    </div>
+                    <div>
+                      <label for="launch-sft-lora-targets">LORA TARGETS</label>
+                      <input id="launch-sft-lora-targets" type="text" value="attn_qkv,attn_proj">
+                    </div>
+                    <div>
                       <label for="launch-eval-max-new-tokens">EVAL TOKENS</label>
                       <input id="launch-eval-max-new-tokens" type="number" min="1" max="320" value="80">
                     </div>

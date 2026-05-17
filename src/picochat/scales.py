@@ -41,6 +41,11 @@ class RunScale:
     sft_early_stop_patience: int
     canary_count: int
     eval_max_new_tokens: int
+    sft_peft: str = "none"
+    sft_lora_rank: int = 8
+    sft_lora_alpha: float = 16.0
+    sft_lora_dropout: float = 0.0
+    sft_lora_targets: tuple[str, ...] = ("attn_qkv", "attn_proj")
     base_optimizer: str = "adamw"
     sft_optimizer: str = "adamw"
     base_muon_learning_rate: float = 0.02

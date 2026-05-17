@@ -51,8 +51,12 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert 'id="launch-n-layer" type="number" min="1" max="128"' in html
     assert 'id="launch-base-resume-from"' in html
     assert 'id="launch-sft-resume-from"' in html
+    assert 'id="launch-sft-peft"' in html
+    assert 'id="launch-sft-lora-targets"' in html
     assert 'option value="h100-100m-ddp8"' in html
     assert '"h100-100m-ddp8"' in js
+    assert '"--sft-peft"' in js
+    assert '"--sft-lora-targets"' in js
     assert "const DDP_SCALE_PRESETS" in js
     assert '"torchrun"' in js
     assert "--nproc_per_node=${ddpWorldSize}" in js
@@ -1019,6 +1023,11 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
         "base_shard_token_size": 64000,
         "base_shard_cache_size": 3,
         "sft_packing": "bos_bestfit",
+        "sft_peft": "lora",
+        "sft_lora_rank": 4,
+        "sft_lora_alpha": 8.0,
+        "sft_lora_dropout": 0.05,
+        "sft_lora_targets": "attn_qkv",
         "long_run_gate_profile": "first_release",
         "preset": "smoke",
         "tokenizer_type": "bpe",
@@ -1047,6 +1056,9 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert "--sft-early-stop-patience" in captured["command"]
     assert "--sft-sampling" in captured["command"]
     assert "--sft-packing" in captured["command"]
+    assert "--sft-peft" in captured["command"]
+    assert "--sft-lora-rank" in captured["command"]
+    assert "--sft-lora-targets" in captured["command"]
     assert "--target-param-data-ratio" in captured["command"]
     assert "--long-run-gate-profile" in captured["command"]
     assert "bpe" in captured["command"]
@@ -1061,6 +1073,11 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert status["job"]["launch_config"]["base_shard_token_size"] == 64000
     assert status["job"]["launch_config"]["base_shard_cache_size"] == 3
     assert status["job"]["launch_config"]["sft_packing"] == "bos_bestfit"
+    assert status["job"]["launch_config"]["sft_peft"] == "lora"
+    assert status["job"]["launch_config"]["sft_lora_rank"] == 4
+    assert status["job"]["launch_config"]["sft_lora_alpha"] == 8.0
+    assert status["job"]["launch_config"]["sft_lora_dropout"] == 0.05
+    assert status["job"]["launch_config"]["sft_lora_targets"] == ["attn_qkv"]
     assert status["job"]["launch_config"]["long_run_gate_profile"] == "first_release"
     assert status["job"]["launch_config"]["base_early_stop_patience"] == 4
     assert status["job"]["launch_config"]["sft_early_stop_patience"] == 4
