@@ -59,6 +59,14 @@ const APP_VIEWS = ["home", "guide", "workbench", "scale"];
 const PICOCHAT_REPO_URL = "https://github.com/gowtham0992/picochat.git";
 const SCALE_PRESETS = ["h100-100m", "h100-pilot", "climbmix-pilot", "mps-local", "medium", "small"];
 const H100_SCALE_PRESETS = new Set(["h100-100m", "h100-pilot"]);
+const SCALE_IMPORT_DEFAULTS = {
+  "h100-100m": { shards: 170, maxRows: 800000 },
+  "h100-pilot": { shards: 16, maxRows: 80000 },
+  "climbmix-pilot": { shards: 1, maxRows: 5000 },
+  "mps-local": { shards: 1, maxRows: 5000 },
+  medium: { shards: 1, maxRows: 5000 },
+  small: { shards: 1, maxRows: 1000 },
+};
 
 const LAUNCH_CONTROL_IDS = [
   "launch-pack-path",
@@ -498,7 +506,10 @@ function bindControls() {
     "scale-import-name",
   ].forEach((id) => {
     $(id)?.addEventListener("input", renderScalePlan);
-    $(id)?.addEventListener("change", renderScalePlan);
+    $(id)?.addEventListener("change", () => {
+      if (id === "scale-preset") applyScalePresetDefaults();
+      renderScalePlan();
+    });
   });
   $("scale-use-launcher-button")?.addEventListener("click", seedScaleFromLauncher);
   $("scale-refresh-button")?.addEventListener("click", renderScalePlan);
@@ -3863,8 +3874,17 @@ function seedScaleFromLauncher() {
   if ($("scale-run-name")) $("scale-run-name").value = config.run_name || suggestedRunName(config.dataset_pack || "climbmix");
   if ($("scale-preset")) $("scale-preset").value = SCALE_PRESETS.includes(config.preset) ? config.preset : "h100-pilot";
   if ($("scale-device")) $("scale-device").value = config.device === "cpu" ? "auto" : config.device || "auto";
+  applyScalePresetDefaults();
   renderScalePlan();
   flashStatus("SCALE PLAN SEEDED. | Commands now mirror the launcher where possible.");
+}
+
+function applyScalePresetDefaults() {
+  const preset = $("scale-preset")?.value || "h100-100m";
+  const defaults = SCALE_IMPORT_DEFAULTS[preset];
+  if (!defaults) return;
+  if ($("scale-climbmix-shards")) $("scale-climbmix-shards").value = String(defaults.shards);
+  if ($("scale-max-rows")) $("scale-max-rows").value = String(defaults.maxRows);
 }
 
 function scaleConfig() {
@@ -3943,27 +3963,64 @@ function renderScalePlan() {
     mpsParts.push("--long-run-gate-profile", "first_release");
   }
   const mpsCommand = shellCommand(mpsParts);
-  const colabSetup = [
-    `!git clone ${PICOCHAT_REPO_URL}`,
-    "%cd picochat",
-    `!pip install -e ".[hf]"`,
+  const remoteSetup = [
+    `git clone ${PICOCHAT_REPO_URL}`,
+    "cd picochat",
+    "git checkout develop",
+    "sudo apt-get update",
+    "sudo apt-get install -y python3.10-venv",
+    "python3 -m venv .venv",
+    "source .venv/bin/activate",
+    "python -m pip install --upgrade pip",
+    "python -m pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1",
+    `python -m pip install -e ".[hf,dev]"`,
   ].join("\n");
-  const colabImport = `!${shellCommand([
-    "PYTHONPATH=src",
-    "python",
-    "-m",
-    "picochat.cli",
-    "data",
-    "climbmix-import",
-    "--out-dir",
-    "runs/climbmix-colab",
-    "--shards",
-    config.shards,
-    "--max-rows",
-    config.max_rows,
-    "--force",
-  ])}`;
-  const colabBenchmark = `!${shellCommand([
+  const remoteSanity = [
+    "mkdir -p logs",
+    `${shellCommand([
+      "PYTHONUNBUFFERED=1",
+      "PYTHONPATH=src",
+      "python",
+      "-m",
+      "picochat.cli",
+      "sanity",
+      "preh100",
+      "--out-dir",
+      "runs/h100-sanity-v1",
+      "--device",
+      "cuda",
+      "--precision",
+      "bf16",
+      "--matmul-precision",
+      "high",
+      "--attn-backend",
+      "flash",
+      "--include-compile",
+    ])} 2>&1 | tee logs/preh100-sanity.log`,
+  ].join("\n");
+  const remoteImport = [
+    "mkdir -p logs",
+    `${shellCommand([
+      "PYTHONUNBUFFERED=1",
+      "PYTHONPATH=src",
+      "python",
+      "-m",
+      "picochat.cli",
+      "data",
+      "climbmix-import",
+      "--out-dir",
+      "runs/climbmix-cuda",
+      "--shards",
+      config.shards,
+      "--max-rows",
+      config.max_rows,
+      "--min-chars",
+      100,
+      "--force",
+    ])} 2>&1 | tee logs/import-climbmix.log`,
+  ].join("\n");
+  const remoteBenchmark = `${shellCommand([
+    "PYTHONUNBUFFERED=1",
     "PYTHONPATH=src",
     "python",
     "-m",
@@ -3971,7 +4028,7 @@ function renderScalePlan() {
     "data",
     "benchmark-pack",
     "--dataset-pack",
-    "runs/climbmix-colab/dataset_pack.json",
+    "runs/climbmix-cuda/dataset_pack.json",
     "--sft-rows",
     1600,
     "--eval-rows",
@@ -3983,8 +4040,9 @@ function renderScalePlan() {
     "--source",
     "offline",
     "--force",
-  ])}`;
-  const colabRunParts = [
+  ])} 2>&1 | tee logs/benchmark-pack-cuda.log`;
+  const remoteRunParts = [
+    "PYTHONUNBUFFERED=1",
     "PYTHONPATH=src",
     "python",
     "-m",
@@ -3994,30 +4052,33 @@ function renderScalePlan() {
     "--out-dir",
     `runs/${config.run_name}`,
     "--dataset-pack",
-    "runs/climbmix-colab/dataset_pack.json",
+    "runs/climbmix-cuda/dataset_pack.json",
     "--scale",
     config.preset,
     "--device",
     "cuda",
   ];
   if (config.long_run_gate_profile === "first_release") {
-    colabRunParts.push("--long-run-gate-profile", "first_release");
+    remoteRunParts.push("--long-run-gate-profile", "first_release");
   }
-  const colabRun = `!${shellCommand(colabRunParts)}`;
-  const colabReturn = [
-    `!zip -r /content/${config.run_name}.zip runs/${config.run_name}`,
-    `# Download ${config.run_name}.zip from Colab, unzip it on this Mac, then paste the unzipped run folder below.`,
+  const remotePreflight = `${shellCommand([...remoteRunParts, "--preflight-only"])} 2>&1 | tee logs/preflight-${config.run_name}.log`;
+  const remoteRun = `${shellCommand(remoteRunParts)} 2>&1 | tee logs/train-${config.run_name}.log`;
+  const remoteReturn = [
+    `tar -czf ${config.run_name}.tgz runs/${config.run_name} logs`,
+    `# Copy ${config.run_name}.tgz back to this Mac, extract it, then paste the run folder below.`,
   ].join("\n");
   renderScaleCommand(
     "scale-mps-command",
     H100_SCALE_PRESETS.has(config.preset) ? "LOCAL PROOF COMMAND" : "MPS / LOCAL COMMAND",
     mpsCommand,
   );
-  renderScaleCommand("scale-colab-setup-command", "COLAB SETUP", colabSetup);
-  renderScaleCommand("scale-colab-import-command", "COLAB CLIMBMIX IMPORT", colabImport);
-  renderScaleCommand("scale-colab-benchmark-command", "COLAB RELEASE BEHAVIOR PACK", colabBenchmark);
-  renderScaleCommand("scale-colab-run-command", "COLAB TRAIN", colabRun);
-  renderScaleCommand("scale-colab-return-command", "COLAB RETURN", colabReturn);
+  renderScaleCommand("scale-remote-setup-command", "REMOTE SETUP", remoteSetup);
+  renderScaleCommand("scale-remote-sanity-command", "PRE-H100 SANITY", remoteSanity);
+  renderScaleCommand("scale-remote-import-command", "REMOTE CLIMBMIX IMPORT", remoteImport);
+  renderScaleCommand("scale-remote-benchmark-command", "REMOTE RELEASE BEHAVIOR PACK", remoteBenchmark);
+  renderScaleCommand("scale-remote-preflight-command", "REMOTE PREFLIGHT", remotePreflight);
+  renderScaleCommand("scale-remote-run-command", "REMOTE TRAIN", remoteRun);
+  renderScaleCommand("scale-remote-return-command", "REMOTE RETURN TAR", remoteReturn);
 }
 
 function renderScaleCommand(id, label, command) {

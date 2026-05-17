@@ -132,11 +132,11 @@
               </div>
               <div>
                 <label for="scale-climbmix-shards">CLIMBMIX SHARDS</label>
-                <input id="scale-climbmix-shards" type="number" min="1" max="6543" value="1">
+                <input id="scale-climbmix-shards" type="number" min="1" max="6543" value="170">
               </div>
               <div>
                 <label for="scale-max-rows">MAX ROWS</label>
-                <input id="scale-max-rows" type="number" min="1" max="1000000" value="1000">
+                <input id="scale-max-rows" type="number" min="1" max="1000000" value="800000">
               </div>
               <button id="scale-use-launcher-button" type="button">USE LAUNCHER SETTINGS</button>
               <button id="scale-refresh-button" type="button">REFRESH COMMANDS</button>
@@ -152,13 +152,15 @@
             <div id="scale-mps-command" class="command-tape source-command"></div>
           </div>
           <div class="terminal-card scale-card">
-            <label>COLAB / NVIDIA CUDA</label>
-            <p class="scale-note">For ClimbMix, let Colab import the same public shard sample directly. That avoids uploading local corpus files.</p>
-            <div id="scale-colab-setup-command" class="command-tape source-command"></div>
-            <div id="scale-colab-import-command" class="command-tape source-command"></div>
-            <div id="scale-colab-benchmark-command" class="command-tape source-command"></div>
-            <div id="scale-colab-run-command" class="command-tape source-command"></div>
-            <div id="scale-colab-return-command" class="command-tape source-command"></div>
+            <label>REMOTE CUDA GPU</label>
+            <p class="scale-note">Use this for Hyperbolic, Lambda, RunPod, or any SSH CUDA box. These are normal shell commands; Colab users can prefix shell lines with <code>!</code>.</p>
+            <div id="scale-remote-setup-command" class="command-tape source-command"></div>
+            <div id="scale-remote-sanity-command" class="command-tape source-command"></div>
+            <div id="scale-remote-import-command" class="command-tape source-command"></div>
+            <div id="scale-remote-benchmark-command" class="command-tape source-command"></div>
+            <div id="scale-remote-preflight-command" class="command-tape source-command"></div>
+            <div id="scale-remote-run-command" class="command-tape source-command"></div>
+            <div id="scale-remote-return-command" class="command-tape source-command"></div>
           </div>
           <div class="terminal-card scale-card">
             <label>IMPORT BACK TO WORKBENCH</label>
