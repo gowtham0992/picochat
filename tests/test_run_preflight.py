@@ -88,7 +88,8 @@ def test_preflight_accepts_narrow_first_release_sft_focus():
     assert checks["sft_category_balance"].status == "pass"
     assert checks["sft_category_balance"].metric == "2"
     assert checks["sft_category_balance"].threshold == ">= 2 first-release behavior categories"
-    assert "separate diagnostics" in checks["sft_category_balance"].message
+    assert "does not train or gate arithmetic/spelling" in checks["sft_category_balance"].message
+    assert "release_skills" in checks["sft_category_balance"].message
 
 
 def test_preflight_still_warns_for_narrow_research_sft_focus():
