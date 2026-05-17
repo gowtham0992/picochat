@@ -594,7 +594,7 @@ def test_attention_backend_fa3_requires_optional_package(monkeypatch):
         model(x)
 
 
-def test_fa3_loader_trusts_explicit_kernel_remote_code(monkeypatch):
+def test_fa3_loader_uses_kernel_hub_flash_attn3(monkeypatch):
     calls = []
     sentinel = object()
 
@@ -611,7 +611,33 @@ def test_fa3_loader_trusts_explicit_kernel_remote_code(monkeypatch):
     finally:
         model_module._fa3_flash_attn_func.cache_clear()
 
-    assert calls == [("varunneal/flash-attention-3", {"trust_remote_code": True})]
+    assert calls == [("kernels-community/flash-attn3", {"version": 1})]
+
+
+def test_fa3_loader_keeps_varunneal_fallback_trusted(monkeypatch):
+    calls = []
+    sentinel = object()
+
+    def fake_get_kernel(repo_id, **kwargs):
+        calls.append((repo_id, kwargs))
+        if repo_id == "kernels-community/flash-attn3":
+            raise RuntimeError("kernel hub miss")
+        return types.SimpleNamespace(flash_attn_func=sentinel)
+
+    fake_kernels = types.ModuleType("kernels")
+    fake_kernels.get_kernel = fake_get_kernel
+    monkeypatch.setitem(sys.modules, "kernels", fake_kernels)
+    model_module._fa3_flash_attn_func.cache_clear()
+    try:
+        assert model_module._fa3_flash_attn_func() is sentinel
+    finally:
+        model_module._fa3_flash_attn_func.cache_clear()
+
+    assert calls == [
+        ("kernels-community/flash-attn3", {"version": 1}),
+        ("kernels-community/flash-attn3", {}),
+        ("varunneal/flash-attention-3", {"trust_remote_code": True}),
+    ]
 
 
 def test_attention_backend_rejects_unknown_value():

@@ -110,14 +110,28 @@ def _fa3_flash_attn_func():
     """Return the optional FlashAttention-3 kernel loader function when present."""
     try:
         from kernels import get_kernel  # type: ignore
-
-        try:
-            kernel = get_kernel("varunneal/flash-attention-3", trust_remote_code=True)
-        except TypeError:
-            kernel = get_kernel("varunneal/flash-attention-3")
-        return getattr(kernel, "flash_attn_func", None)
     except Exception:
         return None
+
+    attempts = (
+        ("kernels-community/flash-attn3", {"version": 1}),
+        ("kernels-community/flash-attn3", {}),
+        ("varunneal/flash-attention-3", {"trust_remote_code": True}),
+    )
+    for repo_id, kwargs in attempts:
+        try:
+            kernel = get_kernel(repo_id, **kwargs)
+        except TypeError:
+            try:
+                kernel = get_kernel(repo_id)
+            except Exception:
+                continue
+        except Exception:
+            continue
+        flash_attn_func = getattr(kernel, "flash_attn_func", None)
+        if flash_attn_func is not None:
+            return flash_attn_func
+    return None
 
 
 def external_flash_attention_available() -> bool:
