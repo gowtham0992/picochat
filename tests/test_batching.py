@@ -8,6 +8,7 @@ from picochat.batching import (
     DeviceBatchPrefetcher,
     ShardedTokenWindowDataset,
     TokenWindowDataset,
+    build_token_shards,
     load_sharded_token_split,
     load_token_shards_manifest,
     load_token_dataset,
@@ -148,11 +149,60 @@ def test_load_sharded_token_split_preserves_document_boundaries_from_manifest(tm
     for shard in shard_manifest["shards"]:
         tokens.extend(torch.load(shard["path"], weights_only=True).tolist())
     assert split.stats["document_boundary_tokens"] is True
+    assert split.stats["document_aligned_shards"] is True
     assert split.stats["packing"] == "bos_eos_per_document_token_shards"
     assert split.stats["num_documents"] == 3
     assert shard_manifest["corpus_manifest_path"] == str(manifest_path)
     assert tokens.count(tokenizer.bos_id) == 3
     assert tokens.count(tokenizer.eos_id) == 3
+
+
+def test_manifest_token_shards_keep_documents_together_when_they_fit(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    manifest_path = tmp_path / "corpus_manifest.json"
+    cache_dir = tmp_path / "shards"
+    docs = [
+        "alpha source document " * 4,
+        "beta source document " * 4,
+        "gamma source document " * 4,
+    ]
+    corpus_text = "\n\n".join(doc.strip() for doc in docs)
+    corpus_path.write_text(f"{corpus_text}\n", encoding="utf-8")
+    CharTokenizer.train([corpus_text]).save(tokenizer_path)
+    tokenizer = CharTokenizer.load(tokenizer_path)
+    tokenized_docs = [
+        tokenizer.encode(doc.strip(), add_bos=True, add_eos=True)
+        for doc in docs
+    ]
+    offset = 0
+    manifest_docs = []
+    for index, doc in enumerate(doc.strip() for doc in docs):
+        manifest_docs.append({
+            "document_id": index,
+            "path": f"doc-{index}.txt",
+            "char_start": offset,
+            "char_end": offset + len(doc),
+        })
+        offset += len(doc) + 2
+    manifest_path.write_text(json.dumps({"documents": manifest_docs}), encoding="utf-8")
+
+    manifest = build_token_shards(
+        corpus_path,
+        tokenizer_path,
+        cache_dir,
+        shard_token_size=max(len(ids) for ids in tokenized_docs) + 1,
+        corpus_manifest_path=manifest_path,
+    )
+
+    assert manifest["document_aligned_shards"] is True
+    assert manifest["num_shards"] == len(docs)
+    for shard in manifest["shards"]:
+        ids = torch.load(shard["path"], weights_only=True).tolist()
+        assert ids[0] == tokenizer.bos_id
+        assert ids[-1] == tokenizer.eos_id
+        assert ids.count(tokenizer.bos_id) == 1
+        assert ids.count(tokenizer.eos_id) == 1
 
 
 def test_manifest_token_shards_stream_document_slices(tmp_path, monkeypatch):

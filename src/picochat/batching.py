@@ -433,6 +433,7 @@ def build_token_shards(
     total_tokens = 0
     num_documents = 0
     document_boundary_tokens = False
+    document_aligned_shards = False
 
     def append_tokens(ids: list[int]) -> None:
         nonlocal buffer, total_tokens
@@ -444,6 +445,12 @@ def build_token_shards(
             if len(buffer) >= shard_token_size:
                 flush()
         total_tokens += len(ids)
+
+    def append_document_tokens(ids: list[int]) -> None:
+        nonlocal buffer
+        if buffer and len(ids) <= shard_token_size and len(buffer) + len(ids) > shard_token_size:
+            flush()
+        append_tokens(ids)
 
     def flush() -> None:
         nonlocal buffer
@@ -469,11 +476,12 @@ def build_token_shards(
     document_texts = _iter_manifest_document_texts(corpus_path, manifest_path)
     if document_texts is not None:
         document_boundary_tokens = True
+        document_aligned_shards = True
         for document in document_texts:
             text = document.strip()
             if not text:
                 continue
-            append_tokens(tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos))
+            append_document_tokens(tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos))
             num_documents += 1
     else:
         if add_bos:
@@ -496,6 +504,7 @@ def build_token_shards(
         "add_bos": add_bos,
         "add_eos": add_eos,
         "document_boundary_tokens": document_boundary_tokens,
+        "document_aligned_shards": document_aligned_shards,
         "num_documents": num_documents if document_boundary_tokens else None,
         "num_tokens": total_tokens,
         "num_shards": len(shard_rows),
@@ -624,6 +633,7 @@ def load_sharded_token_split(
         max_cached_shards=shard_cache_size,
     )
     document_boundary_tokens = bool(manifest.get("document_boundary_tokens", False))
+    document_aligned_shards = bool(manifest.get("document_aligned_shards", False))
     stats = {
         "num_tokens": train_dataset.stats().num_tokens + val_dataset.stats().num_tokens,
         "source_num_tokens": manifest["num_tokens"],
@@ -637,6 +647,7 @@ def load_sharded_token_split(
             else "streamed_token_shards"
         ),
         "document_boundary_tokens": document_boundary_tokens,
+        "document_aligned_shards": document_aligned_shards,
         "train_sequences": len(train_dataset),
         "val_sequences": len(val_dataset),
         "train_tokens": train_dataset.stats().num_tokens,

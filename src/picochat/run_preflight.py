@@ -575,7 +575,8 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
                 "corpus manifest available",
                 (
                     "Run-tiny sharded training builds token shards from the corpus manifest, "
-                    "so source documents still receive BOS/EOS boundary tokens. "
+                    "so source documents receive BOS/EOS boundary tokens and ordinary "
+                    "documents are kept within one token shard. "
                     "Validation remains token-shard holdout rather than full-document holdout."
                 ),
             ))
