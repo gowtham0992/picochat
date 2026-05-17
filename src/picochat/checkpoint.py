@@ -51,4 +51,4 @@ def load_training_state(path: str | Path, map_location: str | torch.device = "cp
     state_path = Path(path) / "training_state.pt"
     if not state_path.exists():
         raise FileNotFoundError(f"checkpoint has no training_state.pt: {Path(path)}")
-    return torch.load(state_path, map_location=map_location, weights_only=False)
+    return torch.load(state_path, map_location=map_location, weights_only=True)
