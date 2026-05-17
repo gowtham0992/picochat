@@ -1,6 +1,10 @@
 import json
 
-from picochat.honesty import inspect_data_honesty, write_data_honesty_report
+from picochat.honesty import (
+    _find_corpus_phrase_hits_in_chunks,
+    inspect_data_honesty,
+    write_data_honesty_report,
+)
 
 
 def write_jsonl(path, rows):
@@ -136,6 +140,28 @@ def test_inspect_data_honesty_skips_full_corpus_matrix_for_large_corpus(tmp_path
     assert base_eval_pair["risk"] == "not_checked"
     assert "exact corpus prompt/support checks still ran separately" in base_eval_pair["reason"]
     assert matrix_pair(report, "sft_vs_eval")["checked"] is True
+
+
+def test_corpus_phrase_scan_matches_normalized_text_across_punctuation_and_chunks():
+    phrase = "inspect the quiet ridge marker before moving"
+    corpus = "noise\nInspect the quiet ridge-marker, before moving safely.\nmore noise"
+
+    hits = _find_corpus_phrase_hits_in_chunks(corpus, {phrase}, chunk_chars=20)
+
+    assert hits == {phrase}
+
+
+def test_corpus_phrase_scan_reports_nested_phrases():
+    short = "quiet ridge marker"
+    long = "inspect the quiet ridge marker before moving"
+
+    hits = _find_corpus_phrase_hits_in_chunks(
+        "inspect the quiet ridge marker before moving",
+        {short, long},
+        chunk_chars=12,
+    )
+
+    assert hits == {short, long}
 
 
 def test_inspect_data_honesty_checks_generated_nearest_neighbors(tmp_path):

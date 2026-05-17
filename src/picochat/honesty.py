@@ -964,30 +964,58 @@ def _find_corpus_phrase_hits_in_stream(
     chunks: Iterable[str],
     phrases: set[str],
 ) -> set[str]:
-    candidates = sorted({phrase for phrase in phrases if phrase}, key=len, reverse=True)
-    if not candidates:
+    phrase_tokens = {
+        phrase: tuple(phrase.split())
+        for phrase in phrases
+        if phrase
+    }
+    phrase_tokens = {
+        phrase: tokens
+        for phrase, tokens in phrase_tokens.items()
+        if tokens
+    }
+    if not phrase_tokens:
         return set()
-    matcher = re.compile("|".join(re.escape(phrase) for phrase in candidates))
-    raw_hits: set[str] = set()
-    max_tail_chars = max(8192, max(len(phrase) for phrase in candidates) * 4)
+
+    candidates_by_first: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
+    for phrase, tokens in phrase_tokens.items():
+        candidates_by_first.setdefault(tokens[0], []).append((phrase, tokens))
+    for candidates in candidates_by_first.values():
+        candidates.sort(key=lambda item: len(item[1]), reverse=True)
+
+    hits: set[str] = set()
+    max_tail_chars = max(8192, max(len(phrase) for phrase in phrase_tokens) * 4)
     tail = ""
     for chunk in chunks:
         if not chunk:
             continue
-        normalized_chunk = _normalize(f"{tail} {chunk}" if tail else chunk)
-        raw_hits.update(match.group(0) for match in matcher.finditer(normalized_chunk))
-        if len(raw_hits) == len(candidates):
-            break
-        tail = chunk[-max_tail_chars:]
-    if not raw_hits:
-        return set()
-    hits = set(raw_hits)
-    for phrase in candidates:
-        if phrase in hits:
+        scan_text = f"{tail}{chunk}" if tail else chunk
+        tokens = _tokens(scan_text)
+        if not tokens:
+            tail = scan_text[-max_tail_chars:]
             continue
-        if any(phrase in hit for hit in raw_hits):
-            hits.add(phrase)
+        for index, token in enumerate(tokens):
+            candidates = candidates_by_first.get(token)
+            if not candidates:
+                continue
+            for phrase, candidate_tokens in candidates:
+                if phrase in hits:
+                    continue
+                if _token_sequence_matches(tokens, index, candidate_tokens):
+                    hits.add(phrase)
+            if len(hits) == len(phrase_tokens):
+                return hits
+        tail = scan_text[-max_tail_chars:]
     return hits
+
+
+def _token_sequence_matches(tokens: list[str], start: int, candidate: tuple[str, ...]) -> bool:
+    if start + len(candidate) > len(tokens):
+        return False
+    for offset, token in enumerate(candidate):
+        if tokens[start + offset] != token:
+            return False
+    return True
 
 
 def _iter_corpus_text_chunks(path: str | Path, chunk_chars: int = 1_000_000) -> Iterable[str]:
