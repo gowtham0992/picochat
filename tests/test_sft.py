@@ -258,6 +258,8 @@ def test_train_sft_writes_artifacts(tmp_path):
 
     assert (out_dir / "checkpoint" / "model.pt").exists()
     assert (out_dir / "checkpoint" / "metadata.json").exists()
+    assert (out_dir / "resume_checkpoint" / "progress.json").exists()
+    assert (out_dir / "resume_checkpoint" / "progress.md").exists()
     assert (out_dir / "best_checkpoint" / "model.pt").exists()
     assert (out_dir / "sft_report.json").exists()
     assert (out_dir / "sft_label_audit.json").exists()
@@ -291,6 +293,10 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert "SFT sampling" in report_text
     assert "Packing" in report_text
     assert "SFT Label Audit" in report_text
+    progress = json.loads((out_dir / "resume_checkpoint" / "progress.json").read_text(encoding="utf-8"))
+    assert progress["stage"] == "sft"
+    assert progress["step"] == 2
+    assert progress["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
 
 
 def test_train_sft_can_resume_from_training_state(tmp_path):

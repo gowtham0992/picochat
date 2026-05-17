@@ -45,6 +45,7 @@ from picochat.precision import (
     maybe_compile_model,
     resolve_precision,
 )
+from picochat.progress import write_checkpoint_progress
 from picochat.report import loss_diagnostics, optimization_stability, training_report_markdown
 from picochat.resume import (
     file_sha256,
@@ -641,6 +642,17 @@ def train_base(config: TrainConfig) -> dict:
                             "loss_spike_baseline": loss_spike_baseline,
                         },
                     ),
+                )
+                write_checkpoint_progress(
+                    out_dir / "resume_checkpoint",
+                    stage="base",
+                    step=final_step,
+                    max_steps=config.max_steps,
+                    train_loss=last_loss,
+                    losses=losses,
+                    best_checkpoint=best_checkpoint,
+                    stop_reason=stop_reason,
+                    resume_from=config.resume_from,
                 )
             barrier_if_distributed(ddp_metadata)
             if (

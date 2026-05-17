@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from picochat.batching import TokenSplitBundle, TokenWindowDataset
@@ -40,6 +42,8 @@ def test_train_base_writes_artifacts(tmp_path):
     assert (out_dir / "checkpoint" / "model.pt").exists()
     assert (out_dir / "best_checkpoint" / "model.pt").exists()
     assert (out_dir / "checkpoint" / "metadata.json").exists()
+    assert (out_dir / "resume_checkpoint" / "progress.json").exists()
+    assert (out_dir / "resume_checkpoint" / "progress.md").exists()
     assert (out_dir / "train_report.json").exists()
     assert (out_dir / "report.md").exists()
     assert (out_dir / "sample.txt").exists()
@@ -63,6 +67,12 @@ def test_train_base_writes_artifacts(tmp_path):
     assert "memorization" in report
     assert report["memorization"]["status"] in {"low", "medium", "high"}
     assert report["dataset"]["val_sequences"] > 0
+    progress = json.loads((out_dir / "resume_checkpoint" / "progress.json").read_text(encoding="utf-8"))
+    assert progress["stage"] == "base"
+    assert progress["step"] == 2
+    assert progress["max_steps"] == 2
+    assert progress["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
+    assert "interrupted runs" in (out_dir / "resume_checkpoint" / "progress.md").read_text(encoding="utf-8")
 
 
 def test_train_base_reports_gradient_accumulation(tmp_path):
