@@ -8,6 +8,9 @@ from typing import Any
 import torch
 
 
+TORCHRUN_REQUIRED_ENV = ("RANK", "WORLD_SIZE", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT")
+
+
 def initialize_ddp(
     device: torch.device,
     enabled: bool = False,
@@ -58,6 +61,13 @@ def ddp_env_metadata(enabled: bool = False) -> dict[str, Any]:
     """Return torchrun rank metadata before the process group is initialized."""
     if not enabled:
         return {"enabled": False, "world_size": 1, "rank": 0, "local_rank": 0}
+    missing = [name for name in TORCHRUN_REQUIRED_ENV if name not in os.environ]
+    if missing:
+        raise RuntimeError(
+            "DDP requires torchrun so every rank gets rendezvous metadata; "
+            f"missing environment variable(s): {', '.join(missing)}. "
+            "Launch with: torchrun --standalone --nproc_per_node=<gpus> -m picochat.cli ..."
+        )
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     rank = int(os.environ.get("RANK", "0"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
