@@ -317,6 +317,7 @@ OMP_NUM_THREADS=1 PICOCHAT_DDP_TIMEOUT_MINUTES=120 PYTORCH_ALLOC_CONF=expandable
   --scale h100-100m-ddp8 \
   --device cuda \
   --ddp \
+  --ddp-world-size 8 \
   --long-run-gate-profile first_release \
   2>&1 | tee logs/train-h100-100m-ddp8.log
 ```

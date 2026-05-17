@@ -1108,6 +1108,8 @@ def test_start_run_plan_preserves_h100_100m_ddp8_preset(tmp_path, monkeypatch):
     assert "-m" in command
     assert "picochat.cli" in command
     assert "--ddp" in command
+    assert "--ddp-world-size" in command
+    assert "8" in command
     assert "--n-embd" in command
     assert "768" in command
     assert "--n-layer" in command

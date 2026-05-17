@@ -1218,6 +1218,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         command.append("--loss-spike-rollback")
     if ddp:
         command.append("--ddp")
+        command.extend(["--ddp-world-size", str(ddp_world_size)])
     if tokenizer_vocab_size is not None:
         command.extend(["--tokenizer-vocab-size", str(tokenizer_vocab_size)])
     if base_dataset_mode == "sharded":

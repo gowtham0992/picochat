@@ -4114,6 +4114,8 @@ function renderScalePlan() {
       "picochat.cli",
       ...remoteRunArgs,
       "--ddp",
+      "--ddp-world-size",
+      ddpWorldSize,
     ]
     : [
       "PYTORCH_ALLOC_CONF=expandable_segments:True",
