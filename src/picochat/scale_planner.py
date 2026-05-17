@@ -55,7 +55,9 @@ class ScalePlan:
     tokenizer_type: str
     tokenizer_vocab_size: int
     bpe_pretokenizer: str
+    attn_backend: str
     base_dataset_mode: str
+    long_run_gate_profile: str
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -65,7 +67,7 @@ class ScalePlan:
             "--device", "cuda",
             "--precision", "bf16",
             "--matmul-precision", "high",
-            "--attn-backend", "flash",
+            "--attn-backend", self.attn_backend,
             "--torch-compile",
             "--tokenizer-type", self.tokenizer_type,
             "--tokenizer-vocab-size", str(self.tokenizer_vocab_size),
@@ -105,7 +107,7 @@ class ScalePlan:
             "--sft-packing", "bos_bestfit",
             "--sft-sampling", "category_sqrt",
             "--eval-max-new-tokens", "120",
-            "--long-run-gate-profile", "first_release",
+            "--long-run-gate-profile", self.long_run_gate_profile,
         ])
         if self.world_size > 1:
             parts.append("--ddp")
@@ -143,6 +145,7 @@ def plan_scale(
     target_param_data_ratio: float = 20.0,
     tokenizer_type: str = "hf_bpe",
     bpe_pretokenizer: str = "regex",
+    attn_backend: str = "flash",
     activation: str = "swiglu",
     norm_type: str = "rmsnorm",
     position_encoding: str = "rope",
@@ -151,6 +154,7 @@ def plan_scale(
     parallel_residual: bool = True,
     linear_bias: bool = False,
     base_dataset_mode: str = "sharded",
+    long_run_gate_profile: str = "skill_release",
 ) -> ScalePlan:
     if target_parameters <= 0:
         raise ValueError("target_parameters must be positive")
@@ -255,7 +259,9 @@ def plan_scale(
         tokenizer_type=tokenizer_type,
         tokenizer_vocab_size=vocab_size,
         bpe_pretokenizer=bpe_pretokenizer,
+        attn_backend=attn_backend,
         base_dataset_mode=base_dataset_mode,
+        long_run_gate_profile=long_run_gate_profile,
     )
 
 
@@ -271,7 +277,7 @@ def render_scale_plan_markdown(plan: ScalePlan) -> str:
         f"- Target parameters: {plan.target_parameters:,}",
         f"- Estimated parameters: {plan.estimated_parameters:,} ({plan.parameter_error_rate:+.2%})",
         f"- Shape: {plan.n_layer} layers, {plan.n_embd} embedding, {plan.n_head} query heads, {plan.n_kv_head} KV heads, {plan.head_dim} head dim",
-        f"- Architecture: {plan.norm_type}, {plan.position_encoding}, {plan.activation}, tied embeddings={plan.tie_embeddings}, qk_norm={plan.qk_norm}, parallel_residual={plan.parallel_residual}, linear_bias={plan.linear_bias}",
+        f"- Architecture: {plan.norm_type}, {plan.position_encoding}, {plan.activation}, attention={plan.attn_backend}, tied embeddings={plan.tie_embeddings}, qk_norm={plan.qk_norm}, parallel_residual={plan.parallel_residual}, linear_bias={plan.linear_bias}",
         "",
         "## Training Budget",
         "",
@@ -299,6 +305,9 @@ def render_scale_plan_markdown(plan: ScalePlan) -> str:
         f"- Base warmup steps: {plan.base_warmup_steps:,}",
         f"- SFT steps: {plan.sft_steps:,}",
         f"- SFT warmup steps: {plan.sft_warmup_steps:,}",
+        f"- Gate profile: `{plan.long_run_gate_profile}`",
+        "",
+        "If the gate profile is `skill_release`, generate the tuning pack with `--profile release_skills --skill-answer-style scratchpad` before running the command.",
         "",
         "## Run Tiny Overrides",
         "",

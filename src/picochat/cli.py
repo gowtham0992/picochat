@@ -1175,6 +1175,8 @@ def build_parser() -> argparse.ArgumentParser:
     scale_plan_parser.add_argument("--per-device-batch-size", type=int, default=8)
     scale_plan_parser.add_argument("--grad-accum-steps", type=int, default=16)
     scale_plan_parser.add_argument("--target-param-data-ratio", type=float, default=20.0)
+    scale_plan_parser.add_argument("--attn-backend", choices=SDPA_BACKENDS, default="flash")
+    scale_plan_parser.add_argument("--long-run-gate-profile", choices=LONG_RUN_GATE_PROFILES, default="skill_release")
     scale_plan_parser.add_argument("--out", default=None, help="Optional Markdown report path.")
 
     run_parser = subparsers.add_parser("run", help="End-to-end experiment runners.")
@@ -2679,6 +2681,8 @@ def run_scale_plan(args: argparse.Namespace) -> int:
         per_device_batch_size=args.per_device_batch_size,
         grad_accum_steps=args.grad_accum_steps,
         target_param_data_ratio=args.target_param_data_ratio,
+        attn_backend=args.attn_backend,
+        long_run_gate_profile=args.long_run_gate_profile,
     )
     markdown = render_scale_plan_markdown(plan)
     print(markdown, end="")

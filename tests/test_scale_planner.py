@@ -66,6 +66,8 @@ def test_scale_plan_marks_ddp_overrides():
     assert "--ddp" in plan.run_tiny_overrides()
     assert plan.base_learning_rate == 0.0002
     assert plan.batch_scaled_learning_rate > plan.base_learning_rate
+    assert "--long-run-gate-profile" in plan.run_tiny_overrides()
+    assert "skill_release" in plan.run_tiny_overrides()
 
 
 def test_scale_plan_markdown_contains_copyable_command():
@@ -76,7 +78,8 @@ def test_scale_plan_markdown_contains_copyable_command():
     assert "--n-embd 768" in markdown
     assert "--no-linear-bias" in markdown
     assert "--base-dataset-mode" in markdown
-    assert "--long-run-gate-profile first_release" in markdown
+    assert "--long-run-gate-profile skill_release" in markdown
+    assert "--profile release_skills --skill-answer-style scratchpad" in markdown
 
 
 def test_cli_scale_plan_prints_report(capsys):
@@ -86,3 +89,23 @@ def test_cli_scale_plan_prints_report(capsys):
     output = capsys.readouterr().out
     assert "Picochat Scale Plan" in output
     assert "Estimated corpus epochs" in output
+
+
+def test_cli_scale_plan_accepts_hopper_attention_and_release_gate(capsys):
+    code = main([
+        "scale",
+        "plan",
+        "--target-params",
+        "1b",
+        "--world-size",
+        "8",
+        "--attn-backend",
+        "fa3",
+        "--long-run-gate-profile",
+        "skill_release",
+    ])
+
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "--attn-backend fa3" in output
+    assert "--long-run-gate-profile skill_release" in output
