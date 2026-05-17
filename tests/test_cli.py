@@ -752,6 +752,8 @@ def test_cli_data_hf_import_uses_importer(tmp_path, capsys, monkeypatch):
             out_path=config.out_path,
             report_path=config.report_path or str(tmp_path / "hf_import_report.json"),
             documents_dir=config.documents_dir or str(tmp_path / "documents"),
+            document_shard_rows=config.document_shard_rows,
+            document_files_written=2,
             rows_seen=3,
             rows_written=2,
             rows_skipped=1,
@@ -780,6 +782,8 @@ def test_cli_data_hf_import_uses_importer(tmp_path, capsys, monkeypatch):
         "3",
         "--min-chars",
         "5",
+        "--document-shard-rows",
+        "2",
         "--no-streaming",
     ])
 
@@ -789,10 +793,12 @@ def test_cli_data_hf_import_uses_importer(tmp_path, capsys, monkeypatch):
     assert captured["config"].text_column == "body"
     assert captured["config"].streaming is False
     assert captured["config"].documents_dir == str(tmp_path / "docs")
+    assert captured["config"].document_shard_rows == 2
     output = capsys.readouterr().out
     assert "imported dataset: demo/dataset" in output
     assert "rows_written: 2" in output
     assert f"documents_dir: {tmp_path / 'docs'}" in output
+    assert "document_files_written: 2" in output
 
 
 def test_cli_demo_uses_default_pipeline(tmp_path, capsys, monkeypatch):

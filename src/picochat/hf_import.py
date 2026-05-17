@@ -39,6 +39,7 @@ class HFImportConfig:
     streaming: bool = True
     report_path: str | None = None
     documents_dir: str | None = None
+    document_shard_rows: int = 1
     data_files: tuple[str, ...] = ()
 
 
@@ -67,6 +68,8 @@ class HFImportReport:
     out_path: str
     report_path: str
     documents_dir: str | None
+    document_shard_rows: int
+    document_files_written: int
     rows_seen: int
     rows_written: int
     rows_skipped: int
@@ -95,6 +98,7 @@ def import_hf_dataset(config: HFImportConfig, loader: DatasetLoader | None = Non
     rows: list[HFImportRow] = []
     documents: list[str] = []
     document_writes: list[tuple[Path, str]] = []
+    document_shard_rows = max(1, config.document_shard_rows)
     for index, record in enumerate(dataset):
         if index >= config.max_rows:
             break
@@ -112,7 +116,12 @@ def import_hf_dataset(config: HFImportConfig, loader: DatasetLoader | None = Non
                 preview=_preview(text),
             ))
             continue
-        document_path = documents_dir / f"row-{index:06d}.txt"
+        included_index = len(documents)
+        if document_shard_rows == 1:
+            document_path = documents_dir / f"row-{index:06d}.txt"
+        else:
+            shard_index = included_index // document_shard_rows
+            document_path = documents_dir / f"shard-{shard_index:06d}.txt"
         documents.append(text)
         document_writes.append((document_path, text))
         rows.append(HFImportRow(
@@ -127,7 +136,7 @@ def import_hf_dataset(config: HFImportConfig, loader: DatasetLoader | None = Non
     out_path.parent.mkdir(parents=True, exist_ok=True)
     corpus_text = "\n\n".join(documents)
     out_path.write_text(corpus_text + ("\n" if corpus_text else ""), encoding="utf-8")
-    _write_document_files(documents_dir, document_writes)
+    document_files_written = _write_document_files(documents_dir, document_writes)
 
     report = HFImportReport(
         dataset=config.dataset,
@@ -140,6 +149,8 @@ def import_hf_dataset(config: HFImportConfig, loader: DatasetLoader | None = Non
         out_path=str(out_path),
         report_path=str(report_path),
         documents_dir=str(documents_dir),
+        document_shard_rows=document_shard_rows,
+        document_files_written=document_files_written,
         data_files=tuple(config.data_files),
         rows_seen=len(rows),
         rows_written=len(documents),
@@ -170,6 +181,8 @@ def hf_import_markdown(report: HFImportReport) -> str:
         f"- Characters written: {report.characters_written:,}",
         f"- Output corpus: `{report.out_path}`",
         f"- Output documents: `{report.documents_dir}`" if report.documents_dir else "- Output documents: none",
+        f"- Document shard rows: {report.document_shard_rows}",
+        f"- Document files written: {report.document_files_written}",
         "",
         "## Rows",
         "",
@@ -268,15 +281,23 @@ def _validate_config(config: HFImportConfig) -> None:
         raise ValueError("max_rows must be at least 1")
     if config.min_chars < 1:
         raise ValueError("min_chars must be at least 1")
+    if config.document_shard_rows < 1:
+        raise ValueError("document_shard_rows must be at least 1")
 
 
-def _write_document_files(documents_dir: Path, documents: list[tuple[Path, str]]) -> None:
+def _write_document_files(documents_dir: Path, documents: list[tuple[Path, str]]) -> int:
     documents_dir.mkdir(parents=True, exist_ok=True)
-    for stale_path in documents_dir.glob("row-*.txt"):
-        if stale_path.is_file():
-            stale_path.unlink()
+    for pattern in ("row-*.txt", "shard-*.txt"):
+        for stale_path in documents_dir.glob(pattern):
+            if stale_path.is_file():
+                stale_path.unlink()
+
+    grouped: dict[Path, list[str]] = {}
     for document_path, text in documents:
-        document_path.write_text(text + "\n", encoding="utf-8")
+        grouped.setdefault(document_path, []).append(text)
+    for document_path, parts in grouped.items():
+        document_path.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
+    return len(grouped)
 
 
 def _preview(text: str, limit: int = 90) -> str:

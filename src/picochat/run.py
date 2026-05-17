@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path
+import time
 
 from picochat.data import (
     DEFAULT_CHAT_INPUT,
@@ -124,6 +125,8 @@ class TinyRunConfig:
 
 def run_tiny(config: TinyRunConfig) -> dict:
     """Run the tiny educational pipeline from corpus to eval report."""
+    run_started = time.perf_counter()
+    stage_timings: list[dict[str, object]] = []
     out_dir = Path(config.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -132,6 +135,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
     tokenizer_path = out_dir / "tokenizer.json"
 
     print(f"[1/7] build corpus -> {corpus_path}")
+    stage_started = time.perf_counter()
     corpus_build = build_corpus_artifacts(
         None if config.dataset_pack else config.corpus_input,
         corpus_path,
@@ -167,6 +171,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "auto lr scaling: "
             f"base {base_learning_rate:.6g}, sft {sft_learning_rate:.6g}"
         )
+    _record_stage_timing(stage_timings, "corpus_build_preflight", stage_started)
 
     if config.tokenizer_type not in TOKENIZER_TYPES:
         raise ValueError(f"Unsupported tokenizer type: {config.tokenizer_type}")
@@ -176,6 +181,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         raise ValueError(f"Unsupported SFT packing mode: {config.sft_packing}")
 
     print("[2/7] check data honesty")
+    stage_started = time.perf_counter()
     honesty_report = inspect_data_honesty(
         corpus_path=corpus_path,
         chat_input=chat_input,
@@ -190,8 +196,10 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "data honesty blocked this run; inspect "
             f"{honesty_markdown_path} or rerun with --allow-leaky-eval for a diagnostic-only run"
         )
+    _record_stage_timing(stage_timings, "data_honesty", stage_started)
 
     print(f"[3/7] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
+    stage_started = time.perf_counter()
     texts = (
         _iter_text_chunks(corpus_path)
         if config.tokenizer_type == "hf_bpe"
@@ -205,8 +213,10 @@ def run_tiny(config: TinyRunConfig) -> dict:
         bpe_pretokenizer=config.bpe_pretokenizer,
     )
     tokenizer.save(tokenizer_path)
+    _record_stage_timing(stage_timings, "tokenizer", stage_started)
 
     print("[4/7] train base model")
+    stage_started = time.perf_counter()
     base_report = train_base(TrainConfig(
         corpus_path=str(corpus_path),
         tokenizer_path=str(tokenizer_path),
@@ -268,8 +278,10 @@ def run_tiny(config: TinyRunConfig) -> dict:
         "path",
         str(out_dir / "base" / "checkpoint"),
     )
+    _record_stage_timing(stage_timings, "base_train", stage_started)
 
     print("[5/7] train chat SFT")
+    stage_started = time.perf_counter()
     sft_report = train_sft(SFTConfig(
         input_path=chat_input,
         tokenizer_path=str(tokenizer_path),
@@ -313,8 +325,10 @@ def run_tiny(config: TinyRunConfig) -> dict:
         "path",
         str(out_dir / "sft" / "checkpoint"),
     )
+    _record_stage_timing(stage_timings, "sft_train", stage_started)
 
     print("[6/7] run SFT fit diagnostic")
+    stage_started = time.perf_counter()
     sft_fit_input = out_dir / "sft_fit" / "sft_fit_eval.jsonl"
     sft_dataset = sft_report.get("dataset", {})
     sft_train_indices = sft_dataset.get("train_indices")
@@ -363,8 +377,10 @@ def run_tiny(config: TinyRunConfig) -> dict:
             support_corpus_path=str(corpus_path),
             log_every=_eval_log_every(sft_fit_heldout_dataset["num_rows"]),
         ))
+    _record_stage_timing(stage_timings, "sft_fit_eval", stage_started)
 
     print("[7/7] run chat eval")
+    stage_started = time.perf_counter()
     eval_report = run_chat_eval(ChatEvalConfig(
         input_path=eval_input,
         checkpoint_path=sft_eval_checkpoint,
@@ -410,6 +426,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         honesty=honesty_report.to_dict(),
         profile=config.long_run_gate_profile,
     )
+    _record_stage_timing(stage_timings, "chat_eval_gate", stage_started)
 
     effective_config = {
         **config.__dict__,
@@ -524,6 +541,10 @@ def run_tiny(config: TinyRunConfig) -> dict:
         "eval_analysis": eval_report.get("analysis", {}),
         "external_evals": external_eval_reports,
         "long_run_gate": long_run_gate,
+        "timing": {
+            "total_seconds": round(time.perf_counter() - run_started, 4),
+            "stages": stage_timings,
+        },
     }
 
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -544,6 +565,12 @@ def _iter_text_chunks(path: Path, chunk_chars: int = 1_000_000):
             if not chunk:
                 break
             yield chunk
+
+
+def _record_stage_timing(stage_timings: list[dict[str, object]], stage: str, started: float) -> None:
+    seconds = round(time.perf_counter() - started, 4)
+    stage_timings.append({"stage": stage, "seconds": seconds})
+    print(f"timing: {stage} {seconds:.1f}s")
 
 
 def _validate_external_eval_inputs(specs: tuple[str, ...]) -> list[dict[str, str]]:

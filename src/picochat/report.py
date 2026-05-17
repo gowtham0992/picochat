@@ -13,6 +13,19 @@ def format_optional_float(value: float | None) -> str:
     return "--" if value is None else format_float(value)
 
 
+def format_duration(seconds: object) -> str:
+    value = _number(seconds)
+    if value is None:
+        return "--"
+    if value < 60:
+        return f"{value:.1f}s"
+    minutes, remainder = divmod(value, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {remainder:.1f}s"
+    hours, minutes = divmod(int(minutes), 60)
+    return f"{hours}h {minutes}m {remainder:.1f}s"
+
+
 def loss_diagnostics(losses: list[dict]) -> dict:
     """Summarize a tiny loss trace with stable, explainable diagnostics."""
     if not losses:
@@ -951,6 +964,21 @@ def tiny_run_summary_markdown(summary: dict) -> str:
             )
         lines.append(f"- Support match rate: {format_float(eval_summary.get('support_match_rate', 0.0) * 100)}%")
     lines.append("")
+
+    timing = summary.get("timing") or {}
+    timing_stages = timing.get("stages") or []
+    if timing_stages:
+        lines.append("## Runtime")
+        lines.append("")
+        lines.append(f"- Total wall time: {format_duration(timing.get('total_seconds'))}")
+        lines.append("")
+        lines.append("| Stage | Time |")
+        lines.append("| --- | ---: |")
+        for item in timing_stages:
+            lines.append(
+                f"| `{item.get('stage', 'unknown')}` | {format_duration(item.get('seconds'))} |"
+            )
+        lines.append("")
 
     if preflight:
         budget = preflight.get("budget", {})

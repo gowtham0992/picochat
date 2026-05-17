@@ -4016,6 +4016,8 @@ function renderScalePlan() {
       config.max_rows,
       "--min-chars",
       100,
+      "--document-shard-rows",
+      1000,
       "--force",
     ])} 2>&1 | tee logs/import-climbmix.log`,
   ].join("\n");

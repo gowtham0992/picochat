@@ -101,6 +101,39 @@ def test_import_hf_dataset_passes_data_files_to_loader(tmp_path):
     assert report.data_files == ("shard_00000.parquet",)
 
 
+def test_import_hf_dataset_can_write_sharded_document_files(tmp_path):
+    def fake_loader(*_args, **_kwargs):
+        return [
+            {"text": "first row is long enough"},
+            {"text": "second row is long enough"},
+            {"text": "third row is long enough"},
+        ]
+
+    documents_dir = tmp_path / "docs"
+    report = import_hf_dataset(
+        HFImportConfig(
+            dataset="demo/dataset",
+            out_path=str(tmp_path / "corpus.txt"),
+            documents_dir=str(documents_dir),
+            document_shard_rows=2,
+            min_chars=1,
+        ),
+        loader=fake_loader,
+    )
+
+    assert report.document_shard_rows == 2
+    assert report.document_files_written == 2
+    assert report.rows[0].document_path == str(documents_dir / "shard-000000.txt")
+    assert report.rows[1].document_path == str(documents_dir / "shard-000000.txt")
+    assert report.rows[2].document_path == str(documents_dir / "shard-000001.txt")
+    assert (documents_dir / "shard-000000.txt").read_text(encoding="utf-8") == (
+        "first row is long enough\n\nsecond row is long enough\n"
+    )
+    assert (documents_dir / "shard-000001.txt").read_text(encoding="utf-8") == (
+        "third row is long enough\n"
+    )
+
+
 def test_import_hf_dataset_clears_stale_row_files(tmp_path):
     def fake_loader(*_args, **_kwargs):
         return [{"text": "fresh row is long enough"}]
@@ -109,6 +142,8 @@ def test_import_hf_dataset_clears_stale_row_files(tmp_path):
     documents_dir.mkdir()
     stale_path = documents_dir / "row-000999.txt"
     stale_path.write_text("stale", encoding="utf-8")
+    stale_shard = documents_dir / "shard-000999.txt"
+    stale_shard.write_text("stale", encoding="utf-8")
 
     import_hf_dataset(
         HFImportConfig(
@@ -121,6 +156,7 @@ def test_import_hf_dataset_clears_stale_row_files(tmp_path):
     )
 
     assert not stale_path.exists()
+    assert not stale_shard.exists()
     assert (documents_dir / "row-000000.txt").exists()
 
 

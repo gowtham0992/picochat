@@ -451,6 +451,8 @@ def test_hf_import_plan_accepts_dataset_url_and_creates_pack(tmp_path, monkeypat
             out_path=str(out_path),
             report_path=str(tmp_path / "hf-out" / "hf_import_report.json"),
             documents_dir=str(docs_dir),
+            document_shard_rows=config.document_shard_rows,
+            document_files_written=2,
             rows_seen=2,
             rows_written=2,
             rows_skipped=0,

@@ -74,6 +74,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data climbmix-import \
   --shards 16 \
   --max-rows 80000 \
   --min-chars 100 \
+  --document-shard-rows 1000 \
   --force 2>&1 | tee logs/import-h100.log
 
 PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
@@ -243,6 +244,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data climbmix-import \
   --shards 170 \
   --max-rows 800000 \
   --min-chars 100 \
+  --document-shard-rows 1000 \
   --force 2>&1 | tee logs/import-h100-100m.log
 
 PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \

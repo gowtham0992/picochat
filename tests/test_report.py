@@ -493,6 +493,13 @@ def test_tiny_run_summary_markdown_contains_key_sections():
             "duplicate_eval_prompts": 0,
             "max_sft_prompt_similarity": 0.25,
         },
+        "timing": {
+            "total_seconds": 125.5,
+            "stages": [
+                {"stage": "corpus_build_preflight", "seconds": 61.0},
+                {"stage": "base_train", "seconds": 64.5},
+            ],
+        },
     }
 
     markdown = tiny_run_summary_markdown(summary)
@@ -503,6 +510,8 @@ def test_tiny_run_summary_markdown_contains_key_sections():
     assert "## SFT Fit Categories" in markdown
     assert "## Data Honesty" in markdown
     assert "## External Benchmarks" in markdown
+    assert "## Runtime" in markdown
+    assert "2m 5.5s" in markdown
     assert "`arc-mini`" in markdown
     assert "70.0000%" in markdown
     assert "Data honesty report" in markdown

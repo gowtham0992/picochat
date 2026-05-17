@@ -424,7 +424,16 @@ def build_parser() -> argparse.ArgumentParser:
     data_hf_import.add_argument(
         "--documents-dir",
         default=None,
-        help="Optional folder for one text file per accepted row. Defaults to a documents folder beside --out.",
+        help="Optional folder for accepted-row document files. Defaults to a documents folder beside --out.",
+    )
+    data_hf_import.add_argument(
+        "--document-shard-rows",
+        type=int,
+        default=1,
+        help=(
+            "Accepted rows per document text file. Use 1000+ for large imports to avoid "
+            "hundreds of thousands of tiny files; 1 preserves per-row document files."
+        ),
     )
     data_hf_import.add_argument("--max-rows", type=int, default=1000, help="Maximum rows to inspect from the split.")
     data_hf_import.add_argument("--min-chars", type=int, default=20, help="Minimum text length required for a row to be written.")
@@ -451,6 +460,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     data_climbmix_import.add_argument("--max-rows", type=int, default=1000, help="Maximum rows/documents to inspect.")
     data_climbmix_import.add_argument("--min-chars", type=int, default=20, help="Minimum document length.")
+    data_climbmix_import.add_argument(
+        "--document-shard-rows",
+        type=int,
+        default=1,
+        help=(
+            "Accepted rows per local document file. Use 1000 for H100-scale imports to "
+            "keep auditability without creating one file per dataset row."
+        ),
+    )
     data_climbmix_import.add_argument("--force", action="store_true", help="Overwrite existing import/pack artifacts.")
     data_climbmix_import.add_argument(
         "--no-streaming",
@@ -1739,6 +1757,7 @@ def hf_import_data(args: argparse.Namespace) -> int:
         out_path=args.out,
         report_path=args.report,
         documents_dir=args.documents_dir,
+        document_shard_rows=args.document_shard_rows,
         max_rows=args.max_rows,
         min_chars=args.min_chars,
         streaming=not args.no_streaming,
@@ -1754,6 +1773,8 @@ def hf_import_data(args: argparse.Namespace) -> int:
     print(f"corpus: {report.out_path}")
     if report.documents_dir:
         print(f"documents_dir: {report.documents_dir}")
+    print(f"document_shard_rows: {report.document_shard_rows}")
+    print(f"document_files_written: {report.document_files_written}")
     print(f"report: {report.report_path}")
     print("\nnext:")
     print(f"PYTHONPATH=src python -m picochat.cli data preview --input {report.documents_dir or report.out_path}")
@@ -1777,6 +1798,7 @@ def climbmix_import_data(args: argparse.Namespace) -> int:
         out_path=str(corpus_path),
         report_path=str(out_dir / "hf_import_report.json"),
         documents_dir=str(documents_dir),
+        document_shard_rows=args.document_shard_rows,
         max_rows=args.max_rows,
         min_chars=args.min_chars,
         streaming=not args.no_streaming,
@@ -1800,6 +1822,8 @@ def climbmix_import_data(args: argparse.Namespace) -> int:
     print(f"characters_written: {report.characters_written}")
     print(f"dataset_pack: {pack_report.dataset_pack}")
     print(f"documents_dir: {report.documents_dir}")
+    print(f"document_shard_rows: {report.document_shard_rows}")
+    print(f"document_files_written: {report.document_files_written}")
     print(f"report: {report.report_path}")
     print("\nnext:")
     print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {pack_report.dataset_pack}")

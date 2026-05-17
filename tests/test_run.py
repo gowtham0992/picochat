@@ -309,6 +309,16 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert summary["config"]["chat_input"] == str(chat_path)
     assert summary["config"]["eval_input"] == str(eval_path)
     assert summary["long_run_gate"]["status"] in {"approved", "warn", "blocked"}
+    assert summary["timing"]["total_seconds"] >= 0
+    assert [item["stage"] for item in summary["timing"]["stages"]] == [
+        "corpus_build_preflight",
+        "data_honesty",
+        "tokenizer",
+        "base_train",
+        "sft_train",
+        "sft_fit_eval",
+        "chat_eval_gate",
+    ]
 
 
 def test_run_tiny_blocks_leaky_eval_by_default(tmp_path):
