@@ -121,6 +121,21 @@ def barrier_if_distributed(metadata: dict[str, Any] | None = None) -> None:
         torch.distributed.barrier()
 
 
+def mean_scalar_if_distributed(
+    value: float,
+    device: torch.device,
+    metadata: dict[str, Any] | None = None,
+) -> float:
+    """Average a scalar metric across ranks for artifact logging."""
+    if metadata is not None and not bool(metadata.get("enabled", False)):
+        return value
+    if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+        return value
+    tensor = torch.tensor(float(value), dtype=torch.float64, device=device)
+    torch.distributed.all_reduce(tensor, op=torch.distributed.ReduceOp.AVG)
+    return float(tensor.item())
+
+
 def no_sync_if_distributed(model: torch.nn.Module, *, enabled: bool):
     """Skip DDP gradient all-reduce for intermediate gradient accumulation microsteps."""
     if enabled and hasattr(model, "no_sync"):

@@ -8,6 +8,7 @@ from picochat.distributed import (
     ddp_env_metadata,
     initialize_ddp,
     is_main_process,
+    mean_scalar_if_distributed,
     no_sync_if_distributed,
 )
 
@@ -20,6 +21,31 @@ def test_is_main_process_uses_ddp_metadata():
 
 def test_barrier_if_distributed_noops_when_disabled():
     barrier_if_distributed({"enabled": False, "rank": 1})
+
+
+def test_mean_scalar_if_distributed_noops_when_disabled(monkeypatch):
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+
+    def fail_all_reduce(*_args, **_kwargs):  # pragma: no cover - should not be called
+        raise AssertionError("all_reduce should not run for disabled DDP metadata")
+
+    monkeypatch.setattr(torch.distributed, "all_reduce", fail_all_reduce)
+
+    assert mean_scalar_if_distributed(1.25, torch.device("cpu"), {"enabled": False}) == 1.25
+
+
+def test_mean_scalar_if_distributed_averages_initialized_group(monkeypatch):
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+
+    def fake_all_reduce(tensor, op):
+        assert op == torch.distributed.ReduceOp.AVG
+        tensor.fill_(2.5)
+
+    monkeypatch.setattr(torch.distributed, "all_reduce", fake_all_reduce)
+
+    assert mean_scalar_if_distributed(1.25, torch.device("cpu"), {"enabled": True}) == 2.5
 
 
 def test_no_sync_if_distributed_uses_ddp_context_when_enabled():

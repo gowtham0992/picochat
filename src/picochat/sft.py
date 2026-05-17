@@ -19,6 +19,7 @@ from picochat.distributed import (
     barrier_if_distributed,
     ddp_env_metadata,
     is_main_process,
+    mean_scalar_if_distributed,
     no_sync_if_distributed,
     prepare_ddp_model,
 )
@@ -997,7 +998,8 @@ def train_sft(config: SFTConfig) -> dict:
         if ema is not None:
             ema.update(model)
 
-        last_loss = sum(micro_losses) / len(micro_losses)
+        local_loss = sum(micro_losses) / len(micro_losses)
+        last_loss = mean_scalar_if_distributed(local_loss, device, ddp_metadata)
         if (
             config.loss_spike_rollback
             and rollback_state is not None
