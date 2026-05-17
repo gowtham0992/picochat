@@ -229,7 +229,58 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --auto-lr-scaling 2>&1 | tee logs/train-h100-pilot.log
 ```
 
-## 6. If SFT Misses, Sweep The Release Behavior Lane
+## 6. Scale To 100M
+
+After the 16-shard pilot proves the runtime and release-behavior SFT lane, the
+next single-GPU scale target is the `h100-100m` preset. This is the compact
+form of the 100M recipe used by the Scale Up screen: 768 width, 16 layers, GQA,
+SwiGLU, FlashAttention, sharded base data, bf16, high matmul precision, and
+first-release SFT defaults.
+
+```bash
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data climbmix-import \
+  --out-dir runs/h100-climbmix-170shard-800k-pack-v1 \
+  --shards 170 \
+  --max-rows 800000 \
+  --min-chars 100 \
+  --force 2>&1 | tee logs/import-h100-100m.log
+
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
+  --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
+  --sft-rows 1600 \
+  --eval-rows 320 \
+  --profile release_behavior \
+  --skill-answer-style direct \
+  --source offline \
+  --force 2>&1 | tee logs/benchmark-pack-h100-100m.log
+
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+  --out-dir runs/h100-climbmix-100m-release-v1 \
+  --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
+  --scale h100-100m \
+  --device cuda \
+  --long-run-gate-profile first_release \
+  --preflight-only 2>&1 | tee logs/preflight-h100-100m.log
+```
+
+If preflight is clean or only warning on known sharded-validation/LR-scaling
+tradeoffs, remove `--preflight-only`:
+
+```bash
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+  --out-dir runs/h100-climbmix-100m-release-v1 \
+  --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
+  --scale h100-100m \
+  --device cuda \
+  --long-run-gate-profile first_release \
+  2>&1 | tee logs/train-h100-100m.log
+```
+
+Do not call this a general reasoning model unless external and internal
+diagnostic benchmarks support that claim. This lane is for a stronger base
+checkpoint plus first-release identity/refusal behavior.
+
+## 7. If SFT Misses, Sweep The Release Behavior Lane
 
 If the base BPB is healthy but first-release SFT fit is below the gate, do not
 scale the model yet and do not mix math/spelling into the release checkpoint.
@@ -267,7 +318,7 @@ Promote only a candidate that clears the first-release gate. Keep weak-skills
 sweeps separate, because they are diagnostics for future capability work, not a
 license to claim the first chat release can do arithmetic or spelling reliably.
 
-## 7. Monitor And Package
+## 8. Monitor And Package
 
 Use another SSH pane:
 
