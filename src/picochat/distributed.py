@@ -66,14 +66,32 @@ def prepare_ddp_model(
         return model, {"enabled": False, "world_size": 1, "rank": 0, "local_rank": 0}
     metadata = initialize_ddp(device, enabled=True)
     local_rank = int(metadata["local_rank"])
+    common_kwargs = {
+        "broadcast_buffers": False,
+        "gradient_as_bucket_view": True,
+        "static_graph": True,
+    }
     if device.type == "cuda":
-        wrapped = torch.nn.parallel.DistributedDataParallel(
-            model,
-            device_ids=[local_rank],
-            output_device=local_rank,
-        )
+        ddp_kwargs = {
+            "device_ids": [local_rank],
+            "output_device": local_rank,
+            **common_kwargs,
+        }
     else:
-        wrapped = torch.nn.parallel.DistributedDataParallel(model)
+        ddp_kwargs = dict(common_kwargs)
+    try:
+        wrapped = torch.nn.parallel.DistributedDataParallel(model, **ddp_kwargs)
+    except TypeError:
+        # Older PyTorch builds may not support every performance hint. Keep
+        # DDP functional instead of making portability depend on one kwarg.
+        if device.type == "cuda":
+            wrapped = torch.nn.parallel.DistributedDataParallel(
+                model,
+                device_ids=[local_rank],
+                output_device=local_rank,
+            )
+        else:
+            wrapped = torch.nn.parallel.DistributedDataParallel(model)
     return wrapped, metadata
 
 

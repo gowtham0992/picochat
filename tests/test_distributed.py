@@ -11,6 +11,7 @@ from picochat.distributed import (
     is_main_process,
     mean_scalar_if_distributed,
     no_sync_if_distributed,
+    prepare_ddp_model,
 )
 
 
@@ -242,3 +243,69 @@ def test_initialize_ddp_falls_back_when_device_id_kwarg_is_missing(monkeypatch):
 
     assert calls[0]["device_id"] == torch.device("cuda", 1)
     assert "device_id" not in calls[1]
+
+
+def test_prepare_ddp_model_uses_static_graph_kwargs(monkeypatch):
+    monkeypatch.setenv("RANK", "1")
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setenv("LOCAL_RANK", "1")
+    monkeypatch.setenv("MASTER_ADDR", "127.0.0.1")
+    monkeypatch.setenv("MASTER_PORT", "29500")
+    captured = {}
+
+    monkeypatch.setattr(torch.cuda, "set_device", lambda local_rank: captured.setdefault("set_device", local_rank))
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: False)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 1)
+    monkeypatch.setattr(torch.distributed, "get_backend", lambda: "nccl")
+    monkeypatch.setattr(torch.distributed, "init_process_group", lambda **_kwargs: None)
+
+    class FakeDDP:
+        def __init__(self, module, **kwargs):
+            self.module = module
+            captured["ddp_kwargs"] = kwargs
+
+    monkeypatch.setattr(torch.nn.parallel, "DistributedDataParallel", FakeDDP)
+    model = torch.nn.Linear(2, 2)
+
+    wrapped, metadata = prepare_ddp_model(model, torch.device("cuda"), enabled=True)
+
+    assert wrapped.module is model
+    assert metadata["local_rank"] == 1
+    assert captured["ddp_kwargs"]["device_ids"] == [1]
+    assert captured["ddp_kwargs"]["output_device"] == 1
+    assert captured["ddp_kwargs"]["broadcast_buffers"] is False
+    assert captured["ddp_kwargs"]["gradient_as_bucket_view"] is True
+    assert captured["ddp_kwargs"]["static_graph"] is True
+
+
+def test_prepare_ddp_model_falls_back_for_old_ddp_kwargs(monkeypatch):
+    monkeypatch.setenv("RANK", "0")
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setenv("LOCAL_RANK", "0")
+    monkeypatch.setenv("MASTER_ADDR", "127.0.0.1")
+    monkeypatch.setenv("MASTER_PORT", "29500")
+    calls = []
+
+    monkeypatch.setattr(torch.cuda, "set_device", lambda _local_rank: None)
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: False)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(torch.distributed, "get_backend", lambda: "nccl")
+    monkeypatch.setattr(torch.distributed, "init_process_group", lambda **_kwargs: None)
+
+    class FakeDDP:
+        def __init__(self, module, **kwargs):
+            calls.append(kwargs)
+            if "static_graph" in kwargs:
+                raise TypeError("old DDP")
+            self.module = module
+
+    monkeypatch.setattr(torch.nn.parallel, "DistributedDataParallel", FakeDDP)
+
+    prepare_ddp_model(torch.nn.Linear(2, 2), torch.device("cuda"), enabled=True)
+
+    assert calls[0]["static_graph"] is True
+    assert calls[1] == {"device_ids": [0], "output_device": 0}
