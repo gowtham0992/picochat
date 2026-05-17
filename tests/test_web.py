@@ -1683,6 +1683,8 @@ def test_run_presets_are_exposed_for_web_launcher():
     assert presets["h100-100m-ddp8"]["loss_spike_rollback"] is False
     assert presets["h100-100m-ddp8"]["long_run_gate_profile"] == "skill_release"
     assert presets["h200-1b-ddp8"]["n_embd"] == 2048
+    assert presets["h200-1b-ddp8"]["context_size"] == 2048
+    assert presets["h200-1b-ddp8"]["base_grad_accum_steps"] == 8
     assert presets["h200-1b-ddp8"]["attn_backend"] == "fa3"
     assert presets["h200-1b-ddp8"]["ddp"] is True
     assert presets["h200-1b-ddp8"]["long_run_gate_profile"] == "skill_release"

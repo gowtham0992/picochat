@@ -397,9 +397,9 @@ LR into a different optimizer experiment.
 
 For the expensive 8x H200 lane, use the `h200-1b-ddp8` scale rather than
 hand-editing the 100M command. The preset is intentionally opinionated:
-32k HF BPE, 1024 context, 24 layers, 2048 width, GQA, SwiGLU, RMSNorm, RoPE,
+32k HF BPE, 2048 context, 24 layers, 2048 width, GQA, SwiGLU, RMSNorm, RoPE,
 tied embeddings, QK norm, parallel residual, FA3, bf16, `torch.compile`,
-sharded base data, and `skill_release`.
+sharded base data, 1M-token global base batches, and `skill_release`.
 
 Install the Hopper/FA3 runtime and prove it before import:
 

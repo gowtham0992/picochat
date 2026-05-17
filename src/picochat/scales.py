@@ -468,14 +468,14 @@ RUN_SCALES: dict[str, RunScale] = {
         name="h200-1b-ddp8",
         label="H200 1B DDP8",
         description=(
-            "Eight-H200 1B-class skill-release recipe. Uses 1M-token global batches, "
-            "FA3, 32k HF BPE, and the skill_release gate; import substantially more "
-            "ClimbMix data before treating this as a release candidate."
+            "Eight-H200 1B-class skill-release recipe. Uses nanochat-class 2048 context, "
+            "1M-token global base batches, FA3, 32k HF BPE, and the skill_release gate; "
+            "import substantially more ClimbMix data before treating this as a release candidate."
         ),
         tokenizer_type="hf_bpe",
         tokenizer_vocab_size=32768,
         tokenizer_min_freq=2,
-        context_size=1024,
+        context_size=2048,
         n_embd=2048,
         n_head=16,
         n_kv_head=4,
@@ -502,7 +502,7 @@ RUN_SCALES: dict[str, RunScale] = {
         sft_min_lr_ratio=0.1,
         base_grad_clip=1.0,
         sft_grad_clip=1.0,
-        base_grad_accum_steps=16,
+        base_grad_accum_steps=8,
         sft_grad_accum_steps=4,
         sft_sampling="category_sqrt",
         sft_packing="bos_bestfit",

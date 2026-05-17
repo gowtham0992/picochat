@@ -80,14 +80,14 @@ def test_h200_1b_ddp8_scale_uses_hopper_release_recipe():
 
     assert scale.tokenizer_type == "hf_bpe"
     assert scale.tokenizer_vocab_size == 32768
-    assert scale.context_size == 1024
+    assert scale.context_size == 2048
     assert scale.n_embd == 2048
     assert scale.n_layer == 24
     assert scale.n_head == 16
     assert scale.n_kv_head == 4
     assert scale.attn_backend == "fa3"
     assert scale.base_batch_size == 8
-    assert scale.base_grad_accum_steps == 16
+    assert scale.base_grad_accum_steps == 8
     assert scale.base_steps == 9200
     assert scale.base_shard_token_size == 10_000_000
     assert scale.target_param_data_ratio == 8.5

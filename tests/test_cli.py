@@ -265,9 +265,10 @@ def test_cli_run_tiny_h200_1b_scale_defaults_to_skill_release(tmp_path, monkeypa
     config = captured["config"]
     assert config.n_embd == 2048
     assert config.n_layer == 24
-    assert config.context_size == 1024
+    assert config.context_size == 2048
     assert config.tokenizer_vocab_size == 32768
     assert config.attn_backend == "fa3"
+    assert config.base_grad_accum_steps == 8
     assert config.target_param_data_ratio == 8.5
     assert config.long_run_gate_profile == "skill_release"
 
