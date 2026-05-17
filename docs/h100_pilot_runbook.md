@@ -400,6 +400,15 @@ PYTHONPATH=src python -m picochat.cli run bundle \
   --strict
 ```
 
+After copying a bundle back to your workstation, inspect it before extracting
+or resuming. This reads checkpoint metadata only; it does not load model
+weights.
+
+```bash
+PYTHONPATH=src python -m picochat.cli run inspect-bundle \
+  --bundle h100-climbmix-modern-pilot-artifacts.tgz
+```
+
 For an interrupted 100M run, package the partial checkpoint the same way and
 resume later from `base/resume_checkpoint` after recreating or copying the
 same dataset/corpus.

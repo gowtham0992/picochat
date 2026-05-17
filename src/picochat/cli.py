@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from picochat.data import (
@@ -55,7 +56,12 @@ from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
 from picochat.model import SDPA_BACKENDS
-from picochat.artifacts import RunBundleConfig, create_run_bundle
+from picochat.artifacts import (
+    RunBundleConfig,
+    bundle_inspection_markdown,
+    create_run_bundle,
+    inspect_run_bundle,
+)
 from picochat.optim import (
     LR_DECAYS,
     MUON_MOMENTUM_SCHEDULES,
@@ -1389,6 +1395,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Fail if no checkpoint payload exists in the run directory.",
     )
+    inspect_bundle_parser = run_subparsers.add_parser(
+        "inspect-bundle",
+        help="Inspect a copied .tgz run bundle and show resumable checkpoints.",
+    )
+    inspect_bundle_parser.add_argument("--bundle", required=True, help="Bundle .tgz path to inspect.")
+    inspect_bundle_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON instead of Markdown.",
+    )
 
     compare_parser = subparsers.add_parser("compare", help="Compare completed run summaries.")
     compare_parser.add_argument("runs", nargs="+", help="Run directories containing summary.json.")
@@ -2276,6 +2292,15 @@ def run_bundle(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_inspect_bundle(args: argparse.Namespace) -> int:
+    report = inspect_run_bundle(args.bundle)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(bundle_inspection_markdown(report))
+    return 0
+
+
 def run_sanity_preh100(args: argparse.Namespace) -> int:
     report = run_preh100_sanity(PreH100SanityConfig(
         out_dir=args.out_dir,
@@ -2718,6 +2743,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run" and args.run_command == "bundle":
         return run_bundle(args)
+
+    if args.command == "run" and args.run_command == "inspect-bundle":
+        return run_inspect_bundle(args)
 
     if args.command == "compare":
         return run_compare(args)

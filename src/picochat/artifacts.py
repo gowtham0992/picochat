@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+from pathlib import PurePosixPath
 import tarfile
 from typing import Any
 
@@ -137,6 +138,69 @@ def create_run_bundle(config: RunBundleConfig) -> dict[str, Any]:
     return manifest
 
 
+def inspect_run_bundle(bundle_path: str | Path) -> dict[str, Any]:
+    """Inspect a copied run bundle without extracting model weights.
+
+    This intentionally reads only tar metadata plus lightweight JSON metadata
+    files. It does not load model.pt or training_state.pt, so it is safe to run
+    on large copied archives before deciding whether to extract or resume.
+    """
+    path = Path(bundle_path)
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(f"bundle does not exist: {path}")
+
+    members: list[str] = []
+    metadata_by_checkpoint: dict[str, dict[str, Any]] = {}
+    manifest: dict[str, Any] | None = _load_sidecar_manifest(path)
+    embedded_manifest: dict[str, Any] | None = None
+
+    with tarfile.open(path, "r:gz") as archive:
+        for member in archive.getmembers():
+            if not member.isfile():
+                continue
+            members.append(member.name)
+            if member.name.endswith(".manifest.json") and embedded_manifest is None:
+                embedded_manifest = _read_tar_json(archive, member)
+            if member.name.endswith("/metadata.json"):
+                checkpoint_root = member.name.removesuffix("/metadata.json")
+                if checkpoint_root.endswith("_checkpoint"):
+                    metadata = _read_tar_json(archive, member)
+                    if metadata is not None:
+                        metadata_by_checkpoint[checkpoint_root] = metadata
+
+    member_set = set(members)
+    if manifest is None:
+        manifest = embedded_manifest
+    checkpoints = [
+        _checkpoint_summary(root, metadata, member_set)
+        for root, metadata in sorted(metadata_by_checkpoint.items())
+    ]
+    roots = sorted({_run_root_from_member(name) for name in members if _run_root_from_member(name)})
+    has_corpus = any(name.endswith("/corpus.txt") for name in members)
+    has_manifest = manifest is not None
+    report = {
+        "bundle": str(path),
+        "bundle_bytes": path.stat().st_size,
+        "manifest_found": has_manifest,
+        "run_roots": roots,
+        "included_file_count": len(members),
+        "checkpoints": checkpoints,
+        "resume_capable_checkpoints": [
+            item for item in checkpoints
+            if item["has_model"] and item["has_training_state"]
+        ],
+        "has_corpus": has_corpus,
+        "has_tokenizer": any(name.endswith("/tokenizer.json") for name in members),
+        "has_preflight": any(name.endswith("/preflight.md") or name.endswith("/preflight.json") for name in members),
+        "has_summary": any(name.endswith("/summary.md") or name.endswith("/summary.json") for name in members),
+        "embedded_manifest_found": embedded_manifest is not None,
+        "sidecar_manifest_found": _sidecar_manifest_path(path).exists(),
+        "manifest": manifest,
+    }
+    report["resume_hints"] = _bundle_resume_hints(report)
+    return report
+
+
 def _collect_path(path: Path, entries: list[Path], missing: list[str], label: str) -> None:
     if not path.exists():
         missing.append(label)
@@ -209,3 +273,134 @@ def _bundle_manifest_markdown(manifest: dict[str, Any]) -> str:
             "",
         ])
     return "\n".join(lines)
+
+
+def bundle_inspection_markdown(report: dict[str, Any]) -> str:
+    """Render a copied-bundle inspection as concise Markdown."""
+    lines = [
+        "# Picochat Bundle Inspection",
+        "",
+        f"- Bundle: `{report['bundle']}`",
+        f"- Bundle bytes: {report['bundle_bytes']}",
+        f"- Manifest found: `{report['manifest_found']}`",
+        f"- Files scanned: {report['included_file_count']}",
+        f"- Corpus included: `{report['has_corpus']}`",
+        f"- Tokenizer included: `{report['has_tokenizer']}`",
+        f"- Preflight included: `{report['has_preflight']}`",
+        f"- Summary included: `{report['has_summary']}`",
+        "",
+    ]
+    roots = report.get("run_roots") or []
+    if roots:
+        lines.extend(["## Run Roots", "", *[f"- `{root}`" for root in roots], ""])
+
+    checkpoints = report.get("checkpoints") or []
+    lines.extend(["## Checkpoints", ""])
+    if checkpoints:
+        lines.append("| Path | Phase | Kind | Step | Model | Training State |")
+        lines.append("| --- | --- | --- | ---: | --- | --- |")
+        for item in checkpoints:
+            lines.append(
+                f"| `{item['path']}` | `{item['phase']}` | `{item['checkpoint_kind']}` | "
+                f"{item['step']} | `{item['has_model']}` | `{item['has_training_state']}` |"
+            )
+    else:
+        lines.append("No checkpoint metadata found.")
+    lines.append("")
+
+    hints = report.get("resume_hints") or []
+    lines.extend(["## Resume Hints", ""])
+    if hints:
+        lines.extend(f"- {hint}" for hint in hints)
+    else:
+        lines.append("- No resumable checkpoint was found in this bundle.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _sidecar_manifest_path(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".manifest.json")
+
+
+def _load_sidecar_manifest(path: Path) -> dict[str, Any] | None:
+    manifest_path = _sidecar_manifest_path(path)
+    if not manifest_path.exists():
+        return None
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _read_tar_json(archive: tarfile.TarFile, member: tarfile.TarInfo) -> dict[str, Any] | None:
+    handle = archive.extractfile(member)
+    if handle is None:
+        return None
+    try:
+        return json.loads(handle.read().decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def _run_root_from_member(name: str) -> str | None:
+    parts = PurePosixPath(name).parts
+    if len(parts) < 2:
+        return None
+    if parts[0] == "runs" and len(parts) >= 3:
+        if parts[2] in {"base", "sft", "honesty", "eval", "sft_fit", "external_eval"}:
+            return str(PurePosixPath(parts[0]) / parts[1])
+        if parts[2] in {"tokenizer.json", "preflight.json", "preflight.md", "summary.json", "summary.md"}:
+            return str(PurePosixPath(parts[0]) / parts[1])
+    if parts[1] in {"base", "sft", "honesty", "eval", "sft_fit", "external_eval"}:
+        return parts[0]
+    if parts[1] in {"tokenizer.json", "preflight.json", "preflight.md", "summary.json", "summary.md"}:
+        return parts[0]
+    return None
+
+
+def _checkpoint_summary(root: str, metadata: dict[str, Any], member_set: set[str]) -> dict[str, Any]:
+    parts = PurePosixPath(root).parts
+    phase = parts[-2] if len(parts) >= 2 else "unknown"
+    config = metadata.get("model_config") if isinstance(metadata.get("model_config"), dict) else {}
+    checkpoint_kind = metadata.get("checkpoint_kind") or (parts[-1] if parts else "unknown")
+    return {
+        "path": root,
+        "phase": phase,
+        "checkpoint_dir": parts[-1] if parts else root,
+        "checkpoint_kind": str(checkpoint_kind),
+        "step": int(metadata.get("step", 0) or 0),
+        "train_loss": metadata.get("train_loss"),
+        "has_model": f"{root}/model.pt" in member_set,
+        "has_training_state": f"{root}/training_state.pt" in member_set or bool(metadata.get("has_training_state")),
+        "n_layer": config.get("n_layer"),
+        "n_embd": config.get("n_embd"),
+        "n_head": config.get("n_head"),
+        "n_kv_head": config.get("n_kv_head"),
+        "context_size": config.get("context_size"),
+        "vocab_size": config.get("vocab_size"),
+    }
+
+
+def _bundle_resume_hints(report: dict[str, Any]) -> list[str]:
+    hints: list[str] = []
+    resume_checkpoints = report.get("resume_capable_checkpoints") or []
+    by_phase = {item.get("phase"): item for item in resume_checkpoints}
+    if "base" in by_phase:
+        path = by_phase["base"]["path"]
+        hints.append(
+            f"After extracting the bundle, rerun the same `run tiny` command with "
+            f"`--base-resume-from {path}`."
+        )
+    if "sft" in by_phase:
+        path = by_phase["sft"]["path"]
+        base_path = by_phase.get("base", {}).get("path", "<base/resume_checkpoint>")
+        hints.append(
+            f"For an interrupted SFT phase, pass both `--base-resume-from {base_path}` "
+            f"and `--sft-resume-from {path}`."
+        )
+    if not report.get("has_corpus"):
+        hints.append(
+            "This bundle excludes `corpus.txt`; rebuild or recopy the same dataset pack "
+            "before resuming so the fingerprint guard can validate the run."
+        )
+    return hints

@@ -289,6 +289,75 @@ def test_cli_run_bundle_packages_partial_checkpoint_without_corpus(tmp_path, cap
     assert "partial.tgz.manifest.json" in names
 
 
+def test_cli_run_inspect_bundle_reports_resume_checkpoint(tmp_path, capsys):
+    source = tmp_path / "source"
+    checkpoint = source / "partial-run" / "base" / "resume_checkpoint"
+    checkpoint.mkdir(parents=True)
+    metadata = {
+        "step": 4125,
+        "train_loss": 3.25,
+        "checkpoint_kind": "resume",
+        "has_training_state": True,
+        "model_config": {
+            "vocab_size": 8192,
+            "context_size": 512,
+            "n_layer": 16,
+            "n_embd": 768,
+            "n_head": 12,
+            "n_kv_head": 4,
+        },
+    }
+    (checkpoint / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    (checkpoint / "model.pt").write_text("weights", encoding="utf-8")
+    (checkpoint / "training_state.pt").write_text("state", encoding="utf-8")
+    (source / "partial-run" / "tokenizer.json").write_text("{}", encoding="utf-8")
+    bundle = tmp_path / "partial.tgz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(source / "partial-run", arcname="runs/partial-run")
+
+    exit_code = main([
+        "run",
+        "inspect-bundle",
+        "--bundle",
+        str(bundle),
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "# Picochat Bundle Inspection" in output
+    assert "`runs/partial-run`" in output
+    assert "`runs/partial-run/base/resume_checkpoint`" in output
+    assert "| `runs/partial-run/base/resume_checkpoint` | `base` | `resume` | 4125 | `True` | `True` |" in output
+    assert "--base-resume-from runs/partial-run/base/resume_checkpoint" in output
+    assert "excludes `corpus.txt`" in output
+
+
+def test_cli_run_inspect_bundle_json(tmp_path, capsys):
+    source = tmp_path / "source"
+    checkpoint = source / "run" / "sft" / "resume_checkpoint"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "metadata.json").write_text(json.dumps({
+        "step": 80,
+        "train_loss": 0.1,
+        "checkpoint_kind": "resume",
+        "has_training_state": True,
+        "model_config": {"vocab_size": 128, "context_size": 16, "n_layer": 1, "n_embd": 8, "n_head": 1},
+    }), encoding="utf-8")
+    (checkpoint / "model.pt").write_text("weights", encoding="utf-8")
+    (checkpoint / "training_state.pt").write_text("state", encoding="utf-8")
+    bundle = tmp_path / "run.tgz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(source / "run", arcname="run")
+
+    exit_code = main(["run", "inspect-bundle", "--bundle", str(bundle), "--json"])
+
+    assert exit_code == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["resume_capable_checkpoints"][0]["path"] == "run/sft/resume_checkpoint"
+    assert report["resume_capable_checkpoints"][0]["step"] == 80
+    assert report["manifest_found"] is False
+
+
 def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
     corpus = tmp_path / "corpus.txt"
     chat = tmp_path / "chat.jsonl"
