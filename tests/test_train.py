@@ -273,6 +273,84 @@ def test_train_base_can_use_sharded_dataset_mode(tmp_path):
     assert report["coverage"]["actual_steps"] == 1
 
 
+def test_train_base_resume_reuses_existing_token_shards(tmp_path, monkeypatch):
+    import picochat.train as train_module
+
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    out_dir = tmp_path / "run"
+    text = "resume should not rebuild token shards\n" * 50
+    corpus_path.write_text(text, encoding="utf-8")
+    CharTokenizer.train([text]).save(tokenizer_path)
+
+    first = train_base(TrainConfig(
+        corpus_path=str(corpus_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir),
+        context_size=8,
+        batch_size=2,
+        max_steps=1,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        dataset_mode="sharded",
+        shard_token_size=64,
+    ))
+
+    calls = []
+
+    def fake_load_sharded_token_split(*args, **kwargs):
+        calls.append(kwargs.get("rebuild"))
+        dataset = TokenWindowDataset([index % 8 for index in range(160)], context_size=8)
+        return TokenSplitBundle(
+            train_dataset=dataset,
+            val_dataset=dataset,
+            stats={
+                "num_tokens": 160,
+                "context_size": 8,
+                "num_sequences": len(dataset),
+                "train_sequences": len(dataset),
+                "val_sequences": len(dataset),
+                "train_tokens": 160,
+                "val_tokens": 160,
+                "split_mode": "sharded",
+                "packing": "bos_eos_per_document_token_shards",
+                "num_shards": 2,
+                "train_shards": 1,
+                "val_shards": 1,
+                "shard_cache_size": kwargs.get("shard_cache_size"),
+            },
+            train_text="",
+            val_text="",
+        )
+
+    monkeypatch.setattr(train_module, "load_sharded_token_split", fake_load_sharded_token_split)
+
+    resumed = train_base(TrainConfig(
+        corpus_path=str(corpus_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir),
+        context_size=8,
+        batch_size=2,
+        max_steps=2,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        dataset_mode="sharded",
+        shard_token_size=64,
+        resume_from=first["resume_checkpoint"],
+    ))
+
+    assert calls == [False]
+    assert resumed["config"]["resume_from"] == first["resume_checkpoint"]
+
+
 def test_train_base_ddp_worker_reuses_rank_zero_token_shards(tmp_path, monkeypatch):
     import picochat.train as train_module
 

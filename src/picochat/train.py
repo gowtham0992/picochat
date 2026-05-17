@@ -15,6 +15,7 @@ import torch.nn.functional as F
 from picochat.batching import (
     DeviceBatchPrefetcher,
     load_sharded_token_split,
+    load_token_shards_manifest,
     load_token_split,
     make_dataloader,
     make_resumable_batcher,
@@ -221,23 +222,39 @@ def train_base(config: TrainConfig) -> dict:
     canary_values = _canary_values(config.seed, config.canary_count)
     if config.dataset_mode == "sharded":
         if main_process:
+            shard_cache_dir = out_dir / "token_shards"
+            rebuild_token_shards = True
+            if config.resume_from:
+                try:
+                    load_token_shards_manifest(
+                        shard_cache_dir,
+                        corpus_path=config.corpus_path,
+                        tokenizer_path=config.tokenizer_path,
+                        shard_token_size=config.shard_token_size,
+                        corpus_manifest_path=config.corpus_manifest_path,
+                    )
+                    rebuild_token_shards = False
+                except (FileNotFoundError, ValueError):
+                    rebuild_token_shards = True
             print(
                 "base data: preparing sharded token dataset "
                 f"({config.shard_token_size:,} tokens/shard, cache={config.shard_cache_size})",
                 flush=True,
             )
+            if not rebuild_token_shards:
+                print("base data: reusing existing token shards for resume", flush=True)
             split = load_sharded_token_split(
                 corpus_path=config.corpus_path,
                 tokenizer_path=config.tokenizer_path,
                 context_size=config.context_size,
-                cache_dir=out_dir / "token_shards",
+                cache_dir=shard_cache_dir,
                 val_fraction=config.val_fraction,
                 seed=config.seed,
                 shard_token_size=config.shard_token_size,
                 shard_cache_size=config.shard_cache_size,
                 corpus_manifest_path=config.corpus_manifest_path,
                 progress=True,
-                rebuild=True,
+                rebuild=rebuild_token_shards,
             )
         barrier_if_distributed(ddp_metadata)
         if not main_process:
