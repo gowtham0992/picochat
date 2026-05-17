@@ -1593,6 +1593,7 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
         "qk_norm": True,
         "parallel_residual": True,
         "xsa_last_n": 2,
+        "scaled_residual_init": True,
         "precision": "bf16",
         "matmul_precision": "high",
         "attn_backend": "math",
@@ -1612,6 +1613,7 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
     assert "--qk-norm" in started["job"]["command"]
     assert "--parallel-residual" in started["job"]["command"]
     assert "--xsa-last-n 2" in started["job"]["command"]
+    assert "--scaled-residual-init" in started["job"]["command"]
     assert "--precision bf16" in started["job"]["command"]
     assert "--matmul-precision high" in started["job"]["command"]
     assert "--attn-backend math" in started["job"]["command"]
@@ -1628,6 +1630,7 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
     assert started["job"]["launch_config"]["qk_norm"] is True
     assert started["job"]["launch_config"]["parallel_residual"] is True
     assert started["job"]["launch_config"]["xsa_last_n"] == 2
+    assert started["job"]["launch_config"]["scaled_residual_init"] is True
     assert started["job"]["launch_config"]["precision"] == "bf16"
     assert started["job"]["launch_config"]["matmul_precision"] == "high"
     assert started["job"]["launch_config"]["attn_backend"] == "math"
@@ -1721,6 +1724,7 @@ def test_run_presets_are_exposed_for_web_launcher():
     assert presets["h200-1b-ddp8"]["context_size"] == 2048
     assert presets["h200-1b-ddp8"]["base_grad_accum_steps"] == 8
     assert presets["h200-1b-ddp8"]["attn_backend"] == "fa3"
+    assert presets["h200-1b-ddp8"]["scaled_residual_init"] is True
     assert presets["h200-1b-ddp8"]["ddp"] is True
     assert presets["h200-1b-ddp8"]["long_run_gate_profile"] == "skill_release"
 

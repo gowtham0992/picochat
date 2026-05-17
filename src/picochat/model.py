@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
+import math
 
 import torch
 import torch.nn as nn
@@ -42,6 +43,7 @@ class GPTConfig:
     rope_base: float = 10000.0
     logit_softcap: float = 0.0
     initializer_range: float = 0.02
+    scaled_residual_init: bool = False
     gradient_checkpointing: bool = False
     tie_embeddings: bool = False
     qk_norm: bool = False
@@ -231,6 +233,7 @@ class CausalSelfAttention(nn.Module):
         self.k_norm = RMSNorm(self.head_dim) if config.qk_norm else nn.Identity()
         self.qkv = nn.Linear(config.n_embd, config.n_embd + 2 * self.kv_dim, bias=config.linear_bias)
         self.proj = nn.Linear(config.n_embd, config.n_embd, bias=config.linear_bias)
+        self.proj._picochat_residual_proj = True
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(
@@ -332,6 +335,7 @@ class MLP(nn.Module):
         else:
             self.fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.linear_bias)
             self.proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.linear_bias)
+        self.proj._picochat_residual_proj = True
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.fc(x)
@@ -436,7 +440,10 @@ class TinyGPT(nn.Module):
 
     def _init_weights(self, module: nn.Module) -> None:
         if isinstance(module, nn.Linear):
-            nn.init.normal_(module.weight, mean=0.0, std=self.config.initializer_range)
+            std = self.config.initializer_range
+            if self.config.scaled_residual_init and getattr(module, "_picochat_residual_proj", False):
+                std *= 1 / math.sqrt(2 * self.config.n_layer)
+            nn.init.normal_(module.weight, mean=0.0, std=std)
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
@@ -614,14 +621,12 @@ class TinyGPT(nn.Module):
         """Approximate dense forward+backward FLOPs per training token.
 
         This is a reporting estimate, not a scheduler input. It follows the
-        common training heuristic of 6 FLOPs per trainable parameter per token,
-        plus dense causal attention score/value FLOPs for the configured context.
+        common Kaplan/Chinchilla MFU convention of 6 FLOPs per trainable
+        parameter per token. Long-context attention costs are intentionally not
+        added separately here so MFU is comparable to common training reports.
         """
         parameters = self.num_parameters()
-        head_dim = self.config.n_embd // self.config.n_head
-        context = self.config.context_size
-        attention_flops = 12 * self.config.n_layer * self.config.n_head * head_dim * context
-        return int((6 * parameters) + attention_flops)
+        return int(6 * parameters)
 
 
 def _external_flash_attention(

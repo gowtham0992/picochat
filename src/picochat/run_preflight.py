@@ -609,6 +609,28 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
                 "prefer a DDP-specific preset or an explicitly chosen LR/step budget."
             ),
         ))
+    n_layer = int(_value(config, "n_layer", 2) or 2)
+    initializer_range = float(_value(config, "initializer_range", 0.02) or 0.02)
+    scaled_residual_init = bool(_value(config, "scaled_residual_init", False))
+    if n_layer >= 16 and initializer_range >= 0.02 and not scaled_residual_init:
+        checks.append(_check(
+            "residual_init_scale",
+            "warn",
+            f"n_layer={n_layer}, init={initializer_range:g}",
+            "--scaled-residual-init for deep modern runs",
+            (
+                "Deep residual stacks are more stable when attention/MLP residual projections "
+                "use 1/sqrt(2*n_layer) scaled initialization."
+            ),
+        ))
+    else:
+        checks.append(_check(
+            "residual_init_scale",
+            "pass",
+            "scaled" if scaled_residual_init else f"n_layer={n_layer}, init={initializer_range:g}",
+            "reviewed residual projection init",
+            "Residual projection initialization is appropriate for this model depth.",
+        ))
     if base_dataset_mode == "packed":
         if stats.num_documents > 1:
             checks.append(_check(

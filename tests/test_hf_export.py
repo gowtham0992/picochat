@@ -30,6 +30,7 @@ def test_export_hf_checkpoint_writes_release_folder(tmp_path):
         parallel_residual=True,
         xsa_last_n=1,
         linear_bias=False,
+        scaled_residual_init=True,
     ))
     save_checkpoint(checkpoint_path, model, step=3, train_loss=1.23)
 
@@ -58,6 +59,7 @@ def test_export_hf_checkpoint_writes_release_folder(tmp_path):
     assert config["picochat_model_config"]["parallel_residual"] is True
     assert config["picochat_model_config"]["xsa_last_n"] == 1
     assert config["picochat_model_config"]["linear_bias"] is False
+    assert config["picochat_model_config"]["scaled_residual_init"] is True
     assert config["linear_bias"] is False
     assert config["initializer_range"] == 0.015
     assert config["picochat_model_config"]["initializer_range"] == 0.015

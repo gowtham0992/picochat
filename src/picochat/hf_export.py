@@ -98,6 +98,7 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "parallel_residual": model.config.parallel_residual,
         "xsa_last_n": model.config.xsa_last_n,
         "linear_bias": model.config.linear_bias,
+        "scaled_residual_init": model.config.scaled_residual_init,
         "bos_token_id": tokenizer.bos_id,
         "eos_token_id": tokenizer.eos_id,
         "pad_token_id": tokenizer.pad_id,
@@ -283,6 +284,7 @@ class PicochatConfig(PretrainedConfig):
         parallel_residual=False,
         xsa_last_n=0,
         linear_bias=True,
+        scaled_residual_init=False,
         use_cache=True,
         bos_token_id=1,
         eos_token_id=2,
@@ -318,6 +320,7 @@ class PicochatConfig(PretrainedConfig):
         self.parallel_residual = parallel_residual
         self.xsa_last_n = xsa_last_n
         self.linear_bias = linear_bias
+        self.scaled_residual_init = scaled_residual_init
         self.use_cache = use_cache
 
     def to_picochat_config(self):
@@ -344,6 +347,7 @@ class PicochatConfig(PretrainedConfig):
             parallel_residual=self.parallel_residual,
             xsa_last_n=self.xsa_last_n,
             linear_bias=self.linear_bias,
+            scaled_residual_init=self.scaled_residual_init,
         )
 '''
 

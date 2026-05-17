@@ -289,6 +289,26 @@ def test_preflight_allows_fa3_attention_on_cuda_bf16():
     assert "FlashAttention-3" in checks["attention_backend_runtime"].message
 
 
+def test_preflight_warns_on_deep_unscaled_residual_init():
+    report = assess_run_preflight(
+        _h100_like_config(n_layer=24, scaled_residual_init=False),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["residual_init_scale"].status == "warn"
+
+
+def test_preflight_accepts_scaled_residual_init_for_deep_run():
+    report = assess_run_preflight(
+        _h100_like_config(n_layer=24, scaled_residual_init=True),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["residual_init_scale"].status == "pass"
+
+
 def test_preflight_parameter_estimate_matches_modern_model():
     config = _h100_like_config(
         tokenizer_vocab_size=1024,

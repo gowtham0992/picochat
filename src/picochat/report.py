@@ -202,6 +202,7 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Parallel residual: {'enabled' if model_config.get('parallel_residual') else 'disabled'}")
     lines.append(f"- XSA last layers: {model_config.get('xsa_last_n', 0) or 'disabled'}")
     lines.append(f"- Linear biases: {'enabled' if model_config.get('linear_bias', True) else 'disabled'}")
+    lines.append(f"- Scaled residual init: {'enabled' if model_config.get('scaled_residual_init') else 'disabled'}")
     lines.append(f"- Logit softcap: {model_config.get('logit_softcap', 0.0) or 'disabled'}")
     lines.append("")
 
@@ -506,6 +507,7 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Parallel residual: {'enabled' if model_config.get('parallel_residual') else 'disabled'}")
     lines.append(f"- XSA last layers: {model_config.get('xsa_last_n', 0) or 'disabled'}")
     lines.append(f"- Linear biases: {'enabled' if model_config.get('linear_bias', True) else 'disabled'}")
+    lines.append(f"- Scaled residual init: {'enabled' if model_config.get('scaled_residual_init') else 'disabled'}")
     lines.append(f"- Logit softcap: {model_config.get('logit_softcap', 0.0) or 'disabled'}")
     lines.append("")
 
@@ -1214,6 +1216,7 @@ def tiny_run_summary_markdown(summary: dict) -> str:
     lines.append(f"- QK norm: {'enabled' if config.get('qk_norm') else 'disabled'}")
     lines.append(f"- Parallel residual: {'enabled' if config.get('parallel_residual') else 'disabled'}")
     lines.append(f"- XSA last layers: {config.get('xsa_last_n', 0) or 'disabled'}")
+    lines.append(f"- Scaled residual init: {'enabled' if config.get('scaled_residual_init') else 'disabled'}")
     lines.append(f"- Logit softcap: {config.get('logit_softcap', 0.0) or 'disabled'}")
     lines.append(f"- Base steps: {config['base_steps']}")
     lines.append(f"- SFT steps: {config['sft_steps']}")

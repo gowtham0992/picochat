@@ -154,21 +154,46 @@ def _check_precision_backward(config: PreH100SanityConfig, work_dir: Path) -> di
 
 def _check_attention_backend(config: PreH100SanityConfig, work_dir: Path) -> dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
+    torch.manual_seed(123)
     device = resolve_device(config.device)
     runtime = resolve_precision(config.precision, device)
-    model = TinyGPT(_tiny_model_config(vocab_size=32, attn_backend=config.attn_backend)).to(device)
+    model_config = _tiny_model_config(vocab_size=32, attn_backend=config.attn_backend)
+    model = TinyGPT(model_config).to(device)
     model.eval()
     x = torch.randint(0, model.config.vocab_size, (1, 8), device=device)
     with torch.no_grad(), autocast_context(runtime):
         logits, _ = model(x)
     if logits.shape != (1, 8, model.config.vocab_size):
         raise AssertionError("attention backend returned bad logits shape")
+    max_reference_diff = None
+    max_allowed_diff = None
+    if device.type == "cuda" and config.attn_backend in {"external_flash", "fa3"}:
+        reference_config = GPTConfig(**{
+            **model_config.to_dict(),
+            "attn_backend": "math",
+        })
+        reference = TinyGPT(reference_config).to(device)
+        reference.load_state_dict(model.state_dict())
+        reference.eval()
+        with torch.no_grad(), autocast_context(runtime):
+            reference_logits, _ = reference(x)
+        max_reference_diff = float((logits - reference_logits).abs().max().detach().cpu())
+        max_allowed_diff = 1e-4 if runtime.dtype_name == "float32" else 5e-2
+        if max_reference_diff > max_allowed_diff:
+            raise AssertionError(
+                f"{config.attn_backend} logits diverged from math SDPA: {max_reference_diff}"
+            )
+    detail = (
+        f"attn_backend={config.attn_backend}, device={device.type}, "
+        f"precision={runtime.dtype_name}"
+    )
+    if max_reference_diff is not None and max_allowed_diff is not None:
+        detail += f", math_sdpa_max_diff={max_reference_diff:.2e}, tolerance={max_allowed_diff:.1e}"
     return {
-        "detail": (
-            f"attn_backend={config.attn_backend}, device={device.type}, "
-            f"precision={runtime.dtype_name}"
-        ),
+        "detail": detail,
         "attn_backend": config.attn_backend,
+        "math_sdpa_max_diff": max_reference_diff,
+        "max_allowed_diff": max_allowed_diff,
         "precision_runtime": runtime.to_dict(),
     }
 
@@ -191,6 +216,7 @@ def _check_modern_init_loss(config: PreH100SanityConfig, work_dir: Path) -> dict
         tie_embeddings=True,
         qk_norm=True,
         parallel_residual=True,
+        scaled_residual_init=True,
         attn_backend=config.attn_backend,
     )
     model = TinyGPT(model_config).to(device)

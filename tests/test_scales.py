@@ -90,5 +90,6 @@ def test_h200_1b_ddp8_scale_uses_hopper_release_recipe():
     assert scale.base_grad_accum_steps == 8
     assert scale.base_steps == 9200
     assert scale.base_shard_token_size == 10_000_000
+    assert scale.scaled_residual_init is True
     assert scale.target_param_data_ratio == 8.5
     assert scale.long_run_gate_profile == "skill_release"

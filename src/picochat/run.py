@@ -62,6 +62,7 @@ class TinyRunConfig:
     parallel_residual: bool = False
     xsa_last_n: int = 0
     linear_bias: bool = True
+    scaled_residual_init: bool = False
     base_steps: int = 300
     sft_steps: int = 600
     base_batch_size: int = 8
@@ -335,6 +336,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         parallel_residual=config.parallel_residual,
         xsa_last_n=config.xsa_last_n,
         linear_bias=config.linear_bias,
+        scaled_residual_init=config.scaled_residual_init,
         seed=config.seed,
         device=config.device,
         log_every=_validation_log_every(config.base_steps),

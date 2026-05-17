@@ -377,6 +377,32 @@ def test_model_supports_xsa_last_layers():
     assert [block.attn.use_xsa for block in model.blocks] == [False, False, True, True]
 
 
+def test_scaled_residual_init_reduces_residual_projection_std():
+    torch.manual_seed(123)
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=64,
+        n_head=4,
+        n_layer=8,
+        scaled_residual_init=True,
+    )
+    model = TinyGPT(config)
+
+    attn_proj_std = float(model.blocks[0].attn.proj.weight.detach().std())
+    qkv_std = float(model.blocks[0].attn.qkv.weight.detach().std())
+    mlp_proj_std = float(model.blocks[0].mlp.proj.weight.detach().std())
+
+    assert attn_proj_std < qkv_std * 0.5
+    assert mlp_proj_std < qkv_std * 0.5
+
+
+def test_flops_estimate_uses_standard_six_times_parameters():
+    model = TinyGPT(GPTConfig(vocab_size=20, context_size=8, n_embd=16, n_head=4, n_layer=1))
+
+    assert model.estimate_training_flops_per_token() == 6 * model.num_parameters()
+
+
 def test_model_rejects_negative_xsa_last_n():
     with pytest.raises(ValueError, match="xsa_last_n"):
         TinyGPT(GPTConfig(vocab_size=20, context_size=8, xsa_last_n=-1))

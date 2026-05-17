@@ -656,6 +656,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use a parallel residual block: x + attn(norm(x)) + mlp(norm(x)).",
     )
     train_base_parser.add_argument(
+        "--scaled-residual-init",
+        action="store_true",
+        help="Scale residual projection init by 1/sqrt(2*n_layer) for deeper models.",
+    )
+    train_base_parser.add_argument(
         "--attn-backend",
         choices=SDPA_BACKENDS,
         default="auto",
@@ -1268,6 +1273,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--parallel-residual",
         action="store_true",
         help="Use a parallel residual block: x + attn(norm(x)) + mlp(norm(x)).",
+    )
+    run_tiny_parser.add_argument(
+        "--scaled-residual-init",
+        action="store_true",
+        default=None,
+        help="Scale residual projection init by 1/sqrt(2*n_layer) for deeper models.",
     )
     run_tiny_parser.add_argument(
         "--attn-backend",
@@ -2257,6 +2268,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         parallel_residual=args.parallel_residual,
         xsa_last_n=args.xsa_last_n,
         linear_bias=args.linear_bias,
+        scaled_residual_init=args.scaled_residual_init,
         seed=args.seed,
         device=args.device,
         log_every=args.log_every,
@@ -2799,6 +2811,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         parallel_residual=_resolve_tiny_bool(args, defaults, "parallel_residual"),
         xsa_last_n=_resolve_tiny_value(args, defaults, "xsa_last_n"),
         linear_bias=_resolve_tiny_value(args, defaults, "linear_bias"),
+        scaled_residual_init=_resolve_tiny_bool(args, defaults, "scaled_residual_init"),
         base_steps=_resolve_tiny_value(args, defaults, "base_steps"),
         sft_steps=_resolve_tiny_value(args, defaults, "sft_steps"),
         base_batch_size=_resolve_tiny_value(args, defaults, "base_batch_size"),

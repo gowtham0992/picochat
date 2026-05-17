@@ -100,6 +100,7 @@ const LAUNCH_CONTROL_IDS = [
   "launch-qk-norm",
   "launch-parallel-residual",
   "launch-xsa-last-n",
+  "launch-scaled-residual-init",
   "launch-base-batch-size",
   "launch-sft-batch-size",
   "launch-base-learning-rate",
@@ -3381,6 +3382,7 @@ function applyLaunchPreset(quiet = false) {
   $("launch-qk-norm").checked = Boolean(values.qk_norm);
   $("launch-parallel-residual").checked = Boolean(values.parallel_residual);
   $("launch-xsa-last-n").value = values.xsa_last_n || 0;
+  $("launch-scaled-residual-init").checked = Boolean(values.scaled_residual_init);
   $("launch-base-steps").value = values.base_steps;
   $("launch-sft-steps").value = values.sft_steps;
   $("launch-base-batch-size").value = values.base_batch_size;
@@ -3488,6 +3490,7 @@ function launchConfig() {
     qk_norm: $("launch-qk-norm").checked,
     parallel_residual: $("launch-parallel-residual").checked,
     xsa_last_n: launchNumber("launch-xsa-last-n"),
+    scaled_residual_init: $("launch-scaled-residual-init").checked,
     base_steps: launchNumber("launch-base-steps"),
     sft_steps: launchNumber("launch-sft-steps"),
     base_batch_size: launchNumber("launch-base-batch-size"),
@@ -3650,12 +3653,13 @@ function launchReadiness(config = launchConfig()) {
   if (config.sft_steps > config.base_steps * 2) cautions.push("SFT is much longer than base; watch eval leakage and overfitting.");
   notes.push(`${config.n_layer}L x ${config.n_embd} embd / ${config.n_head} heads / ${config.n_kv_head} kv`);
   notes.push(`${config.norm_type} / ${config.position_encoding} / ${config.activation}`);
-  if (config.tie_embeddings || config.qk_norm || config.parallel_residual || config.xsa_last_n > 0) {
+  if (config.tie_embeddings || config.qk_norm || config.parallel_residual || config.xsa_last_n > 0 || config.scaled_residual_init) {
     notes.push(`modern flags ${[
       config.tie_embeddings ? "tied" : null,
       config.qk_norm ? "qk-norm" : null,
       config.parallel_residual ? "parallel" : null,
       config.xsa_last_n > 0 ? `xsa-${config.xsa_last_n}` : null,
+      config.scaled_residual_init ? "scaled-init" : null,
     ].filter(Boolean).join("/")}`);
   }
   notes.push(`${String(config.tokenizer_type).toUpperCase()} tokenizer${config.tokenizer_vocab_size ? ` vocab ${config.tokenizer_vocab_size}` : ""}`);
@@ -3838,6 +3842,7 @@ function launchPreviewCommand(config = launchConfig()) {
   if (config.tie_embeddings) parts.push("--tie-embeddings");
   if (config.qk_norm) parts.push("--qk-norm");
   if (config.parallel_residual) parts.push("--parallel-residual");
+  if (config.scaled_residual_init) parts.push("--scaled-residual-init");
   if (config.torch_compile) parts.push("--torch-compile", "--torch-compile-mode", config.torch_compile_mode);
   if (config.gradient_checkpointing) parts.push("--gradient-checkpointing");
   if (config.auto_lr_scaling) parts.push("--auto-lr-scaling");
@@ -3931,6 +3936,7 @@ function runStartPayload(config) {
     qk_norm: config.qk_norm,
     parallel_residual: config.parallel_residual,
     xsa_last_n: config.xsa_last_n,
+    scaled_residual_init: config.scaled_residual_init,
     base_steps: config.base_steps,
     sft_steps: config.sft_steps,
     base_batch_size: config.base_batch_size,
@@ -6438,6 +6444,7 @@ function importantConfigChanges(before, after) {
     ["qk_norm", "QK norm"],
     ["parallel_residual", "Parallel residual"],
     ["xsa_last_n", "XSA last layers"],
+    ["scaled_residual_init", "Scaled residual init"],
     ["precision", "Precision"],
     ["matmul_precision", "Matmul precision"],
     ["attn_backend", "Attention backend"],
@@ -6470,7 +6477,7 @@ function changeTeachingNote(key) {
   if (key.includes("tokenizer")) return "Changes compression and model vocabulary.";
   if (key === "context_size") return "Changes how much text the model sees at once.";
   if (["n_embd", "n_layer", "n_head", "n_kv_head"].includes(key)) return "Changes model capacity and compute cost.";
-  if (["norm_type", "position_encoding", "activation", "tie_embeddings", "qk_norm", "parallel_residual", "xsa_last_n"].includes(key)) return "Changes the Transformer architecture.";
+  if (["norm_type", "position_encoding", "activation", "tie_embeddings", "qk_norm", "parallel_residual", "xsa_last_n", "scaled_residual_init"].includes(key)) return "Changes the Transformer architecture.";
   if (["precision", "matmul_precision", "attn_backend", "torch_compile", "torch_compile_mode", "gradient_checkpointing"].includes(key)) return "Changes GPU/runtime behavior.";
   if (key === "auto_lr_scaling") return "Changes automatic optimizer scaling from effective batch.";
   if (key === "loss_spike_rollback") return "Changes training stability recovery.";

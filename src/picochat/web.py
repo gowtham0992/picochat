@@ -901,6 +901,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     qk_norm = bool(payload.get("qk_norm", preset.get("qk_norm", False)))
     parallel_residual = bool(payload.get("parallel_residual", preset.get("parallel_residual", False)))
     xsa_last_n = _bounded_int(payload.get("xsa_last_n", preset.get("xsa_last_n", 0)), 0, 128)
+    scaled_residual_init = bool(payload.get("scaled_residual_init", preset.get("scaled_residual_init", False)))
     precision = str(payload.get("precision", preset.get("precision", "float32")))
     if precision not in PRECISION_MODES:
         raise ValueError(f"precision must be one of {', '.join(PRECISION_MODES)}")
@@ -1048,6 +1049,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         qk_norm=qk_norm,
         parallel_residual=parallel_residual,
         xsa_last_n=xsa_last_n,
+        scaled_residual_init=scaled_residual_init,
         attn_backend=attn_backend,
         base_steps=base_steps,
         sft_steps=sft_steps,
@@ -1254,6 +1256,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         command.append("--qk-norm")
     if parallel_residual:
         command.append("--parallel-residual")
+    if scaled_residual_init:
+        command.append("--scaled-residual-init")
     if torch_compile:
         command.append("--torch-compile")
         command.extend(["--torch-compile-mode", torch_compile_mode])
@@ -1318,6 +1322,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "qk_norm": qk_norm,
             "parallel_residual": parallel_residual,
             "xsa_last_n": xsa_last_n,
+            "scaled_residual_init": scaled_residual_init,
             "attn_backend": attn_backend,
             "precision": precision,
             "matmul_precision": matmul_precision,

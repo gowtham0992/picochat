@@ -58,6 +58,7 @@ class RunScale:
     attn_backend: str = "auto"
     parallel_residual: bool = False
     linear_bias: bool = True
+    scaled_residual_init: bool = False
     bpe_pretokenizer: str = "regex"
     sft_packing: str = "separate"
     base_dataset_mode: str = "memory"
@@ -488,6 +489,7 @@ RUN_SCALES: dict[str, RunScale] = {
         attn_backend="fa3",
         parallel_residual=True,
         linear_bias=False,
+        scaled_residual_init=True,
         base_steps=9200,
         sft_steps=64,
         base_batch_size=8,

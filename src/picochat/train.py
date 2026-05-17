@@ -93,6 +93,7 @@ class TrainConfig:
     parallel_residual: bool = False
     xsa_last_n: int = 0
     linear_bias: bool = True
+    scaled_residual_init: bool = False
     seed: int = 42
     device: str = "cpu"
     log_every: int = 20
@@ -379,6 +380,7 @@ def train_base(config: TrainConfig) -> dict:
         parallel_residual=config.parallel_residual,
         xsa_last_n=config.xsa_last_n,
         linear_bias=config.linear_bias,
+        scaled_residual_init=config.scaled_residual_init,
         logit_softcap=config.logit_softcap,
         gradient_checkpointing=config.gradient_checkpointing,
     )
