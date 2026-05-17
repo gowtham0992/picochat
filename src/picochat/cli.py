@@ -1309,7 +1309,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="research",
         help=(
             "Completed-run approval profile. research gates all behavior metrics; "
-            "first_release gates identity/refusal/choice while keeping math and spelling diagnostic."
+            "first_release gates release behavior while keeping math and spelling diagnostic."
         ),
     )
     run_tiny_parser.add_argument(

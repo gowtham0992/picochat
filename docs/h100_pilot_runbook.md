@@ -118,7 +118,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --qk-norm \
   --parallel-residual \
   --base-steps 5000 \
-  --sft-steps 700 \
+  --sft-steps 120 \
   --base-batch-size 8 \
   --base-grad-accum-steps 16 \
   --base-dataset-mode sharded \
@@ -129,7 +129,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --base-learning-rate 0.0001 \
   --sft-learning-rate 0.00001 \
   --base-lr-warmup-steps 500 \
-  --sft-lr-warmup-steps 100 \
+  --sft-lr-warmup-steps 40 \
   --base-lr-decay cosine \
   --sft-lr-decay cosine \
   --base-min-lr-ratio 0.1 \
@@ -147,7 +147,10 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
 
 The `--auto-lr-scaling` flag makes the effective SFT LR `0.00002` at SFT
 effective batch 32. That is intentionally much lower than the earlier
-`0.0002` effective SFT LR that overfit within a few dozen H100 steps.
+`0.0002` effective SFT LR that overfit within a few dozen H100 steps. The SFT
+step count is also intentionally short because release-behavior packs are
+compact; if exact fit is high but held-out eval is weak, improve the identity
+curriculum instead of replaying the same rows longer.
 
 The pilot pack uses `--profile release_behavior`: only identity and
 refusal/boundary rows are used for first-release SFT and held-out eval. Keep
@@ -200,7 +203,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --qk-norm \
   --parallel-residual \
   --base-steps 5000 \
-  --sft-steps 700 \
+  --sft-steps 120 \
   --base-batch-size 8 \
   --base-grad-accum-steps 16 \
   --base-dataset-mode sharded \
@@ -211,7 +214,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --base-learning-rate 0.0001 \
   --sft-learning-rate 0.00001 \
   --base-lr-warmup-steps 500 \
-  --sft-lr-warmup-steps 100 \
+  --sft-lr-warmup-steps 40 \
   --base-lr-decay cosine \
   --sft-lr-decay cosine \
   --base-min-lr-ratio 0.1 \

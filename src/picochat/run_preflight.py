@@ -473,7 +473,7 @@ def _sft_checks(config: Any, corpus: CorpusBuildReport | CorpusPreviewReport, bu
         else ">= 4 categories preferred"
     )
     category_balance_message = (
-        "First-release SFT intentionally focuses on identity/refusal/choice behavior; keep other skills as separate diagnostics."
+        "First-release SFT intentionally focuses on release identity, refusal, and optional choice behavior; keep other skills as separate diagnostics."
         if first_release_focus
         else "Category coverage helps reveal which behavior the SFT stage actually teaches."
     )

@@ -863,7 +863,7 @@ def _long_run_gate(
             "name": "sft_fit",
             "severity": "block" if long_run else "warn",
             "message": (
-                "First-release SFT fit is below 70%; fix identity/refusal/choice behavior before scaling."
+                "First-release SFT fit is below 70%; fix identity, refusal, and release choice behavior before scaling."
                 if first_release_profile
                 else "SFT fit is below 70%; fix behavior data before scaling this recipe."
             ),
@@ -882,7 +882,7 @@ def _long_run_gate(
             "name": "sft_heldout_fit",
             "severity": "block" if long_run else "warn",
             "message": (
-                "Held-out first-release SFT fit is below 50%; identity/refusal/choice behavior is not transferring."
+                "Held-out first-release SFT fit is below 50%; release behavior is not transferring."
                 if first_release_profile
                 else (
                     "Held-out SFT fit is below 50%; the chat stage is not transferring "
@@ -923,7 +923,7 @@ def _long_run_gate(
             "name": "first_release_eval",
             "severity": "block" if long_run else "warn",
             "message": (
-                "First-release eval is below 45% across identity, refusal, and choice rows; "
+                "First-release eval is below 45% across release behavior rows; "
                 "keep math/spelling as diagnostics, but do not scale this release recipe yet."
             ),
         })

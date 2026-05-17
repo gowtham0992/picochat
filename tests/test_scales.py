@@ -31,3 +31,5 @@ def test_h100_scale_uses_modern_runtime_defaults():
     assert scale.matmul_precision == "high"
     assert scale.torch_compile is True
     assert scale.sft_learning_rate == 0.00001
+    assert scale.sft_steps == 120
+    assert scale.sft_lr_warmup_steps == 40

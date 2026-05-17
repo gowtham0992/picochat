@@ -120,6 +120,21 @@ def test_release_behavior_profile_is_narrow_first_release_pack(tmp_path):
     assert chat_categories["refusal"] == 240
     assert eval_categories["identity"] == 272
     assert eval_categories["refusal"] == 48
+    identity_chat_rows = [row for row in chat_rows if row["category"] == "identity"]
+    identity_eval_rows = [row for row in eval_rows if row["category"] == "identity"]
+    assert {row["curriculum_stage"] for row in identity_chat_rows} == {
+        "release_identity_1",
+        "release_identity_2",
+        "release_identity_3",
+        "release_identity_4",
+        "release_identity_5",
+    }
+    assert all("workbench" not in row["assistant"].lower() for row in identity_chat_rows)
+    assert any("domain-specific" in row["assistant"] for row in identity_chat_rows)
+    assert all(row.get("fit_normalized_answer_required") is True for row in identity_chat_rows)
+    assert all(row.get("fit_must_include") for row in identity_chat_rows)
+    assert sum("?" in row["user"] for row in identity_chat_rows) >= 1000
+    assert sum("?" in row["user"] for row in identity_eval_rows) >= 200
     assert len({row["user"] for row in chat_rows}) == len(chat_rows)
     assert len({row["user"] for row in eval_rows}) == len(eval_rows)
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
