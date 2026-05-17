@@ -26,7 +26,7 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 DEFAULT_BENCHMARK_SFT_ROWS = 300
 DEFAULT_BENCHMARK_EVAL_ROWS = 80
 BENCHMARK_SOURCES = ("offline", "auto", "hf")
-BENCHMARK_PROFILES = ("full", "release_behavior", "behavior", "weak_skills")
+BENCHMARK_PROFILES = ("full", "release_behavior", "release_skills", "behavior", "weak_skills")
 BENCHMARK_SKILL_ANSWER_STYLES = ("direct", "scratchpad")
 SFT_CHAR_BUDGET = 900
 GENERIC_EVAL_MARKERS = {"final answer", "final answer:"}
@@ -34,6 +34,13 @@ BEHAVIOR_PROFILE_WEIGHTS = {
     "release_behavior": (
         ("identity", 0.85),
         ("refusal", 0.15),
+    ),
+    "release_skills": (
+        ("math", 0.30),
+        ("spelling", 0.25),
+        ("identity", 0.25),
+        ("choice", 0.10),
+        ("refusal", 0.10),
     ),
     "behavior": (
         ("choice", 0.25),
@@ -224,8 +231,13 @@ def generate_benchmark_tuning_pack(
                 "so first-release gates do not claim math, spelling, or choice skills."
                 if profile == "release_behavior"
                 else (
-                    "Behavior curriculum now intentionally over-samples identity, short math, spelling, "
-                    "and choice-format drills because these are the first fragile closed-book skills."
+                    "Release-skills curriculum explicitly trains identity, refusal, choice, arithmetic, "
+                    "and spelling; use it when those skills are release claims, not diagnostics."
+                    if profile == "release_skills"
+                    else (
+                        "Behavior curriculum now intentionally over-samples identity, short math, spelling, "
+                        "and choice-format drills because these are the first fragile closed-book skills."
+                    )
                 )
             ),
             f"HF chat SFT rows are length-budgeted to about {SFT_CHAR_BUDGET} characters for local 512-context runs.",
@@ -435,6 +447,8 @@ def _behavior_profile_result(
     quotas = _quotas(count, BEHAVIOR_PROFILE_WEIGHTS[profile])
     if profile == "release_behavior":
         row_builder = _build_release_behavior_rows
+    elif profile == "release_skills":
+        row_builder = _build_release_skills_behavior_rows
     elif profile == "weak_skills":
         row_builder = _build_weak_skills_behavior_rows
     else:
@@ -483,6 +497,13 @@ def _behavior_profile_notes(profile: str) -> tuple[str, ...]:
             "Identity and refusal rows remain present so narrow skill tuning does not erase basic boundary behavior.",
             "Use this after behavior-first SFT fit is near or above 70% but held-out math/spelling remain weak.",
             "Long open-ended chat rows are excluded so the sweep tests narrow trainability before broad style.",
+        )
+    if profile == "release_skills":
+        return (
+            "Release-skills profile was used: identity, refusal, choice, math, and spelling are all release-critical.",
+            "Math and spelling use staged ladders instead of a single flat template pool.",
+            "Use this with --long-run-gate-profile skill_release when arithmetic and spelling are product claims.",
+            "Use --source hf with the full profile for additional broad chat data when network/HF access is available.",
         )
     return (
         "Behavior profile was used: long open-ended chat rows are excluded.",
@@ -697,6 +718,44 @@ def _build_release_behavior_rows(
         raise ValueError("release_behavior rows only support identity and refusal categories")
     rng = random.Random(seed)
     rows: list[dict[str, Any]] = []
+    for index in range(identity):
+        rows.append(_release_identity_row(index, rng, split=split, eval_rows=eval_rows))
+    for index in range(refusal):
+        rows.append(_refusal_row(index, rng, split=split, eval_rows=eval_rows))
+    rng.shuffle(rows)
+    return rows
+
+
+def _build_release_skills_behavior_rows(
+    spelling: int,
+    identity: int,
+    refusal: int,
+    seed: int,
+    split: str,
+    eval_rows: bool,
+    choice: int = 0,
+    math: int = 0,
+    skill_answer_style: str = "direct",
+) -> list[dict[str, Any]]:
+    skill_answer_style = _normalize_skill_answer_style(skill_answer_style)
+    rng = random.Random(seed)
+    rows: list[dict[str, Any]] = []
+    for index in range(choice):
+        rows.append(_choice_row(index, rng, split=split, eval_rows=eval_rows))
+    rows.extend(_build_staged_math_rows(
+        math,
+        seed=seed + 17,
+        split=split,
+        eval_rows=eval_rows,
+        skill_answer_style=skill_answer_style,
+    ))
+    rows.extend(_build_staged_spelling_rows(
+        spelling,
+        seed=seed + 29,
+        split=split,
+        eval_rows=eval_rows,
+        skill_answer_style=skill_answer_style,
+    ))
     for index in range(identity):
         rows.append(_release_identity_row(index, rng, split=split, eval_rows=eval_rows))
     for index in range(refusal):

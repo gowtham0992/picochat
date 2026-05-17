@@ -102,6 +102,43 @@ def test_preflight_still_warns_for_narrow_research_sft_focus():
     assert checks["sft_category_balance"].threshold == ">= 4 categories preferred"
 
 
+def test_preflight_blocks_skill_release_without_skill_categories():
+    report = assess_run_preflight(
+        _h100_like_config(long_run_gate_profile="skill_release"),
+        _ready_large_corpus(
+            categories={"identity": 1360, "refusal": 240},
+            eval_categories={"identity": 272, "refusal": 48},
+        ),
+    )
+    checks = _checks_by_name(report)
+
+    assert report.status == "blocked"
+    assert checks["sft_category_balance"].status == "block"
+    assert "choice, math, spelling" in checks["sft_category_balance"].message
+    assert checks["eval_skill_release_coverage"].status == "block"
+
+
+def test_preflight_accepts_skill_release_full_curriculum():
+    categories = {
+        "identity": 400,
+        "refusal": 160,
+        "bench_choice_language": 160,
+        "bench_math_addition": 240,
+        "bench_math_subtraction": 240,
+        "bench_spelling_count": 200,
+        "bench_spelling_reverse": 200,
+    }
+    report = assess_run_preflight(
+        _h100_like_config(long_run_gate_profile="skill_release"),
+        _ready_large_corpus(categories=categories, eval_categories=categories),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["sft_category_balance"].status == "pass"
+    assert checks["sft_category_balance"].threshold == "identity/refusal/choice/math/spelling required"
+    assert checks["eval_skill_release_coverage"].status == "pass"
+
+
 def test_preflight_counts_ddp_world_size_in_effective_batch(monkeypatch):
     monkeypatch.setenv("WORLD_SIZE", "8")
     report = assess_run_preflight(
@@ -313,8 +350,10 @@ def _ready_large_corpus(
     *,
     assistant_avg_words: float = 8.0,
     categories: dict[str, int] | None = None,
+    eval_categories: dict[str, int] | None = None,
 ) -> CorpusPreviewReport:
     categories = categories or {"choice": 400, "math": 400, "spelling": 400, "refusal": 400}
+    eval_categories = eval_categories or {"choice": 80, "math": 80, "spelling": 80, "refusal": 80}
     return CorpusPreviewReport(
         input_path="corpus_recipe.json",
         recipe_path="corpus_recipe.json",
@@ -416,7 +455,7 @@ def _ready_large_corpus(
             duplicate_user_samples=(),
             near_duplicate_user_pairs=0,
             near_duplicate_user_samples=(),
-            categories={"choice": 80, "math": 80, "spelling": 80, "refusal": 80},
+            categories=eval_categories,
             category_entropy=2.0,
             category_entropy_normalized=1.0,
             splits={"benchmark": 240, "behavior": 48, "adversarial": 32},

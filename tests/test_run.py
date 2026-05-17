@@ -147,6 +147,83 @@ def test_long_run_gate_first_release_profile_blocks_weak_release_categories():
     assert any(issue["name"] == "first_release_eval" for issue in gate["issues"])
 
 
+def test_long_run_gate_skill_release_blocks_missing_and_weak_skills():
+    gate = _long_run_gate(
+        preflight_report={"status": "warn", "budget": {"long_run": True}},
+        sft_fit_summary={
+            "pass_rate": 0.90,
+            "category_breakdown": {
+                "identity": {"num_passed": 90, "num_examples": 100},
+                "refusal": {"num_passed": 90, "num_examples": 100},
+                "bench_choice_language": {"num_passed": 90, "num_examples": 100},
+                "bench_math_addition": {"num_passed": 20, "num_examples": 100},
+            },
+        },
+        sft_fit_heldout_summary={"pass_rate": 0.70},
+        eval_summary={
+            "pass_rate": 0.80,
+            "non_choice_examples": 300,
+            "non_choice_pass_rate": 0.70,
+            "refusal_pass_rate": 0.90,
+            "prompt_echo_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+            "category_breakdown": {
+                "identity": {"num_passed": 80, "num_examples": 100},
+                "refusal": {"num_passed": 90, "num_examples": 100},
+                "bench_choice_language": {"num_passed": 80, "num_examples": 100},
+                "bench_math_addition": {"num_passed": 10, "num_examples": 100},
+            },
+        },
+        honesty={"status": "ready"},
+        profile="skill_release",
+    )
+
+    assert gate["status"] == "blocked"
+    assert gate["skill_release_sft_rates"]["math"] == pytest.approx(0.20)
+    assert gate["skill_release_eval_rates"]["spelling"] is None
+    assert any(issue["name"] == "skill_release_sft_math" for issue in gate["issues"])
+    assert any(issue["name"] == "skill_release_eval_math" for issue in gate["issues"])
+    assert any(issue["name"] == "skill_release_eval_spelling" for issue in gate["issues"])
+
+
+def test_long_run_gate_skill_release_approves_when_all_groups_clear():
+    gate = _long_run_gate(
+        preflight_report={"status": "warn", "budget": {"long_run": True}},
+        sft_fit_summary={
+            "pass_rate": 0.86,
+            "category_breakdown": {
+                "identity": {"num_passed": 80, "num_examples": 100},
+                "refusal": {"num_passed": 80, "num_examples": 100},
+                "bench_choice_language": {"num_passed": 80, "num_examples": 100},
+                "bench_math_addition": {"num_passed": 70, "num_examples": 100},
+                "bench_spelling_count": {"num_passed": 75, "num_examples": 100},
+            },
+        },
+        sft_fit_heldout_summary={"pass_rate": 0.70},
+        eval_summary={
+            "pass_rate": 0.72,
+            "non_choice_examples": 300,
+            "non_choice_pass_rate": 0.55,
+            "refusal_pass_rate": 0.90,
+            "prompt_echo_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+            "category_breakdown": {
+                "identity": {"num_passed": 70, "num_examples": 100},
+                "refusal": {"num_passed": 90, "num_examples": 100},
+                "bench_choice_language": {"num_passed": 70, "num_examples": 100},
+                "bench_math_addition": {"num_passed": 45, "num_examples": 100},
+                "bench_spelling_count": {"num_passed": 55, "num_examples": 100},
+            },
+        },
+        honesty={"status": "ready"},
+        profile="skill_release",
+    )
+
+    assert gate["status"] == "approved"
+    assert gate["skill_release_eval_rates"]["math"] == pytest.approx(0.45)
+    assert gate["skill_release_eval_thresholds"]["spelling"] == 0.40
+
+
 def test_long_run_gate_rejects_unknown_profile():
     with pytest.raises(ValueError, match="profile must be one of"):
         _long_run_gate(

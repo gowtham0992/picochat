@@ -27,8 +27,14 @@ from picochat.tokenizer import DEFAULT_BPE_PRETOKENIZER, TOKENIZER_TYPES, train_
 from picochat.train import TrainConfig, train_base
 
 
-LONG_RUN_GATE_PROFILES = ("research", "first_release")
+LONG_RUN_GATE_PROFILES = ("research", "first_release", "skill_release")
 FIRST_RELEASE_CATEGORY_PREFIXES = ("identity", "refusal", "bench_choice")
+SKILL_RELEASE_CATEGORY_GATES = (
+    ("identity", ("identity",), 0.60),
+    ("choice", ("bench_choice", "mmlu_", "arc_"), 0.50),
+    ("math", ("bench_math_", "gsm8k"), 0.30),
+    ("spelling", ("bench_spelling_",), 0.40),
+)
 
 
 @dataclass(frozen=True)
@@ -1033,6 +1039,7 @@ def _long_run_gate(
             "message": "Data honesty found leakage or tuning contamination.",
         })
     first_release_profile = profile == "first_release"
+    skill_release_profile = profile == "skill_release"
     sft_fit_rate = (
         _first_release_category_pass_rate(sft_fit_summary)
         if first_release_profile
@@ -1114,6 +1121,51 @@ def _long_run_gate(
                 "keep math/spelling as diagnostics, but do not scale this release recipe yet."
             ),
         })
+    skill_release_sft_rates: dict[str, float | None] = {}
+    skill_release_eval_rates: dict[str, float | None] = {}
+    skill_release_eval_thresholds: dict[str, float] = {}
+    skill_release_sft_threshold = 0.60
+    if skill_release_profile:
+        for name, prefixes, eval_threshold in SKILL_RELEASE_CATEGORY_GATES:
+            sft_group_rate = _category_prefix_pass_rate(sft_fit_summary, prefixes)
+            eval_group_rate = _category_prefix_pass_rate(eval_summary, prefixes)
+            skill_release_sft_rates[name] = sft_group_rate
+            skill_release_eval_rates[name] = eval_group_rate
+            skill_release_eval_thresholds[name] = eval_threshold
+            if sft_group_rate is None:
+                issues.append({
+                    "name": f"skill_release_sft_{name}",
+                    "severity": "block",
+                    "message": (
+                        f"Skill-release SFT fit has no {name} rows; rebuild the tuning pack before launch."
+                    ),
+                })
+            elif sft_group_rate < skill_release_sft_threshold:
+                issues.append({
+                    "name": f"skill_release_sft_{name}",
+                    "severity": "block" if long_run else "warn",
+                    "message": (
+                        f"Skill-release SFT fit for {name} is below "
+                        f"{skill_release_sft_threshold:.0%}; do not claim this behavior is trained."
+                    ),
+                })
+            if eval_group_rate is None:
+                issues.append({
+                    "name": f"skill_release_eval_{name}",
+                    "severity": "block",
+                    "message": (
+                        f"Skill-release eval has no held-out {name} rows; rebuild the eval pack before launch."
+                    ),
+                })
+            elif eval_group_rate < eval_threshold:
+                issues.append({
+                    "name": f"skill_release_eval_{name}",
+                    "severity": "block" if long_run else "warn",
+                    "message": (
+                        f"Skill-release held-out {name} pass rate is below {eval_threshold:.0%}; "
+                        "keep iterating before a release claim."
+                    ),
+                })
     refusal_rate = (
         float(eval_summary.get("refusal_pass_rate"))
         if eval_summary.get("refusal_pass_rate") is not None
@@ -1159,6 +1211,10 @@ def _long_run_gate(
         "eval_non_choice_rate": eval_non_choice_rate,
         "first_release_eval_threshold": first_release_eval_threshold,
         "first_release_eval_rate": first_release_eval_rate,
+        "skill_release_sft_threshold": skill_release_sft_threshold,
+        "skill_release_sft_rates": skill_release_sft_rates,
+        "skill_release_eval_thresholds": skill_release_eval_thresholds,
+        "skill_release_eval_rates": skill_release_eval_rates,
         "refusal_threshold": refusal_threshold,
         "refusal_rate": refusal_rate,
         "issues": issues,
@@ -1166,11 +1222,15 @@ def _long_run_gate(
 
 
 def _first_release_category_pass_rate(summary: dict) -> float | None:
+    return _category_prefix_pass_rate(summary, FIRST_RELEASE_CATEGORY_PREFIXES)
+
+
+def _category_prefix_pass_rate(summary: dict, prefixes: tuple[str, ...]) -> float | None:
     breakdown = summary.get("category_breakdown") or {}
     passed = 0
     total = 0
     for category, row in breakdown.items():
-        if not str(category).startswith(FIRST_RELEASE_CATEGORY_PREFIXES):
+        if not str(category).startswith(prefixes):
             continue
         total += int(row.get("num_examples", 0) or 0)
         passed += int(row.get("num_passed", 0) or 0)

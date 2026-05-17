@@ -327,6 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="full",
         help=(
             "Curriculum profile. release_behavior focuses identity/refusal for first-release gates; "
+            "release_skills includes identity/refusal/choice/math/spelling for skill-release claims; "
             "behavior excludes broad long-form chat rows for first-stage SFT fit; weak_skills "
             "over-samples math and spelling after behavior fit is healthy."
         ),
@@ -1519,7 +1520,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="research",
         help=(
             "Completed-run approval profile. research gates all behavior metrics; "
-            "first_release gates release behavior while keeping math and spelling diagnostic."
+            "first_release gates release behavior while keeping math and spelling diagnostic; "
+            "skill_release blocks unless identity/refusal/choice/math/spelling all clear."
         ),
     )
     run_tiny_parser.add_argument(

@@ -1079,6 +1079,17 @@ def tiny_run_summary_markdown(summary: dict) -> str:
                 f"- Required first-release eval rate: "
                 f"{format_float(float(long_run_gate.get('first_release_eval_threshold', 0.45)) * 100)}%"
             )
+        skill_eval_rates = long_run_gate.get("skill_release_eval_rates") or {}
+        skill_eval_thresholds = long_run_gate.get("skill_release_eval_thresholds") or {}
+        if skill_eval_rates:
+            lines.append("- Skill-release held-out rates:")
+            for name, rate in skill_eval_rates.items():
+                threshold = skill_eval_thresholds.get(name)
+                suffix = (
+                    f" (required {format_float(float(threshold) * 100)}%)"
+                    if threshold is not None else ""
+                )
+                lines.append(f"  - `{name}`: {_format_percent_or_dash(rate)}{suffix}")
         for issue in long_run_gate.get("issues", [])[:8]:
             lines.append(f"- {issue.get('severity', 'warn').upper()} `{issue.get('name')}`: {issue.get('message')}")
         lines.append("")

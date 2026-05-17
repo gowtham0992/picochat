@@ -140,6 +140,56 @@ def test_release_behavior_profile_is_narrow_first_release_pack(tmp_path):
     assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
 
 
+def test_release_skills_profile_trains_every_claimed_release_group(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=1600,
+        eval_rows=320,
+        profile="release_skills",
+        skill_answer_style="scratchpad",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    chat_categories = Counter(row["category"] for row in chat_rows)
+    eval_categories = Counter(row["category"] for row in eval_rows)
+
+    assert report.profile == "release_skills"
+    assert report.source_status == "release_skills"
+    assert chat_categories["identity"] == 400
+    assert chat_categories["refusal"] == 160
+    assert _prefix_count(chat_categories, "bench_choice_") == 160
+    assert _prefix_count(chat_categories, "bench_math_") == 480
+    assert _prefix_count(chat_categories, "bench_spelling_") == 400
+    assert eval_categories["identity"] == 80
+    assert eval_categories["refusal"] == 32
+    assert _prefix_count(eval_categories, "bench_choice_") == 32
+    assert _prefix_count(eval_categories, "bench_math_") == 96
+    assert _prefix_count(eval_categories, "bench_spelling_") == 80
+    assert report.chat_stages["math_l1_addition_single_digit"] > 0
+    assert report.chat_stages["spelling_l1_first_letter"] > 0
+    assert report.eval_stages["math_l3_subtraction_borrow"] > 0
+    skill_rows = [
+        row for row in chat_rows
+        if row["category"].startswith(("bench_math_", "bench_spelling_"))
+    ]
+    assert skill_rows
+    assert all(row.get("fit_normalized_answer_required") is True for row in skill_rows)
+    assert all("Final answer:" in row["assistant"] for row in skill_rows)
+    assert len({row["user"] for row in chat_rows}) == len(chat_rows)
+    assert len({row["user"] for row in eval_rows}) == len(eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
 def test_behavior_profile_supports_max_local_curriculum_size(tmp_path):
     pack = write_pack(tmp_path)
 

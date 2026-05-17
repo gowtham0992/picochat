@@ -22,6 +22,13 @@ MIN_LONG_RUN_EVAL_ROWS = 80
 DEFAULT_TARGET_PARAM_DATA_RATIO = 20.0
 BASE_LR_REFERENCE_EFFECTIVE_BATCH = 8
 FIRST_RELEASE_SFT_CATEGORY_PREFIXES = ("identity", "refusal", "bench_choice")
+SKILL_RELEASE_REQUIRED_CATEGORY_PREFIXES = (
+    ("identity", ("identity",)),
+    ("refusal", ("refusal",)),
+    ("choice", ("bench_choice", "mmlu_", "arc_")),
+    ("math", ("bench_math_", "gsm8k")),
+    ("spelling", ("bench_spelling_",)),
+)
 ACCELERATED_ATTENTION_BACKENDS = ("flash", "external_flash", "fa3", "efficient", "cudnn")
 
 
@@ -101,7 +108,7 @@ def assess_run_preflight(
     checks.extend(_runtime_backend_checks(config))
     checks.extend(_base_budget_checks(config, corpus.stats, budget))
     checks.extend(_sft_checks(config, corpus, budget))
-    checks.extend(_eval_checks(corpus, budget.long_run))
+    checks.extend(_eval_checks(config, corpus, budget.long_run))
     checks.extend(_closed_book_checks())
 
     status = _status_from_checks(checks)
@@ -654,21 +661,35 @@ def _sft_checks(config: Any, corpus: CorpusBuildReport | CorpusPreviewReport, bu
     epochs = budget.estimated_sft_example_epochs
     categories = tuple(str(category) for category in chat.categories)
     first_release_focus = _is_first_release_sft_focus(config, categories)
-    category_balance_status = (
-        "pass"
-        if not budget.long_run or len(categories) >= 4 or first_release_focus
-        else "warn"
-    )
-    category_balance_threshold = (
-        ">= 2 first-release behavior categories"
-        if first_release_focus
-        else ">= 4 categories preferred"
-    )
-    category_balance_message = (
-        "First-release SFT intentionally focuses on release identity, refusal, and optional choice behavior; keep other skills as separate diagnostics."
-        if first_release_focus
-        else "Category coverage helps reveal which behavior the SFT stage actually teaches."
-    )
+    skill_release_profile = _is_skill_release_profile(config)
+    skill_release_missing = _missing_skill_release_groups(categories)
+    if skill_release_profile:
+        category_balance_status = "block" if skill_release_missing else "pass"
+        category_balance_threshold = "identity/refusal/choice/math/spelling required"
+        category_balance_message = (
+            "Skill-release SFT covers all release-critical behavior groups."
+            if not skill_release_missing
+            else (
+                "Skill-release SFT is missing release-critical behavior groups: "
+                f"{', '.join(skill_release_missing)}."
+            )
+        )
+    else:
+        category_balance_status = (
+            "pass"
+            if not budget.long_run or len(categories) >= 4 or first_release_focus
+            else "warn"
+        )
+        category_balance_threshold = (
+            ">= 2 first-release behavior categories"
+            if first_release_focus
+            else ">= 4 categories preferred"
+        )
+        category_balance_message = (
+            "First-release SFT intentionally focuses on release identity, refusal, and optional choice behavior; keep other skills as separate diagnostics."
+            if first_release_focus
+            else "Category coverage helps reveal which behavior the SFT stage actually teaches."
+        )
     checks = [
         _check(
             "chat_sft_readiness",
@@ -768,7 +789,7 @@ def _sft_checks(config: Any, corpus: CorpusBuildReport | CorpusPreviewReport, bu
     return checks
 
 
-def _eval_checks(corpus: CorpusBuildReport | CorpusPreviewReport, long_run: bool) -> list[RunPreflightCheck]:
+def _eval_checks(config: Any, corpus: CorpusBuildReport | CorpusPreviewReport, long_run: bool) -> list[RunPreflightCheck]:
     eval_data = corpus.eval_data
     rules = eval_data.must_include_rules + eval_data.must_include_any_groups + eval_data.must_not_include_rules
     eval_status = "pass"
@@ -776,7 +797,7 @@ def _eval_checks(corpus: CorpusBuildReport | CorpusPreviewReport, long_run: bool
         eval_status = "block" if long_run or "pass/fail rules" not in eval_data.summary else "warn"
     elif eval_data.status == "caution":
         eval_status = "warn"
-    return [
+    checks = [
         _check(
             "eval_readiness",
             eval_status,
@@ -815,6 +836,23 @@ def _eval_checks(corpus: CorpusBuildReport | CorpusPreviewReport, long_run: bool
             "Split labels make smoke, held-out, adversarial, and memorization probes visible.",
         ),
     ]
+    if _is_skill_release_profile(config):
+        missing = _missing_skill_release_groups(tuple(str(category) for category in eval_data.categories))
+        checks.append(_check(
+            "eval_skill_release_coverage",
+            "block" if missing else "pass",
+            "missing " + ", ".join(missing) if missing else "complete",
+            "identity/refusal/choice/math/spelling required",
+            (
+                "Skill-release eval covers every release-critical behavior group."
+                if not missing
+                else (
+                    "Skill-release eval is missing release-critical held-out groups: "
+                    f"{', '.join(missing)}."
+                )
+            ),
+        ))
+    return checks
 
 
 def _closed_book_checks() -> list[RunPreflightCheck]:
@@ -981,6 +1019,17 @@ def _is_first_release_sft_focus(config: Any, categories: tuple[str, ...]) -> boo
     if len(categories) < 2:
         return False
     return all(category.startswith(FIRST_RELEASE_SFT_CATEGORY_PREFIXES) for category in categories)
+
+
+def _is_skill_release_profile(config: Any) -> bool:
+    return str(_value(config, "long_run_gate_profile", "research")) == "skill_release"
+
+
+def _missing_skill_release_groups(categories: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        name for name, prefixes in SKILL_RELEASE_REQUIRED_CATEGORY_PREFIXES
+        if not any(category.startswith(prefixes) for category in categories)
+    )
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
