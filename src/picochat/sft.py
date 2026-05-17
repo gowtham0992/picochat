@@ -54,6 +54,7 @@ from picochat.resume import (
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 from picochat.train import (
     _capture_rollback_state,
+    _format_rate,
     _interval_throughput,
     _is_loss_spike,
     _restore_rollback_state,
@@ -1150,7 +1151,8 @@ def train_sft(config: SFTConfig) -> dict:
                 print(
                     f"sft step {step:04d}/{config.max_steps:04d} | "
                     f"train {last_loss:.4f} | val {val_loss:.4f} | "
-                    f"val_bpb {_format_optional(val_metrics['bpb'])} | {elapsed:.1f}s"
+                    f"val_bpb {_format_optional(val_metrics['bpb'])} | "
+                    f"{_format_rate(throughput['tokens_per_sec'])} tok/s | {elapsed:.1f}s"
                 )
                 save_checkpoint(
                     out_dir / "resume_checkpoint",

@@ -627,7 +627,8 @@ def train_base(config: TrainConfig) -> dict:
                 print(
                     f"step {step:04d}/{config.max_steps:04d} | "
                     f"train {last_loss:.4f} | val {val_loss:.4f} | "
-                    f"val_bpb {_format_optional(val_bpb)} | {elapsed:.1f}s"
+                    f"val_bpb {_format_optional(val_bpb)} | "
+                    f"{_format_rate(throughput['tokens_per_sec'])} tok/s | {elapsed:.1f}s"
                 )
                 save_checkpoint(
                     out_dir / "resume_checkpoint",
@@ -950,6 +951,14 @@ def _coverage_warnings(
 
 def _format_optional(value: float | None) -> str:
     return "--" if value is None else f"{value:.4f}"
+
+
+def _format_rate(value: float | None) -> str:
+    if value is None or not math.isfinite(value):
+        return "--"
+    if value >= 1000:
+        return f"{value / 1000:.1f}k"
+    return f"{value:.0f}"
 
 
 def _interval_throughput(
