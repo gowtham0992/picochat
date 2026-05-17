@@ -435,8 +435,14 @@ def test_train_base_ddp_worker_reuses_rank_zero_token_shards(tmp_path, monkeypat
         )
 
     monkeypatch.setattr(train_module, "initialize_ddp", lambda device, enabled=False: ddp_metadata)
+    monkeypatch.setattr(train_module, "ddp_env_metadata", lambda enabled=False: ddp_metadata)
     monkeypatch.setattr(train_module, "prepare_ddp_model", lambda model, device, enabled=False: (model, ddp_metadata))
     monkeypatch.setattr(train_module, "barrier_if_distributed", lambda metadata=None: None)
+    monkeypatch.setattr(
+        train_module,
+        "_wait_for_generated_dataset_manifest",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(train_module, "load_sharded_token_split", fake_load_sharded_token_split)
 
     report = train_base(TrainConfig(

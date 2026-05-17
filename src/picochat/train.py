@@ -29,6 +29,7 @@ from picochat.device import resolve_device
 from picochat.distributed import (
     barrier_if_distributed,
     broadcast_object_if_distributed,
+    ddp_env_metadata,
     initialize_ddp,
     is_main_process,
     mean_scalar_if_distributed,
@@ -218,17 +219,20 @@ def train_base(config: TrainConfig) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     device = resolve_device(config.device)
-    ddp_metadata = initialize_ddp(device, enabled=config.ddp)
+    ddp_metadata = ddp_env_metadata(config.ddp)
     main_process = is_main_process(ddp_metadata)
     tokenizer = load_tokenizer(config.tokenizer_path)
     if config.dataset_mode not in {"memory", "sharded", "packed"}:
         raise ValueError("dataset_mode must be 'memory', 'sharded', or 'packed'")
     canary_values = _canary_values(config.seed, config.canary_count)
     if config.dataset_mode in {"sharded", "packed"}:
+        shard_cache_dir = out_dir / (
+            "packed_token_shards" if config.dataset_mode == "packed" else "token_shards"
+        )
+        shard_manifest_path = shard_cache_dir / (
+            "packed_shards_manifest.json" if config.dataset_mode == "packed" else "token_shards_manifest.json"
+        )
         if main_process:
-            shard_cache_dir = out_dir / (
-                "packed_token_shards" if config.dataset_mode == "packed" else "token_shards"
-            )
             rebuild_token_shards = True
             if config.resume_from:
                 try:
@@ -279,8 +283,11 @@ def train_base(config: TrainConfig) -> dict:
                 progress=True,
                 rebuild=rebuild_token_shards,
             )
-        barrier_if_distributed(ddp_metadata)
-        if not main_process:
+        else:
+            _wait_for_generated_dataset_manifest(
+                shard_manifest_path,
+                description=f"{config.dataset_mode} base token dataset",
+            )
             loader = (
                 load_packed_token_split
                 if config.dataset_mode == "packed"
@@ -290,9 +297,7 @@ def train_base(config: TrainConfig) -> dict:
                 corpus_path=config.corpus_path,
                 tokenizer_path=config.tokenizer_path,
                 context_size=config.context_size,
-                cache_dir=out_dir / (
-                    "packed_token_shards" if config.dataset_mode == "packed" else "token_shards"
-                ),
+                cache_dir=shard_cache_dir,
                 val_fraction=config.val_fraction,
                 seed=config.seed,
                 shard_token_size=config.shard_token_size,
@@ -320,6 +325,8 @@ def train_base(config: TrainConfig) -> dict:
             f"mode={split.stats.get('split_mode', config.dataset_mode)}",
             flush=True,
         )
+    ddp_metadata = initialize_ddp(device, enabled=config.ddp)
+    main_process = is_main_process(ddp_metadata)
     ddp_env = ddp_metadata
     train_batcher = make_resumable_batcher(
         split.train_dataset,
@@ -1109,6 +1116,26 @@ def _throughput_summary(losses: list[dict]) -> dict[str, float | None]:
         ),
         "final_mfu": float(mfu_rows[-1]["mfu"]) if mfu_rows else None,
     }
+
+
+def _wait_for_generated_dataset_manifest(
+    manifest_path: Path,
+    *,
+    description: str,
+) -> None:
+    """Wait for rank 0 to finish CPU-only token-shard generation before DDP init."""
+    raw_timeout = os.environ.get("PICOCHAT_DDP_TIMEOUT_MINUTES", "120")
+    try:
+        timeout_seconds = max(1, int(raw_timeout)) * 60
+    except ValueError:
+        timeout_seconds = 120 * 60
+    started = time.monotonic()
+    while not manifest_path.exists():
+        if time.monotonic() - started > timeout_seconds:
+            raise TimeoutError(
+                f"timed out waiting for rank 0 to create {description}: {manifest_path}"
+            )
+        time.sleep(2.0)
 
 
 def _estimated_peak_flops_per_sec(
