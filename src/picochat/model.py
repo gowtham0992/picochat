@@ -47,6 +47,7 @@ class GPTConfig:
     qk_norm: bool = False
     attn_backend: str = "auto"
     parallel_residual: bool = False
+    xsa_last_n: int = 0
     linear_bias: bool = True
 
     def to_dict(self) -> dict[str, int | float | str | bool | None]:
@@ -220,6 +221,7 @@ class CausalSelfAttention(nn.Module):
         if config.attn_backend not in SDPA_BACKENDS:
             raise ValueError(f"attn_backend must be one of: {', '.join(SDPA_BACKENDS)}")
         self.attn_backend = config.attn_backend
+        self.use_xsa = False
         self._external_attention_func = (
             _flash_attention_func_for_backend(config.attn_backend)
             if config.attn_backend in _EXTERNAL_FLASH_BACKENDS
@@ -244,6 +246,7 @@ class CausalSelfAttention(nn.Module):
         q = q.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
         k = k.view(batch_size, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+        current_v = v
         attn_dtype = v.dtype
         q = self.q_norm(q).to(dtype=attn_dtype)
         k = self.k_norm(k).to(dtype=attn_dtype)
@@ -306,6 +309,8 @@ class CausalSelfAttention(nn.Module):
                     v,
                     **sdpa_kwargs,
                 )
+        if self.use_xsa:
+            y = _apply_xsa(y, current_v, self.n_head, self.n_kv_head)
         y = y.transpose(1, 2).contiguous().view(batch_size, seq_len, embd_size)
         y = self.dropout(self.proj(y))
         if use_cache:
@@ -405,6 +410,8 @@ class TinyGPT(nn.Module):
             raise ValueError("logit_softcap must be non-negative")
         if config.initializer_range <= 0:
             raise ValueError("initializer_range must be positive")
+        if config.xsa_last_n < 0:
+            raise ValueError("xsa_last_n must be non-negative")
         self.config = config
         self.token_embedding = nn.Embedding(config.vocab_size, config.n_embd)
         self.position_embedding = (
@@ -413,6 +420,10 @@ class TinyGPT(nn.Module):
             else None
         )
         self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layer))
+        if config.xsa_last_n > 0:
+            start = max(0, config.n_layer - config.xsa_last_n)
+            for block in self.blocks[start:]:
+                block.attn.use_xsa = True
         self.ln_f = make_norm(config.norm_type, config.n_embd)
         self.lm_head = nn.Linear(
             config.n_embd,
@@ -694,6 +705,25 @@ def _repeat_kv(x: torch.Tensor, repeat_factor: int) -> torch.Tensor:
     batch_size, n_kv_head, seq_len, head_dim = x.shape
     x = x[:, :, None, :, :].expand(batch_size, n_kv_head, repeat_factor, seq_len, head_dim)
     return x.reshape(batch_size, n_kv_head * repeat_factor, seq_len, head_dim)
+
+
+def _apply_xsa(
+    y: torch.Tensor,
+    current_v: torch.Tensor,
+    n_head: int,
+    n_kv_head: int,
+) -> torch.Tensor:
+    """Remove each query head's component aligned with its own value vector."""
+    if y.size(-2) != current_v.size(-2):
+        raise ValueError("XSA requires current value vectors to match the query sequence length")
+    repeat_factor = n_head // n_kv_head
+    batch_size, _, seq_len, head_dim = y.shape
+    y_t = y.transpose(1, 2)
+    v_t = current_v.transpose(1, 2)
+    y_grouped = y_t.reshape(batch_size, seq_len, n_kv_head, repeat_factor, head_dim)
+    v_norm = F.normalize(v_t, dim=-1).unsqueeze(-2)
+    projection = (y_grouped * v_norm).sum(dim=-1, keepdim=True) * v_norm
+    return (y_grouped - projection).reshape(batch_size, seq_len, n_head, head_dim).transpose(1, 2)
 
 
 def apply_rope(

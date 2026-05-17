@@ -900,6 +900,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     tie_embeddings = bool(payload.get("tie_embeddings", preset.get("tie_embeddings", False)))
     qk_norm = bool(payload.get("qk_norm", preset.get("qk_norm", False)))
     parallel_residual = bool(payload.get("parallel_residual", preset.get("parallel_residual", False)))
+    xsa_last_n = _bounded_int(payload.get("xsa_last_n", preset.get("xsa_last_n", 0)), 0, 128)
     precision = str(payload.get("precision", preset.get("precision", "float32")))
     if precision not in PRECISION_MODES:
         raise ValueError(f"precision must be one of {', '.join(PRECISION_MODES)}")
@@ -1046,6 +1047,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         tie_embeddings=tie_embeddings,
         qk_norm=qk_norm,
         parallel_residual=parallel_residual,
+        xsa_last_n=xsa_last_n,
         attn_backend=attn_backend,
         base_steps=base_steps,
         sft_steps=sft_steps,
@@ -1151,6 +1153,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         position_encoding,
         "--activation",
         activation,
+        "--xsa-last-n",
+        str(xsa_last_n),
         "--attn-backend",
         attn_backend,
         "--base-steps",
@@ -1313,6 +1317,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "tie_embeddings": tie_embeddings,
             "qk_norm": qk_norm,
             "parallel_residual": parallel_residual,
+            "xsa_last_n": xsa_last_n,
             "attn_backend": attn_backend,
             "precision": precision,
             "matmul_precision": matmul_precision,

@@ -154,6 +154,8 @@ def test_cli_run_tiny_h100_scale_applies_modern_defaults(tmp_path, capsys, monke
         "8",
         "--sft-lora-targets",
         "attn_qkv,attn_proj",
+        "--xsa-last-n",
+        "4",
     ])
 
     assert exit_code == 0
@@ -164,6 +166,7 @@ def test_cli_run_tiny_h100_scale_applies_modern_defaults(tmp_path, capsys, monke
     assert config.tie_embeddings is True
     assert config.qk_norm is True
     assert config.parallel_residual is True
+    assert config.xsa_last_n == 4
     assert config.linear_bias is False
     assert config.attn_backend == "flash"
     assert config.precision == "bf16"

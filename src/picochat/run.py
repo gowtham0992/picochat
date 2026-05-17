@@ -60,6 +60,7 @@ class TinyRunConfig:
     qk_norm: bool = False
     attn_backend: str = "auto"
     parallel_residual: bool = False
+    xsa_last_n: int = 0
     linear_bias: bool = True
     base_steps: int = 300
     sft_steps: int = 600
@@ -332,6 +333,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         qk_norm=config.qk_norm,
         attn_backend=config.attn_backend,
         parallel_residual=config.parallel_residual,
+        xsa_last_n=config.xsa_last_n,
         linear_bias=config.linear_bias,
         seed=config.seed,
         device=config.device,

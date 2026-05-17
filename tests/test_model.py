@@ -67,6 +67,27 @@ def test_generate_with_cache_matches_uncached_greedy():
     assert cached.tolist() == uncached.tolist()
 
 
+def test_generate_with_xsa_cache_matches_uncached_greedy():
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_kv_head=2,
+        n_layer=3,
+        position_encoding="rope",
+        xsa_last_n=3,
+    )
+    model = TinyGPT(config)
+    model.eval()
+    prompt = torch.tensor([[1, 2, 3]], dtype=torch.long)
+
+    cached = model.generate(prompt, max_new_tokens=4, temperature=0, use_cache=True)
+    uncached = model.generate(prompt, max_new_tokens=4, temperature=0, use_cache=False)
+
+    assert cached.tolist() == uncached.tolist()
+
+
 def test_forward_returns_kv_cache():
     config = GPTConfig(
         vocab_size=20,
@@ -340,6 +361,25 @@ def test_model_supports_grouped_query_attention_cache():
         config.n_embd // config.n_head
     )
     assert past_kv[0][0].shape == (2, 1, 3, config.n_embd // config.n_head)
+
+
+def test_model_supports_xsa_last_layers():
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=4,
+        xsa_last_n=2,
+    )
+    model = TinyGPT(config)
+
+    assert [block.attn.use_xsa for block in model.blocks] == [False, False, True, True]
+
+
+def test_model_rejects_negative_xsa_last_n():
+    with pytest.raises(ValueError, match="xsa_last_n"):
+        TinyGPT(GPTConfig(vocab_size=20, context_size=8, xsa_last_n=-1))
 
 
 def test_grouped_query_attention_uses_native_sdpa_gqa_when_available(monkeypatch):

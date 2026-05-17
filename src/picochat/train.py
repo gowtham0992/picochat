@@ -91,6 +91,7 @@ class TrainConfig:
     qk_norm: bool = False
     attn_backend: str = "auto"
     parallel_residual: bool = False
+    xsa_last_n: int = 0
     linear_bias: bool = True
     seed: int = 42
     device: str = "cpu"
@@ -376,6 +377,7 @@ def train_base(config: TrainConfig) -> dict:
         qk_norm=config.qk_norm,
         attn_backend=config.attn_backend,
         parallel_residual=config.parallel_residual,
+        xsa_last_n=config.xsa_last_n,
         linear_bias=config.linear_bias,
         logit_softcap=config.logit_softcap,
         gradient_checkpointing=config.gradient_checkpointing,

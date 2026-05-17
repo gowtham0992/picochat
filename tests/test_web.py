@@ -1592,6 +1592,7 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
         "tie_embeddings": True,
         "qk_norm": True,
         "parallel_residual": True,
+        "xsa_last_n": 2,
         "precision": "bf16",
         "matmul_precision": "high",
         "attn_backend": "math",
@@ -1610,6 +1611,7 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
     assert "--tie-embeddings" in started["job"]["command"]
     assert "--qk-norm" in started["job"]["command"]
     assert "--parallel-residual" in started["job"]["command"]
+    assert "--xsa-last-n 2" in started["job"]["command"]
     assert "--precision bf16" in started["job"]["command"]
     assert "--matmul-precision high" in started["job"]["command"]
     assert "--attn-backend math" in started["job"]["command"]
@@ -1625,6 +1627,7 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
     assert started["job"]["launch_config"]["tie_embeddings"] is True
     assert started["job"]["launch_config"]["qk_norm"] is True
     assert started["job"]["launch_config"]["parallel_residual"] is True
+    assert started["job"]["launch_config"]["xsa_last_n"] == 2
     assert started["job"]["launch_config"]["precision"] == "bf16"
     assert started["job"]["launch_config"]["matmul_precision"] == "high"
     assert started["job"]["launch_config"]["attn_backend"] == "math"

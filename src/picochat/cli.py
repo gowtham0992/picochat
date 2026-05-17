@@ -638,6 +638,12 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--tie-embeddings", action="store_true")
     train_base_parser.add_argument("--qk-norm", action="store_true")
     train_base_parser.add_argument(
+        "--xsa-last-n",
+        type=int,
+        default=0,
+        help="Enable zero-parameter exclusive self-attention on the last N transformer blocks.",
+    )
+    train_base_parser.add_argument(
         "--no-linear-bias",
         dest="linear_bias",
         action="store_false",
@@ -1237,6 +1243,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--activation", choices=("gelu", "relu2", "leaky_relu2", "swiglu"), default=None)
     run_tiny_parser.add_argument("--tie-embeddings", action="store_true")
     run_tiny_parser.add_argument("--qk-norm", action="store_true")
+    run_tiny_parser.add_argument(
+        "--xsa-last-n",
+        type=int,
+        default=None,
+        help="Enable zero-parameter exclusive self-attention on the last N transformer blocks.",
+    )
     run_tiny_bias_group = run_tiny_parser.add_mutually_exclusive_group()
     run_tiny_bias_group.add_argument(
         "--linear-bias",
@@ -2243,6 +2255,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         qk_norm=args.qk_norm,
         attn_backend=args.attn_backend,
         parallel_residual=args.parallel_residual,
+        xsa_last_n=args.xsa_last_n,
         linear_bias=args.linear_bias,
         seed=args.seed,
         device=args.device,
@@ -2784,6 +2797,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         qk_norm=_resolve_tiny_bool(args, defaults, "qk_norm"),
         attn_backend=_resolve_tiny_value(args, defaults, "attn_backend"),
         parallel_residual=_resolve_tiny_bool(args, defaults, "parallel_residual"),
+        xsa_last_n=_resolve_tiny_value(args, defaults, "xsa_last_n"),
         linear_bias=_resolve_tiny_value(args, defaults, "linear_bias"),
         base_steps=_resolve_tiny_value(args, defaults, "base_steps"),
         sft_steps=_resolve_tiny_value(args, defaults, "sft_steps"),

@@ -96,6 +96,7 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "qk_norm": model.config.qk_norm,
         "attn_backend": model.config.attn_backend,
         "parallel_residual": model.config.parallel_residual,
+        "xsa_last_n": model.config.xsa_last_n,
         "linear_bias": model.config.linear_bias,
         "bos_token_id": tokenizer.bos_id,
         "eos_token_id": tokenizer.eos_id,
@@ -280,6 +281,7 @@ class PicochatConfig(PretrainedConfig):
         qk_norm=False,
         attn_backend="auto",
         parallel_residual=False,
+        xsa_last_n=0,
         linear_bias=True,
         use_cache=True,
         bos_token_id=1,
@@ -314,6 +316,7 @@ class PicochatConfig(PretrainedConfig):
         self.qk_norm = qk_norm
         self.attn_backend = attn_backend
         self.parallel_residual = parallel_residual
+        self.xsa_last_n = xsa_last_n
         self.linear_bias = linear_bias
         self.use_cache = use_cache
 
@@ -339,6 +342,7 @@ class PicochatConfig(PretrainedConfig):
             qk_norm=self.qk_norm,
             attn_backend=self.attn_backend,
             parallel_residual=self.parallel_residual,
+            xsa_last_n=self.xsa_last_n,
             linear_bias=self.linear_bias,
         )
 '''
