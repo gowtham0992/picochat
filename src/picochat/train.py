@@ -249,7 +249,8 @@ def train_base(config: TrainConfig) -> dict:
                 rebuild=False,
             )
     else:
-        print("base data: preparing in-memory token split", flush=True)
+        if main_process:
+            print("base data: preparing in-memory token split", flush=True)
         split = load_token_split(
             corpus_path=config.corpus_path,
             tokenizer_path=config.tokenizer_path,
@@ -278,12 +279,13 @@ def train_base(config: TrainConfig) -> dict:
         world_size=int(ddp_env["world_size"]),
     )
     batcher_metadata = train_batcher.state_dict()
-    print(
-        "base data: batch sampling "
-        f"mode={batcher_metadata.get('resolved_index_mode', 'unknown')} "
-        f"batches/epoch={batcher_metadata.get('batches_per_epoch', 'unknown')}",
-        flush=True,
-    )
+    if main_process:
+        print(
+            "base data: batch sampling "
+            f"mode={batcher_metadata.get('resolved_index_mode', 'unknown')} "
+            f"batches/epoch={batcher_metadata.get('batches_per_epoch', 'unknown')}",
+            flush=True,
+        )
     pin_memory = device.type == "cuda"
     train_eval_loader = make_dataloader(
         split.train_dataset,
@@ -766,26 +768,30 @@ def train_base(config: TrainConfig) -> dict:
             "weights": "ema" if ema is not None else "raw",
         }
 
-    sample = _generate_sample(
-        model,
-        tokenizer,
-        device,
-        config.sample_tokens,
-        config.seed,
-        precision_runtime=precision_runtime,
-    )
+    sample = ""
     canary_probe = ""
-    if split.canary_values:
-        canary_probe = _generate_sample(
+    memorization_report = {}
+    if main_process:
+        sample = _generate_sample(
             model,
             tokenizer,
             device,
-            min(config.sample_tokens, 80),
-            config.seed + 17,
-            prompt_text="Memorization canary phrase:",
+            config.sample_tokens,
+            config.seed,
             precision_runtime=precision_runtime,
         )
-    memorization_text = f"{sample}\n{canary_probe}" if canary_probe else sample
+        if split.canary_values:
+            canary_probe = _generate_sample(
+                model,
+                tokenizer,
+                device,
+                min(config.sample_tokens, 80),
+                config.seed + 17,
+                prompt_text="Memorization canary phrase:",
+                precision_runtime=precision_runtime,
+            )
+        memorization_text = f"{sample}\n{canary_probe}" if canary_probe else sample
+        memorization_report = memorization_diagnostics(memorization_text, split.train_text, split.val_text)
 
     report = {
         "config": {
@@ -817,7 +823,7 @@ def train_base(config: TrainConfig) -> dict:
         "optimization_stability": optimization_stability(losses, config.grad_clip),
         "throughput": _throughput_summary(losses),
         "rollback_events": rollback_events,
-        "memorization": memorization_diagnostics(memorization_text, split.train_text, split.val_text),
+        "memorization": memorization_report,
         "sample": sample,
         "canary_probe": canary_probe,
         "checkpoint": str(checkpoint_dir),

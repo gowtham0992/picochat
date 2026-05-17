@@ -1294,23 +1294,25 @@ def train_sft(config: SFTConfig) -> dict:
             "weights": "ema" if ema is not None else "raw",
         }
 
-    model.eval()
-    prompt_text = render_chat_prompt([], config.sample_prompt)
-    prompt = torch.tensor(
-        [tokenizer.encode(prompt_text, add_bos=True)],
-        dtype=torch.long,
-        device=device,
-    )
-    with autocast_context(precision_runtime):
-        generated = model.generate(
-            prompt,
-            max_new_tokens=config.sample_tokens,
-            temperature=0.8,
-            top_k=20,
-            seed=config.seed,
-            eos_id=tokenizer.eos_id,
+    sample = ""
+    if main_process:
+        model.eval()
+        prompt_text = render_chat_prompt([], config.sample_prompt)
+        prompt = torch.tensor(
+            [tokenizer.encode(prompt_text, add_bos=True)],
+            dtype=torch.long,
+            device=device,
         )
-    sample = tokenizer.decode(generated[0].tolist())
+        with autocast_context(precision_runtime):
+            generated = model.generate(
+                prompt,
+                max_new_tokens=config.sample_tokens,
+                temperature=0.8,
+                top_k=20,
+                seed=config.seed,
+                eos_id=tokenizer.eos_id,
+            )
+        sample = tokenizer.decode(generated[0].tolist())
 
     report = {
         "config": {
