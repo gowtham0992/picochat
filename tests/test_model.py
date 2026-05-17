@@ -624,6 +624,7 @@ def test_fa3_loader_uses_kernel_hub_flash_attn3(monkeypatch):
 
     fake_kernels = types.ModuleType("kernels")
     fake_kernels.get_kernel = fake_get_kernel
+    monkeypatch.setitem(sys.modules, "flash_attn_interface", None)
     monkeypatch.setitem(sys.modules, "kernels", fake_kernels)
     model_module._fa3_flash_attn_func.cache_clear()
     try:
@@ -646,6 +647,7 @@ def test_fa3_loader_keeps_varunneal_fallback_trusted(monkeypatch):
 
     fake_kernels = types.ModuleType("kernels")
     fake_kernels.get_kernel = fake_get_kernel
+    monkeypatch.setitem(sys.modules, "flash_attn_interface", None)
     monkeypatch.setitem(sys.modules, "kernels", fake_kernels)
     model_module._fa3_flash_attn_func.cache_clear()
     try:

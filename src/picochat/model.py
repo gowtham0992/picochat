@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
-from functools import lru_cache
 
 import torch
 import torch.nn as nn
@@ -23,6 +22,9 @@ _EXTERNAL_FLASH_BACKENDS = ("external_flash", "fa3")
 _SDPA_SUPPORTS_ENABLE_GQA = "enable_gqa" in (
     getattr(F.scaled_dot_product_attention, "__doc__", "") or ""
 )
+_FLASH_ATTN_FUNC_CACHE_MISSING = object()
+_EXTERNAL_FLASH_ATTN_FUNC_CACHE: object = _FLASH_ATTN_FUNC_CACHE_MISSING
+_FA3_FLASH_ATTN_FUNC_CACHE: object = _FLASH_ATTN_FUNC_CACHE_MISSING
 
 
 @dataclass(frozen=True)
@@ -90,34 +92,45 @@ def sdpa_backend_context(attn_backend: str):
     raise RuntimeError("This PyTorch build does not support explicit SDPA backend selection")
 
 
-@lru_cache(maxsize=1)
 def _external_flash_attn_func():
     """Return flash-attn's dense attention function when the optional package exists."""
+    global _EXTERNAL_FLASH_ATTN_FUNC_CACHE
+    if _EXTERNAL_FLASH_ATTN_FUNC_CACHE is not _FLASH_ATTN_FUNC_CACHE_MISSING:
+        return _EXTERNAL_FLASH_ATTN_FUNC_CACHE
     try:
         from flash_attn import flash_attn_func  # type: ignore
-        return flash_attn_func
+
+        _EXTERNAL_FLASH_ATTN_FUNC_CACHE = flash_attn_func
+        return _EXTERNAL_FLASH_ATTN_FUNC_CACHE
     except Exception:
         pass
     try:
         from flash_attn.flash_attn_interface import flash_attn_func  # type: ignore
-        return flash_attn_func
+
+        _EXTERNAL_FLASH_ATTN_FUNC_CACHE = flash_attn_func
+        return _EXTERNAL_FLASH_ATTN_FUNC_CACHE
     except Exception:
+        _EXTERNAL_FLASH_ATTN_FUNC_CACHE = None
         return None
 
 
-@lru_cache(maxsize=1)
 def _fa3_flash_attn_func():
     """Return the optional FlashAttention-3 kernel loader function when present."""
+    global _FA3_FLASH_ATTN_FUNC_CACHE
+    if _FA3_FLASH_ATTN_FUNC_CACHE is not _FLASH_ATTN_FUNC_CACHE_MISSING:
+        return _FA3_FLASH_ATTN_FUNC_CACHE
     try:
         from flash_attn_interface import flash_attn_func  # type: ignore
 
-        return flash_attn_func
+        _FA3_FLASH_ATTN_FUNC_CACHE = flash_attn_func
+        return _FA3_FLASH_ATTN_FUNC_CACHE
     except Exception:
         pass
 
     try:
         from kernels import get_kernel  # type: ignore
     except Exception:
+        _FA3_FLASH_ATTN_FUNC_CACHE = None
         return None
 
     attempts = (
@@ -137,8 +150,24 @@ def _fa3_flash_attn_func():
             continue
         flash_attn_func = getattr(kernel, "flash_attn_func", None)
         if flash_attn_func is not None:
-            return flash_attn_func
+            _FA3_FLASH_ATTN_FUNC_CACHE = flash_attn_func
+            return _FA3_FLASH_ATTN_FUNC_CACHE
+    _FA3_FLASH_ATTN_FUNC_CACHE = None
     return None
+
+
+def _clear_external_flash_attn_func_cache() -> None:
+    global _EXTERNAL_FLASH_ATTN_FUNC_CACHE
+    _EXTERNAL_FLASH_ATTN_FUNC_CACHE = _FLASH_ATTN_FUNC_CACHE_MISSING
+
+
+def _clear_fa3_flash_attn_func_cache() -> None:
+    global _FA3_FLASH_ATTN_FUNC_CACHE
+    _FA3_FLASH_ATTN_FUNC_CACHE = _FLASH_ATTN_FUNC_CACHE_MISSING
+
+
+_external_flash_attn_func.cache_clear = _clear_external_flash_attn_func_cache  # type: ignore[attr-defined]
+_fa3_flash_attn_func.cache_clear = _clear_fa3_flash_attn_func_cache  # type: ignore[attr-defined]
 
 
 def external_flash_attention_available() -> bool:
