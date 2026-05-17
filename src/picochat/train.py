@@ -22,7 +22,7 @@ from picochat.batching import (
 )
 from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
-from picochat.distributed import barrier_if_distributed, is_main_process, prepare_ddp_model
+from picochat.distributed import barrier_if_distributed, ddp_env_metadata, is_main_process, prepare_ddp_model
 from picochat.memorization import memorization_diagnostics
 from picochat.model import GPTConfig, TinyGPT
 from picochat.optim import (
@@ -237,12 +237,15 @@ def train_base(config: TrainConfig) -> dict:
         f"mode={split.stats.get('split_mode', config.dataset_mode)}",
         flush=True,
     )
+    ddp_env = ddp_env_metadata(config.ddp)
     train_batcher = make_resumable_batcher(
         split.train_dataset,
         batch_size=config.batch_size,
         shuffle=True,
         seed=config.seed,
         pin_memory=device.type == "cuda",
+        rank=int(ddp_env["rank"]),
+        world_size=int(ddp_env["world_size"]),
     )
     batcher_metadata = train_batcher.state_dict()
     print(
@@ -328,7 +331,9 @@ def train_base(config: TrainConfig) -> dict:
         muon_learning_rate=config.muon_learning_rate,
     )
     ema = ExponentialMovingAverage(model, config.ema_decay) if config.ema_decay > 0 else None
-    effective_batch_size = config.batch_size * config.grad_accum_steps
+    world_size = int(ddp_metadata.get("world_size", 1))
+    local_effective_batch_size = config.batch_size * config.grad_accum_steps
+    effective_batch_size = local_effective_batch_size * world_size
     effective_tokens_per_step = effective_batch_size * config.context_size
 
     losses: list[dict[str, float | int]] = []
@@ -524,6 +529,7 @@ def train_base(config: TrainConfig) -> dict:
                 **({"muon_momentum": muon_momentum} if muon_momentum is not None else {}),
                 "grad_norm": grad_norm,
                 "grad_accum_steps": config.grad_accum_steps,
+                "local_effective_batch_size": local_effective_batch_size,
                 "effective_batch_size": effective_batch_size,
                 "effective_tokens_per_step": effective_tokens_per_step,
                 **throughput,
@@ -743,6 +749,7 @@ def train_base(config: TrainConfig) -> dict:
             **config.__dict__,
             "requested_device": config.device,
             "device": device.type,
+            "local_effective_batch_size": local_effective_batch_size,
             "effective_batch_size": effective_batch_size,
             "effective_tokens_per_step": effective_tokens_per_step,
             "optimizer_metadata": optimizer.metadata,
@@ -757,7 +764,7 @@ def train_base(config: TrainConfig) -> dict:
         "dataset": {
             **split.stats,
         },
-        "coverage": _coverage_report(split.stats, config, final_step),
+        "coverage": _coverage_report(split.stats, config, final_step, world_size=world_size),
         "model": {
             "config": model_config.to_dict(),
             "num_parameters": model.num_parameters(),
@@ -820,8 +827,15 @@ def _generate_sample(
     return tokenizer.decode(generated[0].tolist())
 
 
-def _coverage_report(dataset_stats: dict, config: TrainConfig, actual_steps: int) -> dict:
-    tokens_per_step = config.batch_size * config.grad_accum_steps * config.context_size
+def _coverage_report(
+    dataset_stats: dict,
+    config: TrainConfig,
+    actual_steps: int,
+    *,
+    world_size: int = 1,
+) -> dict:
+    local_tokens_per_step = config.batch_size * config.grad_accum_steps * config.context_size
+    tokens_per_step = local_tokens_per_step * world_size
     tokens_seen = actual_steps * tokens_per_step
     train_tokens = dataset_stats.get("train_tokens") or dataset_stats.get("num_tokens")
     total_tokens = dataset_stats.get("num_tokens")
@@ -830,6 +844,8 @@ def _coverage_report(dataset_stats: dict, config: TrainConfig, actual_steps: int
         "planned_steps": config.max_steps,
         "micro_batch_size": config.batch_size,
         "grad_accum_steps": config.grad_accum_steps,
+        "world_size": world_size,
+        "local_tokens_per_step_estimate": local_tokens_per_step,
         "tokens_per_step_estimate": tokens_per_step,
         "planned_training_tokens": config.max_steps * tokens_per_step,
         "actual_training_tokens": tokens_seen,

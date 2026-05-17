@@ -15,7 +15,7 @@ from picochat.batching import DeviceBatchPrefetcher, make_resumable_batcher
 from picochat.chat import render_chat_prompt
 from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
-from picochat.distributed import barrier_if_distributed, is_main_process, prepare_ddp_model
+from picochat.distributed import barrier_if_distributed, ddp_env_metadata, is_main_process, prepare_ddp_model
 from picochat.optim import (
     ExponentialMovingAverage,
     create_optimizer,
@@ -837,6 +837,7 @@ def train_sft(config: SFTConfig) -> dict:
         train_weights = category_balanced_weights(train_dataset)
     elif config.sampling == "category_sqrt":
         train_weights = category_sqrt_weights(train_dataset)
+    ddp_env = ddp_env_metadata(config.ddp)
     train_batcher = make_resumable_batcher(
         train_dataset,
         config.batch_size,
@@ -844,6 +845,8 @@ def train_sft(config: SFTConfig) -> dict:
         seed=config.seed,
         weights=train_weights,
         pin_memory=device.type == "cuda",
+        rank=int(ddp_env["rank"]),
+        world_size=int(ddp_env["world_size"]),
     )
     pin_memory = device.type == "cuda"
     train_eval_loader = make_chat_dataloader(
@@ -881,7 +884,9 @@ def train_sft(config: SFTConfig) -> dict:
     )
     ema = ExponentialMovingAverage(model, config.ema_decay) if config.ema_decay > 0 else None
     token_bytes = torch.tensor(token_byte_lengths(tokenizer), dtype=torch.long, device=device)
-    effective_batch_size = config.batch_size * config.grad_accum_steps
+    world_size = int(ddp_metadata.get("world_size", 1))
+    local_effective_batch_size = config.batch_size * config.grad_accum_steps
+    effective_batch_size = local_effective_batch_size * world_size
     effective_tokens_per_step = effective_batch_size * model.config.context_size
 
     losses: list[dict[str, float | int]] = []
@@ -1074,6 +1079,7 @@ def train_sft(config: SFTConfig) -> dict:
                 **({"muon_momentum": muon_momentum} if muon_momentum is not None else {}),
                 "grad_norm": grad_norm,
                 "grad_accum_steps": config.grad_accum_steps,
+                "local_effective_batch_size": local_effective_batch_size,
                 "effective_batch_size": effective_batch_size,
                 "effective_tokens_per_step": effective_tokens_per_step,
                 **throughput,
@@ -1286,6 +1292,7 @@ def train_sft(config: SFTConfig) -> dict:
             **config.__dict__,
             "requested_device": config.device,
             "device": device.type,
+            "local_effective_batch_size": local_effective_batch_size,
             "effective_batch_size": effective_batch_size,
             "effective_tokens_per_step": effective_tokens_per_step,
             "optimizer_metadata": optimizer.metadata,
@@ -1342,6 +1349,7 @@ def train_sft(config: SFTConfig) -> dict:
             total_sequences=len(dataset),
             config=config,
             actual_steps=final_step,
+            world_size=world_size,
         ),
         "model": {
             "config": model.config.to_dict(),
@@ -1380,8 +1388,10 @@ def _coverage_report(
     total_sequences: int,
     config: SFTConfig,
     actual_steps: int,
+    world_size: int = 1,
 ) -> dict:
-    sequences_per_step = config.batch_size * config.grad_accum_steps
+    local_sequences_per_step = config.batch_size * config.grad_accum_steps
+    sequences_per_step = local_sequences_per_step * world_size
     sequence_updates = actual_steps * sequences_per_step
     examples_per_sequence = _safe_ratio(train_source_examples, train_sequences) or 0.0
     examples_per_step = sequences_per_step * examples_per_sequence
@@ -1391,6 +1401,8 @@ def _coverage_report(
         "planned_steps": config.max_steps,
         "micro_batch_size": config.batch_size,
         "grad_accum_steps": config.grad_accum_steps,
+        "world_size": world_size,
+        "local_sequences_per_step_estimate": local_sequences_per_step,
         "sequences_per_step_estimate": sequences_per_step,
         "planned_sequence_updates": config.max_steps * sequences_per_step,
         "actual_sequence_updates": sequence_updates,

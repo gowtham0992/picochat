@@ -43,6 +43,25 @@ def prepare_ddp_model(
     }
 
 
+def ddp_env_metadata(enabled: bool = False) -> dict[str, Any]:
+    """Return torchrun rank metadata before the process group is initialized."""
+    if not enabled:
+        return {"enabled": False, "world_size": 1, "rank": 0, "local_rank": 0}
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    if world_size < 1:
+        raise ValueError("WORLD_SIZE must be at least 1 for DDP")
+    if rank < 0 or rank >= world_size:
+        raise ValueError("RANK must be in [0, WORLD_SIZE) for DDP")
+    return {
+        "enabled": True,
+        "world_size": world_size,
+        "rank": rank,
+        "local_rank": local_rank,
+    }
+
+
 def is_main_process(metadata: dict[str, Any] | None = None) -> bool:
     if metadata is not None:
         return int(metadata.get("rank", 0)) == 0

@@ -164,6 +164,8 @@ class ResumableBatcher:
         index_mode: str = "auto",
         permutation_threshold: int = 5_000_000,
         pin_memory: bool = False,
+        rank: int = 0,
+        world_size: int = 1,
     ):
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
@@ -175,6 +177,10 @@ class ResumableBatcher:
             raise ValueError("permutation_threshold must be at least 1")
         if weights is not None and index_mode == "random":
             raise ValueError("random index_mode does not support weighted sampling")
+        if world_size < 1:
+            raise ValueError("world_size must be at least 1")
+        if rank < 0 or rank >= world_size:
+            raise ValueError("rank must be in [0, world_size)")
         self.dataset = dataset
         self.batch_size = batch_size
         self.shuffle = shuffle
@@ -185,6 +191,8 @@ class ResumableBatcher:
         self.index_mode = index_mode
         self.permutation_threshold = permutation_threshold
         self.pin_memory = pin_memory
+        self.rank = rank
+        self.world_size = world_size
         self._indices_epoch: int | None = None
         self._indices: list[int] = []
 
@@ -199,15 +207,22 @@ class ResumableBatcher:
         if self._resolved_index_mode() == "random":
             return self._next_random_batch()
         indices = self._epoch_indices()
-        start = self.batch_index * self.batch_size
-        end = min(start + self.batch_size, len(indices))
+        start = (
+            self.batch_index * self.batch_size * self.world_size
+            + self.rank * self.batch_size
+        )
+        batch_indices = [
+            indices[(start + offset) % len(indices)]
+            for offset in range(self.batch_size)
+        ]
         self.batch_index += 1
-        batch = [self.dataset[index] for index in indices[start:end]]
+        batch = [self.dataset[index] for index in batch_indices]
         return _collate_tensor_pairs(batch, pin_memory=self.pin_memory)
 
     @property
     def batches_per_epoch(self) -> int:
-        return (len(self.dataset) + self.batch_size - 1) // self.batch_size
+        global_batch_size = self.batch_size * self.world_size
+        return max(1, len(self.dataset) // global_batch_size)
 
     def state_dict(self) -> dict[str, Any]:
         return {
@@ -222,6 +237,9 @@ class ResumableBatcher:
             "resolved_index_mode": self._resolved_index_mode(),
             "permutation_threshold": self.permutation_threshold,
             "pin_memory": self.pin_memory,
+            "rank": self.rank,
+            "world_size": self.world_size,
+            "global_batch_size": self.batch_size * self.world_size,
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -238,6 +256,8 @@ class ResumableBatcher:
             raise ValueError("batcher state index_mode does not match this run")
         if bool(state.get("pin_memory", self.pin_memory)) != self.pin_memory:
             raise ValueError("batcher state pin_memory does not match this run")
+        if int(state.get("world_size", self.world_size)) != self.world_size:
+            raise ValueError("batcher state world_size does not match this run")
         self.epoch = int(state.get("epoch", 0))
         self.batch_index = int(state.get("batch_index", 0))
         if self.batch_index < 0 or self.batch_index > self.batches_per_epoch:
@@ -256,7 +276,12 @@ class ResumableBatcher:
     def _next_random_batch(self):
         batch_size = min(self.batch_size, len(self.dataset))
         generator = torch.Generator()
-        generator.manual_seed(self.seed + (self.epoch * 1_000_003) + self.batch_index)
+        generator.manual_seed(
+            self.seed
+            + (self.epoch * 1_000_003)
+            + (self.batch_index * self.world_size)
+            + self.rank
+        )
         if hasattr(self.dataset, "random_batch_indices"):
             indices = self.dataset.random_batch_indices(batch_size, generator)
         else:
@@ -562,6 +587,8 @@ def make_resumable_batcher(
     index_mode: str = "auto",
     permutation_threshold: int = 5_000_000,
     pin_memory: bool = False,
+    rank: int = 0,
+    world_size: int = 1,
 ) -> ResumableBatcher:
     """Create a deterministic train iterator that can save and load position."""
     return ResumableBatcher(
@@ -573,6 +600,8 @@ def make_resumable_batcher(
         index_mode=index_mode,
         permutation_threshold=permutation_threshold,
         pin_memory=pin_memory,
+        rank=rank,
+        world_size=world_size,
     )
 
 

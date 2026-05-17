@@ -168,6 +168,100 @@ def test_resumable_batcher_uses_random_sampling_for_large_auto_mode():
     assert resumed_y.tolist() == expected_y.tolist()
 
 
+def test_resumable_batcher_shards_permutation_batches_by_rank():
+    class SyntheticDataset(torch.utils.data.Dataset):
+        def __len__(self):
+            return 32
+
+        def __getitem__(self, index):
+            return torch.tensor([index]), torch.tensor([index + 1])
+
+    dataset = SyntheticDataset()
+    rank0 = make_resumable_batcher(
+        dataset,
+        batch_size=4,
+        shuffle=False,
+        seed=11,
+        rank=0,
+        world_size=2,
+    )
+    rank1 = make_resumable_batcher(
+        dataset,
+        batch_size=4,
+        shuffle=False,
+        seed=11,
+        rank=1,
+        world_size=2,
+    )
+
+    x0, _ = next(rank0)
+    x1, _ = next(rank1)
+
+    assert x0.squeeze(-1).tolist() == [0, 1, 2, 3]
+    assert x1.squeeze(-1).tolist() == [4, 5, 6, 7]
+    assert set(x0.squeeze(-1).tolist()).isdisjoint(x1.squeeze(-1).tolist())
+
+
+def test_resumable_batcher_random_mode_uses_rank_distinct_streams():
+    class LargeSyntheticDataset(torch.utils.data.Dataset):
+        def __len__(self):
+            return 100
+
+        def __getitem__(self, index):
+            return torch.tensor([index]), torch.tensor([index + 1])
+
+    dataset = LargeSyntheticDataset()
+    rank0 = make_resumable_batcher(
+        dataset,
+        batch_size=8,
+        shuffle=True,
+        seed=11,
+        permutation_threshold=10,
+        rank=0,
+        world_size=2,
+    )
+    rank1 = make_resumable_batcher(
+        dataset,
+        batch_size=8,
+        shuffle=True,
+        seed=11,
+        permutation_threshold=10,
+        rank=1,
+        world_size=2,
+    )
+
+    x0, _ = next(rank0)
+    x1, _ = next(rank1)
+
+    assert rank0.state_dict()["resolved_index_mode"] == "random"
+    assert rank0.state_dict()["world_size"] == 2
+    assert x0.tolist() != x1.tolist()
+
+
+def test_resumable_batcher_resume_rejects_world_size_change():
+    dataset = TokenWindowDataset(list(range(30)), context_size=4)
+    first = make_resumable_batcher(
+        dataset,
+        batch_size=3,
+        shuffle=True,
+        seed=7,
+        rank=0,
+        world_size=2,
+    )
+    state = first.state_dict()
+    resumed = make_resumable_batcher(
+        dataset,
+        batch_size=3,
+        shuffle=True,
+        seed=7,
+        rank=0,
+        world_size=1,
+    )
+
+    with pytest.raises(ValueError, match="world_size"):
+        resumed.load_state_dict(state)
+
+
 def test_sharded_random_batches_stay_within_one_shard(tmp_path):
     shards = []
     for index, start in enumerate((0, 100)):

@@ -17,6 +17,7 @@ def test_run_preh100_sanity_writes_reports(tmp_path):
         "kv_cache_equivalence",
         "resume_fingerprint_guard",
         "sharded_loader",
+        "ddp_batcher_rank_split",
         "hf_export",
         "torch_compile",
     }

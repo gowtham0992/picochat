@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 import torch
 
-from picochat.batching import load_sharded_token_split
+from picochat.batching import TokenWindowDataset, load_sharded_token_split, make_resumable_batcher
 from picochat.checkpoint import save_checkpoint
 from picochat.device import resolve_device
 from picochat.generate import GenerateConfig, generate_text_with_trace
@@ -51,6 +51,7 @@ def run_preh100_sanity(config: PreH100SanityConfig) -> dict[str, Any]:
         ("kv_cache_equivalence", _check_kv_cache_equivalence),
         ("resume_fingerprint_guard", _check_resume_fingerprint_guard),
         ("sharded_loader", _check_sharded_loader),
+        ("ddp_batcher_rank_split", _check_ddp_batcher_rank_split),
         ("hf_export", _check_hf_export),
         ("torch_compile", _check_torch_compile),
     ]:
@@ -347,6 +348,59 @@ def _check_sharded_loader(config: PreH100SanityConfig, work_dir: Path) -> dict[s
             f"train_sequences={bundle.stats['train_sequences']}"
         ),
         "stats": bundle.stats,
+    }
+
+
+def _check_ddp_batcher_rank_split(config: PreH100SanityConfig, work_dir: Path) -> dict[str, Any]:
+    dataset = TokenWindowDataset(list(range(96)), context_size=4)
+    rank0 = make_resumable_batcher(
+        dataset,
+        batch_size=8,
+        shuffle=False,
+        seed=123,
+        rank=0,
+        world_size=4,
+    )
+    rank1 = make_resumable_batcher(
+        dataset,
+        batch_size=8,
+        shuffle=False,
+        seed=123,
+        rank=1,
+        world_size=4,
+    )
+    x0, _ = next(rank0)
+    x1, _ = next(rank1)
+    rank0_starts = set(x0[:, 0].tolist())
+    rank1_starts = set(x1[:, 0].tolist())
+    if rank0_starts & rank1_starts:
+        raise AssertionError("DDP ranks received overlapping training windows")
+    random_rank0 = make_resumable_batcher(
+        dataset,
+        batch_size=8,
+        shuffle=True,
+        seed=123,
+        permutation_threshold=4,
+        rank=0,
+        world_size=4,
+    )
+    random_rank1 = make_resumable_batcher(
+        dataset,
+        batch_size=8,
+        shuffle=True,
+        seed=123,
+        permutation_threshold=4,
+        rank=1,
+        world_size=4,
+    )
+    random_x0, _ = next(random_rank0)
+    random_x1, _ = next(random_rank1)
+    if random_x0.tolist() == random_x1.tolist():
+        raise AssertionError("DDP random rank streams are identical")
+    return {
+        "detail": "permutation ranks disjoint; random rank streams differ",
+        "world_size": 4,
+        "batch_size": 8,
     }
 
 
