@@ -1,4 +1,6 @@
 from contextlib import contextmanager
+import sys
+import types
 
 import pytest
 import torch
@@ -590,6 +592,26 @@ def test_attention_backend_fa3_requires_optional_package(monkeypatch):
 
     with pytest.raises(RuntimeError, match="FlashAttention-3"):
         model(x)
+
+
+def test_fa3_loader_trusts_explicit_kernel_remote_code(monkeypatch):
+    calls = []
+    sentinel = object()
+
+    def fake_get_kernel(repo_id, **kwargs):
+        calls.append((repo_id, kwargs))
+        return types.SimpleNamespace(flash_attn_func=sentinel)
+
+    fake_kernels = types.ModuleType("kernels")
+    fake_kernels.get_kernel = fake_get_kernel
+    monkeypatch.setitem(sys.modules, "kernels", fake_kernels)
+    model_module._fa3_flash_attn_func.cache_clear()
+    try:
+        assert model_module._fa3_flash_attn_func() is sentinel
+    finally:
+        model_module._fa3_flash_attn_func.cache_clear()
+
+    assert calls == [("varunneal/flash-attention-3", {"trust_remote_code": True})]
 
 
 def test_attention_backend_rejects_unknown_value():

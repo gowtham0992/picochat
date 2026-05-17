@@ -111,7 +111,10 @@ def _fa3_flash_attn_func():
     try:
         from kernels import get_kernel  # type: ignore
 
-        kernel = get_kernel("varunneal/flash-attention-3")
+        try:
+            kernel = get_kernel("varunneal/flash-attention-3", trust_remote_code=True)
+        except TypeError:
+            kernel = get_kernel("varunneal/flash-attention-3")
         return getattr(kernel, "flash_attn_func", None)
     except Exception:
         return None
