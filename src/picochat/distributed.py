@@ -8,6 +8,31 @@ from typing import Any
 import torch
 
 
+def initialize_ddp(
+    device: torch.device,
+    enabled: bool = False,
+) -> dict[str, Any]:
+    """Initialize a single-node torchrun process group when DDP is enabled."""
+    if not enabled:
+        return {"enabled": False, "world_size": 1, "rank": 0, "local_rank": 0}
+    if not torch.distributed.is_available():
+        raise RuntimeError("torch.distributed is not available in this PyTorch build")
+    env = ddp_env_metadata(enabled=True)
+    local_rank = int(env["local_rank"])
+    if device.type == "cuda":
+        torch.cuda.set_device(local_rank)
+    if not torch.distributed.is_initialized():
+        backend = "nccl" if device.type == "cuda" else "gloo"
+        torch.distributed.init_process_group(backend=backend, init_method="env://")
+    return {
+        "enabled": True,
+        "world_size": torch.distributed.get_world_size(),
+        "rank": torch.distributed.get_rank(),
+        "local_rank": local_rank,
+        "backend": torch.distributed.get_backend(),
+    }
+
+
 def prepare_ddp_model(
     model: torch.nn.Module,
     device: torch.device,
@@ -16,17 +41,9 @@ def prepare_ddp_model(
     """Wrap a model in DistributedDataParallel when explicitly requested."""
     if not enabled:
         return model, {"enabled": False, "world_size": 1, "rank": 0, "local_rank": 0}
-    if not torch.distributed.is_available():
-        raise RuntimeError("torch.distributed is not available in this PyTorch build")
-    if not torch.distributed.is_initialized():
-        backend = "nccl" if device.type == "cuda" else "gloo"
-        torch.distributed.init_process_group(backend=backend, init_method="env://")
-
-    world_size = torch.distributed.get_world_size()
-    rank = torch.distributed.get_rank()
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    metadata = initialize_ddp(device, enabled=True)
+    local_rank = int(metadata["local_rank"])
     if device.type == "cuda":
-        torch.cuda.set_device(local_rank)
         wrapped = torch.nn.parallel.DistributedDataParallel(
             model,
             device_ids=[local_rank],
@@ -34,13 +51,7 @@ def prepare_ddp_model(
         )
     else:
         wrapped = torch.nn.parallel.DistributedDataParallel(model)
-    return wrapped, {
-        "enabled": True,
-        "world_size": world_size,
-        "rank": rank,
-        "local_rank": local_rank,
-        "backend": torch.distributed.get_backend(),
-    }
+    return wrapped, metadata
 
 
 def ddp_env_metadata(enabled: bool = False) -> dict[str, Any]:
