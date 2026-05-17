@@ -71,6 +71,7 @@ class RunScale:
     auto_lr_scaling: bool = False
     loss_spike_rollback: bool = False
     target_param_data_ratio: float = 20.0
+    long_run_gate_profile: str = "research"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -351,11 +352,12 @@ RUN_SCALES: dict[str, RunScale] = {
         torch_compile_mode="default",
         auto_lr_scaling=True,
         loss_spike_rollback=True,
+        long_run_gate_profile="first_release",
     ),
     "h100-100m": RunScale(
         name="h100-100m",
         label="H100 100M",
-        description="Single-H100/H200 100M-parameter first-release run for multi-hundred-million-token ClimbMix pilots.",
+        description="Single-H100/H200 100M-parameter skill-release run for multi-hundred-million-token ClimbMix pilots.",
         tokenizer_type="hf_bpe",
         tokenizer_vocab_size=8192,
         tokenizer_min_freq=2,
@@ -403,14 +405,15 @@ RUN_SCALES: dict[str, RunScale] = {
         torch_compile_mode="default",
         auto_lr_scaling=True,
         loss_spike_rollback=True,
+        long_run_gate_profile="skill_release",
     ),
     "h100-100m-ddp8": RunScale(
         name="h100-100m-ddp8",
         label="H100 100M DDP8",
         description=(
             "DDP-aware 100M recipe for 8 GPUs. Keeps base tokens and SFT example "
-            "exposure near the single-GPU 100M target by reducing steps and uses "
-            "explicit tuned LRs."
+            "exposure near the single-GPU 100M target by reducing steps, uses "
+            "explicit tuned LRs, and defaults to the skill_release gate."
         ),
         tokenizer_type="hf_bpe",
         tokenizer_vocab_size=8192,
@@ -459,6 +462,65 @@ RUN_SCALES: dict[str, RunScale] = {
         torch_compile_mode="default",
         auto_lr_scaling=False,
         loss_spike_rollback=False,
+        long_run_gate_profile="skill_release",
+    ),
+    "h200-1b-ddp8": RunScale(
+        name="h200-1b-ddp8",
+        label="H200 1B DDP8",
+        description=(
+            "Eight-H200 1B-class skill-release recipe. Uses 1M-token global batches, "
+            "FA3, 32k HF BPE, and the skill_release gate; import substantially more "
+            "ClimbMix data before treating this as a release candidate."
+        ),
+        tokenizer_type="hf_bpe",
+        tokenizer_vocab_size=32768,
+        tokenizer_min_freq=2,
+        context_size=1024,
+        n_embd=2048,
+        n_head=16,
+        n_kv_head=4,
+        n_layer=24,
+        norm_type="rmsnorm",
+        position_encoding="rope",
+        activation="swiglu",
+        tie_embeddings=True,
+        qk_norm=True,
+        attn_backend="fa3",
+        parallel_residual=True,
+        linear_bias=False,
+        base_steps=9200,
+        sft_steps=64,
+        base_batch_size=8,
+        sft_batch_size=8,
+        base_learning_rate=1e-4,
+        sft_learning_rate=1e-5,
+        base_lr_warmup_steps=500,
+        sft_lr_warmup_steps=10,
+        base_lr_decay="cosine",
+        sft_lr_decay="cosine",
+        base_min_lr_ratio=0.1,
+        sft_min_lr_ratio=0.1,
+        base_grad_clip=1.0,
+        sft_grad_clip=1.0,
+        base_grad_accum_steps=16,
+        sft_grad_accum_steps=4,
+        sft_sampling="category_sqrt",
+        sft_packing="bos_bestfit",
+        base_dataset_mode="sharded",
+        base_shard_token_size=10_000_000,
+        base_shard_cache_size=2,
+        base_early_stop_patience=4,
+        sft_early_stop_patience=4,
+        canary_count=1,
+        eval_max_new_tokens=160,
+        precision="bf16",
+        matmul_precision="high",
+        torch_compile=True,
+        torch_compile_mode="default",
+        auto_lr_scaling=False,
+        loss_spike_rollback=False,
+        target_param_data_ratio=8.5,
+        long_run_gate_profile="skill_release",
     ),
 }
 

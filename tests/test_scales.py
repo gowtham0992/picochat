@@ -53,6 +53,7 @@ def test_h100_100m_scale_matches_release_pilot_recipe():
     assert scale.attn_backend == "flash"
     assert scale.linear_bias is False
     assert scale.precision == "bf16"
+    assert scale.long_run_gate_profile == "skill_release"
 
 
 def test_h100_100m_ddp8_scale_uses_global_budget_recipe():
@@ -70,3 +71,24 @@ def test_h100_100m_ddp8_scale_uses_global_budget_recipe():
     assert scale.auto_lr_scaling is False
     assert scale.loss_spike_rollback is False
     assert scale.base_dataset_mode == "sharded"
+    assert scale.target_param_data_ratio == 20.0
+    assert scale.long_run_gate_profile == "skill_release"
+
+
+def test_h200_1b_ddp8_scale_uses_hopper_release_recipe():
+    scale = RUN_SCALES["h200-1b-ddp8"]
+
+    assert scale.tokenizer_type == "hf_bpe"
+    assert scale.tokenizer_vocab_size == 32768
+    assert scale.context_size == 1024
+    assert scale.n_embd == 2048
+    assert scale.n_layer == 24
+    assert scale.n_head == 16
+    assert scale.n_kv_head == 4
+    assert scale.attn_backend == "fa3"
+    assert scale.base_batch_size == 8
+    assert scale.base_grad_accum_steps == 16
+    assert scale.base_steps == 9200
+    assert scale.base_shard_token_size == 10_000_000
+    assert scale.target_param_data_ratio == 8.5
+    assert scale.long_run_gate_profile == "skill_release"

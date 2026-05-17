@@ -57,10 +57,17 @@ const MUON_EMA_TRIAL_DEFAULTS = {
 };
 const APP_VIEWS = ["home", "guide", "workbench", "scale"];
 const PICOCHAT_REPO_URL = "https://github.com/gowtham0992/picochat.git";
-const SCALE_PRESETS = ["h100-100m-ddp8", "h100-100m", "h100-pilot", "climbmix-pilot", "mps-local", "medium", "small"];
-const H100_SCALE_PRESETS = new Set(["h100-100m-ddp8", "h100-100m", "h100-pilot"]);
-const DDP_SCALE_PRESETS = new Set(["h100-100m-ddp8"]);
+const SCALE_PRESETS = ["h200-1b-ddp8", "h100-100m-ddp8", "h100-100m", "h100-pilot", "climbmix-pilot", "mps-local", "medium", "small"];
+const H100_SCALE_PRESETS = new Set(["h200-1b-ddp8", "h100-100m-ddp8", "h100-100m", "h100-pilot"]);
+const DDP_SCALE_PRESETS = new Set(["h200-1b-ddp8", "h100-100m-ddp8"]);
+const SCALE_GATE_DEFAULTS = {
+  "h200-1b-ddp8": "skill_release",
+  "h100-100m-ddp8": "skill_release",
+  "h100-100m": "skill_release",
+  "h100-pilot": "first_release",
+};
 const SCALE_IMPORT_DEFAULTS = {
+  "h200-1b-ddp8": { shards: 2048, maxRows: 10000000 },
   "h100-100m-ddp8": { shards: 170, maxRows: 800000 },
   "h100-100m": { shards: 170, maxRows: 800000 },
   "h100-pilot": { shards: 16, maxRows: 80000 },
@@ -3415,7 +3422,7 @@ function applyLaunchPreset(quiet = false) {
     : (values.sft_lora_targets || "attn_qkv,attn_proj");
   $("launch-eval-max-new-tokens").value = values.eval_max_new_tokens;
   $("launch-target-param-data-ratio").value = values.target_param_data_ratio || 20;
-  $("launch-long-run-gate-profile").value = values.long_run_gate_profile || (preset === "h100-pilot" ? "first_release" : "research");
+  $("launch-long-run-gate-profile").value = values.long_run_gate_profile || SCALE_GATE_DEFAULTS[preset] || "research";
   if (values.tokenizer_type) $("launch-tokenizer-type").value = values.tokenizer_type;
   $("launch-bpe-pretokenizer").value = values.bpe_pretokenizer || "regex";
   $("launch-tokenizer-vocab-size").value = values.tokenizer_vocab_size || "";
@@ -3561,10 +3568,10 @@ function launchReadiness(config = launchConfig()) {
   }
   if (!["float32", "bf16", "fp16", "auto"].includes(config.precision)) blockers.push("Precision mode is invalid.");
   if (!["default", "highest", "high", "medium"].includes(config.matmul_precision)) blockers.push("Matmul precision mode is invalid.");
-  if (!["auto", "flash", "external_flash", "efficient", "math", "cudnn"].includes(config.attn_backend)) blockers.push("Attention backend is invalid.");
+  if (!["auto", "flash", "fa3", "external_flash", "efficient", "math", "cudnn"].includes(config.attn_backend)) blockers.push("Attention backend is invalid.");
   if (!["default", "reduce-overhead", "max-autotune"].includes(config.torch_compile_mode)) blockers.push("Torch compile mode is invalid.");
-  if (!["research", "first_release"].includes(config.long_run_gate_profile)) blockers.push("Gate profile is invalid.");
-  if (["flash", "external_flash"].includes(config.attn_backend) && !["auto", "cuda"].includes(config.device)) {
+  if (!["research", "first_release", "skill_release"].includes(config.long_run_gate_profile)) blockers.push("Gate profile is invalid.");
+  if (["flash", "fa3", "external_flash"].includes(config.attn_backend) && !["auto", "cuda"].includes(config.device)) {
     blockers.push("Flash attention requires CUDA or AUTO device selection.");
   }
   if (config.ddp && config.loss_spike_rollback) {
@@ -3627,6 +3634,9 @@ function launchReadiness(config = launchConfig()) {
   const benchmarkProfile = state.benchmarkPack?.profile || "";
   if (config.long_run_gate_profile === "first_release" && usingBenchmarkPack && benchmarkProfile && benchmarkProfile !== "release_behavior") {
     cautions.push("FIRST RELEASE gate should normally use a RELEASE BEHAVIOR benchmark pack.");
+  }
+  if (config.long_run_gate_profile === "skill_release" && usingBenchmarkPack && benchmarkProfile && benchmarkProfile !== "release_skills") {
+    cautions.push("SKILL RELEASE gate requires a RELEASE SKILLS benchmark pack with identity/refusal/choice/math/spelling rows.");
   }
   if (usingBenchmarkPack && config.sft_steps > 500) {
     cautions.push("Curated benchmark SFT usually overfits past a few hundred steps; start near 300, then compare.");
@@ -3987,10 +3997,12 @@ function scaleConfig() {
     preset,
     device: $("scale-device")?.value || "auto",
     long_run_gate_profile: H100_SCALE_PRESETS.has(preset)
-      ? "first_release"
+      ? (SCALE_GATE_DEFAULTS[preset] || "first_release")
       : $("launch-long-run-gate-profile")?.value || "research",
+    ddp: DDP_SCALE_PRESETS.has(preset),
+    ddp_world_size: DDP_SCALE_PRESETS.has(preset) ? 8 : 1,
     shards: boundedScaleNumber("scale-climbmix-shards", 1, 1, 6543),
-    max_rows: boundedScaleNumber("scale-max-rows", 1000, 1, 1000000),
+    max_rows: boundedScaleNumber("scale-max-rows", 1000, 1, 20000000),
   };
 }
 
@@ -4049,10 +4061,11 @@ function renderScalePlan() {
     "--device",
     config.device === "cuda" ? "auto" : config.device,
   ];
-  if (config.long_run_gate_profile === "first_release") {
-    mpsParts.push("--long-run-gate-profile", "first_release");
+  if (config.long_run_gate_profile && config.long_run_gate_profile !== "research") {
+    mpsParts.push("--long-run-gate-profile", config.long_run_gate_profile);
   }
   const mpsCommand = shellCommand(mpsParts);
+  const wantsFa3Setup = config.preset === "h200-1b-ddp8";
   const remoteSetup = [
     `git clone ${PICOCHAT_REPO_URL}`,
     "cd picochat",
@@ -4062,8 +4075,11 @@ function renderScalePlan() {
     "python3 -m venv .venv",
     "source .venv/bin/activate",
     "python -m pip install --upgrade pip",
-    "python -m pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1",
+    wantsFa3Setup
+      ? "python -m pip install --index-url https://download.pytorch.org/whl/cu128 torch==2.9.1"
+      : "python -m pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1",
     `python -m pip install -e ".[hf,dev]"`,
+    ...(wantsFa3Setup ? ["python -m pip install kernels"] : []),
   ].join("\n");
   const remoteSanity = [
     "mkdir -p logs",
@@ -4084,7 +4100,7 @@ function renderScalePlan() {
       "--matmul-precision",
       "high",
       "--attn-backend",
-      "flash",
+      wantsFa3Setup ? "fa3" : "flash",
       "--include-compile",
     ])} 2>&1 | tee logs/preh100-sanity.log`,
   ].join("\n");
@@ -4111,6 +4127,8 @@ function renderScalePlan() {
       "--force",
     ])} 2>&1 | tee logs/import-climbmix.log`,
   ].join("\n");
+  const releaseProfile = config.long_run_gate_profile === "skill_release" ? "release_skills" : "release_behavior";
+  const releaseAnswerStyle = config.long_run_gate_profile === "skill_release" ? "scratchpad" : "direct";
   const remoteBenchmark = `${shellCommand([
     "PYTHONUNBUFFERED=1",
     "PYTHONPATH=src",
@@ -4126,9 +4144,9 @@ function renderScalePlan() {
     "--eval-rows",
     320,
     "--profile",
-    "release_behavior",
+    releaseProfile,
     "--skill-answer-style",
-    "direct",
+    releaseAnswerStyle,
     "--source",
     "offline",
     "--force",
@@ -4147,8 +4165,8 @@ function renderScalePlan() {
     "--device",
     "cuda",
   ];
-  if (config.long_run_gate_profile === "first_release") {
-    remoteRunArgs.push("--long-run-gate-profile", "first_release");
+  if (config.long_run_gate_profile && config.long_run_gate_profile !== "research") {
+    remoteRunArgs.push("--long-run-gate-profile", config.long_run_gate_profile);
   }
   const remotePreflightParts = [
     ...(usesDdp ? ["OMP_NUM_THREADS=1"] : []),
@@ -4231,7 +4249,11 @@ function renderScalePlan() {
   renderScaleCommand("scale-remote-setup-command", "REMOTE SETUP", remoteSetup);
   renderScaleCommand("scale-remote-sanity-command", "PRE-H100 SANITY", remoteSanity);
   renderScaleCommand("scale-remote-import-command", "REMOTE CLIMBMIX IMPORT", remoteImport);
-  renderScaleCommand("scale-remote-benchmark-command", "REMOTE RELEASE BEHAVIOR PACK", remoteBenchmark);
+  renderScaleCommand(
+    "scale-remote-benchmark-command",
+    config.long_run_gate_profile === "skill_release" ? "REMOTE RELEASE SKILLS PACK" : "REMOTE RELEASE BEHAVIOR PACK",
+    remoteBenchmark,
+  );
   renderScaleCommand("scale-remote-preflight-command", "REMOTE PREFLIGHT", remotePreflight);
   renderScaleCommand("scale-remote-run-command", "REMOTE TRAIN", remoteRun);
   renderScaleCommand("scale-remote-return-command", "REMOTE RETURN / INSPECT", remoteReturn);
@@ -5217,9 +5239,11 @@ async function createBenchmarkTuningPack() {
     $("editor-chat-path").value = "";
     $("editor-eval-path").value = "";
     $("launch-pack-path").value = packPath;
-    if ($("launch-long-run-gate-profile") && report.profile === "release_behavior") {
+    if ($("launch-long-run-gate-profile") && report.profile === "release_skills") {
+      $("launch-long-run-gate-profile").value = "skill_release";
+    } else if ($("launch-long-run-gate-profile") && report.profile === "release_behavior") {
       $("launch-long-run-gate-profile").value = "first_release";
-    } else if ($("launch-long-run-gate-profile")?.value === "first_release") {
+    } else if (["first_release", "skill_release"].includes($("launch-long-run-gate-profile")?.value)) {
       $("launch-long-run-gate-profile").value = "research";
     }
     renderBenchmarkTuningPack(report);

@@ -577,6 +577,35 @@ def test_attention_backend_can_use_optional_fa3(monkeypatch):
     }]
 
 
+def test_attention_backend_resolves_fa3_loader_once(monkeypatch):
+    load_calls = 0
+
+    def fake_flash(q, k, v, causal=True):
+        return torch.zeros_like(q)
+
+    def fake_loader():
+        nonlocal load_calls
+        load_calls += 1
+        return fake_flash
+
+    monkeypatch.setattr(model_module, "_fa3_flash_attn_func", fake_loader)
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        attn_backend="fa3",
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    model(x)
+    model(x)
+
+    assert load_calls == 1
+
+
 def test_attention_backend_fa3_requires_optional_package(monkeypatch):
     monkeypatch.setattr(model_module, "_fa3_flash_attn_func", lambda: None)
     config = GPTConfig(

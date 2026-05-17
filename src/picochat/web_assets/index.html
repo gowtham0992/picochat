@@ -113,6 +113,7 @@
               <div>
                 <label for="scale-preset">PRESET</label>
                 <select id="scale-preset">
+                  <option value="h200-1b-ddp8">H200 1B DDP8</option>
                   <option value="h100-100m-ddp8">H100 100M DDP8</option>
                   <option value="h100-100m">H100 100M</option>
                   <option value="h100-pilot">H100 PILOT</option>
@@ -137,7 +138,7 @@
               </div>
               <div>
                 <label for="scale-max-rows">MAX ROWS</label>
-                <input id="scale-max-rows" type="number" min="1" max="1000000" value="800000">
+                <input id="scale-max-rows" type="number" min="1" max="20000000" value="800000">
               </div>
               <button id="scale-use-launcher-button" type="button">USE LAUNCHER SETTINGS</button>
               <button id="scale-refresh-button" type="button">REFRESH COMMANDS</button>
@@ -795,6 +796,7 @@
                       <select id="launch-attn-backend">
                         <option value="auto">AUTO</option>
                         <option value="flash">FLASH</option>
+                        <option value="fa3">FA3</option>
                         <option value="external_flash">FLASH-ATTN</option>
                         <option value="efficient">EFFICIENT</option>
                         <option value="math">MATH</option>
@@ -884,6 +886,7 @@
                       <select id="launch-long-run-gate-profile">
                         <option value="research">RESEARCH</option>
                         <option value="first_release">FIRST RELEASE</option>
+                        <option value="skill_release">SKILL RELEASE</option>
                       </select>
                     </div>
                   </div>

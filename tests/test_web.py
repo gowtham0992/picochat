@@ -55,8 +55,13 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert 'id="launch-sft-lora-targets"' in html
     assert 'option value="packed"' in html
     assert 'option value="external_flash"' in html
+    assert 'option value="fa3"' in html
+    assert 'option value="skill_release"' in html
+    assert 'option value="h200-1b-ddp8"' in html
     assert 'option value="h100-100m-ddp8"' in html
+    assert '"h200-1b-ddp8"' in js
     assert '"h100-100m-ddp8"' in js
+    assert '"release_skills"' in js
     assert '"--sft-peft"' in js
     assert '"--sft-lora-targets"' in js
     assert "const DDP_SCALE_PRESETS" in js
@@ -1669,12 +1674,16 @@ def test_run_presets_are_exposed_for_web_launcher():
     assert presets["small-local"]["n_layer"] >= presets["tiny"]["n_layer"]
     assert presets["h100-100m"]["n_embd"] == 768
     assert presets["h100-100m"]["base_steps"] == 33000
-    assert presets["h100-100m"]["long_run_gate_profile"] == "first_release"
+    assert presets["h100-100m"]["long_run_gate_profile"] == "skill_release"
     assert presets["h100-100m-ddp8"]["base_steps"] == 4100
     assert presets["h100-100m-ddp8"]["sft_steps"] == 24
     assert presets["h100-100m-ddp8"]["ddp"] is True
     assert presets["h100-100m-ddp8"]["loss_spike_rollback"] is False
-    assert presets["h100-100m-ddp8"]["long_run_gate_profile"] == "first_release"
+    assert presets["h100-100m-ddp8"]["long_run_gate_profile"] == "skill_release"
+    assert presets["h200-1b-ddp8"]["n_embd"] == 2048
+    assert presets["h200-1b-ddp8"]["attn_backend"] == "fa3"
+    assert presets["h200-1b-ddp8"]["ddp"] is True
+    assert presets["h200-1b-ddp8"]["long_run_gate_profile"] == "skill_release"
 
 
 def test_start_run_plan_rejects_unknown_preset(tmp_path):

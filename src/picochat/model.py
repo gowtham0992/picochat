@@ -170,6 +170,14 @@ _external_flash_attn_func.cache_clear = _clear_external_flash_attn_func_cache  #
 _fa3_flash_attn_func.cache_clear = _clear_fa3_flash_attn_func_cache  # type: ignore[attr-defined]
 
 
+def _flash_attention_func_for_backend(backend: str):
+    if backend == "fa3":
+        return _fa3_flash_attn_func()
+    if backend == "external_flash":
+        return _external_flash_attn_func()
+    return None
+
+
 def external_flash_attention_available() -> bool:
     """Whether the optional flash-attn package is importable in this environment."""
     return _external_flash_attn_func() is not None
@@ -212,6 +220,11 @@ class CausalSelfAttention(nn.Module):
         if config.attn_backend not in SDPA_BACKENDS:
             raise ValueError(f"attn_backend must be one of: {', '.join(SDPA_BACKENDS)}")
         self.attn_backend = config.attn_backend
+        self._external_attention_func = (
+            _flash_attention_func_for_backend(config.attn_backend)
+            if config.attn_backend in _EXTERNAL_FLASH_BACKENDS
+            else None
+        )
         self.q_norm = RMSNorm(self.head_dim) if config.qk_norm else nn.Identity()
         self.k_norm = RMSNorm(self.head_dim) if config.qk_norm else nn.Identity()
         self.qkv = nn.Linear(config.n_embd, config.n_embd + 2 * self.kv_dim, bias=config.linear_bias)
@@ -275,12 +288,15 @@ class CausalSelfAttention(nn.Module):
         y = None
         if self.attn_backend in _EXTERNAL_FLASH_BACKENDS:
             if past_kv is None and attn_mask is None:
+                if self._external_attention_func is None:
+                    self._external_attention_func = _flash_attention_func_for_backend(self.attn_backend)
                 y = _external_flash_attention(
                     q,
                     k,
                     v,
                     dropout_p=sdpa_kwargs["dropout_p"],
                     backend=self.attn_backend,
+                    flash_attn_func=self._external_attention_func,
                 )
         if y is None:
             with sdpa_backend_context(self.attn_backend):
@@ -602,8 +618,8 @@ def _external_flash_attention(
     *,
     dropout_p: float,
     backend: str,
+    flash_attn_func,
 ) -> torch.Tensor:
-    flash_attn_func = _fa3_flash_attn_func() if backend == "fa3" else _external_flash_attn_func()
     if flash_attn_func is None:
         if backend == "fa3":
             raise RuntimeError(

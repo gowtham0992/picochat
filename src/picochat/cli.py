@@ -1517,7 +1517,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument(
         "--long-run-gate-profile",
         choices=LONG_RUN_GATE_PROFILES,
-        default="research",
+        default=None,
         help=(
             "Completed-run approval profile. research gates all behavior metrics; "
             "first_release gates release behavior while keeping math and spelling diagnostic; "
@@ -2850,7 +2850,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         loss_spike_lr_decay=_resolve_tiny_value(args, defaults, "loss_spike_lr_decay"),
         loss_spike_min_lr_scale=_resolve_tiny_value(args, defaults, "loss_spike_min_lr_scale"),
         loss_spike_snapshot_every=_resolve_tiny_value(args, defaults, "loss_spike_snapshot_every"),
-        long_run_gate_profile=args.long_run_gate_profile,
+        long_run_gate_profile=_resolve_tiny_value(args, defaults, "long_run_gate_profile"),
     )
 
 
