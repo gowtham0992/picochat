@@ -181,6 +181,33 @@ def test_cli_run_tiny_h100_scale_applies_modern_defaults(tmp_path, capsys, monke
     assert "tiny run: 1/1 passed" in capsys.readouterr().out
 
 
+def test_cli_run_tiny_ddp_worker_completion_does_not_expect_eval(tmp_path, capsys, monkeypatch):
+    def fake_run(config):
+        assert config.out_dir == str(tmp_path / "worker")
+        assert config.ddp is True
+        return {
+            "status": "ddp_worker_complete",
+            "rank": 1,
+            "world_size": 8,
+            "out_dir": str(tmp_path / "worker"),
+        }
+
+    monkeypatch.setattr("picochat.cli.run_tiny", fake_run)
+
+    exit_code = main([
+        "run",
+        "tiny",
+        "--out-dir",
+        str(tmp_path / "worker"),
+        "--ddp",
+        "--ddp-world-size",
+        "8",
+    ])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == ""
+
+
 def test_cli_run_tiny_can_override_h100_scale_linear_bias(tmp_path, monkeypatch):
     captured = {}
 

@@ -2744,6 +2744,11 @@ def run_tiny_command(args: argparse.Namespace) -> int:
             )
         return 0
     summary = run_tiny(config)
+    if summary.get("status") == "ddp_worker_complete":
+        return 0
+    if "eval" not in summary:
+        print("tiny run: completed without eval summary")
+        return 0
     print(
         f"tiny run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "
         f"passed ({summary['eval']['pass_rate'] * 100:.2f}%)"
