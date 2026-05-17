@@ -416,6 +416,7 @@ def build_token_shards(
     add_eos: bool = True,
     read_chars: int = 1_000_000,
     corpus_manifest_path: str | Path | None = None,
+    progress: bool = False,
 ) -> dict[str, Any]:
     """Tokenize a corpus into disk shards without holding all tokens in memory."""
     if shard_token_size < 2:
@@ -456,6 +457,13 @@ def build_token_shards(
             "path": str(shard_path),
             "num_tokens": len(buffer),
         })
+        if progress and (len(shard_rows) == 1 or len(shard_rows) % 50 == 0):
+            written_tokens = sum(int(row["num_tokens"]) for row in shard_rows)
+            print(
+                "base data: token shard build "
+                f"shards={len(shard_rows):,} tokens={written_tokens:,}",
+                flush=True,
+            )
         buffer = []
 
     document_texts = _iter_manifest_document_texts(corpus_path, manifest_path)
@@ -571,6 +579,7 @@ def load_sharded_token_split(
     shard_cache_size: int = 2,
     rebuild: bool = True,
     corpus_manifest_path: str | Path | None = None,
+    progress: bool = False,
 ) -> TokenSplitBundle:
     """Build token shards and return train/validation sharded window datasets."""
     if not 0.0 < val_fraction < 1.0:
@@ -582,6 +591,7 @@ def load_sharded_token_split(
             out_dir=cache_dir,
             shard_token_size=shard_token_size,
             corpus_manifest_path=corpus_manifest_path,
+            progress=progress,
         )
     else:
         manifest = load_token_shards_manifest(

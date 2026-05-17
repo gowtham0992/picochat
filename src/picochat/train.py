@@ -234,6 +234,7 @@ def train_base(config: TrainConfig) -> dict:
                 shard_token_size=config.shard_token_size,
                 shard_cache_size=config.shard_cache_size,
                 corpus_manifest_path=config.corpus_manifest_path,
+                progress=True,
                 rebuild=True,
             )
         barrier_if_distributed(ddp_metadata)
