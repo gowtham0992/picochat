@@ -3441,10 +3441,14 @@ function boundedNumberInput(id, fallback, min, max) {
 
 function launchConfig() {
   const tokenizerVocab = $("launch-tokenizer-vocab-size").value.trim();
+  const preset = $("launch-preset").value;
+  const ddp = DDP_SCALE_PRESETS.has(preset);
   return {
     dataset_pack: $("launch-pack-path").value.trim(),
     run_name: $("launch-run-name").value.trim(),
-    preset: $("launch-preset").value,
+    preset,
+    ddp,
+    ddp_world_size: ddp ? 8 : 1,
     context_size: launchNumber("launch-context-size"),
     n_embd: launchNumber("launch-n-embd"),
     n_head: launchNumber("launch-n-head"),
@@ -3631,7 +3635,8 @@ function renderLaunchReadiness() {
 
 function launchPreviewCommand(config = launchConfig()) {
   const outDir = config.run_name ? `runs/${config.run_name}` : "runs/my-run";
-  const usesDdp = DDP_SCALE_PRESETS.has(config.preset);
+  const usesDdp = Boolean(config.ddp);
+  const ddpWorldSize = config.ddp_world_size || 8;
   const envParts = [
     ...(usesDdp ? ["OMP_NUM_THREADS=1"] : []),
     ...(usesDdp ? ["PICOCHAT_DDP_TIMEOUT_MINUTES=120"] : []),
@@ -3643,7 +3648,7 @@ function launchPreviewCommand(config = launchConfig()) {
     ...envParts,
     "torchrun",
     "--standalone",
-    "--nproc_per_node=8",
+    `--nproc_per_node=${ddpWorldSize}`,
     "-m",
     "picochat.cli",
   ] : [
@@ -4066,7 +4071,8 @@ function renderScalePlan() {
     "offline",
     "--force",
   ])} 2>&1 | tee logs/benchmark-pack-cuda.log`;
-  const usesDdp = DDP_SCALE_PRESETS.has(config.preset);
+  const usesDdp = Boolean(config.ddp);
+  const ddpWorldSize = config.ddp_world_size || 8;
   const remoteRunArgs = [
     "run",
     "tiny",
@@ -4093,7 +4099,7 @@ function renderScalePlan() {
     "picochat.cli",
     ...remoteRunArgs,
   ];
-  if (usesDdp) remotePreflightParts.push("--ddp", "--ddp-world-size", "8");
+  if (usesDdp) remotePreflightParts.push("--ddp", "--ddp-world-size", ddpWorldSize);
   const remoteRunParts = usesDdp
     ? [
       "OMP_NUM_THREADS=1",
@@ -4103,7 +4109,7 @@ function renderScalePlan() {
       "PYTHONPATH=src",
       "torchrun",
       "--standalone",
-      "--nproc_per_node=8",
+      `--nproc_per_node=${ddpWorldSize}`,
       "-m",
       "picochat.cli",
       ...remoteRunArgs,

@@ -53,7 +53,8 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert '"h100-100m-ddp8"' in js
     assert "const DDP_SCALE_PRESETS" in js
     assert '"torchrun"' in js
-    assert '"--nproc_per_node=8"' in js
+    assert "--nproc_per_node=${ddpWorldSize}" in js
+    assert "ddp_world_size" in js
     assert '"--ddp-world-size"' in js
     assert '"--ddp"' in js
     assert '"OMP_NUM_THREADS=1"' in js
