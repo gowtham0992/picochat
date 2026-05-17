@@ -338,14 +338,31 @@ def inspect_documents(documents: list[str], num_files: int | None = None) -> Cor
             near_duplicate_documents_checked=0,
         )
 
-    all_text = "\n".join(documents)
-    lines = all_text.splitlines()
-    non_empty_lines = [line.strip() for line in lines if line.strip()]
-    duplicate_lines = len(non_empty_lines) - len(set(non_empty_lines))
+    seen_lines: set[str] = set()
+    duplicate_lines = 0
+    non_empty_line_count = 0
+    empty_lines = 0
+    num_lines = 0
+    non_ascii_chars = 0
+    document_chars = 0
+    for document in documents:
+        document_chars += len(document)
+        non_ascii_chars += sum(1 for char in document if ord(char) > 127)
+        lines = document.splitlines()
+        num_lines += len(lines)
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                empty_lines += 1
+                continue
+            non_empty_line_count += 1
+            if stripped in seen_lines:
+                duplicate_lines += 1
+            else:
+                seen_lines.add(stripped)
+    joined_character_count = document_chars + max(0, len(documents) - 1)
     normalized_documents = [_normalize_document_for_duplicate_check(document) for document in documents]
     duplicate_documents = len(normalized_documents) - len(set(normalized_documents))
-    non_ascii_chars = sum(1 for char in all_text if ord(char) > 127)
-    empty_lines = sum(1 for line in lines if not line.strip())
     near_duplicate_rate, near_duplicate_pairs, near_duplicate_checked = (
         _near_duplicate_document_stats(documents)
     )
@@ -353,13 +370,13 @@ def inspect_documents(documents: list[str], num_files: int | None = None) -> Cor
     return CorpusStats(
         num_files=num_files if num_files is not None else len(documents),
         num_documents=len(documents),
-        num_characters=len(all_text),
-        num_lines=len(lines),
-        average_document_chars=len(all_text) / len(documents),
+        num_characters=joined_character_count,
+        num_lines=num_lines,
+        average_document_chars=joined_character_count / len(documents),
         duplicate_document_rate=duplicate_documents / max(1, len(normalized_documents)),
-        duplicate_line_rate=duplicate_lines / max(1, len(non_empty_lines)),
-        non_ascii_rate=non_ascii_chars / max(1, len(all_text)),
-        empty_line_rate=empty_lines / max(1, len(lines)),
+        duplicate_line_rate=duplicate_lines / max(1, non_empty_line_count),
+        non_ascii_rate=non_ascii_chars / max(1, joined_character_count),
+        empty_line_rate=empty_lines / max(1, num_lines),
         near_duplicate_document_rate=near_duplicate_rate,
         near_duplicate_document_pairs=near_duplicate_pairs,
         near_duplicate_documents_checked=near_duplicate_checked,
@@ -741,8 +758,7 @@ def build_corpus_artifacts(
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    corpus_text = "\n\n".join(collected.documents)
-    output_path.write_text(corpus_text + ("\n" if corpus_text else ""), encoding="utf-8")
+    _write_corpus_documents(output_path, collected.documents)
     document_records = _document_records(collected.document_sources, collected.documents)
 
     report = CorpusBuildReport(
@@ -789,7 +805,6 @@ def preview_corpus_sources(
         dataset_pack,
         min_quality_score=min_quality_score,
     )
-    corpus_text = "\n\n".join(collected.documents)
     return CorpusPreviewReport(
         input_path=collected.input_path,
         recipe_path=collected.recipe_path,
@@ -802,7 +817,7 @@ def preview_corpus_sources(
         chat_data=collected.chat_data,
         eval_data=collected.eval_data,
         warnings=collected.warnings,
-        preview=corpus_text[:max(0, preview_chars)],
+        preview=_preview_documents(collected.documents, max(0, preview_chars)),
         min_quality_score=collected.min_quality_score,
     )
 
@@ -958,6 +973,37 @@ def _document_records(
         ))
         offset = char_end + 2
     return tuple(records)
+
+
+def _write_corpus_documents(output_path: Path, documents: tuple[str, ...]) -> None:
+    with output_path.open("w", encoding="utf-8") as handle:
+        for index, document in enumerate(documents):
+            if index:
+                handle.write("\n\n")
+            handle.write(document)
+        if documents:
+            handle.write("\n")
+
+
+def _preview_documents(documents: tuple[str, ...], preview_chars: int) -> str:
+    if preview_chars <= 0:
+        return ""
+    remaining = preview_chars
+    parts: list[str] = []
+    for index, document in enumerate(documents):
+        if index:
+            separator = "\n\n"
+            if remaining <= len(separator):
+                parts.append(separator[:remaining])
+                break
+            parts.append(separator)
+            remaining -= len(separator)
+        if remaining <= len(document):
+            parts.append(document[:remaining])
+            break
+        parts.append(document)
+        remaining -= len(document)
+    return "".join(parts)
 
 
 def _source_files(path: Path) -> list[Path]:
