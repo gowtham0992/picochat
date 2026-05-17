@@ -1241,6 +1241,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Wrap base and SFT training in DistributedDataParallel. Launch with torchrun.",
     )
     run_tiny_parser.add_argument(
+        "--ddp-world-size",
+        type=int,
+        default=None,
+        help=(
+            "Preflight-only DDP world-size simulation. Use this to estimate an 8-GPU "
+            "budget without launching eight preflight workers."
+        ),
+    )
+    run_tiny_parser.add_argument(
         "--sft-sampling",
         choices=SFT_SAMPLING_MODES,
         default=None,
@@ -2485,6 +2494,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         torch_compile_mode=_resolve_tiny_value(args, defaults, "torch_compile_mode"),
         gradient_checkpointing=_resolve_tiny_bool(args, defaults, "gradient_checkpointing"),
         ddp=_resolve_tiny_bool(args, defaults, "ddp"),
+        ddp_world_size=args.ddp_world_size if args.ddp_world_size is not None else defaults.ddp_world_size,
         allow_unsafe_long_run=args.allow_unsafe_long_run,
         target_param_data_ratio=_resolve_tiny_value(args, defaults, "target_param_data_ratio"),
         auto_lr_scaling=_resolve_tiny_bool(args, defaults, "auto_lr_scaling"),

@@ -436,6 +436,28 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
             "Effective batch combines batch size and gradient accumulation.",
         ),
     ]
+    scale_name = str(_value(config, "scale", "custom"))
+    if scale_name.endswith("-ddp8"):
+        ddp_enabled = bool(_value(config, "ddp", False))
+        if ddp_enabled and budget.ddp_world_size == 8:
+            checks.append(_check(
+                "ddp_scale_launch",
+                "pass",
+                f"{budget.ddp_world_size} ranks",
+                "--ddp with 8 ranks",
+                "The DDP8 preset is being evaluated with the intended global batch.",
+            ))
+        else:
+            checks.append(_check(
+                "ddp_scale_launch",
+                "block",
+                f"ddp={ddp_enabled}, world_size={budget.ddp_world_size}",
+                "--ddp and WORLD_SIZE=8, or --ddp-world-size 8 for preflight",
+                (
+                    "This preset is calibrated for 8 GPU ranks. Running it as a "
+                    "single-process job undertrains the base model by about 8x."
+                ),
+            ))
     base_lr = float(_value(config, "base_learning_rate", 0.0) or 0.0)
     if base_lr <= 0:
         checks.append(_check("base_lr", "block", str(base_lr), "> 0", "Base training needs a positive learning rate."))

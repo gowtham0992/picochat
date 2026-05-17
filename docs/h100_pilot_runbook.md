@@ -286,7 +286,22 @@ checkpoint plus first-release identity/refusal behavior.
 
 For an 8x H100/B200 box, do not reuse the single-GPU 33k-step command. The
 global batch is 8x larger, so the same token budget needs about one eighth the
-steps. Use the DDP-aware preset and launch with `torchrun`:
+steps. Run preflight once with a simulated DDP world size:
+
+```bash
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+  --out-dir runs/h100-climbmix-100m-ddp8-release-v1 \
+  --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
+  --scale h100-100m-ddp8 \
+  --device cuda \
+  --ddp \
+  --ddp-world-size 8 \
+  --long-run-gate-profile first_release \
+  --preflight-only 2>&1 | tee logs/preflight-h100-100m-ddp8.log
+```
+
+If the only warnings are the known sharded-validation tradeoff and the reviewed
+LR notes, launch the actual distributed run with `torchrun`:
 
 ```bash
 PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=8 -m picochat.cli run tiny \
@@ -296,13 +311,12 @@ PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=8 -m picochat.cli run 
   --device cuda \
   --ddp \
   --long-run-gate-profile first_release \
-  --preflight-only 2>&1 | tee logs/preflight-h100-100m-ddp8.log
+  2>&1 | tee logs/train-h100-100m-ddp8.log
 ```
 
-If the only warnings are the known sharded-validation tradeoff and the reviewed
-LR notes, remove `--preflight-only`. This preset uses explicit learning rates
-instead of `--auto-lr-scaling`, because auto scaling includes DDP world size and
-can silently turn a stable single-GPU LR into a different optimizer experiment.
+This preset uses explicit learning rates instead of `--auto-lr-scaling`, because
+auto scaling includes DDP world size and can silently turn a stable single-GPU
+LR into a different optimizer experiment.
 
 ## 7. If SFT Misses, Sweep The Release Behavior Lane
 

@@ -51,6 +51,7 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert "const DDP_SCALE_PRESETS" in js
     assert '"torchrun"' in js
     assert '"--nproc_per_node=8"' in js
+    assert '"--ddp-world-size"' in js
     assert '"--ddp"' in js
 
 
@@ -1402,6 +1403,9 @@ def test_run_presets_are_exposed_for_web_launcher():
     assert presets["h100-100m"]["n_embd"] == 768
     assert presets["h100-100m"]["base_steps"] == 33000
     assert presets["h100-100m"]["long_run_gate_profile"] == "first_release"
+    assert presets["h100-100m-ddp8"]["base_steps"] == 4100
+    assert presets["h100-100m-ddp8"]["ddp"] is True
+    assert presets["h100-100m-ddp8"]["long_run_gate_profile"] == "first_release"
 
 
 def test_start_run_plan_rejects_unknown_preset(tmp_path):

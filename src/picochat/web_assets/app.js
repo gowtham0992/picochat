@@ -4046,6 +4046,30 @@ function renderScalePlan() {
     "--force",
   ])} 2>&1 | tee logs/benchmark-pack-cuda.log`;
   const usesDdp = DDP_SCALE_PRESETS.has(config.preset);
+  const remoteRunArgs = [
+    "run",
+    "tiny",
+    "--out-dir",
+    `runs/${config.run_name}`,
+    "--dataset-pack",
+    "runs/climbmix-cuda/dataset_pack.json",
+    "--scale",
+    config.preset,
+    "--device",
+    "cuda",
+  ];
+  if (config.long_run_gate_profile === "first_release") {
+    remoteRunArgs.push("--long-run-gate-profile", "first_release");
+  }
+  const remotePreflightParts = [
+    "PYTHONUNBUFFERED=1",
+    "PYTHONPATH=src",
+    "python",
+    "-m",
+    "picochat.cli",
+    ...remoteRunArgs,
+  ];
+  if (usesDdp) remotePreflightParts.push("--ddp", "--ddp-world-size", "8");
   const remoteRunParts = usesDdp
     ? [
       "PYTHONUNBUFFERED=1",
@@ -4055,8 +4079,8 @@ function renderScalePlan() {
       "--nproc_per_node=8",
       "-m",
       "picochat.cli",
-      "run",
-      "tiny",
+      ...remoteRunArgs,
+      "--ddp",
     ]
     : [
       "PYTHONUNBUFFERED=1",
@@ -4064,24 +4088,9 @@ function renderScalePlan() {
       "python",
       "-m",
       "picochat.cli",
-      "run",
-      "tiny",
+      ...remoteRunArgs,
     ];
-  remoteRunParts.push(
-    "--out-dir",
-    `runs/${config.run_name}`,
-    "--dataset-pack",
-    "runs/climbmix-cuda/dataset_pack.json",
-    "--scale",
-    config.preset,
-    "--device",
-    "cuda",
-  );
-  if (usesDdp) remoteRunParts.push("--ddp");
-  if (config.long_run_gate_profile === "first_release") {
-    remoteRunParts.push("--long-run-gate-profile", "first_release");
-  }
-  const remotePreflight = `${shellCommand([...remoteRunParts, "--preflight-only"])} 2>&1 | tee logs/preflight-${config.run_name}.log`;
+  const remotePreflight = `${shellCommand([...remotePreflightParts, "--preflight-only"])} 2>&1 | tee logs/preflight-${config.run_name}.log`;
   const remoteRun = `${shellCommand(remoteRunParts)} 2>&1 | tee logs/train-${config.run_name}.log`;
   const remoteReturn = [
     `tar -czf ${config.run_name}.tgz runs/${config.run_name} logs`,

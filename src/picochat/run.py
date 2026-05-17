@@ -109,6 +109,7 @@ class TinyRunConfig:
     torch_compile_mode: str = "default"
     gradient_checkpointing: bool = False
     ddp: bool = False
+    ddp_world_size: int = 1
     allow_unsafe_long_run: bool = False
     target_param_data_ratio: float = 20.0
     auto_lr_scaling: bool = False

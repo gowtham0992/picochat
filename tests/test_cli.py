@@ -164,6 +164,45 @@ def test_cli_run_tiny_h100_scale_applies_modern_defaults(tmp_path, capsys, monke
     assert "tiny run: 1/1 passed" in capsys.readouterr().out
 
 
+def test_cli_run_tiny_accepts_ddp_world_size_for_preflight(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_preview(*args, **kwargs):
+        captured["preview_kwargs"] = kwargs
+        return {"stats": {}, "readiness": {"status": "ready"}}
+
+    def fake_preflight(config, preview):
+        captured["config"] = config
+        return type("Report", (), {
+            "status": "ready",
+            "to_dict": lambda self: {},
+            "summary": "ready",
+        })()
+
+    monkeypatch.setattr("picochat.cli.preview_corpus_sources", fake_preview)
+    monkeypatch.setattr("picochat.cli.assess_run_preflight", fake_preflight)
+    monkeypatch.setattr("picochat.cli.preflight_markdown", lambda report: "# preflight")
+
+    exit_code = main([
+        "run",
+        "tiny",
+        "--out-dir",
+        str(tmp_path / "ddp8"),
+        "--dataset-pack",
+        "pack.json",
+        "--scale",
+        "h100-100m-ddp8",
+        "--ddp",
+        "--ddp-world-size",
+        "8",
+        "--preflight-only",
+    ])
+
+    assert exit_code == 0
+    assert captured["config"].ddp is True
+    assert captured["config"].ddp_world_size == 8
+
+
 def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
     import json
 

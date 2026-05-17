@@ -120,6 +120,39 @@ def test_preflight_surfaces_ddp_auto_lr_scaling_risk(monkeypatch):
     assert "DDP world size" in checks["ddp_auto_lr_scaling"].message
 
 
+def test_preflight_blocks_ddp8_scale_without_eight_rank_budget(monkeypatch):
+    monkeypatch.delenv("WORLD_SIZE", raising=False)
+    report = assess_run_preflight(
+        _h100_like_config(
+            scale="h100-100m-ddp8",
+            ddp=False,
+            base_steps=4100,
+        ),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["ddp_scale_launch"].status == "block"
+    assert report.status == "blocked"
+
+
+def test_preflight_allows_ddp8_scale_with_simulated_world_size(monkeypatch):
+    monkeypatch.delenv("WORLD_SIZE", raising=False)
+    report = assess_run_preflight(
+        _h100_like_config(
+            scale="h100-100m-ddp8",
+            ddp=True,
+            ddp_world_size=8,
+            base_steps=4100,
+        ),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert report.budget.ddp_world_size == 8
+    assert checks["ddp_scale_launch"].status == "pass"
+
+
 def _h100_like_config(**overrides) -> TinyRunConfig:
     values = {
         "out_dir": "runs/test-preflight",
