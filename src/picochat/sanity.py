@@ -219,6 +219,8 @@ def _check_modern_init_loss(config: PreH100SanityConfig, work_dir: Path) -> dict
 
 def _check_kv_cache_equivalence(config: PreH100SanityConfig, work_dir: Path) -> dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
+    device = resolve_device(config.device)
+    runtime = resolve_precision(config.precision, device)
     tokenizer_path, checkpoint_path = _write_checkpoint_fixture(work_dir)
     tokenizer = CharTokenizer.load(tokenizer_path)
     model_config = GPTConfig(
@@ -230,10 +232,10 @@ def _check_kv_cache_equivalence(config: PreH100SanityConfig, work_dir: Path) -> 
         position_encoding="rope",
         attn_backend=config.attn_backend,
     )
-    model = TinyGPT(model_config)
+    model = TinyGPT(model_config).to(device)
     model.eval()
-    ids = torch.tensor([tokenizer.encode("hello pico", add_bos=True)], dtype=torch.long)
-    with torch.no_grad():
+    ids = torch.tensor([tokenizer.encode("hello pico", add_bos=True)], dtype=torch.long, device=device)
+    with torch.no_grad(), autocast_context(runtime):
         full_logits, _ = model(ids)
         cached_parts = []
         past_kv = None
@@ -246,7 +248,8 @@ def _check_kv_cache_equivalence(config: PreH100SanityConfig, work_dir: Path) -> 
             cached_parts.append(logits)
         cached_logits = torch.cat(cached_parts, dim=1)
     max_diff = float((full_logits - cached_logits).abs().max().item())
-    if max_diff > 1e-4:
+    max_allowed_diff = 1e-4 if runtime.dtype_name == "float32" else 5e-3
+    if max_diff > max_allowed_diff:
         raise AssertionError(f"cached logits diverged from full logits: {max_diff}")
 
     cached = generate_text_with_trace(GenerateConfig(
@@ -272,8 +275,13 @@ def _check_kv_cache_equivalence(config: PreH100SanityConfig, work_dir: Path) -> 
     if not cached["used_kv_cache"]:
         raise AssertionError("generation did not use the KV cache")
     return {
-        "detail": f"max_logit_diff={max_diff:.2e}, generated={cached['completion']!r}",
+        "detail": (
+            f"max_logit_diff={max_diff:.2e}, tolerance={max_allowed_diff:.1e}, "
+            f"generated={cached['completion']!r}"
+        ),
         "max_logit_diff": max_diff,
+        "max_allowed_diff": max_allowed_diff,
+        "precision_runtime": runtime.to_dict(),
     }
 
 
