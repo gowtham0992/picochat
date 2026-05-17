@@ -3996,7 +3996,7 @@ function renderScalePlan() {
     "cd picochat",
     "git checkout develop",
     "sudo apt-get update",
-    "sudo apt-get install -y python3.10-venv",
+    "sudo apt-get install -y python3.10-venv python3.10-dev build-essential",
     "python3 -m venv .venv",
     "source .venv/bin/activate",
     "python -m pip install --upgrade pip",

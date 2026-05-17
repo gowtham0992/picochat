@@ -60,6 +60,7 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert '"OMP_NUM_THREADS=1"' in js
     assert '"PICOCHAT_DDP_TIMEOUT_MINUTES=120"' in js
     assert '"PYTORCH_ALLOC_CONF=expandable_segments:True"' in js
+    assert "python3.10-dev build-essential" in js
     assert '"bundle"' in js
     assert '"--logs-dir"' in js
     assert "base data: token shard build" in js
