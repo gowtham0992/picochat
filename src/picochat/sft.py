@@ -23,6 +23,17 @@ from picochat.distributed import (
     no_sync_if_distributed,
     prepare_ddp_model,
 )
+from picochat.lora import (
+    DEFAULT_LORA_TARGETS,
+    LoRAConfig,
+    apply_lora,
+    load_lora_adapter,
+    merged_lora_model,
+    parse_lora_targets,
+    save_lora_adapter,
+    subtract_lora_delta_from_base,
+    trainable_parameter_report,
+)
 from picochat.optim import (
     ExponentialMovingAverage,
     create_optimizer,
@@ -67,6 +78,7 @@ from picochat.train import (
 
 SFT_SAMPLING_MODES = ("uniform", "category_sqrt", "category_balanced")
 SFT_PACKING_MODES = ("separate", "bos_bestfit")
+SFT_PEFT_MODES = ("none", "lora")
 
 
 @dataclass(frozen=True)
@@ -156,6 +168,11 @@ class SFTConfig:
     torch_compile_mode: str = "default"
     resume_from: str | None = None
     ddp: bool = False
+    peft: str = "none"
+    lora_rank: int = 8
+    lora_alpha: float = 16.0
+    lora_dropout: float = 0.0
+    lora_targets: tuple[str, ...] = DEFAULT_LORA_TARGETS
     loss_spike_rollback: bool = False
     loss_spike_threshold: float = 2.5
     loss_spike_lr_decay: float = 0.5
@@ -753,6 +770,23 @@ def train_sft(config: SFTConfig) -> dict:
         raise ValueError(f"sampling must be one of: {', '.join(SFT_SAMPLING_MODES)}")
     if config.packing not in SFT_PACKING_MODES:
         raise ValueError(f"packing must be one of: {', '.join(SFT_PACKING_MODES)}")
+    if config.peft not in SFT_PEFT_MODES:
+        raise ValueError(f"peft must be one of: {', '.join(SFT_PEFT_MODES)}")
+    lora_targets = parse_lora_targets(config.lora_targets)
+    if config.peft == "none" and (
+        config.lora_rank != 8
+        or config.lora_alpha != 16.0
+        or config.lora_dropout != 0.0
+        or lora_targets != DEFAULT_LORA_TARGETS
+    ):
+        raise ValueError("LoRA options require --peft lora")
+    if config.peft == "lora":
+        if config.lora_rank < 1:
+            raise ValueError("lora_rank must be at least 1")
+        if config.lora_alpha <= 0:
+            raise ValueError("lora_alpha must be positive")
+        if not 0.0 <= config.lora_dropout < 1.0:
+            raise ValueError("lora_dropout must be in [0, 1)")
     if config.ddp and config.loss_spike_rollback:
         raise ValueError(
             "loss_spike_rollback is not supported with DDP because rollback "
@@ -786,6 +820,22 @@ def train_sft(config: SFTConfig) -> dict:
     model, metadata = load_checkpoint(checkpoint_source, map_location=device)
     if model.config.vocab_size != len(tokenizer):
         raise ValueError("tokenizer vocabulary size does not match checkpoint")
+    lora_config = (
+        LoRAConfig(
+            rank=config.lora_rank,
+            alpha=config.lora_alpha,
+            dropout=config.lora_dropout,
+            targets=lora_targets,
+        )
+        if config.peft == "lora"
+        else None
+    )
+    peft_report = {"mode": "none"}
+    if lora_config is not None:
+        peft_report = apply_lora(model, lora_config)
+        if config.resume_from:
+            load_lora_adapter(config.resume_from, model, map_location=device)
+            subtract_lora_delta_from_base(model)
     training_fingerprint = make_training_fingerprint({
         "kind": "sft",
         "input_sha256": file_sha256(config.input_path),
@@ -796,6 +846,8 @@ def train_sft(config: SFTConfig) -> dict:
         "context_size": model.config.context_size,
         "sampling": config.sampling,
         "packing": config.packing,
+        "peft": config.peft,
+        "lora_config": lora_config.to_dict() if lora_config is not None else None,
     })
     resume_state = (
         load_training_state(config.resume_from, map_location=device)
@@ -879,6 +931,7 @@ def train_sft(config: SFTConfig) -> dict:
     )
 
     model = model.to(device)
+    parameter_report = trainable_parameter_report(model)
     matmul_precision_runtime = configure_float32_matmul_precision(config.matmul_precision)
     precision_runtime = resolve_precision(config.precision, device)
     compiled_model, compile_metadata = maybe_compile_model(
@@ -946,6 +999,41 @@ def train_sft(config: SFTConfig) -> dict:
         loss_spike_baseline = float(raw_baseline) if raw_baseline is not None else None
     if loss_spike_baseline is None and math.isfinite(last_loss) and last_loss > 0:
         loss_spike_baseline = last_loss
+
+    def save_model_checkpoint(
+        path: Path,
+        *,
+        step: int,
+        train_loss: float,
+        extra_metadata: dict,
+        training_state: dict | None = None,
+    ) -> None:
+        checkpoint_metadata = dict(extra_metadata)
+        checkpoint_metadata["peft"] = peft_report
+        checkpoint_metadata["parameter_report"] = parameter_report
+        if lora_config is not None:
+            checkpoint_metadata["adapter_checkpoint"] = str(path)
+        with merged_lora_model(model):
+            save_checkpoint(
+                path,
+                model,
+                step=step,
+                train_loss=train_loss,
+                extra_metadata=checkpoint_metadata,
+                training_state=training_state,
+            )
+        if lora_config is not None:
+            save_lora_adapter(
+                path,
+                model,
+                config=lora_config,
+                metadata={
+                    "checkpoint_kind": checkpoint_metadata.get("checkpoint_kind"),
+                    "step": step,
+                    "base_checkpoint": config.checkpoint_path,
+                    "resume_source": config.resume_from,
+                },
+            )
 
     train_batches = DeviceBatchPrefetcher(train_batcher, device)
     model.train()
@@ -1121,9 +1209,8 @@ def train_sft(config: SFTConfig) -> dict:
                 evals_without_improvement = 0
                 if main_process:
                     with using_ema_weights(model, ema):
-                        save_checkpoint(
+                        save_model_checkpoint(
                             best_checkpoint_dir,
-                            model,
                             step=step,
                             train_loss=last_loss,
                             extra_metadata={
@@ -1157,9 +1244,8 @@ def train_sft(config: SFTConfig) -> dict:
                     f"val_bpb {_format_optional(val_metrics['bpb'])} | "
                     f"{_format_rate(throughput['tokens_per_sec'])} tok/s | {elapsed:.1f}s"
                 )
-                save_checkpoint(
+                save_model_checkpoint(
                     out_dir / "resume_checkpoint",
-                    model,
                     step=final_step,
                     train_loss=last_loss,
                     extra_metadata={
@@ -1222,9 +1308,8 @@ def train_sft(config: SFTConfig) -> dict:
     ema_checkpoint_dir = out_dir / "ema_checkpoint"
     elapsed_final = elapsed_offset + time.time() - start
     if main_process:
-        save_checkpoint(
+        save_model_checkpoint(
             checkpoint_dir,
-            model,
             step=final_step,
             train_loss=last_loss,
             extra_metadata={
@@ -1258,9 +1343,8 @@ def train_sft(config: SFTConfig) -> dict:
     barrier_if_distributed(ddp_metadata)
     if ema is not None and main_process:
         with using_ema_weights(model, ema):
-            save_checkpoint(
+            save_model_checkpoint(
                 ema_checkpoint_dir,
-                model,
                 step=final_step,
                 train_loss=last_loss,
                 extra_metadata={
@@ -1277,9 +1361,8 @@ def train_sft(config: SFTConfig) -> dict:
     if best_checkpoint is None:
         if main_process:
             with using_ema_weights(model, ema):
-                save_checkpoint(
+                save_model_checkpoint(
                     best_checkpoint_dir,
-                    model,
                     step=final_step,
                     train_loss=last_loss,
                     extra_metadata={
@@ -1322,6 +1405,9 @@ def train_sft(config: SFTConfig) -> dict:
     report = {
         "config": {
             **config.__dict__,
+            "peft": peft_report,
+            "peft_mode": config.peft,
+            "lora_config": lora_config.to_dict() if lora_config is not None else None,
             "requested_device": config.device,
             "device": device.type,
             "local_effective_batch_size": local_effective_batch_size,
@@ -1386,6 +1472,7 @@ def train_sft(config: SFTConfig) -> dict:
         "model": {
             "config": model.config.to_dict(),
             "num_parameters": model.num_parameters(),
+            "parameter_report": parameter_report,
         },
         "losses": losses,
         "loss_diagnostics": loss_diagnostics(losses),
@@ -1397,6 +1484,7 @@ def train_sft(config: SFTConfig) -> dict:
         "checkpoint": str(checkpoint_dir),
         "resume_checkpoint": str(out_dir / "resume_checkpoint"),
         "ema_checkpoint": str(ema_checkpoint_dir) if ema is not None else None,
+        "adapter_checkpoint": str(checkpoint_dir) if lora_config is not None else None,
         "best_checkpoint": best_checkpoint,
         "stop_reason": stop_reason,
     }

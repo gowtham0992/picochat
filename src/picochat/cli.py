@@ -31,6 +31,7 @@ from picochat.external_benchmark import (
     ExternalBenchmarkConvertConfig,
     convert_external_benchmark,
 )
+from picochat.lora import DEFAULT_LORA_TARGETS, LORA_TARGETS, PEFT_MODES, parse_lora_targets
 from picochat.eval_starter import generate_eval_starter
 from picochat.sft_starter import generate_sft_starter
 from picochat.benchmark_pack import (
@@ -776,6 +777,20 @@ def build_parser() -> argparse.ArgumentParser:
         default="separate",
         help="SFT sequence packing. Keep separate as the verified default; bos_bestfit packs multiple BOS-delimited examples per context.",
     )
+    train_sft_parser.add_argument(
+        "--peft",
+        choices=PEFT_MODES,
+        default="none",
+        help="Parameter-efficient SFT mode. Use lora to train adapter weights while saving merged full checkpoints.",
+    )
+    train_sft_parser.add_argument("--lora-rank", type=int, default=8)
+    train_sft_parser.add_argument("--lora-alpha", type=float, default=16.0)
+    train_sft_parser.add_argument("--lora-dropout", type=float, default=0.0)
+    train_sft_parser.add_argument(
+        "--lora-targets",
+        default=",".join(DEFAULT_LORA_TARGETS),
+        help=f"Comma-separated LoRA targets: {', '.join(LORA_TARGETS)}.",
+    )
     train_sft_sweep_parser = train_subparsers.add_parser(
         "sft-sweep",
         help="Run a controlled SFT schedule sweep from one base checkpoint.",
@@ -862,6 +877,20 @@ def build_parser() -> argparse.ArgumentParser:
         choices=SFT_PACKING_MODES,
         default="separate",
         help="SFT sequence packing used for every sweep candidate.",
+    )
+    train_sft_sweep_parser.add_argument(
+        "--peft",
+        choices=PEFT_MODES,
+        default="none",
+        help="Parameter-efficient SFT mode for every sweep candidate.",
+    )
+    train_sft_sweep_parser.add_argument("--lora-rank", type=int, default=8)
+    train_sft_sweep_parser.add_argument("--lora-alpha", type=float, default=16.0)
+    train_sft_sweep_parser.add_argument("--lora-dropout", type=float, default=0.0)
+    train_sft_sweep_parser.add_argument(
+        "--lora-targets",
+        default=",".join(DEFAULT_LORA_TARGETS),
+        help=f"Comma-separated LoRA targets: {', '.join(LORA_TARGETS)}.",
     )
 
     generate_parser = subparsers.add_parser("generate", help="Generate from a checkpoint.")
@@ -1284,6 +1313,20 @@ def build_parser() -> argparse.ArgumentParser:
             "Maximum SFT rows to score in the automatic fit diagnostic. "
             "Use 0 to score every SFT row."
         ),
+    )
+    run_tiny_parser.add_argument(
+        "--sft-peft",
+        choices=PEFT_MODES,
+        default=None,
+        help="Parameter-efficient SFT mode for the chat stage. Use lora for adapter tuning.",
+    )
+    run_tiny_parser.add_argument("--sft-lora-rank", type=int, default=None)
+    run_tiny_parser.add_argument("--sft-lora-alpha", type=float, default=None)
+    run_tiny_parser.add_argument("--sft-lora-dropout", type=float, default=None)
+    run_tiny_parser.add_argument(
+        "--sft-lora-targets",
+        default=None,
+        help=f"Comma-separated LoRA targets: {', '.join(LORA_TARGETS)}.",
     )
     run_tiny_parser.add_argument(
         "--base-resume-from",
@@ -2128,6 +2171,11 @@ def run_train_sft(args: argparse.Namespace) -> int:
         loss_spike_lr_decay=args.loss_spike_lr_decay,
         loss_spike_min_lr_scale=args.loss_spike_min_lr_scale,
         loss_spike_snapshot_every=args.loss_spike_snapshot_every,
+        peft=args.peft,
+        lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        lora_targets=parse_lora_targets(args.lora_targets),
     )
     report = train_sft(config)
     if report.get("config", {}).get("artifacts_written", True):
@@ -2187,6 +2235,11 @@ def run_train_sft_sweep(args: argparse.Namespace) -> int:
         torch_compile=args.torch_compile,
         torch_compile_mode=args.torch_compile_mode,
         eval_log_every=args.eval_log_every,
+        peft=args.peft,
+        lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        lora_targets=parse_lora_targets(args.lora_targets),
     ))
     print(f"sft sweep report: {Path(args.out_dir) / 'sft_sweep.md'}")
     best_fit = report.get("best_sft_fit") or {}
@@ -2586,6 +2639,11 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         sft_sampling=_resolve_tiny_value(args, defaults, "sft_sampling"),
         sft_packing=_resolve_tiny_value(args, defaults, "sft_packing"),
         sft_fit_max_rows=_resolve_tiny_value(args, defaults, "sft_fit_max_rows"),
+        sft_peft=_resolve_tiny_value(args, defaults, "sft_peft"),
+        sft_lora_rank=_resolve_tiny_value(args, defaults, "sft_lora_rank"),
+        sft_lora_alpha=_resolve_tiny_value(args, defaults, "sft_lora_alpha"),
+        sft_lora_dropout=_resolve_tiny_value(args, defaults, "sft_lora_dropout"),
+        sft_lora_targets=parse_lora_targets(_resolve_tiny_value(args, defaults, "sft_lora_targets")),
         allow_default_tuning_data=args.allow_default_tuning_data,
         base_resume_from=args.base_resume_from,
         sft_resume_from=args.sft_resume_from,

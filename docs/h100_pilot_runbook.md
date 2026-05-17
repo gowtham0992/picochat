@@ -364,6 +364,12 @@ Promote only a candidate that clears the first-release gate. Keep weak-skills
 sweeps separate, because they are diagnostics for future capability work, not a
 license to claim the first chat release can do arithmetic or spelling reliably.
 
+For domain adaptation sweeps where the base checkpoint is expensive and you
+want lightweight adapter artifacts, add `--peft lora --lora-rank 8
+--lora-alpha 16 --lora-targets attn_qkv,attn_proj` to the SFT sweep. Picochat
+will train only the adapter weights, save adapter files, and still write merged
+full checkpoints for the existing eval/export path.
+
 ## 8. Monitor And Package
 
 Use another SSH pane:

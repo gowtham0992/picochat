@@ -175,6 +175,7 @@ Inputs:
 Output artifacts:
 
 - `sft/checkpoint/`
+- `sft/checkpoint/adapter_model.pt` and `adapter_config.json` when using LoRA
 - `sft/sft_report.json`
 - `sft/report.md`
 - `sft/sample.txt`
@@ -196,6 +197,16 @@ Useful command:
 ```bash
 PYTHONPATH=src python -m picochat.cli train sft --input examples/tiny_chat.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/base/best_checkpoint --out-dir runs/manual/sft --max-steps 600 --early-stop-patience 6
 ```
+
+LoRA command for lightweight domain adapters:
+
+```bash
+PYTHONPATH=src python -m picochat.cli train sft --input examples/tiny_chat.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/base/best_checkpoint --out-dir runs/manual/sft-lora --peft lora --lora-rank 8 --lora-alpha 16 --lora-targets attn_qkv,attn_proj --max-steps 600 --early-stop-patience 6
+```
+
+LoRA is for adapting an existing base checkpoint to a domain or behavior style.
+It does not replace base pretraining or make the base model know facts it never
+saw.
 
 ## 5. Eval
 

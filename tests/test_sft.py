@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from picochat.checkpoint import load_training_state, save_checkpoint
+from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.model import GPTConfig, TinyGPT
 from picochat.sft import (
     ChatExample,
@@ -309,6 +309,59 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert progress["stage"] == "sft"
     assert progress["step"] == 2
     assert progress["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
+
+
+def test_train_sft_lora_writes_adapter_and_merged_checkpoint(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "base"
+    out_dir = tmp_path / "sft-lora"
+    rows = [
+        {"user": "What is Picochat?", "assistant": "Picochat is small."},
+        {"user": "What comes next?", "assistant": "Adapter tuning comes next."},
+    ]
+    write_jsonl(input_path, rows)
+    tokenizer = CharTokenizer.train([
+        "User: What is Picochat?\nAssistant: Picochat is small.\n"
+        "User: What comes next?\nAssistant: Adapter tuning comes next."
+    ])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=64,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    report = train_sft(SFTConfig(
+        input_path=str(input_path),
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=str(checkpoint_path),
+        out_dir=str(out_dir),
+        batch_size=2,
+        max_steps=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        peft="lora",
+        lora_rank=2,
+        lora_alpha=4.0,
+        lora_targets=("attn_qkv",),
+    ))
+
+    assert (out_dir / "checkpoint" / "model.pt").exists()
+    assert (out_dir / "checkpoint" / "adapter_model.pt").exists()
+    assert (out_dir / "checkpoint" / "adapter_config.json").exists()
+    assert (out_dir / "best_checkpoint" / "adapter_model.pt").exists()
+    merged_model, metadata = load_checkpoint(out_dir / "checkpoint")
+    assert merged_model.config.n_layer == 1
+    assert metadata["peft"]["mode"] == "lora"
+    assert report["config"]["peft"]["mode"] == "lora"
+    assert report["config"]["peft_mode"] == "lora"
+    assert report["model"]["parameter_report"]["trainable_fraction"] < 1
+    assert report["adapter_checkpoint"] == str(out_dir / "checkpoint")
 
 
 def test_train_sft_can_resume_from_training_state(tmp_path):

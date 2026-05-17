@@ -168,7 +168,14 @@ def training_report_markdown(report: dict) -> str:
     lines.append("## Model")
     lines.append("")
     model_config = model["config"]
+    parameter_report = model.get("parameter_report") or {}
     lines.append(f"- Parameters: {model['num_parameters']:,}")
+    if parameter_report:
+        lines.append(f"- Trainable parameters: {int(parameter_report.get('trainable_parameters', 0)):,}")
+        lines.append(
+            f"- Trainable fraction: "
+            f"{format_float(float(parameter_report.get('trainable_fraction', 0.0)) * 100)}%"
+        )
     lines.append(f"- Vocabulary size: {model_config['vocab_size']}")
     lines.append(f"- Layers: {model_config['n_layer']}")
     lines.append(f"- Embedding size: {model_config['n_embd']}")
@@ -459,7 +466,14 @@ def sft_report_markdown(report: dict) -> str:
     lines.append("## Model")
     lines.append("")
     model_config = model["config"]
+    parameter_report = model.get("parameter_report") or {}
     lines.append(f"- Parameters: {model['num_parameters']:,}")
+    if parameter_report:
+        lines.append(f"- Trainable parameters: {int(parameter_report.get('trainable_parameters', 0)):,}")
+        lines.append(
+            f"- Trainable fraction: "
+            f"{format_float(float(parameter_report.get('trainable_fraction', 0.0)) * 100)}%"
+        )
     lines.append(f"- Vocabulary size: {model_config['vocab_size']}")
     lines.append(f"- Layers: {model_config['n_layer']}")
     lines.append(f"- Embedding size: {model_config['n_embd']}")
@@ -519,6 +533,15 @@ def sft_report_markdown(report: dict) -> str:
         f"- Torch compile: "
         f"{'enabled' if compile_metadata.get('enabled') else 'disabled'}"
     )
+    peft = config.get("peft") or {}
+    if isinstance(peft, dict) and peft.get("mode") == "lora":
+        lines.append(
+            f"- PEFT: `lora` rank {peft.get('rank')} alpha {peft.get('alpha')} "
+            f"targets `{', '.join(peft.get('targets', []))}`"
+        )
+        lines.append(f"- LoRA adapted modules: {peft.get('adapted_module_count')}")
+    else:
+        lines.append("- PEFT: `none`")
     lines.append("")
     has_ema = any("ema_val_loss" in item for item in losses)
     if has_ema:
@@ -601,6 +624,8 @@ def sft_report_markdown(report: dict) -> str:
     lines.append("## Artifacts")
     lines.append("")
     lines.append(f"- Checkpoint: `{report['checkpoint']}`")
+    if report.get("adapter_checkpoint"):
+        lines.append(f"- LoRA adapter checkpoint: `{report['adapter_checkpoint']}`")
     if best_checkpoint:
         lines.append(
             f"- Best validation checkpoint: `{best_checkpoint['path']}` "

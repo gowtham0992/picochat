@@ -18,6 +18,7 @@ from picochat.distributed import barrier_if_distributed, initialize_ddp, is_main
 from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
 from picochat.external_benchmark import ExternalBenchmarkConvertConfig, convert_external_benchmark
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
+from picochat.lora import DEFAULT_LORA_TARGETS
 from picochat.report import tiny_run_summary_markdown
 from picochat.run_preflight import assess_run_preflight, preflight_markdown
 from picochat.sft import SFTConfig, SFT_PACKING_MODES, SFT_SAMPLING_MODES, train_sft
@@ -101,6 +102,11 @@ class TinyRunConfig:
     sft_sampling: str = "uniform"
     sft_packing: str = "separate"
     sft_fit_max_rows: int = 1000
+    sft_peft: str = "none"
+    sft_lora_rank: int = 8
+    sft_lora_alpha: float = 16.0
+    sft_lora_dropout: float = 0.0
+    sft_lora_targets: tuple[str, ...] = DEFAULT_LORA_TARGETS
     allow_default_tuning_data: bool = False
     base_resume_from: str | None = None
     sft_resume_from: str | None = None
@@ -381,6 +387,11 @@ def run_tiny(config: TinyRunConfig) -> dict:
         loss_spike_lr_decay=config.loss_spike_lr_decay,
         loss_spike_min_lr_scale=config.loss_spike_min_lr_scale,
         loss_spike_snapshot_every=config.loss_spike_snapshot_every,
+        peft=config.sft_peft,
+        lora_rank=config.sft_lora_rank,
+        lora_alpha=config.sft_lora_alpha,
+        lora_dropout=config.sft_lora_dropout,
+        lora_targets=config.sft_lora_targets,
     ))
     sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",

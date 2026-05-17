@@ -165,9 +165,13 @@ def create_optimizer(
     if muon_learning_rate <= 0:
         raise ValueError("muon_learning_rate must be positive")
 
+    trainable_params = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    if not trainable_params:
+        raise ValueError("optimizer received no trainable parameters")
+
     if optimizer_type == "adamw":
         optimizer = torch.optim.AdamW(
-            model.parameters(),
+            trainable_params,
             lr=learning_rate,
             weight_decay=weight_decay,
         )
@@ -176,7 +180,7 @@ def create_optimizer(
             group["weight_decay_scale"] = 1.0
         return OptimizerBundle([optimizer], {
             "optimizer": "adamw",
-            "adamw_parameters": sum(parameter.numel() for parameter in model.parameters()),
+            "adamw_parameters": sum(parameter.numel() for parameter in trainable_params),
             "muon_parameters": 0,
             "muon_learning_rate": None,
             "weight_decay": weight_decay,

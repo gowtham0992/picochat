@@ -128,6 +128,8 @@ runs/pico-demo/
     canary_probe.txt
   sft/
     checkpoint/
+      adapter_model.pt        # only when SFT uses --peft lora
+      adapter_config.json     # only when SFT uses --peft lora
     best_checkpoint/
     sft_report.json
     report.md
@@ -173,6 +175,9 @@ Longer runs add guardrails instead of blind optimism:
   SFT uses group-aware validation when examples provide a `group` field
 - base and SFT reports record learning-rate schedule, warmup, gradient clipping,
   and per-checkpoint LR/gradient-norm traces when those controls are enabled
+- SFT can optionally train native LoRA adapters with `--peft lora`; Picochat
+  still writes merged full checkpoints for normal eval/export, plus separate
+  adapter files for lightweight domain-tuning artifacts
 - training supports `--device auto|cpu|mps|cuda`; `auto` picks CUDA first, then
   Apple MPS, then CPU, while reports record both requested and resolved device
 - base and SFT support gradient accumulation; reports show micro batch,
@@ -692,6 +697,26 @@ Train base and SFT stages manually:
 ```bash
 PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/base --context-size 128 --n-embd 64 --n-layer 2 --max-steps 300 --early-stop-patience 6 --canary-count 1
 PYTHONPATH=src python -m picochat.cli train sft --input examples/tiny_chat.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/base/best_checkpoint --out-dir runs/manual/sft --max-steps 600 --early-stop-patience 6
+```
+
+For domain adaptation experiments where you want a small trainable artifact,
+use native LoRA SFT. This freezes the base model, trains low-rank adapter
+weights, saves `adapter_model.pt`/`adapter_config.json`, and also saves merged
+`model.pt` checkpoints so existing eval, chat, and HF export commands keep
+working:
+
+```bash
+PYTHONPATH=src python -m picochat.cli train sft \
+  --input examples/tiny_chat.jsonl \
+  --tokenizer runs/manual/tokenizer.json \
+  --checkpoint runs/manual/base/best_checkpoint \
+  --out-dir runs/manual/sft-lora \
+  --peft lora \
+  --lora-rank 8 \
+  --lora-alpha 16 \
+  --lora-targets attn_qkv,attn_proj \
+  --max-steps 600 \
+  --early-stop-patience 6
 ```
 
 Evaluate and chat:

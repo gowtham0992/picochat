@@ -146,6 +146,14 @@ def test_cli_run_tiny_h100_scale_applies_modern_defaults(tmp_path, capsys, monke
         "h100-pilot",
         "--long-run-gate-profile",
         "first_release",
+        "--sft-peft",
+        "lora",
+        "--sft-lora-rank",
+        "4",
+        "--sft-lora-alpha",
+        "8",
+        "--sft-lora-targets",
+        "attn_qkv,attn_proj",
     ])
 
     assert exit_code == 0
@@ -165,6 +173,10 @@ def test_cli_run_tiny_h100_scale_applies_modern_defaults(tmp_path, capsys, monke
     assert config.auto_lr_scaling is True
     assert config.loss_spike_rollback is True
     assert config.long_run_gate_profile == "first_release"
+    assert config.sft_peft == "lora"
+    assert config.sft_lora_rank == 4
+    assert config.sft_lora_alpha == 8.0
+    assert config.sft_lora_targets == ("attn_qkv", "attn_proj")
     assert "tiny run: 1/1 passed" in capsys.readouterr().out
 
 
@@ -405,6 +417,10 @@ def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
         assert config.checkpoint_path == "base"
         assert config.eval_log_every == 50
         assert config.matmul_precision == "default"
+        assert config.peft == "lora"
+        assert config.lora_rank == 2
+        assert config.lora_alpha == 4.0
+        assert config.lora_targets == ("attn_qkv",)
         return {
             "best_sft_fit": {
                 "candidate": "uniform-lr1em04-steps1",
@@ -429,6 +445,14 @@ def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
         "base",
         "--out-dir",
         str(tmp_path / "sweep"),
+        "--peft",
+        "lora",
+        "--lora-rank",
+        "2",
+        "--lora-alpha",
+        "4",
+        "--lora-targets",
+        "attn_qkv",
     ])
 
     assert exit_code == 0
@@ -1268,13 +1292,23 @@ def test_cli_train_sft(tmp_path, capsys):
         "category_balanced",
         "--sft-packing",
         "bos_bestfit",
+        "--peft",
+        "lora",
+        "--lora-rank",
+        "2",
+        "--lora-alpha",
+        "4",
+        "--lora-targets",
+        "attn_qkv",
     ])
 
     assert exit_code == 0
     assert (out_dir / "checkpoint" / "model.pt").exists()
+    assert (out_dir / "checkpoint" / "adapter_model.pt").exists()
     report = json.loads((out_dir / "sft_report.json").read_text(encoding="utf-8"))
     assert report["dataset"]["sampling"] == "category_balanced"
     assert report["dataset"]["packing"] == "bos_bestfit"
+    assert report["config"]["peft"]["mode"] == "lora"
     assert "saved sft checkpoint" in capsys.readouterr().out
 
 

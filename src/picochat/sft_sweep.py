@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
+from picochat.lora import DEFAULT_LORA_TARGETS, PEFT_MODES, parse_lora_targets
 from picochat.sft import SFTConfig, SFT_PACKING_MODES, SFT_SAMPLING_MODES, train_sft
 
 
@@ -50,6 +51,11 @@ class SFTSweepConfig:
     torch_compile: bool = False
     torch_compile_mode: str = "default"
     eval_log_every: int = 50
+    peft: str = "none"
+    lora_rank: int = 8
+    lora_alpha: float = 16.0
+    lora_dropout: float = 0.0
+    lora_targets: tuple[str, ...] = DEFAULT_LORA_TARGETS
 
 
 def run_sft_sweep(config: SFTSweepConfig) -> dict:
@@ -120,6 +126,7 @@ def sft_sweep_markdown(report: dict) -> str:
         f"- Base checkpoint: `{config['checkpoint_path']}`",
         f"- Held-out eval: `{config.get('eval_input_path') or 'not run'}`",
         f"- SFT packing: `{config.get('packing', 'separate')}`",
+        f"- PEFT: `{config.get('peft', 'none')}`",
         f"- Precision: `{config.get('precision', 'float32')}`",
         f"- Matmul precision: `{config.get('matmul_precision', 'default')}`",
         f"- torch.compile: `{config.get('torch_compile', False)}`",
@@ -203,6 +210,11 @@ def _run_candidate(
         matmul_precision=config.matmul_precision,
         torch_compile=config.torch_compile,
         torch_compile_mode=config.torch_compile_mode,
+        peft=config.peft,
+        lora_rank=config.lora_rank,
+        lora_alpha=config.lora_alpha,
+        lora_dropout=config.lora_dropout,
+        lora_targets=config.lora_targets,
     ))
     eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",
@@ -284,6 +296,7 @@ def _run_candidate(
         "step_count": step_count,
         "sampling": sampling,
         "packing": config.packing,
+        "peft": sft_report.get("config", {}).get("peft", {"mode": config.peft}),
         "sft_final_train_loss": sft_report["losses"][-1]["train_loss"],
         "sft_final_val_loss": sft_report["losses"][-1]["val_loss"],
         "sft_final_val_bpb": sft_report["losses"][-1].get("val_bpb"),
@@ -359,6 +372,9 @@ def _validate_sweep_config(config: SFTSweepConfig) -> None:
         raise ValueError(f"unsupported SFT sampling mode(s): {', '.join(bad_samplings)}")
     if config.packing not in SFT_PACKING_MODES:
         raise ValueError(f"unsupported SFT packing mode: {config.packing}")
+    if config.peft not in PEFT_MODES:
+        raise ValueError(f"unsupported PEFT mode: {config.peft}")
+    parse_lora_targets(config.lora_targets)
     if config.fit_max_rows < 0:
         raise ValueError("fit_max_rows must be non-negative")
 

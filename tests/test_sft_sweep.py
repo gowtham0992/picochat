@@ -54,6 +54,10 @@ def test_run_sft_sweep_writes_candidate_and_summary_artifacts(tmp_path):
         packing="bos_bestfit",
         precision="float32",
         torch_compile=False,
+        peft="lora",
+        lora_rank=2,
+        lora_alpha=4.0,
+        lora_targets=("attn_qkv",),
     ))
 
     row = report["rows"][0]
@@ -73,6 +77,8 @@ def test_run_sft_sweep_writes_candidate_and_summary_artifacts(tmp_path):
     assert row["packing"] == "bos_bestfit"
     assert report["config"]["precision"] == "float32"
     assert report["config"]["torch_compile"] is False
+    assert report["config"]["peft"] == "lora"
+    assert row["peft"]["mode"] == "lora"
     assert row["eval_score"] is not None
     assert "eval_non_choice_pass_rate" in row
     assert report["best_sft_fit"]["candidate"] == row["candidate"]
@@ -102,6 +108,7 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
             "precision": "bf16",
             "matmul_precision": "high",
             "torch_compile": True,
+            "peft": "lora",
         },
         "rows": [{
             "candidate": "uniform-lr1em04-steps1",
@@ -128,6 +135,7 @@ def test_sft_sweep_markdown_explains_sft_fit_first():
     assert "# Picochat SFT Sweep" in markdown
     assert "Use SFT fit first" in markdown
     assert "SFT packing: `bos_bestfit`" in markdown
+    assert "PEFT: `lora`" in markdown
     assert "Precision: `bf16`" in markdown
     assert "Matmul precision: `high`" in markdown
     assert "torch.compile: `True`" in markdown
