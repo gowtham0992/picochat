@@ -423,6 +423,7 @@ def build_token_shards(
     corpus_path = Path(corpus_path)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    _clear_stale_token_shards(out_dir)
 
     shard_rows: list[dict[str, Any]] = []
     buffer: list[int] = []
@@ -480,6 +481,16 @@ def build_token_shards(
         encoding="utf-8",
     )
     return manifest
+
+
+def _clear_stale_token_shards(out_dir: Path) -> None:
+    """Remove prior generated token shards before writing a fresh manifest."""
+    for stale_path in out_dir.glob("tokens-*.pt"):
+        if stale_path.is_file():
+            stale_path.unlink()
+    manifest_path = out_dir / "token_shards_manifest.json"
+    if manifest_path.exists():
+        manifest_path.unlink()
 
 
 def load_token_shards_manifest(

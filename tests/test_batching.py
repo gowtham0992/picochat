@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 import torch
@@ -103,6 +104,51 @@ def test_load_sharded_token_split_can_reuse_existing_manifest(tmp_path):
 
     assert reused.stats["num_shards"] == built.stats["num_shards"]
     assert reused.stats["train_shards"] == built.stats["train_shards"]
+
+
+def test_building_token_shards_removes_stale_generated_shards(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    cache_dir = tmp_path / "shards"
+    text = "stale shards should not survive a rebuild\n" * 40
+    corpus_path.write_text(text, encoding="utf-8")
+    CharTokenizer.train([text]).save(tokenizer_path)
+
+    load_sharded_token_split(
+        corpus_path,
+        tokenizer_path,
+        context_size=8,
+        cache_dir=cache_dir,
+        val_fraction=0.25,
+        seed=1,
+        shard_token_size=24,
+        rebuild=True,
+    )
+    stale_path = cache_dir / "tokens-999999.pt"
+    torch.save(torch.tensor([1, 2, 3]), stale_path)
+    keep_path = cache_dir / "notes.txt"
+    keep_path.write_text("operator note", encoding="utf-8")
+
+    rebuilt = load_sharded_token_split(
+        corpus_path,
+        tokenizer_path,
+        context_size=8,
+        cache_dir=cache_dir,
+        val_fraction=0.25,
+        seed=1,
+        shard_token_size=48,
+        rebuild=True,
+    )
+
+    manifest_shards = {
+        Path(row["path"]).name
+        for row in json.loads((cache_dir / "token_shards_manifest.json").read_text(encoding="utf-8"))["shards"]
+    }
+    disk_shards = {path.name for path in cache_dir.glob("tokens-*.pt")}
+    assert stale_path.name not in disk_shards
+    assert disk_shards == manifest_shards
+    assert keep_path.read_text(encoding="utf-8") == "operator note"
+    assert rebuilt.stats["num_shards"] == len(manifest_shards)
 
 
 def test_load_token_shards_manifest_rejects_mismatched_run(tmp_path):
