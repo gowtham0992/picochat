@@ -3628,11 +3628,21 @@ function renderLaunchReadiness() {
 
 function launchPreviewCommand(config = launchConfig()) {
   const outDir = config.run_name ? `runs/${config.run_name}` : "runs/my-run";
-  const parts = [
+  const usesDdp = DDP_SCALE_PRESETS.has(config.preset);
+  const parts = usesDdp ? [
+    "PYTHONPATH=src",
+    "torchrun",
+    "--standalone",
+    "--nproc_per_node=8",
+    "-m",
+    "picochat.cli",
+  ] : [
     "PYTHONPATH=src",
     "python",
     "-m",
     "picochat.cli",
+  ];
+  parts.push(
     "run",
     "tiny",
     "--out-dir",
@@ -3729,7 +3739,7 @@ function launchPreviewCommand(config = launchConfig()) {
     config.min_quality_score,
     "--device",
     config.device || "cpu",
-  ];
+  );
   if (state.runPresets[config.preset]) parts.push("--scale", config.preset);
   if (config.tie_embeddings) parts.push("--tie-embeddings");
   if (config.qk_norm) parts.push("--qk-norm");
@@ -3738,6 +3748,7 @@ function launchPreviewCommand(config = launchConfig()) {
   if (config.gradient_checkpointing) parts.push("--gradient-checkpointing");
   if (config.auto_lr_scaling) parts.push("--auto-lr-scaling");
   if (config.loss_spike_rollback) parts.push("--loss-spike-rollback");
+  if (usesDdp) parts.push("--ddp");
   if (config.tokenizer_vocab_size) parts.push("--tokenizer-vocab-size", config.tokenizer_vocab_size);
   if (config.base_dataset_mode === "sharded") {
     parts.push("--base-shard-token-size", config.base_shard_token_size);

@@ -590,7 +590,7 @@
                 </div>
                 <div>
                   <label for="launch-context-size">CTX</label>
-                  <input id="launch-context-size" type="number" min="8" max="512" value="64">
+                  <input id="launch-context-size" type="number" min="8" max="8192" value="64">
                 </div>
                 <div>
                   <label for="launch-base-steps">BASE STEPS</label>
@@ -605,19 +605,19 @@
                   <div class="run-launch-controls advanced-launch-grid">
                     <div>
                       <label for="launch-n-embd">N EMBED</label>
-                      <input id="launch-n-embd" type="number" min="16" max="512" value="32">
+                      <input id="launch-n-embd" type="number" min="16" max="4096" value="32">
                     </div>
                     <div>
                       <label for="launch-n-head">HEADS</label>
-                      <input id="launch-n-head" type="number" min="1" max="16" value="4">
+                      <input id="launch-n-head" type="number" min="1" max="128" value="4">
                     </div>
                     <div>
                       <label for="launch-n-kv-head">KV HEADS</label>
-                      <input id="launch-n-kv-head" type="number" min="1" max="16" value="4">
+                      <input id="launch-n-kv-head" type="number" min="1" max="128" value="4">
                     </div>
                     <div>
                       <label for="launch-n-layer">LAYERS</label>
-                      <input id="launch-n-layer" type="number" min="1" max="12" value="1">
+                      <input id="launch-n-layer" type="number" min="1" max="128" value="1">
                     </div>
                     <div>
                       <label for="launch-norm-type">NORM</label>

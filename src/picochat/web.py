@@ -861,17 +861,17 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
 
     preset_name = _optional_string(payload.get("preset")) or "smoke"
     preset = _run_preset(preset_name)
-    context_size = _bounded_int(payload.get("context_size", preset["context_size"]), 8, 1024)
+    context_size = _bounded_int(payload.get("context_size", preset["context_size"]), 8, 8192)
     base_steps = _bounded_int(payload.get("base_steps", preset["base_steps"]), 1, 100000)
     sft_steps = _bounded_int(payload.get("sft_steps", preset["sft_steps"]), 1, 10000)
     base_batch_size = _bounded_int(payload.get("base_batch_size", preset["base_batch_size"]), 1, 64)
     sft_batch_size = _bounded_int(payload.get("sft_batch_size", preset["sft_batch_size"]), 1, 64)
     seed = _bounded_int(payload.get("seed", 42), 0, 9999)
     eval_max_new_tokens = _bounded_int(payload.get("eval_max_new_tokens", preset["eval_max_new_tokens"]), 1, 320)
-    n_embd = _bounded_int(payload.get("n_embd", preset["n_embd"]), 16, 512)
-    n_head = _bounded_int(payload.get("n_head", preset["n_head"]), 1, 16)
-    n_kv_head = _bounded_int(payload.get("n_kv_head", preset.get("n_kv_head", n_head)), 1, 16)
-    n_layer = _bounded_int(payload.get("n_layer", preset["n_layer"]), 1, 12)
+    n_embd = _bounded_int(payload.get("n_embd", preset["n_embd"]), 16, 4096)
+    n_head = _bounded_int(payload.get("n_head", preset["n_head"]), 1, 128)
+    n_kv_head = _bounded_int(payload.get("n_kv_head", preset.get("n_kv_head", n_head)), 1, 128)
+    n_layer = _bounded_int(payload.get("n_layer", preset["n_layer"]), 1, 128)
     if n_embd % n_head != 0:
         raise ValueError("n_embd must be divisible by n_head")
     if n_head % n_kv_head != 0:
@@ -996,6 +996,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     device = str(payload.get("device", preset.get("device", "cpu"))).strip().lower()
     if device not in DEVICE_CHOICES:
         raise ValueError(f"device must be one of {', '.join(DEVICE_CHOICES)}")
+    ddp = bool(payload.get("ddp", preset.get("ddp", False)))
+    ddp_world_size = _bounded_int(payload.get("ddp_world_size", 8 if ddp else 1), 1, 128)
     allow_unsafe_long_run = bool(payload.get("allow_unsafe_long_run", False))
 
     preflight_config = TinyRunConfig(
@@ -1027,6 +1029,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         torch_compile=torch_compile,
         torch_compile_mode=torch_compile_mode,
         gradient_checkpointing=gradient_checkpointing,
+        ddp=ddp,
+        ddp_world_size=ddp_world_size,
         eval_max_new_tokens=eval_max_new_tokens,
         min_quality_score=min_quality_score,
         split_mode="document",
@@ -1077,6 +1081,15 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     command = [
         sys.executable,
         "-m",
+    ]
+    if ddp:
+        command.extend([
+            "torch.distributed.run",
+            "--standalone",
+            f"--nproc_per_node={ddp_world_size}",
+            "-m",
+        ])
+    command.extend([
         "picochat.cli",
         "run",
         "tiny",
@@ -1180,7 +1193,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         str(min_quality_score),
         "--device",
         device,
-    ]
+    ])
     if preset_name in RUN_SCALES:
         command.extend(["--scale", preset_name])
     if tie_embeddings:
@@ -1198,6 +1211,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         command.append("--auto-lr-scaling")
     if loss_spike_rollback:
         command.append("--loss-spike-rollback")
+    if ddp:
+        command.append("--ddp")
     if tokenizer_vocab_size is not None:
         command.extend(["--tokenizer-vocab-size", str(tokenizer_vocab_size)])
     if base_dataset_mode == "sharded":
@@ -1280,6 +1295,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "target_param_data_ratio": target_param_data_ratio,
             "long_run_gate_profile": long_run_gate_profile,
             "device": device,
+            "ddp": ddp,
+            "ddp_world_size": ddp_world_size,
             "allow_unsafe_long_run": allow_unsafe_long_run,
         },
         "launch_readiness": launch_preview.readiness.to_dict(),

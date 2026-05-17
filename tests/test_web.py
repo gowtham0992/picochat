@@ -47,6 +47,8 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     html = Path("src/picochat/web_assets/index.html").read_text(encoding="utf-8")
     js = Path("src/picochat/web_assets/app.js").read_text(encoding="utf-8")
 
+    assert 'id="launch-n-embd" type="number" min="16" max="4096"' in html
+    assert 'id="launch-n-layer" type="number" min="1" max="128"' in html
     assert 'option value="h100-100m-ddp8"' in html
     assert '"h100-100m-ddp8"' in js
     assert "const DDP_SCALE_PRESETS" in js
@@ -1049,6 +1051,56 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert captured["kwargs"]["env"]["PYTHONUNBUFFERED"] == "1"
     assert (tmp_path / "runs" / "ui-run" / "web_run.log").exists()
     assert run_status_plan(job["id"], tmp_path / "runs")["job"]["pid"] == 4321
+
+
+def test_start_run_plan_preserves_h100_100m_ddp8_preset(tmp_path, monkeypatch):
+    source_path = tmp_path / "lesson.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    source_path.write_text("lesson\n" * 100, encoding="utf-8")
+    chat_path.write_text(json.dumps({"user": "who", "assistant": "Picochat"}) + "\n", encoding="utf-8")
+    eval_path.write_text(json.dumps({"user": "who", "must_include": ["Picochat"]}) + "\n", encoding="utf-8")
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+    captured = {}
+
+    class FakeProcess:
+        pid = 4321
+
+        def __init__(self, command, **kwargs):
+            captured["command"] = command
+            captured["kwargs"] = kwargs
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr("picochat.web.subprocess.Popen", FakeProcess)
+
+    started = start_run_plan(tmp_path / "runs", {
+        "dataset_pack": str(pack_path),
+        "run_name": "ddp8",
+        "preset": "h100-100m-ddp8",
+        "allow_unsafe_long_run": True,
+    })
+
+    command = captured["command"]
+    assert "torch.distributed.run" in command
+    assert "--nproc_per_node=8" in command
+    assert "-m" in command
+    assert "picochat.cli" in command
+    assert "--ddp" in command
+    assert "--n-embd" in command
+    assert "768" in command
+    assert "--n-layer" in command
+    assert "16" in command
+    assert started["job"]["launch_config"]["n_embd"] == 768
+    assert started["job"]["launch_config"]["n_layer"] == 16
+    assert started["job"]["launch_config"]["ddp"] is True
+    assert started["job"]["launch_config"]["ddp_world_size"] == 8
 
 
 def test_run_progress_parser_extracts_training_and_eval_steps():
