@@ -761,6 +761,48 @@ def test_cli_data_benchmark_pack(tmp_path, capsys):
     assert (tmp_path / "eval_benchmark.jsonl").exists()
 
 
+def test_cli_data_task_pack(tmp_path, capsys):
+    import json
+
+    corpus = tmp_path / "corpus.txt"
+    corpus.write_text("Picochat trains tiny local models.\n", encoding="utf-8")
+    chat = tmp_path / "chat.jsonl"
+    chat.write_text(json.dumps({"user": "hi", "assistant": "hello"}) + "\n", encoding="utf-8")
+    eval_path = tmp_path / "eval.jsonl"
+    eval_path.write_text(json.dumps({"user": "hi", "must_include": ["hello"]}) + "\n", encoding="utf-8")
+    pack = tmp_path / "dataset_pack.json"
+    pack.write_text(json.dumps({
+        "corpus": str(corpus),
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    exit_code = main([
+        "data",
+        "task-pack",
+        "--dataset-pack",
+        str(pack),
+        "--sft-rows",
+        "64",
+        "--eval-rows",
+        "24",
+        "--profile",
+        "capability",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "task-mixture chat SFT:" in output
+    assert "task-mixture eval:" in output
+    assert "profile: capability" in output
+    assert "contamination:" in output
+    assert "promoted_to_pack: True" in output
+    assert "weak_skills" in output
+    assert "behavior_anchor" in output
+    assert (tmp_path / "chat_task_mixture_capability.jsonl").exists()
+    assert (tmp_path / "eval_task_mixture_capability.jsonl").exists()
+
+
 def test_cli_data_slice_pack(tmp_path, capsys):
     import json
 

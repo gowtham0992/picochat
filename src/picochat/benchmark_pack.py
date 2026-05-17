@@ -29,6 +29,7 @@ BENCHMARK_SOURCES = ("offline", "auto", "hf")
 BENCHMARK_PROFILES = ("full", "release_behavior", "behavior", "weak_skills")
 BENCHMARK_SKILL_ANSWER_STYLES = ("direct", "scratchpad")
 SFT_CHAR_BUDGET = 900
+GENERIC_EVAL_MARKERS = {"final answer", "final answer:"}
 BEHAVIOR_PROFILE_WEIGHTS = {
     "release_behavior": (
         ("identity", 0.85),
@@ -2321,7 +2322,7 @@ def _contamination_report(chat_rows: list[dict[str, Any]], eval_rows: list[dict[
             answers = [answers]
         for answer in answers:
             answer_text = _norm_prompt(str(answer))
-            if len(answer_text) < 12 or answer_text in {"a", "b", "c", "d"}:
+            if len(answer_text) < 12 or answer_text in {"a", "b", "c", "d"} | GENERIC_EVAL_MARKERS:
                 continue
             if answer_text in train_assistant_text:
                 answer_overlaps.append({

@@ -82,6 +82,12 @@ from picochat.tuning_slice import (
     slice_tuning_pack,
     stage_tuning_pack,
 )
+from picochat.task_mixture import (
+    DEFAULT_TASK_MIXTURE_EVAL_ROWS,
+    DEFAULT_TASK_MIXTURE_SFT_ROWS,
+    TASK_MIXTURE_PROFILES,
+    generate_task_mixture_pack,
+)
 from picochat.web import WebConfig, serve_web
 
 
@@ -337,6 +343,61 @@ def build_parser() -> argparse.ArgumentParser:
     data_benchmark_pack.add_argument("--seed", type=int, default=42)
     data_benchmark_pack.add_argument("--force", action="store_true", help="Overwrite existing benchmark pack files.")
     data_benchmark_pack.add_argument(
+        "--no-promote",
+        action="store_true",
+        help="Write files but do not point dataset_pack.json at them.",
+    )
+
+    data_task_pack = data_subparsers.add_parser(
+        "task-pack",
+        help="Generate a staged task-mixture SFT/eval pack for release or capability tuning.",
+    )
+    data_task_pack.add_argument(
+        "--dataset-pack",
+        "--pack",
+        dest="dataset_pack",
+        required=True,
+        help="Dataset pack whose chat/eval paths should be replaced or supplemented.",
+    )
+    data_task_pack.add_argument("--out-dir", default=None, help="Optional output directory for task-mixture files.")
+    data_task_pack.add_argument("--chat-out", default=None, help="Optional output path for chat SFT JSONL.")
+    data_task_pack.add_argument("--eval-out", default=None, help="Optional output path for eval JSONL.")
+    data_task_pack.add_argument(
+        "--sft-rows",
+        type=int,
+        default=DEFAULT_TASK_MIXTURE_SFT_ROWS,
+        help="Number of staged SFT rows to write.",
+    )
+    data_task_pack.add_argument(
+        "--eval-rows",
+        type=int,
+        default=DEFAULT_TASK_MIXTURE_EVAL_ROWS,
+        help="Number of held-out eval rows to write.",
+    )
+    data_task_pack.add_argument(
+        "--source",
+        choices=BENCHMARK_SOURCES,
+        default="offline",
+        help="Source for benchmark components: offline deterministic rows, auto HF fallback, or HF-required.",
+    )
+    data_task_pack.add_argument(
+        "--profile",
+        choices=TASK_MIXTURE_PROFILES,
+        default="capability",
+        help=(
+            "Task-mixture profile. release is identity/refusal only; capability adds scratchpad "
+            "math/spelling; balanced mixes release, weak skills, and benchmark rows."
+        ),
+    )
+    data_task_pack.add_argument(
+        "--skill-answer-style",
+        choices=BENCHMARK_SKILL_ANSWER_STYLES,
+        default="scratchpad",
+        help="Default answer style for components that do not override it.",
+    )
+    data_task_pack.add_argument("--seed", type=int, default=42)
+    data_task_pack.add_argument("--force", action="store_true", help="Overwrite existing task-mixture files.")
+    data_task_pack.add_argument(
         "--no-promote",
         action="store_true",
         help="Write files but do not point dataset_pack.json at them.",
@@ -1831,6 +1892,49 @@ def benchmark_pack_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def task_pack_data(args: argparse.Namespace) -> int:
+    report = generate_task_mixture_pack(
+        dataset_pack=args.dataset_pack,
+        out_dir=args.out_dir,
+        chat_out=args.chat_out,
+        eval_out=args.eval_out,
+        sft_rows=args.sft_rows,
+        eval_rows=args.eval_rows,
+        seed=args.seed,
+        source=args.source,
+        profile=args.profile,
+        skill_answer_style=args.skill_answer_style,
+        force=args.force,
+        promote_to_pack=not args.no_promote,
+    )
+    print(f"task-mixture chat SFT: {report.chat_output_path}")
+    print(f"task-mixture eval: {report.eval_output_path}")
+    print(f"sft_rows: {report.sft_rows}")
+    print(f"eval_rows: {report.eval_rows}")
+    print(f"profile: {report.profile}")
+    print(f"source: {report.source_mode}")
+    print(f"source_status: {report.source_status}")
+    if report.fallback_reason:
+        print(f"fallback_reason: {report.fallback_reason}")
+    print(f"contamination: {report.contamination['status']}")
+    print(f"promoted_to_pack: {report.promoted_to_pack}")
+    print("components:")
+    for component in report.components:
+        chat_count = report.chat_component_counts.get(component.name, 0)
+        eval_count = report.eval_component_counts.get(component.name, 0)
+        print(f"- {component.name}: train={chat_count}, eval={eval_count}, profile={component.benchmark_profile}")
+    print("chat categories:")
+    for name, count in report.chat_categories.items():
+        print(f"- {name}: {count}")
+    print("eval categories:")
+    for name, count in report.eval_categories.items():
+        print(f"- {name}: {count}")
+    print(f"report: {report.report_path}")
+    print("\nnext:")
+    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {report.dataset_pack}")
+    return 0
+
+
 def slice_pack_data(args: argparse.Namespace) -> int:
     report = slice_tuning_pack(
         args.dataset_pack,
@@ -2822,6 +2926,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "benchmark-pack":
         return benchmark_pack_data(args)
+
+    if args.command == "data" and args.data_command == "task-pack":
+        return task_pack_data(args)
 
     if args.command == "data" and args.data_command == "slice-pack":
         return slice_pack_data(args)

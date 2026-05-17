@@ -96,6 +96,33 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
   --force 2>&1 | tee logs/benchmark-pack-h100.log
 ```
 
+For capability research, generate a separate task-mixture pack instead of
+overloading the first-release pack. `release` is identity/refusal only,
+`capability` mixes scratchpad arithmetic/spelling with release behavior, and
+`balanced` adds general benchmark rows. Use these as explicit midtraining or
+diagnostic packs; keep first-release model claims tied to `release_behavior` or
+the `release` task mixture.
+
+```bash
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data task-pack \
+  --dataset-pack runs/h100-climbmix-16shard-80k-pack-v1/dataset_pack.json \
+  --out-dir runs/h100-climbmix-16shard-80k-capability-pack-v1 \
+  --sft-rows 2400 \
+  --eval-rows 480 \
+  --profile capability \
+  --source offline \
+  --skill-answer-style scratchpad \
+  --force \
+  --no-promote 2>&1 | tee logs/task-pack-capability-h100.log
+```
+
+A staged research sequence should train from the base checkpoint into the
+capability task mixture, then run a narrow release SFT from the same base or
+from the capability checkpoint depending on the claim being tested. Do not mix
+those results in reports: capability rows are for math/spelling transfer
+diagnostics, while release rows are for a conservative public SLM identity and
+boundary claim.
+
 ## 4. Preflight The Pilot
 
 This recipe uses hf BPE, regex pretokenization, RoPE/RMSNorm/SwiGLU, GQA, tied
