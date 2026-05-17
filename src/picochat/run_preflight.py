@@ -472,6 +472,24 @@ def _runtime_backend_checks(config: Any) -> list[RunPreflightCheck]:
                 "only supported for single-process runs."
             ),
         ))
+    if bool(_value(config, "ddp", False)):
+        muon_phases = [
+            phase
+            for phase, field in (("base", "base_optimizer"), ("sft", "sft_optimizer"))
+            if str(_value(config, field, "adamw")) == "muon"
+        ]
+        if muon_phases:
+            checks.append(_check(
+                "ddp_muon_optimizer",
+                "warn",
+                ", ".join(muon_phases),
+                "AdamW release preset or dedicated Muon ablation",
+                (
+                    "Picochat's Muon path is a transparent rank-local Muon+AdamW hybrid. "
+                    "It is not nanochat's specialized distributed Muon/AdamW optimizer, "
+                    "so treat DDP Muon as an ablation before using it for an expensive release run."
+                ),
+            ))
     return checks
 
 

@@ -187,6 +187,20 @@ def test_preflight_blocks_ddp_loss_spike_rollback(monkeypatch):
     assert "rank-local" in checks["ddp_loss_spike_rollback"].message
 
 
+def test_preflight_warns_that_ddp_muon_needs_dedicated_ablation(monkeypatch):
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    report = assess_run_preflight(
+        _h100_like_config(ddp=True, base_optimizer="muon", sft_optimizer="muon"),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["ddp_muon_optimizer"].status == "warn"
+    assert checks["ddp_muon_optimizer"].metric == "base, sft"
+    assert "rank-local" in checks["ddp_muon_optimizer"].message
+    assert "distributed Muon/AdamW" in checks["ddp_muon_optimizer"].message
+
+
 def test_preflight_blocks_ddp8_scale_without_eight_rank_budget(monkeypatch):
     monkeypatch.delenv("WORLD_SIZE", raising=False)
     report = assess_run_preflight(
