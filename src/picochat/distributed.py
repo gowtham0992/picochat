@@ -136,6 +136,23 @@ def mean_scalar_if_distributed(
     return float(tensor.item())
 
 
+def broadcast_object_if_distributed(
+    value: Any,
+    *,
+    src: int = 0,
+    metadata: dict[str, Any] | None = None,
+) -> Any:
+    """Broadcast a small Python object from one rank to every distributed worker."""
+    if metadata is not None and not bool(metadata.get("enabled", False)):
+        return value
+    if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+        return value
+    rank = torch.distributed.get_rank()
+    payload = [value if rank == src else None]
+    torch.distributed.broadcast_object_list(payload, src=src)
+    return payload[0]
+
+
 def no_sync_if_distributed(model: torch.nn.Module, *, enabled: bool):
     """Skip DDP gradient all-reduce for intermediate gradient accumulation microsteps."""
     if enabled and hasattr(model, "no_sync"):

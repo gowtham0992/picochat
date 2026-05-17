@@ -24,6 +24,7 @@ from picochat.checkpoint import load_checkpoint, load_training_state, save_check
 from picochat.device import resolve_device
 from picochat.distributed import (
     barrier_if_distributed,
+    broadcast_object_if_distributed,
     initialize_ddp,
     is_main_process,
     mean_scalar_if_distributed,
@@ -324,20 +325,31 @@ def train_base(config: TrainConfig) -> dict:
         logit_softcap=config.logit_softcap,
         gradient_checkpointing=config.gradient_checkpointing,
     )
-    training_fingerprint = make_training_fingerprint({
-        "kind": "base",
-        "corpus_sha256": file_sha256(config.corpus_path),
-        "tokenizer_sha256": file_sha256(config.tokenizer_path),
-        "corpus_manifest_sha256": file_sha256(config.corpus_manifest_path),
-        "model_config": model_config.to_dict(),
-        "dataset_mode": config.dataset_mode,
-        "split_mode": config.split_mode,
-        "val_fraction": config.val_fraction,
-        "seed": config.seed,
-        "context_size": config.context_size,
-        "shard_token_size": config.shard_token_size if config.dataset_mode == "sharded" else None,
-        "shard_cache_size": config.shard_cache_size if config.dataset_mode == "sharded" else None,
-    })
+    def build_training_fingerprint() -> dict:
+        return make_training_fingerprint({
+            "kind": "base",
+            "corpus_sha256": file_sha256(config.corpus_path),
+            "tokenizer_sha256": file_sha256(config.tokenizer_path),
+            "corpus_manifest_sha256": file_sha256(config.corpus_manifest_path),
+            "model_config": model_config.to_dict(),
+            "dataset_mode": config.dataset_mode,
+            "split_mode": config.split_mode,
+            "val_fraction": config.val_fraction,
+            "seed": config.seed,
+            "context_size": config.context_size,
+            "shard_token_size": config.shard_token_size if config.dataset_mode == "sharded" else None,
+            "shard_cache_size": config.shard_cache_size if config.dataset_mode == "sharded" else None,
+        })
+
+    training_fingerprint = None
+    if main_process:
+        training_fingerprint = build_training_fingerprint()
+    training_fingerprint = broadcast_object_if_distributed(
+        training_fingerprint,
+        metadata=ddp_metadata,
+    )
+    if training_fingerprint is None:
+        training_fingerprint = build_training_fingerprint()
     resume_state = None
     resume_metadata = None
     if config.resume_from:

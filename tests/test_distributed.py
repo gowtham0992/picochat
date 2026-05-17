@@ -5,6 +5,7 @@ import torch
 
 from picochat.distributed import (
     barrier_if_distributed,
+    broadcast_object_if_distributed,
     ddp_env_metadata,
     initialize_ddp,
     is_main_process,
@@ -46,6 +47,36 @@ def test_mean_scalar_if_distributed_averages_initialized_group(monkeypatch):
     monkeypatch.setattr(torch.distributed, "all_reduce", fake_all_reduce)
 
     assert mean_scalar_if_distributed(1.25, torch.device("cpu"), {"enabled": True}) == 2.5
+
+
+def test_broadcast_object_if_distributed_noops_when_disabled(monkeypatch):
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+
+    def fail_broadcast(*_args, **_kwargs):  # pragma: no cover - should not be called
+        raise AssertionError("broadcast should not run for disabled DDP metadata")
+
+    monkeypatch.setattr(torch.distributed, "broadcast_object_list", fail_broadcast)
+
+    payload = {"sha256": "abc"}
+    assert broadcast_object_if_distributed(payload, metadata={"enabled": False}) == payload
+
+
+def test_broadcast_object_if_distributed_receives_payload(monkeypatch):
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 1)
+
+    def fake_broadcast(payload, src):
+        assert src == 0
+        assert payload == [None]
+        payload[0] = {"sha256": "from-rank-zero"}
+
+    monkeypatch.setattr(torch.distributed, "broadcast_object_list", fake_broadcast)
+
+    assert broadcast_object_if_distributed(None, metadata={"enabled": True}) == {
+        "sha256": "from-rank-zero"
+    }
 
 
 def test_no_sync_if_distributed_uses_ddp_context_when_enabled():
