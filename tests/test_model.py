@@ -538,6 +538,60 @@ def test_attention_backend_external_flash_requires_optional_package(monkeypatch)
         model(x)
 
 
+def test_attention_backend_can_use_optional_fa3(monkeypatch):
+    calls = []
+
+    def fake_flash(q, k, v, causal=True):
+        calls.append({
+            "q_shape": tuple(q.shape),
+            "k_shape": tuple(k.shape),
+            "causal": causal,
+        })
+        return torch.zeros_like(q)
+
+    def fail_sdpa(*args, **kwargs):
+        raise AssertionError("fa3 should bypass PyTorch SDPA")
+
+    monkeypatch.setattr(model_module, "_fa3_flash_attn_func", lambda: fake_flash)
+    monkeypatch.setattr(torch.nn.functional, "scaled_dot_product_attention", fail_sdpa)
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        attn_backend="fa3",
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    logits, _ = model(x)
+
+    assert logits.shape == (2, config.context_size, config.vocab_size)
+    assert calls == [{
+        "q_shape": (2, 8, 4, 4),
+        "k_shape": (2, 8, 4, 4),
+        "causal": True,
+    }]
+
+
+def test_attention_backend_fa3_requires_optional_package(monkeypatch):
+    monkeypatch.setattr(model_module, "_fa3_flash_attn_func", lambda: None)
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        attn_backend="fa3",
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    with pytest.raises(RuntimeError, match="FlashAttention-3"):
+        model(x)
+
+
 def test_attention_backend_rejects_unknown_value():
     with pytest.raises(ValueError, match="attn_backend"):
         TinyGPT(GPTConfig(vocab_size=20, context_size=8, attn_backend="made_up"))

@@ -226,6 +226,17 @@ def test_preflight_allows_external_flash_attention_on_cuda_bf16():
     assert "flash-attn package" in checks["attention_backend_runtime"].message
 
 
+def test_preflight_allows_fa3_attention_on_cuda_bf16():
+    report = assess_run_preflight(
+        _h100_like_config(attn_backend="fa3", device="cuda", precision="bf16"),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["attention_backend_runtime"].status == "pass"
+    assert "FlashAttention-3" in checks["attention_backend_runtime"].message
+
+
 def test_preflight_parameter_estimate_matches_modern_model():
     config = _h100_like_config(
         tokenizer_vocab_size=1024,

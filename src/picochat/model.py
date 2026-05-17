@@ -12,14 +12,14 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 KVCache = tuple[tuple[torch.Tensor, torch.Tensor], ...]
-SDPA_BACKENDS = ("auto", "flash", "efficient", "math", "cudnn", "external_flash")
+SDPA_BACKENDS = ("auto", "flash", "efficient", "math", "cudnn", "external_flash", "fa3")
 _SDPA_BACKEND_NAMES = {
     "flash": "FLASH_ATTENTION",
     "efficient": "EFFICIENT_ATTENTION",
     "math": "MATH",
     "cudnn": "CUDNN_ATTENTION",
 }
-_EXTERNAL_FLASH_BACKENDS = ("external_flash",)
+_EXTERNAL_FLASH_BACKENDS = ("external_flash", "fa3")
 _SDPA_SUPPORTS_ENABLE_GQA = "enable_gqa" in (
     getattr(F.scaled_dot_product_attention, "__doc__", "") or ""
 )
@@ -105,9 +105,26 @@ def _external_flash_attn_func():
         return None
 
 
+@lru_cache(maxsize=1)
+def _fa3_flash_attn_func():
+    """Return the optional FlashAttention-3 kernel loader function when present."""
+    try:
+        from kernels import get_kernel  # type: ignore
+
+        kernel = get_kernel("varunneal/flash-attention-3")
+        return getattr(kernel, "flash_attn_func", None)
+    except Exception:
+        return None
+
+
 def external_flash_attention_available() -> bool:
     """Whether the optional flash-attn package is importable in this environment."""
     return _external_flash_attn_func() is not None
+
+
+def fa3_attention_available() -> bool:
+    """Whether the optional FA3 kernel package is importable in this environment."""
+    return _fa3_flash_attn_func() is not None
 
 
 def make_norm(norm_type: str, size: int) -> nn.Module:
@@ -205,7 +222,13 @@ class CausalSelfAttention(nn.Module):
         y = None
         if self.attn_backend in _EXTERNAL_FLASH_BACKENDS:
             if past_kv is None and attn_mask is None:
-                y = _external_flash_attention(q, k, v, dropout_p=sdpa_kwargs["dropout_p"])
+                y = _external_flash_attention(
+                    q,
+                    k,
+                    v,
+                    dropout_p=sdpa_kwargs["dropout_p"],
+                    backend=self.attn_backend,
+                )
         if y is None:
             with sdpa_backend_context(self.attn_backend):
                 y = F.scaled_dot_product_attention(
@@ -525,9 +548,16 @@ def _external_flash_attention(
     v: torch.Tensor,
     *,
     dropout_p: float,
+    backend: str,
 ) -> torch.Tensor:
-    flash_attn_func = _external_flash_attn_func()
+    flash_attn_func = _fa3_flash_attn_func() if backend == "fa3" else _external_flash_attn_func()
     if flash_attn_func is None:
+        if backend == "fa3":
+            raise RuntimeError(
+                "attn_backend='fa3' requires the optional kernels package with "
+                "varunneal/flash-attention-3 (FlashAttention-3); use attn_backend='flash' "
+                "for PyTorch SDPA FlashAttention"
+            )
         raise RuntimeError(
             "attn_backend='external_flash' requires the optional flash-attn package; "
             "use attn_backend='flash' for PyTorch SDPA FlashAttention"
@@ -535,7 +565,10 @@ def _external_flash_attention(
     q_t = q.transpose(1, 2).contiguous()
     k_t = k.transpose(1, 2).contiguous()
     v_t = v.transpose(1, 2).contiguous()
-    y_t = flash_attn_func(q_t, k_t, v_t, dropout_p=dropout_p, causal=True)
+    if backend == "fa3":
+        y_t = flash_attn_func(q_t, k_t, v_t, causal=True)
+    else:
+        y_t = flash_attn_func(q_t, k_t, v_t, dropout_p=dropout_p, causal=True)
     return y_t.transpose(1, 2)
 
 

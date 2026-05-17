@@ -22,7 +22,7 @@ MIN_LONG_RUN_EVAL_ROWS = 80
 DEFAULT_TARGET_PARAM_DATA_RATIO = 20.0
 BASE_LR_REFERENCE_EFFECTIVE_BATCH = 8
 FIRST_RELEASE_SFT_CATEGORY_PREFIXES = ("identity", "refusal", "bench_choice")
-ACCELERATED_ATTENTION_BACKENDS = ("flash", "external_flash", "efficient", "cudnn")
+ACCELERATED_ATTENTION_BACKENDS = ("flash", "external_flash", "fa3", "efficient", "cudnn")
 
 
 @dataclass(frozen=True)
@@ -444,6 +444,8 @@ def _runtime_backend_checks(config: Any) -> list[RunPreflightCheck]:
         runtime_message = "Explicit accelerated attention is paired with CUDA and mixed precision."
         if attn_backend == "external_flash":
             runtime_message += " The optional flash-attn package must still pass sanity on this host."
+        if attn_backend == "fa3":
+            runtime_message += " The optional FlashAttention-3 kernels package must still pass sanity on this host."
         checks.append(_check(
             "attention_backend_runtime",
             "pass",

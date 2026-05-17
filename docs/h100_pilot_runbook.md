@@ -255,6 +255,12 @@ first-release SFT defaults. The H100 presets also disable transformer linear
 biases to match modern decoder-only LM practice while keeping legacy/local
 scales backwards compatible.
 
+The default H100 presets use PyTorch SDPA FlashAttention via
+`--attn-backend flash`. If a Hopper box has the optional FA3 `kernels` package
+installed and `sanity preh100 --attn-backend fa3` passes, you can run the same
+recipe with `--attn-backend fa3`. Do not silently fall back on a paid run:
+forced `fa3` should fail if the kernel is unavailable.
+
 Before launching, generate an explicit scale plan. This is the reproducible
 bridge between a target size, dataset token budget, global batch, and step
 count. It is useful when changing GPU count, context size, or target model size
