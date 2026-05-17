@@ -1,5 +1,6 @@
 import pytest
 
+from picochat.batching import TokenSplitBundle, TokenWindowDataset
 from picochat.checkpoint import load_training_state
 from picochat.tokenizer import CharTokenizer
 from picochat.train import TrainConfig, train_base
@@ -249,6 +250,65 @@ def test_train_base_can_use_sharded_dataset_mode(tmp_path):
     assert report["dataset"]["shard_cache_size"] == 3
     assert (out_dir / "token_shards" / "token_shards_manifest.json").exists()
     assert report["coverage"]["actual_steps"] == 1
+
+
+def test_train_base_ddp_worker_reuses_rank_zero_token_shards(tmp_path, monkeypatch):
+    import picochat.train as train_module
+
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    out_dir = tmp_path / "run"
+    text = "rank zero builds token shards once\n" * 40
+    corpus_path.write_text(text, encoding="utf-8")
+    CharTokenizer.train([text]).save(tokenizer_path)
+    calls = []
+    ddp_metadata = {"enabled": True, "world_size": 2, "rank": 1, "local_rank": 1}
+
+    def fake_load_sharded_token_split(*args, **kwargs):
+        calls.append(kwargs.get("rebuild"))
+        dataset = TokenWindowDataset([index % 8 for index in range(120)], context_size=8)
+        return TokenSplitBundle(
+            train_dataset=dataset,
+            val_dataset=dataset,
+            stats={
+                "num_tokens": 120,
+                "train_tokens": 120,
+                "val_tokens": 120,
+                "split_mode": "sharded",
+                "num_shards": 2,
+                "shard_cache_size": kwargs.get("shard_cache_size"),
+            },
+            train_text="",
+            val_text="",
+        )
+
+    monkeypatch.setattr(train_module, "initialize_ddp", lambda device, enabled=False: ddp_metadata)
+    monkeypatch.setattr(train_module, "prepare_ddp_model", lambda model, device, enabled=False: (model, ddp_metadata))
+    monkeypatch.setattr(train_module, "barrier_if_distributed", lambda metadata=None: None)
+    monkeypatch.setattr(train_module, "load_sharded_token_split", fake_load_sharded_token_split)
+
+    report = train_base(TrainConfig(
+        corpus_path=str(corpus_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir),
+        context_size=8,
+        batch_size=2,
+        max_steps=1,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        dataset_mode="sharded",
+        shard_token_size=64,
+        ddp=True,
+    ))
+
+    assert calls == [False]
+    assert report["config"]["ddp_metadata"]["rank"] == 1
+    assert report["config"]["artifacts_written"] is False
+    assert not (out_dir / "token_shards").exists()
 
 
 def test_train_base_records_gradient_checkpointing_and_ddp_metadata(tmp_path):

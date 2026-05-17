@@ -22,7 +22,7 @@ from picochat.batching import (
 )
 from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
-from picochat.distributed import barrier_if_distributed, ddp_env_metadata, is_main_process, prepare_ddp_model
+from picochat.distributed import barrier_if_distributed, initialize_ddp, is_main_process, prepare_ddp_model
 from picochat.memorization import memorization_diagnostics
 from picochat.model import GPTConfig, TinyGPT
 from picochat.optim import (
@@ -199,26 +199,43 @@ def train_base(config: TrainConfig) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     device = resolve_device(config.device)
+    ddp_metadata = initialize_ddp(device, enabled=config.ddp)
+    main_process = is_main_process(ddp_metadata)
     tokenizer = load_tokenizer(config.tokenizer_path)
     if config.dataset_mode not in {"memory", "sharded"}:
         raise ValueError("dataset_mode must be 'memory' or 'sharded'")
     canary_values = _canary_values(config.seed, config.canary_count)
     if config.dataset_mode == "sharded":
-        print(
-            "base data: preparing sharded token dataset "
-            f"({config.shard_token_size:,} tokens/shard, cache={config.shard_cache_size})",
-            flush=True,
-        )
-        split = load_sharded_token_split(
-            corpus_path=config.corpus_path,
-            tokenizer_path=config.tokenizer_path,
-            context_size=config.context_size,
-            cache_dir=out_dir / "token_shards",
-            val_fraction=config.val_fraction,
-            seed=config.seed,
-            shard_token_size=config.shard_token_size,
-            shard_cache_size=config.shard_cache_size,
-        )
+        if main_process:
+            print(
+                "base data: preparing sharded token dataset "
+                f"({config.shard_token_size:,} tokens/shard, cache={config.shard_cache_size})",
+                flush=True,
+            )
+            split = load_sharded_token_split(
+                corpus_path=config.corpus_path,
+                tokenizer_path=config.tokenizer_path,
+                context_size=config.context_size,
+                cache_dir=out_dir / "token_shards",
+                val_fraction=config.val_fraction,
+                seed=config.seed,
+                shard_token_size=config.shard_token_size,
+                shard_cache_size=config.shard_cache_size,
+                rebuild=True,
+            )
+        barrier_if_distributed(ddp_metadata)
+        if not main_process:
+            split = load_sharded_token_split(
+                corpus_path=config.corpus_path,
+                tokenizer_path=config.tokenizer_path,
+                context_size=config.context_size,
+                cache_dir=out_dir / "token_shards",
+                val_fraction=config.val_fraction,
+                seed=config.seed,
+                shard_token_size=config.shard_token_size,
+                shard_cache_size=config.shard_cache_size,
+                rebuild=False,
+            )
     else:
         print("base data: preparing in-memory token split", flush=True)
         split = load_token_split(
@@ -231,13 +248,14 @@ def train_base(config: TrainConfig) -> dict:
             corpus_manifest_path=config.corpus_manifest_path,
             canary_values=canary_values,
         )
-    print(
-        "base data: ready "
-        f"train={len(split.train_dataset):,} val={len(split.val_dataset):,} "
-        f"mode={split.stats.get('split_mode', config.dataset_mode)}",
-        flush=True,
-    )
-    ddp_env = ddp_env_metadata(config.ddp)
+    if main_process:
+        print(
+            "base data: ready "
+            f"train={len(split.train_dataset):,} val={len(split.val_dataset):,} "
+            f"mode={split.stats.get('split_mode', config.dataset_mode)}",
+            flush=True,
+        )
+    ddp_env = ddp_metadata
     train_batcher = make_resumable_batcher(
         split.train_dataset,
         batch_size=config.batch_size,

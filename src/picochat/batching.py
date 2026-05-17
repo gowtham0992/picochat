@@ -469,6 +469,8 @@ def build_token_shards(
         "corpus_path": str(corpus_path),
         "tokenizer_path": str(tokenizer_path),
         "shard_token_size": shard_token_size,
+        "add_bos": add_bos,
+        "add_eos": add_eos,
         "num_tokens": total_tokens,
         "num_shards": len(shard_rows),
         "shards": shard_rows,
@@ -477,6 +479,49 @@ def build_token_shards(
         json.dumps(manifest, indent=2),
         encoding="utf-8",
     )
+    return manifest
+
+
+def load_token_shards_manifest(
+    cache_dir: str | Path,
+    *,
+    corpus_path: str | Path,
+    tokenizer_path: str | Path,
+    shard_token_size: int,
+    add_bos: bool = True,
+    add_eos: bool = True,
+) -> dict[str, Any]:
+    """Load an existing token-shard manifest and verify it matches this run."""
+    cache_dir = Path(cache_dir)
+    manifest_path = cache_dir / "token_shards_manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"token shard manifest does not exist: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    expected = {
+        "corpus_path": str(Path(corpus_path)),
+        "tokenizer_path": str(Path(tokenizer_path)),
+        "shard_token_size": int(shard_token_size),
+        "add_bos": bool(add_bos),
+        "add_eos": bool(add_eos),
+    }
+    observed = {
+        "corpus_path": str(manifest.get("corpus_path")),
+        "tokenizer_path": str(manifest.get("tokenizer_path")),
+        "shard_token_size": int(manifest.get("shard_token_size", 0)),
+        "add_bos": bool(manifest.get("add_bos", True)),
+        "add_eos": bool(manifest.get("add_eos", True)),
+    }
+    if observed != expected:
+        raise ValueError(
+            "token shard manifest does not match this run; rebuild the sharded dataset"
+        )
+    shards = manifest.get("shards")
+    if not isinstance(shards, list) or not shards:
+        raise ValueError("token shard manifest contains no shards")
+    for shard in shards:
+        shard_path = Path(str(shard.get("path", "")))
+        if not shard_path.exists():
+            raise FileNotFoundError(f"token shard is missing: {shard_path}")
     return manifest
 
 
@@ -489,16 +534,25 @@ def load_sharded_token_split(
     seed: int = 42,
     shard_token_size: int = 1_000_000,
     shard_cache_size: int = 2,
+    rebuild: bool = True,
 ) -> TokenSplitBundle:
     """Build token shards and return train/validation sharded window datasets."""
     if not 0.0 < val_fraction < 1.0:
         raise ValueError("val_fraction must be between 0 and 1")
-    manifest = build_token_shards(
-        corpus_path=corpus_path,
-        tokenizer_path=tokenizer_path,
-        out_dir=cache_dir,
-        shard_token_size=shard_token_size,
-    )
+    if rebuild:
+        manifest = build_token_shards(
+            corpus_path=corpus_path,
+            tokenizer_path=tokenizer_path,
+            out_dir=cache_dir,
+            shard_token_size=shard_token_size,
+        )
+    else:
+        manifest = load_token_shards_manifest(
+            cache_dir,
+            corpus_path=corpus_path,
+            tokenizer_path=tokenizer_path,
+            shard_token_size=shard_token_size,
+        )
     shards = manifest["shards"]
     if len(shards) < 2:
         raise ValueError("sharded split requires at least two token shards")
