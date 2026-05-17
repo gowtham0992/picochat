@@ -1566,6 +1566,7 @@ def test_run_presets_are_exposed_for_web_launcher():
     assert presets["h100-100m"]["base_steps"] == 33000
     assert presets["h100-100m"]["long_run_gate_profile"] == "first_release"
     assert presets["h100-100m-ddp8"]["base_steps"] == 4100
+    assert presets["h100-100m-ddp8"]["sft_steps"] == 24
     assert presets["h100-100m-ddp8"]["ddp"] is True
     assert presets["h100-100m-ddp8"]["loss_spike_rollback"] is False
     assert presets["h100-100m-ddp8"]["long_run_gate_profile"] == "first_release"

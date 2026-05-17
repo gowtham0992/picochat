@@ -400,8 +400,9 @@ RUN_SCALES: dict[str, RunScale] = {
         name="h100-100m-ddp8",
         label="H100 100M DDP8",
         description=(
-            "DDP-aware 100M recipe for 8 GPUs. Keeps the global token budget near "
-            "the single-GPU 100M target by reducing steps and uses explicit tuned LRs."
+            "DDP-aware 100M recipe for 8 GPUs. Keeps base tokens and SFT example "
+            "exposure near the single-GPU 100M target by reducing steps and uses "
+            "explicit tuned LRs."
         ),
         tokenizer_type="hf_bpe",
         tokenizer_vocab_size=8192,
@@ -419,13 +420,13 @@ RUN_SCALES: dict[str, RunScale] = {
         attn_backend="flash",
         parallel_residual=True,
         base_steps=4100,
-        sft_steps=180,
+        sft_steps=24,
         base_batch_size=8,
         sft_batch_size=8,
         base_learning_rate=2e-4,
         sft_learning_rate=2e-5,
         base_lr_warmup_steps=200,
-        sft_lr_warmup_steps=20,
+        sft_lr_warmup_steps=5,
         base_lr_decay="cosine",
         sft_lr_decay="cosine",
         base_min_lr_ratio=0.1,

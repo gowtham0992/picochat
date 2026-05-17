@@ -63,6 +63,8 @@ def test_h100_100m_ddp8_scale_uses_global_budget_recipe():
     assert scale.base_grad_accum_steps == 16
     assert scale.base_learning_rate == 0.0002
     assert scale.sft_learning_rate == 0.00002
+    assert scale.sft_steps == 24
+    assert scale.sft_lr_warmup_steps == 5
     assert scale.auto_lr_scaling is False
     assert scale.loss_spike_rollback is False
     assert scale.base_dataset_mode == "sharded"

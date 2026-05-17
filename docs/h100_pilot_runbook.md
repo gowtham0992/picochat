@@ -291,8 +291,9 @@ checkpoint plus first-release identity/refusal behavior.
 ### 6A. 8-GPU Variant
 
 For an 8x H100/B200 box, do not reuse the single-GPU 33k-step command. The
-global batch is 8x larger, so the same token budget needs about one eighth the
-steps. Run preflight once with a simulated DDP world size:
+global base batch and SFT example batch are both 8x larger, so the same budget
+needs about one eighth the steps in both phases. Run preflight once with a
+simulated DDP world size:
 
 ```bash
 PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
