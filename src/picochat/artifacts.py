@@ -363,6 +363,7 @@ def _checkpoint_summary(root: str, metadata: dict[str, Any], member_set: set[str
     phase = parts[-2] if len(parts) >= 2 else "unknown"
     config = metadata.get("model_config") if isinstance(metadata.get("model_config"), dict) else {}
     checkpoint_kind = metadata.get("checkpoint_kind") or (parts[-1] if parts else "unknown")
+    has_training_state = f"{root}/training_state.pt" in member_set
     return {
         "path": root,
         "phase": phase,
@@ -371,7 +372,8 @@ def _checkpoint_summary(root: str, metadata: dict[str, Any], member_set: set[str
         "step": int(metadata.get("step", 0) or 0),
         "train_loss": metadata.get("train_loss"),
         "has_model": f"{root}/model.pt" in member_set,
-        "has_training_state": f"{root}/training_state.pt" in member_set or bool(metadata.get("has_training_state")),
+        "has_training_state": has_training_state,
+        "metadata_has_training_state": bool(metadata.get("has_training_state")),
         "n_layer": config.get("n_layer"),
         "n_embd": config.get("n_embd"),
         "n_head": config.get("n_head"),

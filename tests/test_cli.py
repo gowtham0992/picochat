@@ -358,6 +358,31 @@ def test_cli_run_inspect_bundle_json(tmp_path, capsys):
     assert report["manifest_found"] is False
 
 
+def test_cli_run_inspect_bundle_requires_training_state_file_for_resume(tmp_path, capsys):
+    source = tmp_path / "source"
+    checkpoint = source / "run" / "base" / "resume_checkpoint"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "metadata.json").write_text(json.dumps({
+        "step": 12,
+        "train_loss": 1.0,
+        "checkpoint_kind": "resume",
+        "has_training_state": True,
+        "model_config": {"vocab_size": 128, "context_size": 16, "n_layer": 1, "n_embd": 8, "n_head": 1},
+    }), encoding="utf-8")
+    (checkpoint / "model.pt").write_text("weights", encoding="utf-8")
+    bundle = tmp_path / "broken.tgz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(source / "run", arcname="run")
+
+    exit_code = main(["run", "inspect-bundle", "--bundle", str(bundle), "--json"])
+
+    assert exit_code == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["checkpoints"][0]["metadata_has_training_state"] is True
+    assert report["checkpoints"][0]["has_training_state"] is False
+    assert report["resume_capable_checkpoints"] == []
+
+
 def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
     corpus = tmp_path / "corpus.txt"
     chat = tmp_path / "chat.jsonl"
