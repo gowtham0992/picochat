@@ -57,9 +57,11 @@ const MUON_EMA_TRIAL_DEFAULTS = {
 };
 const APP_VIEWS = ["home", "guide", "workbench", "scale"];
 const PICOCHAT_REPO_URL = "https://github.com/gowtham0992/picochat.git";
-const SCALE_PRESETS = ["h100-100m", "h100-pilot", "climbmix-pilot", "mps-local", "medium", "small"];
-const H100_SCALE_PRESETS = new Set(["h100-100m", "h100-pilot"]);
+const SCALE_PRESETS = ["h100-100m-ddp8", "h100-100m", "h100-pilot", "climbmix-pilot", "mps-local", "medium", "small"];
+const H100_SCALE_PRESETS = new Set(["h100-100m-ddp8", "h100-100m", "h100-pilot"]);
+const DDP_SCALE_PRESETS = new Set(["h100-100m-ddp8"]);
 const SCALE_IMPORT_DEFAULTS = {
+  "h100-100m-ddp8": { shards: 170, maxRows: 800000 },
   "h100-100m": { shards: 170, maxRows: 800000 },
   "h100-pilot": { shards: 16, maxRows: 80000 },
   "climbmix-pilot": { shards: 1, maxRows: 5000 },
@@ -4043,14 +4045,29 @@ function renderScalePlan() {
     "offline",
     "--force",
   ])} 2>&1 | tee logs/benchmark-pack-cuda.log`;
-  const remoteRunParts = [
-    "PYTHONUNBUFFERED=1",
-    "PYTHONPATH=src",
-    "python",
-    "-m",
-    "picochat.cli",
-    "run",
-    "tiny",
+  const usesDdp = DDP_SCALE_PRESETS.has(config.preset);
+  const remoteRunParts = usesDdp
+    ? [
+      "PYTHONUNBUFFERED=1",
+      "PYTHONPATH=src",
+      "torchrun",
+      "--standalone",
+      "--nproc_per_node=8",
+      "-m",
+      "picochat.cli",
+      "run",
+      "tiny",
+    ]
+    : [
+      "PYTHONUNBUFFERED=1",
+      "PYTHONPATH=src",
+      "python",
+      "-m",
+      "picochat.cli",
+      "run",
+      "tiny",
+    ];
+  remoteRunParts.push(
     "--out-dir",
     `runs/${config.run_name}`,
     "--dataset-pack",
@@ -4059,7 +4076,8 @@ function renderScalePlan() {
     config.preset,
     "--device",
     "cuda",
-  ];
+  );
+  if (usesDdp) remoteRunParts.push("--ddp");
   if (config.long_run_gate_profile === "first_release") {
     remoteRunParts.push("--long-run-gate-profile", "first_release");
   }

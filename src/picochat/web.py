@@ -181,6 +181,7 @@ RUN_PRESETS = {
     "climbmix-pilot": {**RUN_SCALES["climbmix-pilot"].to_dict(), "device": "auto"},
     "h100-pilot": {**RUN_SCALES["h100-pilot"].to_dict(), "device": "cuda", "long_run_gate_profile": "first_release"},
     "h100-100m": {**RUN_SCALES["h100-100m"].to_dict(), "device": "cuda", "long_run_gate_profile": "first_release"},
+    "h100-100m-ddp8": {**RUN_SCALES["h100-100m-ddp8"].to_dict(), "device": "cuda", "long_run_gate_profile": "first_release", "ddp": True},
 }
 
 

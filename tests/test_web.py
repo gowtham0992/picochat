@@ -42,6 +42,18 @@ def test_web_css_variables_are_defined():
     assert used <= defined
 
 
+def test_web_scale_lane_exposes_ddp8_recipe():
+    html = Path("src/picochat/web_assets/index.html").read_text(encoding="utf-8")
+    js = Path("src/picochat/web_assets/app.js").read_text(encoding="utf-8")
+
+    assert 'option value="h100-100m-ddp8"' in html
+    assert '"h100-100m-ddp8"' in js
+    assert "const DDP_SCALE_PRESETS" in js
+    assert '"torchrun"' in js
+    assert '"--nproc_per_node=8"' in js
+    assert '"--ddp"' in js
+
+
 def write_run(root, name):
     run_dir = root / name
     (run_dir / "eval").mkdir(parents=True)
