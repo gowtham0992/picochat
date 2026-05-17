@@ -268,8 +268,11 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --preflight-only 2>&1 | tee logs/preflight-h100-100m.log
 ```
 
-If preflight is clean or only warning on known sharded-validation/LR-scaling
-tradeoffs, remove `--preflight-only`:
+If preflight is clean or only warning on the reviewed token-shard validation
+and LR-scaling tradeoffs, remove `--preflight-only`. Sharded base data
+preserves source document BOS/EOS boundaries when `corpus_manifest.json` is
+present, but validation is still a held-out token-shard split rather than a
+complete-document split:
 
 ```bash
 PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
@@ -303,8 +306,8 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --preflight-only 2>&1 | tee logs/preflight-h100-100m-ddp8.log
 ```
 
-If the only warnings are the known sharded-validation tradeoff and the reviewed
-LR notes, launch the actual distributed run with `torchrun`:
+If the only warnings are the reviewed token-shard validation tradeoff and LR
+notes, launch the actual distributed run with `torchrun`:
 
 ```bash
 OMP_NUM_THREADS=1 PICOCHAT_DDP_TIMEOUT_MINUTES=120 PYTORCH_ALLOC_CONF=expandable_segments:True PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=8 -m picochat.cli run tiny \
@@ -375,6 +378,11 @@ timestamps before terminating.
 During base training, the first loss should be near the tokenizer log-vocab
 baseline and then fall quickly. For an 8,192-token vocabulary, seeing the first
 base loss around 8-10 is normal; seeing hundreds is a stop condition.
+
+For sharded base data, setup now prints `base data: token shard build ...`
+progress while token shards are being written. That stage is CPU/tokenizer
+work; the GPU starts doing real work after `base data: ready ... mode=sharded`
+and the first `step 0001/...` row.
 
 Before terminating the instance, package the run with Picochat's artifact
 bundler instead of hand-writing a `tar` file list. By default this keeps the

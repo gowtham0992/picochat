@@ -3576,7 +3576,7 @@ function launchReadiness(config = launchConfig()) {
     cautions.push("Gradient checkpointing saves memory but can slow small local runs.");
   }
   if (config.base_dataset_mode === "sharded") {
-    cautions.push("Sharded base data avoids giant token tensors but validates by token shard, not complete source document.");
+    cautions.push("Sharded base data preserves BOS/EOS document boundaries when a corpus manifest exists, but validates by token shard rather than complete source document.");
   }
   const usingBenchmarkPack = Boolean(state.benchmarkPack && state.benchmarkPack.dataset_pack === config.dataset_pack);
   const benchmarkProfile = state.benchmarkPack?.profile || "";
@@ -4125,7 +4125,10 @@ function renderScalePlan() {
       ...remoteRunArgs,
     ];
   const remotePreflight = `${shellCommand([...remotePreflightParts, "--preflight-only"])} 2>&1 | tee logs/preflight-${config.run_name}.log`;
-  const remoteRun = `${shellCommand(remoteRunParts)} 2>&1 | tee logs/train-${config.run_name}.log`;
+  const remoteRun = [
+    "# Sharded setup prints 'base data: token shard build ...' before the first train step.",
+    `${shellCommand(remoteRunParts)} 2>&1 | tee logs/train-${config.run_name}.log`,
+  ].join("\n");
   const bundleParts = [
     "PYTHONPATH=src",
     "python",
