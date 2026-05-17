@@ -322,6 +322,47 @@ def test_resumable_batcher_resume_rejects_world_size_change():
         resumed.load_state_dict(state)
 
 
+def test_resumable_batcher_ddp_resume_state_is_rank_independent():
+    dataset = TokenWindowDataset(list(range(80)), context_size=4)
+    rank0 = make_resumable_batcher(
+        dataset,
+        batch_size=3,
+        shuffle=True,
+        seed=7,
+        rank=0,
+        world_size=2,
+    )
+    rank1 = make_resumable_batcher(
+        dataset,
+        batch_size=3,
+        shuffle=True,
+        seed=7,
+        rank=1,
+        world_size=2,
+    )
+
+    next(rank0)
+    next(rank1)
+    shared_state = rank0.state_dict()
+    expected_rank1_x, expected_rank1_y = next(rank1)
+
+    resumed_rank1 = make_resumable_batcher(
+        dataset,
+        batch_size=3,
+        shuffle=True,
+        seed=7,
+        rank=1,
+        world_size=2,
+    )
+    resumed_rank1.load_state_dict(shared_state)
+    observed_rank1_x, observed_rank1_y = next(resumed_rank1)
+
+    assert shared_state["rank"] == 0
+    assert resumed_rank1.state_dict()["rank"] == 1
+    assert observed_rank1_x.tolist() == expected_rank1_x.tolist()
+    assert observed_rank1_y.tolist() == expected_rank1_y.tolist()
+
+
 def test_sharded_random_batches_stay_within_one_shard(tmp_path):
     shards = []
     for index, start in enumerate((0, 100)):
