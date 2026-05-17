@@ -4103,8 +4103,23 @@ function renderScalePlan() {
     ];
   const remotePreflight = `${shellCommand([...remotePreflightParts, "--preflight-only"])} 2>&1 | tee logs/preflight-${config.run_name}.log`;
   const remoteRun = `${shellCommand(remoteRunParts)} 2>&1 | tee logs/train-${config.run_name}.log`;
+  const bundleParts = [
+    "PYTHONPATH=src",
+    "python",
+    "-m",
+    "picochat.cli",
+    "run",
+    "bundle",
+    "--run-dir",
+    `runs/${config.run_name}`,
+    "--out",
+    `${config.run_name}.tgz`,
+    "--logs-dir",
+    "logs",
+    "--strict",
+  ];
   const remoteReturn = [
-    `tar -czf ${config.run_name}.tgz runs/${config.run_name} logs`,
+    shellCommand(bundleParts),
     `# Copy ${config.run_name}.tgz back to this Mac, extract it, then paste the run folder below.`,
   ].join("\n");
   renderScaleCommand(

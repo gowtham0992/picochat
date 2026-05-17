@@ -56,6 +56,8 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert '"--nproc_per_node=8"' in js
     assert '"--ddp-world-size"' in js
     assert '"--ddp"' in js
+    assert '"bundle"' in js
+    assert '"--logs-dir"' in js
 
 
 def write_run(root, name):

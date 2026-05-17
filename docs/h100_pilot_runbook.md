@@ -373,15 +373,23 @@ During base training, the first loss should be near the tokenizer log-vocab
 baseline and then fall quickly. For an 8,192-token vocabulary, seeing the first
 base loss around 8-10 is normal; seeing hundreds is a stop condition.
 
-Before terminating the instance:
+Before terminating the instance, package the run with Picochat's artifact
+bundler instead of hand-writing a `tar` file list. By default this keeps the
+copy small: checkpoints, tokenizer, progress files, summaries, eval reports,
+and logs are included; `corpus.txt`, `corpus_manifest.json`, and token shards
+are excluded unless you pass `--include-corpus` or `--include-token-shards`.
 
 ```bash
-tar -czf h100-climbmix-modern-pilot-artifacts.tgz \
-  runs/h100-sanity-v1 \
-  runs/h100-climbmix-16shard-80k-pack-v1 \
-  runs/h100-climbmix-16shard-80k-modern-pilot-v1 \
-  logs
+PYTHONPATH=src python -m picochat.cli run bundle \
+  --run-dir runs/h100-climbmix-16shard-80k-modern-pilot-v1 \
+  --out h100-climbmix-modern-pilot-artifacts.tgz \
+  --logs-dir logs \
+  --strict
 ```
+
+For an interrupted 100M run, package the partial checkpoint the same way and
+resume later from `base/resume_checkpoint` after recreating or copying the
+same dataset/corpus.
 
 For model release tests, export the best SFT checkpoint after the run:
 
