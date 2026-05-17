@@ -24,6 +24,42 @@ def test_barrier_if_distributed_noops_when_disabled():
     barrier_if_distributed({"enabled": False, "rank": 1})
 
 
+def test_barrier_if_distributed_passes_nccl_device_ids(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "get_backend", lambda: "nccl")
+
+    def fake_barrier(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(torch.distributed, "barrier", fake_barrier)
+
+    barrier_if_distributed({"enabled": True, "rank": 1, "local_rank": 3})
+
+    assert captured["device_ids"] == [3]
+
+
+def test_barrier_if_distributed_falls_back_for_old_torch(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "get_backend", lambda: "nccl")
+
+    def fake_barrier(**kwargs):
+        calls.append(kwargs)
+        if "device_ids" in kwargs:
+            raise TypeError("old torch")
+
+    monkeypatch.setattr(torch.distributed, "barrier", fake_barrier)
+
+    barrier_if_distributed({"enabled": True, "rank": 1, "local_rank": 3})
+
+    assert calls == [{"device_ids": [3]}, {}]
+
+
 def test_mean_scalar_if_distributed_noops_when_disabled(monkeypatch):
     monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
     monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
@@ -151,3 +187,58 @@ def test_initialize_ddp_uses_long_preprocessing_timeout(monkeypatch):
 
     assert captured["timeout"].total_seconds() == 45 * 60
     assert metadata["timeout_minutes"] == 45
+
+
+def test_initialize_ddp_passes_cuda_device_id(monkeypatch):
+    monkeypatch.setenv("RANK", "1")
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setenv("LOCAL_RANK", "1")
+    monkeypatch.setenv("MASTER_ADDR", "127.0.0.1")
+    monkeypatch.setenv("MASTER_PORT", "29500")
+    captured = {}
+
+    monkeypatch.setattr(torch.cuda, "set_device", lambda local_rank: captured.setdefault("set_device", local_rank))
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: False)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 1)
+    monkeypatch.setattr(torch.distributed, "get_backend", lambda: "nccl")
+
+    def fake_init_process_group(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(torch.distributed, "init_process_group", fake_init_process_group)
+
+    metadata = initialize_ddp(torch.device("cuda"), enabled=True)
+
+    assert captured["set_device"] == 1
+    assert captured["device_id"] == torch.device("cuda", 1)
+    assert metadata["local_rank"] == 1
+
+
+def test_initialize_ddp_falls_back_when_device_id_kwarg_is_missing(monkeypatch):
+    monkeypatch.setenv("RANK", "1")
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setenv("LOCAL_RANK", "1")
+    monkeypatch.setenv("MASTER_ADDR", "127.0.0.1")
+    monkeypatch.setenv("MASTER_PORT", "29500")
+    calls = []
+
+    monkeypatch.setattr(torch.cuda, "set_device", lambda _local_rank: None)
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: False)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 1)
+    monkeypatch.setattr(torch.distributed, "get_backend", lambda: "nccl")
+
+    def fake_init_process_group(**kwargs):
+        calls.append(kwargs)
+        if "device_id" in kwargs:
+            raise TypeError("old torch")
+
+    monkeypatch.setattr(torch.distributed, "init_process_group", fake_init_process_group)
+
+    initialize_ddp(torch.device("cuda"), enabled=True)
+
+    assert calls[0]["device_id"] == torch.device("cuda", 1)
+    assert "device_id" not in calls[1]

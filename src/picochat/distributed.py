@@ -30,11 +30,22 @@ def initialize_ddp(
         torch.cuda.set_device(local_rank)
     if not torch.distributed.is_initialized():
         backend = "nccl" if device.type == "cuda" else "gloo"
-        torch.distributed.init_process_group(
-            backend=backend,
-            init_method="env://",
-            timeout=_ddp_timeout(),
-        )
+        init_kwargs = {
+            "backend": backend,
+            "init_method": "env://",
+            "timeout": _ddp_timeout(),
+        }
+        if device.type == "cuda":
+            try:
+                torch.distributed.init_process_group(
+                    **init_kwargs,
+                    device_id=torch.device("cuda", local_rank),
+                )
+            except TypeError:
+                # Older PyTorch releases do not expose the device_id kwarg.
+                torch.distributed.init_process_group(**init_kwargs)
+        else:
+            torch.distributed.init_process_group(**init_kwargs)
     return {
         "enabled": True,
         "world_size": torch.distributed.get_world_size(),
@@ -118,6 +129,13 @@ def barrier_if_distributed(metadata: dict[str, Any] | None = None) -> None:
     if metadata is not None and not bool(metadata.get("enabled", False)):
         return
     if torch.distributed.is_available() and torch.distributed.is_initialized():
+        local_rank = None if metadata is None else metadata.get("local_rank")
+        if local_rank is not None and torch.distributed.get_backend() == "nccl":
+            try:
+                torch.distributed.barrier(device_ids=[int(local_rank)])
+                return
+            except TypeError:
+                pass
         torch.distributed.barrier()
 
 
