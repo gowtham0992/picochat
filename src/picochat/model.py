@@ -138,8 +138,9 @@ class CausalSelfAttention(nn.Module):
         q = q.view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
         k = k.view(batch_size, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-        q = self.q_norm(q)
-        k = self.k_norm(k)
+        attn_dtype = v.dtype
+        q = self.q_norm(q).to(dtype=attn_dtype)
+        k = self.k_norm(k).to(dtype=attn_dtype)
         if self.position_encoding == "rope":
             q, k = apply_rope(q, k, base=self.rope_base, start_pos=start_pos)
 

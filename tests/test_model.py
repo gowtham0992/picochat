@@ -245,6 +245,41 @@ def test_model_supports_qk_norm():
     assert isinstance(model.blocks[0].attn.k_norm, RMSNorm)
 
 
+def test_qk_norm_preserves_attention_dtype_under_autocast(monkeypatch):
+    observed = {}
+
+    def fake_sdpa(q, k, v, **kwargs):
+        observed["q_dtype"] = q.dtype
+        observed["k_dtype"] = k.dtype
+        observed["v_dtype"] = v.dtype
+        return torch.zeros_like(q)
+
+    monkeypatch.setattr(model_module.F, "scaled_dot_product_attention", fake_sdpa)
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        norm_type="rmsnorm",
+        position_encoding="rope",
+        qk_norm=True,
+    )
+    model = TinyGPT(config)
+    x = torch.randint(0, config.vocab_size, (2, config.context_size))
+
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        logits, loss = model(x, x)
+
+    assert logits.shape == (2, config.context_size, config.vocab_size)
+    assert loss is not None
+    assert observed == {
+        "q_dtype": torch.bfloat16,
+        "k_dtype": torch.bfloat16,
+        "v_dtype": torch.bfloat16,
+    }
+
+
 def test_model_supports_grouped_query_attention_cache():
     config = GPTConfig(
         vocab_size=20,
