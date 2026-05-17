@@ -4157,9 +4157,20 @@ function renderScalePlan() {
     "logs",
     "--strict",
   ];
+  const inspectBundleParts = [
+    "PYTHONPATH=src",
+    "python",
+    "-m",
+    "picochat.cli",
+    "run",
+    "inspect-bundle",
+    "--bundle",
+    `${config.run_name}.tgz`,
+  ];
   const remoteReturn = [
     shellCommand(bundleParts),
-    `# Copy ${config.run_name}.tgz back to this Mac, extract it, then paste the run folder below.`,
+    `# After copying ${config.run_name}.tgz back to this Mac, inspect it before extracting or resuming.`,
+    shellCommand(inspectBundleParts),
   ].join("\n");
   renderScaleCommand(
     "scale-mps-command",
@@ -4172,7 +4183,7 @@ function renderScalePlan() {
   renderScaleCommand("scale-remote-benchmark-command", "REMOTE RELEASE BEHAVIOR PACK", remoteBenchmark);
   renderScaleCommand("scale-remote-preflight-command", "REMOTE PREFLIGHT", remotePreflight);
   renderScaleCommand("scale-remote-run-command", "REMOTE TRAIN", remoteRun);
-  renderScaleCommand("scale-remote-return-command", "REMOTE RETURN TAR", remoteReturn);
+  renderScaleCommand("scale-remote-return-command", "REMOTE RETURN / INSPECT", remoteReturn);
 }
 
 function renderScaleCommand(id, label, command) {

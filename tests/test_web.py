@@ -66,6 +66,7 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert '"PYTORCH_ALLOC_CONF=expandable_segments:True"' in js
     assert "python3.10-dev build-essential" in js
     assert '"bundle"' in js
+    assert '"inspect-bundle"' in js
     assert '"--logs-dir"' in js
     assert "base data: token shard build" in js
     assert "preserves BOS/EOS document boundaries" in js
