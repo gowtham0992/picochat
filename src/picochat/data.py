@@ -26,6 +26,8 @@ TEXT_EXTENSIONS = {
     ".csv",
     ".py",
 }
+CORPUS_REPORT_MAX_DOCUMENT_ROWS = 200
+CORPUS_REPORT_MAX_FILE_ROWS = 500
 
 DOCUMENT_EXTENSIONS = {
     ".docx",
@@ -922,11 +924,16 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         "| ---: | --- | --- | ---: | ---: | --- | ---: |",
     ])
     if report.documents:
-        for document in report.documents:
+        for document in report.documents[:CORPUS_REPORT_MAX_DOCUMENT_ROWS]:
             lines.append(
                 f"| {document.document_id} | `{document.path}` | `{document.label or ''}` | "
                 f"{document.num_characters} | {document.num_lines} | "
                 f"{document.char_start}:{document.char_end} | {document.quality_score} |"
+            )
+        omitted_documents = len(report.documents) - CORPUS_REPORT_MAX_DOCUMENT_ROWS
+        if omitted_documents > 0:
+            lines.append(
+                f"|  | {omitted_documents:,} more document(s) omitted; see `corpus_manifest.json` for the full list. |  |  |  |  |  |"
             )
     else:
         lines.append("|  | none |  |  |  |  |  |")
@@ -937,11 +944,16 @@ def corpus_report_markdown(report: CorpusBuildReport) -> str:
         "| File | Label | Ext | Included | Score | Chars | Lines | Reason | Flags |",
         "| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |",
     ])
-    for record in report.files:
+    for record in report.files[:CORPUS_REPORT_MAX_FILE_ROWS]:
         flags = ", ".join(record.quality_flags)
         lines.append(
             f"| `{record.path}` | `{record.label or ''}` | `{record.extension}` | {str(record.included).lower()} | "
             f"{record.quality_score} | {record.num_characters} | {record.num_lines} | `{record.reason}` | `{flags}` |"
+        )
+    omitted_files = len(report.files) - CORPUS_REPORT_MAX_FILE_ROWS
+    if omitted_files > 0:
+        lines.append(
+            f"| {omitted_files:,} more file(s) omitted; see `corpus_manifest.json` for the full list. |  |  |  |  |  |  |  |  |"
         )
     lines.append("")
     return "\n".join(lines)

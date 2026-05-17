@@ -137,6 +137,28 @@ def test_build_corpus_artifacts_writes_manifest_and_report(tmp_path):
     assert "## Documents" in (output_path.parent / "corpus_report.md").read_text(encoding="utf-8")
 
 
+def test_corpus_report_caps_large_provenance_tables(tmp_path):
+    input_dir = tmp_path / "input"
+    output_path = tmp_path / "out" / "corpus.txt"
+    input_dir.mkdir()
+    for index in range(505):
+        (input_dir / f"doc-{index:03d}.txt").write_text(
+            f"document {index} has enough text for a useful source record\n",
+            encoding="utf-8",
+        )
+
+    report = build_corpus_artifacts(input_dir, output_path)
+    markdown = (output_path.parent / "corpus_report.md").read_text(encoding="utf-8")
+    manifest = json.loads((output_path.parent / "corpus_manifest.json").read_text(encoding="utf-8"))
+
+    assert len(report.files) == 505
+    assert len(manifest["files"]) == 505
+    assert len(manifest["documents"]) == 505
+    assert "305 more document(s) omitted" in markdown
+    assert "5 more file(s) omitted" in markdown
+    assert "doc-504.txt" not in markdown
+
+
 def test_custom_corpus_preview_does_not_suggest_demo_tuning_data(tmp_path):
     input_dir = tmp_path / "input"
     output_path = tmp_path / "out" / "corpus.txt"
