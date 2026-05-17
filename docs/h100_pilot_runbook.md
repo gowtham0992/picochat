@@ -21,6 +21,7 @@ source .venv/bin/activate
 export OMP_NUM_THREADS=1
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 export PICOCHAT_DDP_TIMEOUT_MINUTES=120
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 
 python -m pip install --upgrade pip
 python -m pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1
@@ -97,11 +98,12 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
 ```
 
 For capability research, generate a separate task-mixture pack instead of
-overloading the first-release pack. `release` is identity/refusal only,
-`capability` mixes scratchpad arithmetic/spelling with release behavior, and
-`balanced` adds general benchmark rows. Use these as explicit midtraining or
-diagnostic packs; keep first-release model claims tied to `release_behavior` or
-the `release` task mixture.
+overloading a narrow identity/refusal pack. `release_behavior` is only for a
+conservative identity/refusal pilot. Use `release_skills` with scratchpad
+answers when the public claim includes arithmetic, spelling, choice handling,
+identity, and refusals; the `skill_release` gate fails closed on each group.
+The `capability` task mixture remains useful for diagnostics and midtraining
+experiments, but do not mix those results into a release claim.
 
 ```bash
 PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data task-pack \
@@ -195,14 +197,13 @@ release-behavior transfer sweep selected 180 SFT steps with a short warmup:
 enough to clear first-release eval without returning to the high-exposure
 700-step replay loop.
 
-The pilot pack uses `--profile release_behavior`: only identity and
-refusal/boundary rows are used for first-release SFT and held-out eval. Keep
-math, spelling, and choice as separate diagnostic sweeps until the narrow
-release behavior gate is healthy. Pass `--long-run-gate-profile first_release`
-on the train command when evaluating this release pack; it still reports all
-categories present in the eval file, but it approves only the first releasable
-closed-book behaviors instead of silently turning hard skill failures into a
-product claim.
+The pilot pack above uses `--profile release_behavior`: only identity and
+refusal/boundary rows are used for first-release SFT and held-out eval. That is
+a narrow smoke lane, not a math/spelling/conversation release. For any release
+claim that includes skills, generate `--profile release_skills
+--skill-answer-style scratchpad` and run with `--long-run-gate-profile
+skill_release`; the gate checks identity, refusal, choice, math, and spelling
+separately.
 
 Optional comparable benchmarks can be attached directly to the run. Picochat
 will convert ARC/MMLU-style JSONL/JSON/CSV into internal choice-eval JSONL,
@@ -278,7 +279,7 @@ After the 16-shard pilot proves the runtime and release-behavior SFT lane, the
 next single-GPU scale target is the `h100-100m` preset. This is the compact
 form of the 100M recipe used by the Scale Up screen: 768 width, 16 layers, GQA,
 SwiGLU, FlashAttention, sharded base data, bf16, high matmul precision, and
-first-release SFT defaults. The H100 presets also disable transformer linear
+skill-release SFT defaults. The H100 presets also disable transformer linear
 biases to match modern decoder-only LM practice while keeping legacy/local
 scales backwards compatible.
 
@@ -319,8 +320,8 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --sft-rows 1600 \
   --eval-rows 320 \
-  --profile release_behavior \
-  --skill-answer-style direct \
+  --profile release_skills \
+  --skill-answer-style scratchpad \
   --source offline \
   --force 2>&1 | tee logs/benchmark-pack-h100-100m.log
 
@@ -329,7 +330,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --scale h100-100m \
   --device cuda \
-  --long-run-gate-profile first_release \
+  --long-run-gate-profile skill_release \
   --preflight-only 2>&1 | tee logs/preflight-h100-100m.log
 ```
 
@@ -345,13 +346,14 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --scale h100-100m \
   --device cuda \
-  --long-run-gate-profile first_release \
+  --long-run-gate-profile skill_release \
   2>&1 | tee logs/train-h100-100m.log
 ```
 
 Do not call this a general reasoning model unless external and internal
 diagnostic benchmarks support that claim. This lane is for a stronger base
-checkpoint plus first-release identity/refusal behavior.
+checkpoint plus a skill-release curriculum whose arithmetic, spelling, choice,
+identity, and refusal groups must each clear their own gate.
 
 ### 6A. 8-GPU Variant
 
@@ -368,7 +370,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --device cuda \
   --ddp \
   --ddp-world-size 8 \
-  --long-run-gate-profile first_release \
+  --long-run-gate-profile skill_release \
   --preflight-only 2>&1 | tee logs/preflight-h100-100m-ddp8.log
 ```
 
@@ -376,14 +378,14 @@ If the only warnings are the reviewed token-shard validation tradeoff and LR
 notes, launch the actual distributed run with `torchrun`:
 
 ```bash
-OMP_NUM_THREADS=1 PICOCHAT_DDP_TIMEOUT_MINUTES=120 PYTORCH_ALLOC_CONF=expandable_segments:True PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=8 -m picochat.cli run tiny \
+OMP_NUM_THREADS=1 PICOCHAT_DDP_TIMEOUT_MINUTES=120 TORCH_NCCL_ASYNC_ERROR_HANDLING=1 PYTORCH_ALLOC_CONF=expandable_segments:True PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=8 -m picochat.cli run tiny \
   --out-dir runs/h100-climbmix-100m-ddp8-release-v1 \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --scale h100-100m-ddp8 \
   --device cuda \
   --ddp \
   --ddp-world-size 8 \
-  --long-run-gate-profile first_release \
+  --long-run-gate-profile skill_release \
   2>&1 | tee logs/train-h100-100m-ddp8.log
 ```
 
@@ -391,20 +393,109 @@ This preset uses explicit learning rates instead of `--auto-lr-scaling`, because
 auto scaling includes DDP world size and can silently turn a stable single-GPU
 LR into a different optimizer experiment.
 
-## 7. If SFT Misses, Sweep The Release Behavior Lane
+### 6B. H200 1B DDP8 Release-Skills Run
 
-If the base BPB is healthy but first-release SFT fit is below the gate, do not
-scale the model yet and do not mix math/spelling into the release checkpoint.
-Sweep a narrow release-behavior SFT schedule from the best base checkpoint with
-the same CUDA runtime settings. This isolates behavior tuning from base
-learning.
+For the expensive 8x H200 lane, use the `h200-1b-ddp8` scale rather than
+hand-editing the 100M command. The preset is intentionally opinionated:
+32k HF BPE, 1024 context, 24 layers, 2048 width, GQA, SwiGLU, RMSNorm, RoPE,
+tied embeddings, QK norm, parallel residual, FA3, bf16, `torch.compile`,
+sharded base data, and `skill_release`.
+
+Install the Hopper/FA3 runtime and prove it before import:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install --index-url https://download.pytorch.org/whl/cu128 torch==2.9.1
+python -m pip install -e ".[hf,dev]"
+python -m pip install kernels
+
+python - <<'PY'
+import torch
+print(torch.__version__, torch.cuda.is_available(), torch.cuda.device_count())
+from flash_attn_interface import flash_attn_func
+print("direct FA3 OK:", flash_attn_func)
+PY
+
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli sanity preh100 \
+  --out-dir runs/h200-ddp8-sanity-fa3-v1 \
+  --device cuda \
+  --precision bf16 \
+  --matmul-precision high \
+  --attn-backend fa3 \
+  --include-compile \
+  2>&1 | tee logs/sanity-h200-fa3.log
+```
+
+Build a larger pack and promote a release-skills curriculum. This is the
+non-negotiable path when arithmetic and spelling are claims:
+
+```bash
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data climbmix-import \
+  --out-dir runs/h200-climbmix-2048shard-10m-pack-v1 \
+  --shards 2048 \
+  --max-rows 10000000 \
+  --min-chars 100 \
+  --document-shard-rows 1000 \
+  --force 2>&1 | tee logs/import-h200-1b.log
+
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
+  --dataset-pack runs/h200-climbmix-2048shard-10m-pack-v1/dataset_pack.json \
+  --sft-rows 1600 \
+  --eval-rows 320 \
+  --profile release_skills \
+  --skill-answer-style scratchpad \
+  --source offline \
+  --force 2>&1 | tee logs/benchmark-pack-h200-1b.log
+```
+
+Preflight with the same DDP world size you will launch:
+
+```bash
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+  --out-dir runs/h200-climbmix-1b-ddp8-release-v1 \
+  --dataset-pack runs/h200-climbmix-2048shard-10m-pack-v1/dataset_pack.json \
+  --scale h200-1b-ddp8 \
+  --device cuda \
+  --ddp \
+  --ddp-world-size 8 \
+  --long-run-gate-profile skill_release \
+  --preflight-only 2>&1 | tee logs/preflight-h200-1b-ddp8.log
+```
+
+Then launch with `torchrun`. Do not add `--auto-lr-scaling`; the scale already
+uses a DDP8 global-batch recipe.
+
+```bash
+OMP_NUM_THREADS=1 PICOCHAT_DDP_TIMEOUT_MINUTES=180 TORCH_NCCL_ASYNC_ERROR_HANDLING=1 PYTORCH_ALLOC_CONF=expandable_segments:True PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=8 -m picochat.cli run tiny \
+  --out-dir runs/h200-climbmix-1b-ddp8-release-v1 \
+  --dataset-pack runs/h200-climbmix-2048shard-10m-pack-v1/dataset_pack.json \
+  --scale h200-1b-ddp8 \
+  --device cuda \
+  --ddp \
+  --ddp-world-size 8 \
+  --long-run-gate-profile skill_release \
+  2>&1 | tee logs/train-h200-1b-ddp8.log
+```
+
+If `skill_release` blocks, the correct next action is a targeted SFT/curriculum
+sweep from the saved base checkpoint, not a public claim that the missing skill
+works.
+
+## 7. If SFT Misses, Sweep The Release-Skills Lane
+
+If the base BPB is healthy but skill-release SFT fit is below the gate, do not
+scale the model yet and do not pretend the model learned the missing skill.
+Sweep the release-skills SFT schedule from the best base checkpoint with the
+same CUDA runtime settings. This isolates behavior tuning from base learning
+while still requiring arithmetic, spelling, choice, identity, and refusal
+evidence before release.
 
 ```bash
 PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli train sft-sweep \
   --dataset-pack runs/h100-climbmix-16shard-80k-pack-v1/dataset_pack.json \
   --tokenizer runs/h100-climbmix-16shard-80k-modern-pilot-v1/tokenizer.json \
   --checkpoint runs/h100-climbmix-16shard-80k-modern-pilot-v1/base/best_checkpoint \
-  --out-dir runs/h100-release-behavior-sft-sweep-v1 \
+  --out-dir runs/h100-release-skills-sft-sweep-v1 \
   --device cuda \
   --precision bf16 \
   --matmul-precision high \
@@ -422,12 +513,12 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli train sft-sweep \
   --fit-max-rows 1000 \
   --eval-max-new-tokens 120 \
   --support-corpus runs/h100-climbmix-16shard-80k-modern-pilot-v1/corpus.txt \
-  2>&1 | tee logs/sft-sweep-h100-release-behavior-v1.log
+  2>&1 | tee logs/sft-sweep-h100-release-skills-v1.log
 ```
 
-Promote only a candidate that clears the first-release gate. Keep weak-skills
-sweeps separate, because they are diagnostics for future capability work, not a
-license to claim the first chat release can do arithmetic or spelling reliably.
+Promote only a candidate that clears the skill-release gate. Keep weak-skills
+sweeps separate unless the corresponding held-out skill groups clear; diagnostics
+are useful, but they are not a license to claim arithmetic or spelling.
 
 For domain adaptation sweeps where the base checkpoint is expensive and you
 want lightweight adapter artifacts, add `--peft lora --lora-rank 8
@@ -501,7 +592,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --scale h100-100m \
   --device cuda \
-  --long-run-gate-profile first_release \
+  --long-run-gate-profile skill_release \
   --base-resume-from runs/h100-climbmix-100m-release-v1/base/resume_checkpoint \
   2>&1 | tee logs/train-h100-100m-resume.log
 ```
@@ -517,7 +608,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --scale h100-100m \
   --device cuda \
-  --long-run-gate-profile first_release \
+  --long-run-gate-profile skill_release \
   --base-resume-from runs/h100-climbmix-100m-release-v1/base/resume_checkpoint \
   --sft-resume-from runs/h100-climbmix-100m-release-v1/sft/resume_checkpoint \
   2>&1 | tee logs/train-h100-100m-sft-resume.log

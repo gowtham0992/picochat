@@ -56,6 +56,7 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert 'option value="packed"' in html
     assert 'option value="external_flash"' in html
     assert 'option value="fa3"' in html
+    assert 'option value="release_skills"' in html
     assert 'option value="skill_release"' in html
     assert 'option value="h200-1b-ddp8"' in html
     assert 'option value="h100-100m-ddp8"' in html
@@ -74,6 +75,7 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert '"--sft-resume-from"' in js
     assert '"OMP_NUM_THREADS=1"' in js
     assert '"PICOCHAT_DDP_TIMEOUT_MINUTES=120"' in js
+    assert '"TORCH_NCCL_ASYNC_ERROR_HANDLING=1"' in js
     assert '"PYTORCH_ALLOC_CONF=expandable_segments:True"' in js
     assert "python3.10-dev build-essential" in js
     assert '"bundle"' in js

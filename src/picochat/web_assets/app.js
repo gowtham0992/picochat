@@ -1215,6 +1215,7 @@ function guideCreateSftContent() {
             <label for="guide-benchmark-profile">CURATED PROFILE</label>
             <select id="guide-benchmark-profile">
               <option value="release_behavior" ${curriculumProfile === "release_behavior" ? "selected" : ""}>RELEASE BEHAVIOR</option>
+              <option value="release_skills" ${curriculumProfile === "release_skills" ? "selected" : ""}>RELEASE SKILLS</option>
               <option value="behavior" ${curriculumProfile === "behavior" ? "selected" : ""}>BEHAVIOR FIRST</option>
               <option value="weak_skills" ${curriculumProfile === "weak_skills" ? "selected" : ""}>WEAK SKILLS</option>
               <option value="full" ${curriculumProfile === "full" ? "selected" : ""}>FULL MIX</option>
@@ -1274,6 +1275,7 @@ function guideCreateEvalContent() {
             <label for="guide-benchmark-profile">CURATED PROFILE</label>
             <select id="guide-benchmark-profile">
               <option value="release_behavior" ${curriculumProfile === "release_behavior" ? "selected" : ""}>RELEASE BEHAVIOR</option>
+              <option value="release_skills" ${curriculumProfile === "release_skills" ? "selected" : ""}>RELEASE SKILLS</option>
               <option value="behavior" ${curriculumProfile === "behavior" ? "selected" : ""}>BEHAVIOR FIRST</option>
               <option value="weak_skills" ${curriculumProfile === "weak_skills" ? "selected" : ""}>WEAK SKILLS</option>
               <option value="full" ${curriculumProfile === "full" ? "selected" : ""}>FULL MIX</option>
@@ -4184,6 +4186,7 @@ function renderScalePlan() {
     ? [
       "OMP_NUM_THREADS=1",
       "PICOCHAT_DDP_TIMEOUT_MINUTES=120",
+      "TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
       "PYTORCH_ALLOC_CONF=expandable_segments:True",
       "PYTHONUNBUFFERED=1",
       "PYTHONPATH=src",
