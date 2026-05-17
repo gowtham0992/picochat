@@ -118,9 +118,11 @@ def maybe_compile_model(
         return model, {"enabled": False, "mode": mode}
     if not hasattr(torch, "compile"):
         raise RuntimeError("torch.compile is not available in this PyTorch build")
-    compile_kwargs = {} if mode == "default" else {"mode": mode}
+    compile_kwargs = {"dynamic": False}
+    if mode != "default":
+        compile_kwargs["mode"] = mode
     compiled = torch.compile(model, **compile_kwargs)
-    return compiled, {"enabled": True, "mode": mode}
+    return compiled, {"enabled": True, "mode": mode, "dynamic": False}
 
 
 def _runtime(
