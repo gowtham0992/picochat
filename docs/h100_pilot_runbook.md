@@ -253,6 +253,24 @@ form of the 100M recipe used by the Scale Up screen: 768 width, 16 layers, GQA,
 SwiGLU, FlashAttention, sharded base data, bf16, high matmul precision, and
 first-release SFT defaults.
 
+Before launching, generate an explicit scale plan. This is the reproducible
+bridge between a target size, dataset token budget, global batch, and step
+count. It is useful when changing GPU count, context size, or target model size
+instead of hand-editing the run command.
+
+```bash
+PYTHONPATH=src python -m picochat.cli scale plan \
+  --target-params 100m \
+  --depth 16 \
+  --dataset-tokens 667m \
+  --world-size 1 \
+  --out runs/h100-100m-scale-plan.md
+```
+
+For an 8-GPU box, use the same command with `--world-size 8` and compare the
+recommended steps and LR candidates before deciding whether to use the
+conservative `h100-100m-ddp8` preset or a fresh optimizer experiment.
+
 ```bash
 PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data climbmix-import \
   --out-dir runs/h100-climbmix-170shard-800k-pack-v1 \

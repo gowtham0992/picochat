@@ -72,6 +72,7 @@ from picochat.optim import (
 from picochat.precision import COMPILE_MODES, MATMUL_PRECISION_MODES, PRECISION_MODES
 from picochat.sanity import PreH100SanityConfig, run_preh100_sanity
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
+from picochat.scale_planner import parse_count, plan_scale, render_scale_plan_markdown
 from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep
 from picochat.skills_corpus import generate_skills_corpus
 from picochat.tuning_slice import (
@@ -1079,6 +1080,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Bootstrap samples for SFT-fit pass-rate confidence intervals. Use 0 to disable.",
     )
     eval_sft_fit_parser.add_argument("--ci-confidence", type=float, default=0.95)
+
+    scale_parser = subparsers.add_parser("scale", help="Plan larger GPU training recipes.")
+    scale_subparsers = scale_parser.add_subparsers(dest="scale_command")
+    scale_plan_parser = scale_subparsers.add_parser(
+        "plan",
+        help="Compute a parameter/data/batch scale recipe without training.",
+    )
+    scale_plan_parser.add_argument(
+        "--target-params",
+        required=True,
+        help="Target model size, e.g. 100m, 300m, or 1b.",
+    )
+    scale_plan_parser.add_argument(
+        "--dataset-tokens",
+        default=None,
+        help="Optional estimated corpus tokens, e.g. 667m. Used only for epoch reporting.",
+    )
+    scale_plan_parser.add_argument("--depth", type=int, default=None, help="Optional fixed layer count.")
+    scale_plan_parser.add_argument("--aspect-ratio", type=int, default=48, help="n_embd ~= depth * aspect ratio.")
+    scale_plan_parser.add_argument("--head-dim", type=int, default=64)
+    scale_plan_parser.add_argument("--vocab-size", type=int, default=8192)
+    scale_plan_parser.add_argument("--context-size", type=int, default=512)
+    scale_plan_parser.add_argument("--world-size", type=int, default=1)
+    scale_plan_parser.add_argument("--per-device-batch-size", type=int, default=8)
+    scale_plan_parser.add_argument("--grad-accum-steps", type=int, default=16)
+    scale_plan_parser.add_argument("--target-param-data-ratio", type=float, default=20.0)
+    scale_plan_parser.add_argument("--out", default=None, help="Optional Markdown report path.")
 
     run_parser = subparsers.add_parser("run", help="End-to-end experiment runners.")
     run_subparsers = run_parser.add_subparsers(dest="run_command")
@@ -2508,6 +2536,31 @@ def run_eval_sft_fit(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_scale_plan(args: argparse.Namespace) -> int:
+    dataset_tokens = parse_count(args.dataset_tokens) if args.dataset_tokens else None
+    plan = plan_scale(
+        target_parameters=parse_count(args.target_params),
+        dataset_tokens=dataset_tokens,
+        depth=args.depth,
+        aspect_ratio=args.aspect_ratio,
+        head_dim=args.head_dim,
+        vocab_size=args.vocab_size,
+        context_size=args.context_size,
+        world_size=args.world_size,
+        per_device_batch_size=args.per_device_batch_size,
+        grad_accum_steps=args.grad_accum_steps,
+        target_param_data_ratio=args.target_param_data_ratio,
+    )
+    markdown = render_scale_plan_markdown(plan)
+    print(markdown, end="")
+    if args.out:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(markdown, encoding="utf-8")
+        print(f"saved scale plan: {out_path}")
+    return 0
+
+
 def _resolve_tiny_value(args: argparse.Namespace, defaults: TinyRunConfig, field: str):
     value = getattr(args, field)
     if value is not None:
@@ -2799,6 +2852,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "eval" and args.eval_command == "sft-fit":
         return run_eval_sft_fit(args)
+
+    if args.command == "scale" and args.scale_command == "plan":
+        return run_scale_plan(args)
 
     if args.command == "run" and args.run_command == "tiny":
         return run_tiny_command(args)
