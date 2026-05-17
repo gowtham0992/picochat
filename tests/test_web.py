@@ -56,6 +56,8 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert '"--nproc_per_node=8"' in js
     assert '"--ddp-world-size"' in js
     assert '"--ddp"' in js
+    assert '"OMP_NUM_THREADS=1"' in js
+    assert '"PYTORCH_ALLOC_CONF=expandable_segments:True"' in js
     assert '"bundle"' in js
     assert '"--logs-dir"' in js
 
@@ -983,6 +985,8 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
             return None
 
     monkeypatch.setattr("picochat.web.subprocess.Popen", FakeProcess)
+    monkeypatch.delenv("PYTORCH_ALLOC_CONF", raising=False)
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
 
     status = start_run_plan(tmp_path / "runs", {
         "dataset_pack": str(pack_path),
@@ -1081,6 +1085,8 @@ def test_start_run_plan_preserves_h100_100m_ddp8_preset(tmp_path, monkeypatch):
             return None
 
     monkeypatch.setattr("picochat.web.subprocess.Popen", FakeProcess)
+    monkeypatch.delenv("PYTORCH_ALLOC_CONF", raising=False)
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
 
     started = start_run_plan(tmp_path / "runs", {
         "dataset_pack": str(pack_path),
@@ -1103,6 +1109,8 @@ def test_start_run_plan_preserves_h100_100m_ddp8_preset(tmp_path, monkeypatch):
     assert started["job"]["launch_config"]["n_layer"] == 16
     assert started["job"]["launch_config"]["ddp"] is True
     assert started["job"]["launch_config"]["ddp_world_size"] == 8
+    assert captured["kwargs"]["env"]["OMP_NUM_THREADS"] == "1"
+    assert captured["kwargs"]["env"]["PYTORCH_ALLOC_CONF"] == "expandable_segments:True"
 
 
 def test_run_progress_parser_extracts_training_and_eval_steps():

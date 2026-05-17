@@ -3629,15 +3629,21 @@ function renderLaunchReadiness() {
 function launchPreviewCommand(config = launchConfig()) {
   const outDir = config.run_name ? `runs/${config.run_name}` : "runs/my-run";
   const usesDdp = DDP_SCALE_PRESETS.has(config.preset);
-  const parts = usesDdp ? [
+  const envParts = [
+    ...(usesDdp ? ["OMP_NUM_THREADS=1"] : []),
+    ...((usesDdp || config.device === "cuda") ? ["PYTORCH_ALLOC_CONF=expandable_segments:True"] : []),
+    "PYTHONUNBUFFERED=1",
     "PYTHONPATH=src",
+  ];
+  const parts = usesDdp ? [
+    ...envParts,
     "torchrun",
     "--standalone",
     "--nproc_per_node=8",
     "-m",
     "picochat.cli",
   ] : [
-    "PYTHONPATH=src",
+    ...envParts,
     "python",
     "-m",
     "picochat.cli",
@@ -4073,6 +4079,8 @@ function renderScalePlan() {
     remoteRunArgs.push("--long-run-gate-profile", "first_release");
   }
   const remotePreflightParts = [
+    ...(usesDdp ? ["OMP_NUM_THREADS=1"] : []),
+    "PYTORCH_ALLOC_CONF=expandable_segments:True",
     "PYTHONUNBUFFERED=1",
     "PYTHONPATH=src",
     "python",
@@ -4083,6 +4091,8 @@ function renderScalePlan() {
   if (usesDdp) remotePreflightParts.push("--ddp", "--ddp-world-size", "8");
   const remoteRunParts = usesDdp
     ? [
+      "OMP_NUM_THREADS=1",
+      "PYTORCH_ALLOC_CONF=expandable_segments:True",
       "PYTHONUNBUFFERED=1",
       "PYTHONPATH=src",
       "torchrun",
@@ -4094,6 +4104,7 @@ function renderScalePlan() {
       "--ddp",
     ]
     : [
+      "PYTORCH_ALLOC_CONF=expandable_segments:True",
       "PYTHONUNBUFFERED=1",
       "PYTHONPATH=src",
       "python",

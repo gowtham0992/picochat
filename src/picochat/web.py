@@ -1226,7 +1226,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         process = subprocess.Popen(
             command,
             cwd=Path.cwd(),
-            env=_child_env(),
+            env=_child_env(device=device, ddp=ddp),
             stdout=log_file,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1854,12 +1854,16 @@ def _default_run_name(dataset_pack: str) -> str:
     return f"{base}-run"
 
 
-def _child_env() -> dict[str, str]:
+def _child_env(*, device: str = "cpu", ddp: bool = False) -> dict[str, str]:
     env = os.environ.copy()
     src_path = str(Path.cwd() / "src")
     current = env.get("PYTHONPATH")
     env["PYTHONPATH"] = f"{src_path}{os.pathsep}{current}" if current else src_path
     env["PYTHONUNBUFFERED"] = "1"
+    if ddp:
+        env.setdefault("OMP_NUM_THREADS", "1")
+    if ddp or device == "cuda":
+        env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
     return env
 
 
