@@ -86,6 +86,19 @@ def test_preflight_still_warns_for_narrow_research_sft_focus():
     assert checks["sft_category_balance"].threshold == ">= 4 categories preferred"
 
 
+def test_preflight_counts_ddp_world_size_in_effective_batch(monkeypatch):
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    report = assess_run_preflight(
+        _h100_like_config(ddp=True, base_steps=100, sft_steps=10),
+        _ready_large_corpus(),
+    )
+
+    assert report.budget.ddp_world_size == 8
+    assert report.budget.base_effective_batch_size == 8 * 16 * 8
+    assert report.budget.sft_effective_batch_size == 8 * 4 * 8
+    assert report.budget.base_effective_tokens_per_step == 8 * 16 * 8 * 512
+
+
 def _h100_like_config(**overrides) -> TinyRunConfig:
     values = {
         "out_dir": "runs/test-preflight",

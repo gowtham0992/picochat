@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import math
+import os
 from typing import Any
 
 from picochat.data import CorpusBuildReport, CorpusPreviewReport, CorpusStats
@@ -41,6 +42,7 @@ class RunBudgetPlan:
     estimated_corpus_tokens: int
     corpus_token_note: str
     corpus_tokens_per_parameter: float | None
+    ddp_world_size: int
     base_effective_batch_size: int
     sft_effective_batch_size: int
     base_effective_tokens_per_step: int
@@ -130,6 +132,7 @@ def preflight_markdown(report: RunPreflightReport) -> str:
         f"- Estimated corpus tokens: {budget.estimated_corpus_tokens:,}",
         f"- Corpus tokens / parameter: {_format_optional_float(budget.corpus_tokens_per_parameter)}",
         f"- Corpus token estimate: {budget.corpus_token_note}",
+        f"- DDP world size: {budget.ddp_world_size}",
         f"- Base effective batch: {budget.base_effective_batch_size}",
         f"- Base planned tokens: {budget.base_planned_tokens:,}",
         f"- Target token/parameter ratio: {budget.target_param_data_ratio:.2f}",
@@ -170,8 +173,17 @@ def estimate_run_budget(config: Any, stats: CorpusStats, sft_examples: int) -> R
     context_size = int(_value(config, "context_size", 128) or 128)
     base_steps = int(_value(config, "base_steps", 0) or 0)
     sft_steps = int(_value(config, "sft_steps", 0) or 0)
-    base_effective_batch = int(_value(config, "base_batch_size", 1) or 1) * int(_value(config, "base_grad_accum_steps", 1) or 1)
-    sft_effective_batch = int(_value(config, "sft_batch_size", 1) or 1) * int(_value(config, "sft_grad_accum_steps", 1) or 1)
+    ddp_world_size = _ddp_world_size(config)
+    base_effective_batch = (
+        int(_value(config, "base_batch_size", 1) or 1)
+        * int(_value(config, "base_grad_accum_steps", 1) or 1)
+        * ddp_world_size
+    )
+    sft_effective_batch = (
+        int(_value(config, "sft_batch_size", 1) or 1)
+        * int(_value(config, "sft_grad_accum_steps", 1) or 1)
+        * ddp_world_size
+    )
     estimated_parameters = _estimate_parameters(
         vocab_size,
         n_embd,
@@ -215,6 +227,7 @@ def estimate_run_budget(config: Any, stats: CorpusStats, sft_examples: int) -> R
         estimated_corpus_tokens=corpus_tokens,
         corpus_token_note=token_note,
         corpus_tokens_per_parameter=corpus_tokens_per_parameter,
+        ddp_world_size=ddp_world_size,
         base_effective_batch_size=base_effective_batch,
         sft_effective_batch_size=sft_effective_batch,
         base_effective_tokens_per_step=base_tokens_per_step,
@@ -732,6 +745,17 @@ def _value(config: Any, name: str, default: Any) -> Any:
     if isinstance(config, dict):
         return config.get(name, default)
     return getattr(config, name, default)
+
+
+def _ddp_world_size(config: Any) -> int:
+    if not bool(_value(config, "ddp", False)):
+        return 1
+    raw = os.environ.get("WORLD_SIZE", _value(config, "ddp_world_size", 1))
+    try:
+        world_size = int(raw)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, world_size)
 
 
 def _safe_ratio(numerator: int | float, denominator: int | float | None) -> float | None:
