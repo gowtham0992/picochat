@@ -634,7 +634,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--dropout", type=float, default=0.0)
     train_base_parser.add_argument("--norm-type", choices=("layernorm", "rmsnorm"), default="layernorm")
     train_base_parser.add_argument("--position-encoding", choices=("learned", "rope"), default="learned")
-    train_base_parser.add_argument("--activation", choices=("gelu", "relu2", "swiglu"), default="gelu")
+    train_base_parser.add_argument("--activation", choices=("gelu", "relu2", "leaky_relu2", "swiglu"), default="gelu")
     train_base_parser.add_argument("--tie-embeddings", action="store_true")
     train_base_parser.add_argument("--qk-norm", action="store_true")
     train_base_parser.add_argument(
@@ -1234,7 +1234,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--dropout", type=float, default=None)
     run_tiny_parser.add_argument("--norm-type", choices=("layernorm", "rmsnorm"), default=None)
     run_tiny_parser.add_argument("--position-encoding", choices=("learned", "rope"), default=None)
-    run_tiny_parser.add_argument("--activation", choices=("gelu", "relu2", "swiglu"), default=None)
+    run_tiny_parser.add_argument("--activation", choices=("gelu", "relu2", "leaky_relu2", "swiglu"), default=None)
     run_tiny_parser.add_argument("--tie-embeddings", action="store_true")
     run_tiny_parser.add_argument("--qk-norm", action="store_true")
     run_tiny_bias_group = run_tiny_parser.add_mutually_exclusive_group()

@@ -1637,6 +1637,38 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
     assert started["job"]["launch_config"]["long_run_gate_profile"] == "first_release"
 
 
+def test_start_run_plan_accepts_leaky_relu2_activation(tmp_path, monkeypatch):
+    pack_path = tmp_path / "dataset_pack.json"
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+    (tmp_path / "lesson.txt").write_text("lesson text", encoding="utf-8")
+    (tmp_path / "chat.jsonl").write_text(json.dumps({"user": "hi", "assistant": "hello"}) + "\n", encoding="utf-8")
+    (tmp_path / "eval.jsonl").write_text(json.dumps({"user": "hi", "must_include": ["hello"]}) + "\n", encoding="utf-8")
+
+    class FakeProcess:
+        pid = 1234
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr("picochat.web.subprocess.Popen", lambda *args, **kwargs: FakeProcess())
+
+    started = start_run_plan(tmp_path / "runs", {
+        "dataset_pack": str(pack_path),
+        "run_name": "leaky",
+        "scale": "smoke",
+        "base_steps": 1,
+        "sft_steps": 1,
+        "activation": "leaky_relu2",
+    })
+
+    assert "--activation leaky_relu2" in started["job"]["command"]
+
+
 def test_start_run_plan_rejects_invalid_runtime_knob(tmp_path):
     pack_path = tmp_path / "dataset_pack.json"
     pack_path.write_text(json.dumps({

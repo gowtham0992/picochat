@@ -895,8 +895,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     if position_encoding == "rope" and (n_embd // n_head) % 2 != 0:
         raise ValueError("RoPE requires an even attention head dimension")
     activation = str(payload.get("activation", preset.get("activation", "gelu")))
-    if activation not in {"gelu", "relu2", "swiglu"}:
-        raise ValueError("activation must be gelu, relu2, or swiglu")
+    if activation not in {"gelu", "relu2", "leaky_relu2", "swiglu"}:
+        raise ValueError("activation must be gelu, relu2, leaky_relu2, or swiglu")
     tie_embeddings = bool(payload.get("tie_embeddings", preset.get("tie_embeddings", False)))
     qk_norm = bool(payload.get("qk_norm", preset.get("qk_norm", False)))
     parallel_residual = bool(payload.get("parallel_residual", preset.get("parallel_residual", False)))

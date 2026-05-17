@@ -316,8 +316,8 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
-        if config.activation not in {"gelu", "relu2", "swiglu"}:
-            raise ValueError("activation must be 'gelu', 'relu2', or 'swiglu'")
+        if config.activation not in {"gelu", "relu2", "leaky_relu2", "swiglu"}:
+            raise ValueError("activation must be 'gelu', 'relu2', 'leaky_relu2', or 'swiglu'")
         self.dropout = nn.Dropout(config.dropout)
         self.activation = config.activation
         if self.activation == "swiglu":
@@ -333,6 +333,8 @@ class MLP(nn.Module):
         if self.activation == "swiglu":
             gate, value = x.chunk(2, dim=-1)
             x = F.silu(gate) * value
+        elif self.activation == "leaky_relu2":
+            x = F.leaky_relu(x, negative_slope=0.5).square()
         elif self.activation == "relu2":
             x = F.relu(x).square()
         else:
