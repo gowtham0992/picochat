@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 import os
 from typing import Any
 
@@ -9,6 +10,8 @@ import torch
 
 
 TORCHRUN_REQUIRED_ENV = ("RANK", "WORLD_SIZE", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT")
+DEFAULT_DDP_TIMEOUT_MINUTES = 120
+DDP_TIMEOUT_ENV = "PICOCHAT_DDP_TIMEOUT_MINUTES"
 
 
 def initialize_ddp(
@@ -26,13 +29,18 @@ def initialize_ddp(
         torch.cuda.set_device(local_rank)
     if not torch.distributed.is_initialized():
         backend = "nccl" if device.type == "cuda" else "gloo"
-        torch.distributed.init_process_group(backend=backend, init_method="env://")
+        torch.distributed.init_process_group(
+            backend=backend,
+            init_method="env://",
+            timeout=_ddp_timeout(),
+        )
     return {
         "enabled": True,
         "world_size": torch.distributed.get_world_size(),
         "rank": torch.distributed.get_rank(),
         "local_rank": local_rank,
         "backend": torch.distributed.get_backend(),
+        "timeout_minutes": _ddp_timeout_minutes(),
     }
 
 
@@ -81,6 +89,19 @@ def ddp_env_metadata(enabled: bool = False) -> dict[str, Any]:
         "rank": rank,
         "local_rank": local_rank,
     }
+
+
+def _ddp_timeout() -> timedelta:
+    return timedelta(minutes=_ddp_timeout_minutes())
+
+
+def _ddp_timeout_minutes() -> int:
+    raw = os.environ.get(DDP_TIMEOUT_ENV, str(DEFAULT_DDP_TIMEOUT_MINUTES))
+    try:
+        minutes = int(raw)
+    except ValueError:
+        minutes = DEFAULT_DDP_TIMEOUT_MINUTES
+    return max(1, minutes)
 
 
 def is_main_process(metadata: dict[str, Any] | None = None) -> bool:

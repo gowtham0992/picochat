@@ -3631,6 +3631,7 @@ function launchPreviewCommand(config = launchConfig()) {
   const usesDdp = DDP_SCALE_PRESETS.has(config.preset);
   const envParts = [
     ...(usesDdp ? ["OMP_NUM_THREADS=1"] : []),
+    ...(usesDdp ? ["PICOCHAT_DDP_TIMEOUT_MINUTES=120"] : []),
     ...((usesDdp || config.device === "cuda") ? ["PYTORCH_ALLOC_CONF=expandable_segments:True"] : []),
     "PYTHONUNBUFFERED=1",
     "PYTHONPATH=src",
@@ -4080,6 +4081,7 @@ function renderScalePlan() {
   }
   const remotePreflightParts = [
     ...(usesDdp ? ["OMP_NUM_THREADS=1"] : []),
+    ...(usesDdp ? ["PICOCHAT_DDP_TIMEOUT_MINUTES=120"] : []),
     "PYTORCH_ALLOC_CONF=expandable_segments:True",
     "PYTHONUNBUFFERED=1",
     "PYTHONPATH=src",
@@ -4092,6 +4094,7 @@ function renderScalePlan() {
   const remoteRunParts = usesDdp
     ? [
       "OMP_NUM_THREADS=1",
+      "PICOCHAT_DDP_TIMEOUT_MINUTES=120",
       "PYTORCH_ALLOC_CONF=expandable_segments:True",
       "PYTHONUNBUFFERED=1",
       "PYTHONPATH=src",

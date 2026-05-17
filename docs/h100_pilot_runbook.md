@@ -20,6 +20,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 export OMP_NUM_THREADS=1
 export PYTORCH_ALLOC_CONF=expandable_segments:True
+export PICOCHAT_DDP_TIMEOUT_MINUTES=120
 
 python -m pip install --upgrade pip
 python -m pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1
@@ -306,7 +307,7 @@ If the only warnings are the known sharded-validation tradeoff and the reviewed
 LR notes, launch the actual distributed run with `torchrun`:
 
 ```bash
-OMP_NUM_THREADS=1 PYTORCH_ALLOC_CONF=expandable_segments:True PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=8 -m picochat.cli run tiny \
+OMP_NUM_THREADS=1 PICOCHAT_DDP_TIMEOUT_MINUTES=120 PYTORCH_ALLOC_CONF=expandable_segments:True PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=8 -m picochat.cli run tiny \
   --out-dir runs/h100-climbmix-100m-ddp8-release-v1 \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --scale h100-100m-ddp8 \

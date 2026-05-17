@@ -1862,6 +1862,7 @@ def _child_env(*, device: str = "cpu", ddp: bool = False) -> dict[str, str]:
     env["PYTHONUNBUFFERED"] = "1"
     if ddp:
         env.setdefault("OMP_NUM_THREADS", "1")
+        env.setdefault("PICOCHAT_DDP_TIMEOUT_MINUTES", "120")
     if ddp or device == "cuda":
         env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
     return env
