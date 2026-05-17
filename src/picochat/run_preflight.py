@@ -395,24 +395,25 @@ def _runtime_backend_checks(config: Any) -> list[RunPreflightCheck]:
     attn_backend = str(_value(config, "attn_backend", "auto"))
     device = str(_value(config, "device", "cpu"))
     precision = str(_value(config, "precision", "float32"))
+    checks = []
     if attn_backend not in ACCELERATED_SDPA_BACKENDS:
-        return [_check(
+        checks.append(_check(
             "attention_backend_runtime",
             "pass",
             f"{attn_backend}/{device}/{precision}",
             "compatible runtime",
             "Attention backend selection is compatible with this preflight gate.",
-        )]
-    if device != "cuda":
-        return [_check(
+        ))
+    elif device != "cuda":
+        checks.append(_check(
             "attention_backend_runtime",
             "block",
             f"{attn_backend}/{device}/{precision}",
             "--device cuda for flash/efficient/cudnn SDPA",
             "Accelerated SDPA backends are CUDA runtime choices; use auto/math on CPU or MPS.",
-        )]
-    if precision == "float32":
-        return [_check(
+        ))
+    elif precision == "float32":
+        checks.append(_check(
             "attention_backend_runtime",
             "block",
             f"{attn_backend}/{device}/{precision}",
@@ -421,14 +422,28 @@ def _runtime_backend_checks(config: Any) -> list[RunPreflightCheck]:
                 "Flash, efficient, and CuDNN SDPA kernels require half/bfloat16 tensors "
                 "on the H100/H200 path. Float32 will fail before training starts."
             ),
-        )]
-    return [_check(
-        "attention_backend_runtime",
-        "pass",
-        f"{attn_backend}/{device}/{precision}",
-        "CUDA mixed precision",
-        "Explicit accelerated attention is paired with CUDA and mixed precision.",
-    )]
+        ))
+    else:
+        checks.append(_check(
+            "attention_backend_runtime",
+            "pass",
+            f"{attn_backend}/{device}/{precision}",
+            "CUDA mixed precision",
+            "Explicit accelerated attention is paired with CUDA and mixed precision.",
+        ))
+    if bool(_value(config, "ddp", False)) and bool(_value(config, "loss_spike_rollback", False)):
+        checks.append(_check(
+            "ddp_loss_spike_rollback",
+            "block",
+            "enabled",
+            "disable rollback for DDP",
+            (
+                "Loss-spike rollback uses rank-local train loss and snapshots. "
+                "Under DDP that can make ranks restore different weights, so it is "
+                "only supported for single-process runs."
+            ),
+        ))
+    return checks
 
 
 def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) -> list[RunPreflightCheck]:

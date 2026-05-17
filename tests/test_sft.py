@@ -23,6 +23,18 @@ def write_jsonl(path, rows):
     path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
 
 
+def test_train_sft_rejects_ddp_loss_spike_rollback(tmp_path):
+    with pytest.raises(ValueError, match="loss_spike_rollback is not supported with DDP"):
+        train_sft(SFTConfig(
+            input_path=str(tmp_path / "missing-chat.jsonl"),
+            tokenizer_path=str(tmp_path / "missing-tokenizer.json"),
+            checkpoint_path=str(tmp_path / "missing-checkpoint"),
+            out_dir=str(tmp_path / "sft"),
+            ddp=True,
+            loss_spike_rollback=True,
+        ))
+
+
 def test_load_chat_examples_from_jsonl(tmp_path):
     input_path = tmp_path / "chat.jsonl"
     write_jsonl(input_path, [{"user": "hi", "assistant": "hello", "category": "greet", "group": "greet-basic"}])

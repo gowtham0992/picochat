@@ -448,7 +448,7 @@ RUN_SCALES: dict[str, RunScale] = {
         torch_compile=True,
         torch_compile_mode="default",
         auto_lr_scaling=False,
-        loss_spike_rollback=True,
+        loss_spike_rollback=False,
     ),
 }
 

@@ -745,6 +745,11 @@ def train_sft(config: SFTConfig) -> dict:
         raise ValueError(f"sampling must be one of: {', '.join(SFT_SAMPLING_MODES)}")
     if config.packing not in SFT_PACKING_MODES:
         raise ValueError(f"packing must be one of: {', '.join(SFT_PACKING_MODES)}")
+    if config.ddp and config.loss_spike_rollback:
+        raise ValueError(
+            "loss_spike_rollback is not supported with DDP because rollback "
+            "decisions are rank-local; disable rollback for distributed runs"
+        )
     validate_optim_controls(
         max_steps=config.max_steps,
         lr_warmup_steps=config.lr_warmup_steps,

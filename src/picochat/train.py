@@ -177,6 +177,11 @@ def evaluate_metrics(
 
 def train_base(config: TrainConfig) -> dict:
     """Train a tiny next-token model and save artifacts."""
+    if config.ddp and config.loss_spike_rollback:
+        raise ValueError(
+            "loss_spike_rollback is not supported with DDP because rollback "
+            "decisions are rank-local; disable rollback for distributed runs"
+        )
     validate_optim_controls(
         max_steps=config.max_steps,
         lr_warmup_steps=config.lr_warmup_steps,

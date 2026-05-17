@@ -64,4 +64,5 @@ def test_h100_100m_ddp8_scale_uses_global_budget_recipe():
     assert scale.base_learning_rate == 0.0002
     assert scale.sft_learning_rate == 0.00002
     assert scale.auto_lr_scaling is False
+    assert scale.loss_spike_rollback is False
     assert scale.base_dataset_mode == "sharded"

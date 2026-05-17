@@ -120,6 +120,19 @@ def test_preflight_surfaces_ddp_auto_lr_scaling_risk(monkeypatch):
     assert "DDP world size" in checks["ddp_auto_lr_scaling"].message
 
 
+def test_preflight_blocks_ddp_loss_spike_rollback(monkeypatch):
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    report = assess_run_preflight(
+        _h100_like_config(ddp=True, loss_spike_rollback=True),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert report.status == "blocked"
+    assert checks["ddp_loss_spike_rollback"].status == "block"
+    assert "rank-local" in checks["ddp_loss_spike_rollback"].message
+
+
 def test_preflight_blocks_ddp8_scale_without_eight_rank_budget(monkeypatch):
     monkeypatch.delenv("WORLD_SIZE", raising=False)
     report = assess_run_preflight(

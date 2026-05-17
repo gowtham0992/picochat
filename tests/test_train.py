@@ -8,6 +8,17 @@ from picochat.tokenizer import CharTokenizer
 from picochat.train import TrainConfig, train_base
 
 
+def test_train_base_rejects_ddp_loss_spike_rollback(tmp_path):
+    with pytest.raises(ValueError, match="loss_spike_rollback is not supported with DDP"):
+        train_base(TrainConfig(
+            corpus_path=str(tmp_path / "missing.txt"),
+            tokenizer_path=str(tmp_path / "missing-tokenizer.json"),
+            out_dir=str(tmp_path / "run"),
+            ddp=True,
+            loss_spike_rollback=True,
+        ))
+
+
 def test_train_base_writes_artifacts(tmp_path):
     corpus_path = tmp_path / "corpus.txt"
     tokenizer_path = tmp_path / "tokenizer.json"
