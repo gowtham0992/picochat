@@ -33,3 +33,21 @@ def test_h100_scale_uses_modern_runtime_defaults():
     assert scale.sft_learning_rate == 0.00001
     assert scale.sft_steps == 180
     assert scale.sft_lr_warmup_steps == 20
+
+
+def test_h100_100m_scale_matches_release_pilot_recipe():
+    scale = RUN_SCALES["h100-100m"]
+
+    assert scale.tokenizer_type == "hf_bpe"
+    assert scale.tokenizer_vocab_size == 8192
+    assert scale.n_embd == 768
+    assert scale.n_layer == 16
+    assert scale.n_head == 12
+    assert scale.n_kv_head == 4
+    assert scale.base_steps == 33000
+    assert scale.base_learning_rate == 0.00005
+    assert scale.sft_learning_rate == 0.00001
+    assert scale.sft_steps == 180
+    assert scale.base_dataset_mode == "sharded"
+    assert scale.attn_backend == "flash"
+    assert scale.precision == "bf16"

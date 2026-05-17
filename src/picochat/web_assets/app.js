@@ -57,7 +57,8 @@ const MUON_EMA_TRIAL_DEFAULTS = {
 };
 const APP_VIEWS = ["home", "guide", "workbench", "scale"];
 const PICOCHAT_REPO_URL = "https://github.com/gowtham0992/picochat.git";
-const SCALE_PRESETS = ["h100-pilot", "climbmix-pilot", "mps-local", "medium", "small"];
+const SCALE_PRESETS = ["h100-100m", "h100-pilot", "climbmix-pilot", "mps-local", "medium", "small"];
+const H100_SCALE_PRESETS = new Set(["h100-100m", "h100-pilot"]);
 
 const LAUNCH_CONTROL_IDS = [
   "launch-pack-path",
@@ -3875,7 +3876,7 @@ function scaleConfig() {
     run_name: runName,
     preset,
     device: $("scale-device")?.value || "auto",
-    long_run_gate_profile: preset === "h100-pilot"
+    long_run_gate_profile: H100_SCALE_PRESETS.has(preset)
       ? "first_release"
       : $("launch-long-run-gate-profile")?.value || "research",
     shards: boundedScaleNumber("scale-climbmix-shards", 1, 1, 6543),
@@ -3909,11 +3910,11 @@ function renderScalePlan() {
   if (!config.dataset_pack) blockers.push("Choose or import a dataset pack first.");
   if (!config.run_name) blockers.push("Name the GPU run.");
   const status = blockers.length ? "blocked" : "ready";
-  const localProofPreset = config.preset === "h100-pilot" ? "mps-local" : config.preset;
-  const localProofRunName = config.preset === "h100-pilot"
+  const localProofPreset = H100_SCALE_PRESETS.has(config.preset) ? "mps-local" : config.preset;
+  const localProofRunName = H100_SCALE_PRESETS.has(config.preset)
     ? `${config.run_name}-local-proof`
     : config.run_name;
-  const localProofNote = config.preset === "h100-pilot"
+  const localProofNote = H100_SCALE_PRESETS.has(config.preset)
     ? " | local proof uses MPS LOCAL to avoid H100-only FlashAttention settings"
     : "";
   $("scale-readiness").className = `readiness-summary ${status}`;
@@ -4009,7 +4010,7 @@ function renderScalePlan() {
   ].join("\n");
   renderScaleCommand(
     "scale-mps-command",
-    config.preset === "h100-pilot" ? "LOCAL PROOF COMMAND" : "MPS / LOCAL COMMAND",
+    H100_SCALE_PRESETS.has(config.preset) ? "LOCAL PROOF COMMAND" : "MPS / LOCAL COMMAND",
     mpsCommand,
   );
   renderScaleCommand("scale-colab-setup-command", "COLAB SETUP", colabSetup);

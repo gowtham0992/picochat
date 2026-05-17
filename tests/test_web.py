@@ -1385,6 +1385,9 @@ def test_run_presets_are_exposed_for_web_launcher():
     assert presets["smoke"]["sft_learning_rate"] == 1e-3
     assert presets["small-local"]["sft_learning_rate"] == 3e-4
     assert presets["small-local"]["n_layer"] >= presets["tiny"]["n_layer"]
+    assert presets["h100-100m"]["n_embd"] == 768
+    assert presets["h100-100m"]["base_steps"] == 33000
+    assert presets["h100-100m"]["long_run_gate_profile"] == "first_release"
 
 
 def test_start_run_plan_rejects_unknown_preset(tmp_path):
