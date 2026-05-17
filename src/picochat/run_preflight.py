@@ -60,6 +60,9 @@ class RunBudgetPlan:
     base_lr_reference_effective_batch: int
     base_lr_sqrt_scale: float
     sft_lr_sqrt_scale: float
+    auto_lr_scaling: bool
+    base_effective_learning_rate: float
+    sft_effective_learning_rate: float
     long_run: bool
     long_run_reason: str
 
@@ -135,6 +138,7 @@ def preflight_markdown(report: RunPreflightReport) -> str:
         f"- DDP world size: {budget.ddp_world_size}",
         f"- Base effective batch: {budget.base_effective_batch_size}",
         f"- Base planned tokens: {budget.base_planned_tokens:,}",
+        f"- Base effective LR: {budget.base_effective_learning_rate:.6g}",
         f"- Target token/parameter ratio: {budget.target_param_data_ratio:.2f}",
         f"- Target training tokens: {budget.target_training_tokens:,}",
         f"- Recommended base steps: {budget.recommended_base_steps:,}",
@@ -144,6 +148,8 @@ def preflight_markdown(report: RunPreflightReport) -> str:
         f"- SFT effective batch: {budget.sft_effective_batch_size}",
         f"- SFT planned example updates: {budget.sft_planned_example_updates:,}",
         f"- SFT estimated example epochs: {_format_optional_float(budget.estimated_sft_example_epochs)}",
+        f"- SFT effective LR: {budget.sft_effective_learning_rate:.6g}",
+        f"- Auto LR scaling: {'enabled' if budget.auto_lr_scaling else 'disabled'}",
         f"- Long run: {'yes' if budget.long_run else 'no'} ({budget.long_run_reason})",
         "",
         "## Checklist",
@@ -213,6 +219,11 @@ def estimate_run_budget(config: Any, stats: CorpusStats, sft_examples: int) -> R
     sft_epochs = _safe_ratio(sft_example_updates, sft_examples)
     base_lr_scale = math.sqrt(base_effective_batch / BASE_LR_REFERENCE_EFFECTIVE_BATCH)
     sft_lr_scale = math.sqrt(sft_effective_batch / BASE_LR_REFERENCE_EFFECTIVE_BATCH)
+    auto_lr_scaling = bool(_value(config, "auto_lr_scaling", False))
+    base_learning_rate = float(_value(config, "base_learning_rate", 0.0) or 0.0)
+    sft_learning_rate = float(_value(config, "sft_learning_rate", 0.0) or 0.0)
+    base_effective_lr = base_learning_rate * base_lr_scale if auto_lr_scaling else base_learning_rate
+    sft_effective_lr = sft_learning_rate * sft_lr_scale if auto_lr_scaling else sft_learning_rate
     long_run = base_steps >= LONG_RUN_BASE_STEPS or estimated_parameters >= LONG_RUN_PARAMETER_COUNT
     if base_steps >= LONG_RUN_BASE_STEPS and estimated_parameters >= LONG_RUN_PARAMETER_COUNT:
         long_reason = f">={LONG_RUN_BASE_STEPS} base steps and >={LONG_RUN_PARAMETER_COUNT:,} params"
@@ -245,6 +256,9 @@ def estimate_run_budget(config: Any, stats: CorpusStats, sft_examples: int) -> R
         base_lr_reference_effective_batch=BASE_LR_REFERENCE_EFFECTIVE_BATCH,
         base_lr_sqrt_scale=base_lr_scale,
         sft_lr_sqrt_scale=sft_lr_scale,
+        auto_lr_scaling=auto_lr_scaling,
+        base_effective_learning_rate=base_effective_lr,
+        sft_effective_learning_rate=sft_effective_lr,
         long_run=long_run,
         long_run_reason=long_reason,
     )
@@ -429,6 +443,24 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
         checks.append(_check("base_lr", "warn", str(base_lr), "<= 0.003", "High LR can destabilize tiny transformers."))
     else:
         checks.append(_check("base_lr", "pass", str(base_lr), "0 < lr <= 0.003", "Base LR is in a plausible local range."))
+    if budget.auto_lr_scaling:
+        effective_lr_status = "pass"
+        if budget.base_effective_learning_rate <= 0:
+            effective_lr_status = "block"
+        elif budget.long_run and budget.base_effective_learning_rate > 0.001:
+            effective_lr_status = "warn"
+        elif budget.base_effective_learning_rate > 0.003:
+            effective_lr_status = "warn"
+        checks.append(_check(
+            "base_effective_lr",
+            effective_lr_status,
+            f"{budget.base_effective_learning_rate:.6g}",
+            "<= 0.001 preferred after auto scaling",
+            (
+                "This is the LR that will actually be used after auto LR scaling. "
+                "Treat large DDP-scaled changes as a new optimizer experiment."
+            ),
+        ))
     checks.append(_check(
         "lr_batch_scaling",
         "warn" if budget.long_run and budget.base_effective_batch_size != BASE_LR_REFERENCE_EFFECTIVE_BATCH else "pass",
@@ -440,6 +472,17 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
             f"{base_lr * budget.base_lr_sqrt_scale:.6g}."
         ),
     ))
+    if budget.auto_lr_scaling and budget.ddp_world_size > 1:
+        checks.append(_check(
+            "ddp_auto_lr_scaling",
+            "warn",
+            f"{budget.ddp_world_size} ranks, {budget.base_lr_sqrt_scale:.2f}x base LR scale",
+            "explicitly reviewed DDP LR",
+            (
+                "Auto LR scaling includes DDP world size. For expensive 8x runs, "
+                "prefer a DDP-specific preset or an explicitly chosen LR/step budget."
+            ),
+        ))
     if base_dataset_mode == "sharded":
         checks.append(_check(
             "document_boundaries",
@@ -557,6 +600,17 @@ def _sft_checks(config: Any, corpus: CorpusBuildReport | CorpusPreviewReport, bu
         "positive; usually <= base LR for long run",
         "SFT should steer behavior without erasing the base model.",
     ))
+    if budget.auto_lr_scaling:
+        checks.append(_check(
+            "sft_effective_lr",
+            "warn" if budget.long_run and budget.sft_effective_learning_rate > 0.0002 else "pass" if budget.sft_effective_learning_rate > 0 else "block",
+            f"{budget.sft_effective_learning_rate:.6g}",
+            "<= 0.0002 preferred after auto scaling",
+            (
+                "This is the SFT LR that will actually be used after auto LR scaling. "
+                "Large values can overfit behavior rows before held-out transfer improves."
+            ),
+        ))
     checks.append(_check(
         "sft_lr_batch_scaling",
         "warn" if budget.long_run and budget.sft_effective_batch_size != BASE_LR_REFERENCE_EFFECTIVE_BATCH else "pass",

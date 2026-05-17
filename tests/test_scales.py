@@ -51,3 +51,17 @@ def test_h100_100m_scale_matches_release_pilot_recipe():
     assert scale.base_dataset_mode == "sharded"
     assert scale.attn_backend == "flash"
     assert scale.precision == "bf16"
+
+
+def test_h100_100m_ddp8_scale_uses_global_budget_recipe():
+    scale = RUN_SCALES["h100-100m-ddp8"]
+
+    assert scale.n_embd == RUN_SCALES["h100-100m"].n_embd
+    assert scale.n_layer == RUN_SCALES["h100-100m"].n_layer
+    assert scale.base_steps == 4100
+    assert scale.base_batch_size == 8
+    assert scale.base_grad_accum_steps == 16
+    assert scale.base_learning_rate == 0.0002
+    assert scale.sft_learning_rate == 0.00002
+    assert scale.auto_lr_scaling is False
+    assert scale.base_dataset_mode == "sharded"

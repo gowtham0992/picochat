@@ -282,6 +282,28 @@ Do not call this a general reasoning model unless external and internal
 diagnostic benchmarks support that claim. This lane is for a stronger base
 checkpoint plus first-release identity/refusal behavior.
 
+### 6A. 8-GPU Variant
+
+For an 8x H100/B200 box, do not reuse the single-GPU 33k-step command. The
+global batch is 8x larger, so the same token budget needs about one eighth the
+steps. Use the DDP-aware preset and launch with `torchrun`:
+
+```bash
+PYTHONUNBUFFERED=1 torchrun --standalone --nproc_per_node=8 -m picochat.cli run tiny \
+  --out-dir runs/h100-climbmix-100m-ddp8-release-v1 \
+  --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
+  --scale h100-100m-ddp8 \
+  --device cuda \
+  --ddp \
+  --long-run-gate-profile first_release \
+  --preflight-only 2>&1 | tee logs/preflight-h100-100m-ddp8.log
+```
+
+If the only warnings are the known sharded-validation tradeoff and the reviewed
+LR notes, remove `--preflight-only`. This preset uses explicit learning rates
+instead of `--auto-lr-scaling`, because auto scaling includes DDP world size and
+can silently turn a stable single-GPU LR into a different optimizer experiment.
+
 ## 7. If SFT Misses, Sweep The Release Behavior Lane
 
 If the base BPB is healthy but first-release SFT fit is below the gate, do not

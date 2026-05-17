@@ -99,6 +99,27 @@ def test_preflight_counts_ddp_world_size_in_effective_batch(monkeypatch):
     assert report.budget.base_effective_tokens_per_step == 8 * 16 * 8 * 512
 
 
+def test_preflight_surfaces_ddp_auto_lr_scaling_risk(monkeypatch):
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    report = assess_run_preflight(
+        _h100_like_config(
+            ddp=True,
+            auto_lr_scaling=True,
+            base_steps=4100,
+            base_learning_rate=0.00005,
+            sft_learning_rate=0.00001,
+        ),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert report.budget.auto_lr_scaling is True
+    assert report.budget.base_effective_learning_rate > 0.0005
+    assert checks["base_effective_lr"].status == "pass"
+    assert checks["ddp_auto_lr_scaling"].status == "warn"
+    assert "DDP world size" in checks["ddp_auto_lr_scaling"].message
+
+
 def _h100_like_config(**overrides) -> TinyRunConfig:
     values = {
         "out_dir": "runs/test-preflight",
