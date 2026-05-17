@@ -1173,7 +1173,15 @@ def build_parser() -> argparse.ArgumentParser:
     run_tiny_parser.add_argument("--activation", choices=("gelu", "relu2", "swiglu"), default=None)
     run_tiny_parser.add_argument("--tie-embeddings", action="store_true")
     run_tiny_parser.add_argument("--qk-norm", action="store_true")
-    run_tiny_parser.add_argument(
+    run_tiny_bias_group = run_tiny_parser.add_mutually_exclusive_group()
+    run_tiny_bias_group.add_argument(
+        "--linear-bias",
+        dest="linear_bias",
+        action="store_true",
+        default=None,
+        help="Enable biases in transformer linear layers and the untied LM head.",
+    )
+    run_tiny_bias_group.add_argument(
         "--no-linear-bias",
         dest="linear_bias",
         action="store_false",

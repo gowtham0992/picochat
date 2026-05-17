@@ -181,6 +181,35 @@ def test_cli_run_tiny_h100_scale_applies_modern_defaults(tmp_path, capsys, monke
     assert "tiny run: 1/1 passed" in capsys.readouterr().out
 
 
+def test_cli_run_tiny_can_override_h100_scale_linear_bias(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run(config):
+        captured["config"] = config
+        return {
+            "eval": {
+                "num_passed": 1,
+                "num_examples": 1,
+                "pass_rate": 1.0,
+            },
+        }
+
+    monkeypatch.setattr("picochat.cli.run_tiny", fake_run)
+
+    exit_code = main([
+        "run",
+        "tiny",
+        "--out-dir",
+        str(tmp_path / "h100-bias"),
+        "--scale",
+        "h100-pilot",
+        "--linear-bias",
+    ])
+
+    assert exit_code == 0
+    assert captured["config"].linear_bias is True
+
+
 def test_cli_run_tiny_accepts_phase_resume_paths(tmp_path, monkeypatch):
     captured = {}
 
