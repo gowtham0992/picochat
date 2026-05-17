@@ -881,13 +881,14 @@ def train_sft(config: SFTConfig) -> dict:
     model = model.to(device)
     matmul_precision_runtime = configure_float32_matmul_precision(config.matmul_precision)
     precision_runtime = resolve_precision(config.precision, device)
-    ddp_model, ddp_metadata = prepare_ddp_model(model, device, enabled=config.ddp)
-    main_process = is_main_process(ddp_metadata)
-    train_model, compile_metadata = maybe_compile_model(
-        ddp_model,
+    compiled_model, compile_metadata = maybe_compile_model(
+        model,
         enabled=config.torch_compile,
         mode=config.torch_compile_mode,
     )
+    ddp_model, ddp_metadata = prepare_ddp_model(compiled_model, device, enabled=config.ddp)
+    main_process = is_main_process(ddp_metadata)
+    train_model = ddp_model
     scaler = make_grad_scaler(precision_runtime)
     optimizer = create_optimizer(
         model,
