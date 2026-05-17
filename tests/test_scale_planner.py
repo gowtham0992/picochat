@@ -20,6 +20,7 @@ def test_scale_plan_matches_100m_shape_and_exact_parameter_count():
     assert plan.recommended_base_steps == 32_645
     assert 3.1 < plan.estimated_epochs < 3.3
     assert plan.linear_bias is False
+    assert plan.scaled_residual_init is True
 
     config = GPTConfig(
         vocab_size=8192,
@@ -64,6 +65,7 @@ def test_scale_plan_marks_ddp_overrides():
     assert plan.global_batch_tokens == 524_288
     assert plan.recommended_base_steps < 5_000
     assert "--ddp" in plan.run_tiny_overrides()
+    assert "--scaled-residual-init" in plan.run_tiny_overrides()
     assert plan.base_learning_rate == 0.0002
     assert plan.batch_scaled_learning_rate > plan.base_learning_rate
     assert "--long-run-gate-profile" in plan.run_tiny_overrides()
@@ -77,6 +79,7 @@ def test_scale_plan_markdown_contains_copyable_command():
     assert "# Picochat Scale Plan" in markdown
     assert "--n-embd 768" in markdown
     assert "--no-linear-bias" in markdown
+    assert "--scaled-residual-init" in markdown
     assert "--base-dataset-mode" in markdown
     assert "--long-run-gate-profile skill_release" in markdown
     assert "--profile release_skills --skill-answer-style scratchpad" in markdown

@@ -35,6 +35,7 @@ class ScalePlan:
     qk_norm: bool
     parallel_residual: bool
     linear_bias: bool
+    scaled_residual_init: bool
     global_batch_tokens: int
     per_device_batch_size: int
     grad_accum_steps: int
@@ -84,6 +85,8 @@ class ScalePlan:
             "--qk-norm",
             "--parallel-residual",
         ]
+        if self.scaled_residual_init:
+            parts.append("--scaled-residual-init")
         if not self.linear_bias:
             parts.append("--no-linear-bias")
         parts.extend([
@@ -153,6 +156,7 @@ def plan_scale(
     qk_norm: bool = True,
     parallel_residual: bool = True,
     linear_bias: bool = False,
+    scaled_residual_init: bool = True,
     base_dataset_mode: str = "sharded",
     long_run_gate_profile: str = "skill_release",
 ) -> ScalePlan:
@@ -239,6 +243,7 @@ def plan_scale(
         qk_norm=qk_norm,
         parallel_residual=parallel_residual,
         linear_bias=linear_bias,
+        scaled_residual_init=scaled_residual_init,
         global_batch_tokens=global_batch_tokens,
         per_device_batch_size=per_device_batch_size,
         grad_accum_steps=grad_accum_steps,
@@ -277,7 +282,7 @@ def render_scale_plan_markdown(plan: ScalePlan) -> str:
         f"- Target parameters: {plan.target_parameters:,}",
         f"- Estimated parameters: {plan.estimated_parameters:,} ({plan.parameter_error_rate:+.2%})",
         f"- Shape: {plan.n_layer} layers, {plan.n_embd} embedding, {plan.n_head} query heads, {plan.n_kv_head} KV heads, {plan.head_dim} head dim",
-        f"- Architecture: {plan.norm_type}, {plan.position_encoding}, {plan.activation}, attention={plan.attn_backend}, tied embeddings={plan.tie_embeddings}, qk_norm={plan.qk_norm}, parallel_residual={plan.parallel_residual}, linear_bias={plan.linear_bias}",
+        f"- Architecture: {plan.norm_type}, {plan.position_encoding}, {plan.activation}, attention={plan.attn_backend}, tied embeddings={plan.tie_embeddings}, qk_norm={plan.qk_norm}, parallel_residual={plan.parallel_residual}, scaled_residual_init={plan.scaled_residual_init}, linear_bias={plan.linear_bias}",
         "",
         "## Training Budget",
         "",
