@@ -13,6 +13,18 @@ def format_optional_float(value: float | None) -> str:
     return "--" if value is None else format_float(value)
 
 
+def format_optional_tflops(value: float | None) -> str:
+    if value is None or not math.isfinite(value):
+        return "--"
+    return f"{value / 1e12:.2f} TFLOP/s"
+
+
+def format_optional_percent(value: float | None) -> str:
+    if value is None or not math.isfinite(value):
+        return "--"
+    return f"{value * 100:.2f}%"
+
+
 def format_duration(seconds: object) -> str:
     value = _number(seconds)
     if value is None:
@@ -202,6 +214,11 @@ def training_report_markdown(report: dict) -> str:
     if throughput:
         lines.append(f"- Average tokens/sec: {format_optional_float(throughput.get('avg_tokens_per_sec'))}")
         lines.append(f"- Final tokens/sec: {format_optional_float(throughput.get('final_tokens_per_sec'))}")
+        lines.append(f"- Average model FLOP utilization: {format_optional_percent(throughput.get('avg_mfu'))}")
+        lines.append(f"- Final model FLOP utilization: {format_optional_percent(throughput.get('final_mfu'))}")
+        lines.append(f"- Average estimated FLOP/s: {format_optional_tflops(throughput.get('avg_flops_per_sec'))}")
+    if config.get("peak_flops_source"):
+        lines.append(f"- MFU reference: {config.get('peak_flops_source')}")
     lines.append(f"- Optimizer: `{config.get('optimizer', 'adamw')}`")
     if config.get("optimizer") == "muon":
         lines.append(f"- Muon matrix LR: {config.get('muon_learning_rate')}")
@@ -499,6 +516,11 @@ def sft_report_markdown(report: dict) -> str:
     if throughput:
         lines.append(f"- Average tokens/sec: {format_optional_float(throughput.get('avg_tokens_per_sec'))}")
         lines.append(f"- Final tokens/sec: {format_optional_float(throughput.get('final_tokens_per_sec'))}")
+        lines.append(f"- Average model FLOP utilization: {format_optional_percent(throughput.get('avg_mfu'))}")
+        lines.append(f"- Final model FLOP utilization: {format_optional_percent(throughput.get('final_mfu'))}")
+        lines.append(f"- Average estimated FLOP/s: {format_optional_tflops(throughput.get('avg_flops_per_sec'))}")
+    if config.get("peak_flops_source"):
+        lines.append(f"- MFU reference: {config.get('peak_flops_source')}")
     lines.append(f"- Optimizer: `{config.get('optimizer', 'adamw')}`")
     if config.get("optimizer") == "muon":
         lines.append(f"- Muon matrix LR: {config.get('muon_learning_rate')}")

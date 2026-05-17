@@ -667,9 +667,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train_base_parser.add_argument(
         "--dataset-mode",
-        choices=("memory", "sharded"),
+        choices=("memory", "sharded", "packed"),
         default="memory",
-        help="Use the in-memory token tensor path or disk-backed token shards.",
+        help=(
+            "Use in-memory windows, disk-backed token shards, or disk-backed "
+            "BOS-bestfit packed rows with complete-document holdout."
+        ),
     )
     train_base_parser.add_argument(
         "--shard-token-size",
@@ -1358,11 +1361,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_tiny_parser.add_argument(
         "--base-dataset-mode",
-        choices=("memory", "sharded"),
+        choices=("memory", "sharded", "packed"),
         default=None,
         help=(
             "Base training dataset path. memory preserves document-split behavior; "
-            "sharded writes token shards to disk for larger H100-scale corpora."
+            "sharded writes token shards to disk for larger H100-scale corpora; "
+            "packed holds out complete documents, then writes BOS-bestfit rows."
         ),
     )
     run_tiny_parser.add_argument(

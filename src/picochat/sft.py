@@ -66,6 +66,7 @@ from picochat.resume import (
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 from picochat.train import (
     _capture_rollback_state,
+    _estimated_peak_flops_per_sec,
     _format_rate,
     _interval_throughput,
     _is_loss_spike,
@@ -956,6 +957,11 @@ def train_sft(config: SFTConfig) -> dict:
     local_effective_batch_size = config.batch_size * config.grad_accum_steps
     effective_batch_size = local_effective_batch_size * world_size
     effective_tokens_per_step = effective_batch_size * model.config.context_size
+    estimated_flops_per_token = model.estimate_training_flops_per_token()
+    estimated_peak_flops_per_sec, peak_flops_source = _estimated_peak_flops_per_sec(
+        device,
+        world_size=world_size,
+    )
 
     losses: list[dict[str, float | int]] = []
     start = time.time()
@@ -1159,6 +1165,8 @@ def train_sft(config: SFTConfig) -> dict:
                 now=now,
                 last_log_wall_time=last_log_wall_time,
                 tokens_per_step=effective_tokens_per_step,
+                flops_per_token=estimated_flops_per_token,
+                peak_flops_per_sec=estimated_peak_flops_per_sec,
             )
             last_log_wall_time = now
             last_log_step = step
@@ -1413,6 +1421,10 @@ def train_sft(config: SFTConfig) -> dict:
             "local_effective_batch_size": local_effective_batch_size,
             "effective_batch_size": effective_batch_size,
             "effective_tokens_per_step": effective_tokens_per_step,
+            "estimated_flops_per_token": estimated_flops_per_token,
+            "estimated_flops_per_step": estimated_flops_per_token * effective_tokens_per_step,
+            "estimated_peak_flops_per_sec": estimated_peak_flops_per_sec,
+            "peak_flops_source": peak_flops_source,
             "optimizer_metadata": optimizer.metadata,
             "precision_runtime": precision_runtime.to_dict(),
             "matmul_precision_runtime": matmul_precision_runtime,

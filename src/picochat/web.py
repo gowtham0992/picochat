@@ -945,8 +945,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         128,
     )
     base_dataset_mode = str(payload.get("base_dataset_mode", preset.get("base_dataset_mode", "memory")))
-    if base_dataset_mode not in {"memory", "sharded"}:
-        raise ValueError("base_dataset_mode must be memory or sharded")
+    if base_dataset_mode not in {"memory", "sharded", "packed"}:
+        raise ValueError("base_dataset_mode must be memory, sharded, or packed")
     base_shard_token_size = _bounded_int(
         payload.get("base_shard_token_size", preset.get("base_shard_token_size", 1_000_000)),
         1_000,

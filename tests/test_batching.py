@@ -6,9 +6,12 @@ import torch
 
 from picochat.batching import (
     DeviceBatchPrefetcher,
+    PackedTokenRowDataset,
     ShardedTokenWindowDataset,
     TokenWindowDataset,
+    build_packed_token_shards,
     build_token_shards,
+    load_packed_token_split,
     load_sharded_token_split,
     load_token_shards_manifest,
     load_token_dataset,
@@ -72,6 +75,100 @@ def test_load_sharded_token_split_uses_disk_shards(tmp_path):
     assert (cache_dir / "token_shards_manifest.json").exists()
     assert x.shape == (8,)
     assert y.shape == (8,)
+
+
+def test_load_packed_token_split_uses_document_holdout_and_bos_rows(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    manifest_path = tmp_path / "corpus_manifest.json"
+    cache_dir = tmp_path / "packed"
+    docs = [
+        "alpha packed document " * 4,
+        "beta packed document " * 4,
+        "gamma packed document " * 4,
+        "delta packed document " * 4,
+    ]
+    corpus_text = "\n\n".join(doc.strip() for doc in docs)
+    corpus_path.write_text(f"{corpus_text}\n", encoding="utf-8")
+    CharTokenizer.train([corpus_text]).save(tokenizer_path)
+    offset = 0
+    manifest_docs = []
+    for index, doc in enumerate(doc.strip() for doc in docs):
+        manifest_docs.append({
+            "document_id": index,
+            "path": f"doc-{index}.txt",
+            "char_start": offset,
+            "char_end": offset + len(doc),
+        })
+        offset += len(doc) + 2
+    manifest_path.write_text(json.dumps({"documents": manifest_docs}), encoding="utf-8")
+
+    split = load_packed_token_split(
+        corpus_path,
+        tokenizer_path,
+        context_size=8,
+        cache_dir=cache_dir,
+        val_fraction=0.25,
+        seed=1,
+        shard_token_size=18,
+        corpus_manifest_path=manifest_path,
+    )
+    x, y = split.train_dataset[0]
+
+    assert split.stats["split_mode"] == "packed"
+    assert split.stats["split_reason"] == "held_out_complete_documents_bos_bestfit"
+    assert split.stats["packing"] == "bos_bestfit_base"
+    assert split.stats["document_boundary_tokens"] is True
+    assert split.stats["train_documents"] == 3
+    assert split.stats["val_documents"] == 1
+    assert split.stats["train_shards"] > 0
+    assert (cache_dir / "packed_shards_manifest.json").exists()
+    assert isinstance(split.train_dataset, PackedTokenRowDataset)
+    assert x.shape == (8,)
+    assert y.shape == (8,)
+
+
+def test_packed_token_shards_do_not_drop_long_documents(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    manifest_path = tmp_path / "corpus_manifest.json"
+    cache_dir = tmp_path / "packed"
+    docs = [
+        "long document alpha " * 40,
+        "long document beta " * 40,
+        "long document gamma " * 40,
+        "long document delta " * 40,
+    ]
+    corpus_text = "\n\n".join(doc.strip() for doc in docs)
+    corpus_path.write_text(f"{corpus_text}\n", encoding="utf-8")
+    CharTokenizer.train([corpus_text]).save(tokenizer_path)
+    offset = 0
+    manifest_docs = []
+    for index, doc in enumerate(doc.strip() for doc in docs):
+        manifest_docs.append({
+            "document_id": index,
+            "path": f"doc-{index}.txt",
+            "char_start": offset,
+            "char_end": offset + len(doc),
+        })
+        offset += len(doc) + 2
+    manifest_path.write_text(json.dumps({"documents": manifest_docs}), encoding="utf-8")
+
+    manifest = build_packed_token_shards(
+        corpus_path,
+        tokenizer_path,
+        cache_dir,
+        context_size=16,
+        shard_token_size=68,
+        corpus_manifest_path=manifest_path,
+        val_fraction=0.25,
+        seed=1,
+    )
+
+    source_tokens = manifest["train"]["source_tokens"] + manifest["val"]["source_tokens"]
+    dropped_tokens = manifest["train"]["dropped_tokens"] + manifest["val"]["dropped_tokens"]
+    assert source_tokens > 1000
+    assert dropped_tokens < source_tokens * 0.05
 
 
 def test_load_sharded_token_split_can_reuse_existing_manifest(tmp_path):

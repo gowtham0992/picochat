@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 
 import torch
 import torch.nn as nn
@@ -11,13 +12,14 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 KVCache = tuple[tuple[torch.Tensor, torch.Tensor], ...]
-SDPA_BACKENDS = ("auto", "flash", "efficient", "math", "cudnn")
+SDPA_BACKENDS = ("auto", "flash", "efficient", "math", "cudnn", "external_flash")
 _SDPA_BACKEND_NAMES = {
     "flash": "FLASH_ATTENTION",
     "efficient": "EFFICIENT_ATTENTION",
     "math": "MATH",
     "cudnn": "CUDNN_ATTENTION",
 }
+_EXTERNAL_FLASH_BACKENDS = ("external_flash",)
 _SDPA_SUPPORTS_ENABLE_GQA = "enable_gqa" in (
     getattr(F.scaled_dot_product_attention, "__doc__", "") or ""
 )
@@ -63,7 +65,7 @@ class RMSNorm(nn.Module):
 
 def sdpa_backend_context(attn_backend: str):
     """Return a context manager constraining PyTorch SDPA backend selection."""
-    if attn_backend == "auto":
+    if attn_backend == "auto" or attn_backend in _EXTERNAL_FLASH_BACKENDS:
         return nullcontext()
     if attn_backend not in _SDPA_BACKEND_NAMES:
         raise ValueError(f"attn_backend must be one of: {', '.join(SDPA_BACKENDS)}")
@@ -85,6 +87,26 @@ def sdpa_backend_context(attn_backend: str):
             enable_cudnn=attn_backend == "cudnn",
         )
     raise RuntimeError("This PyTorch build does not support explicit SDPA backend selection")
+
+
+@lru_cache(maxsize=1)
+def _external_flash_attn_func():
+    """Return flash-attn's dense attention function when the optional package exists."""
+    try:
+        from flash_attn import flash_attn_func  # type: ignore
+        return flash_attn_func
+    except Exception:
+        pass
+    try:
+        from flash_attn.flash_attn_interface import flash_attn_func  # type: ignore
+        return flash_attn_func
+    except Exception:
+        return None
+
+
+def external_flash_attention_available() -> bool:
+    """Whether the optional flash-attn package is importable in this environment."""
+    return _external_flash_attn_func() is not None
 
 
 def make_norm(norm_type: str, size: int) -> nn.Module:
@@ -179,13 +201,18 @@ class CausalSelfAttention(nn.Module):
         if attn_mask is not None:
             sdpa_kwargs["attn_mask"] = attn_mask
 
-        with sdpa_backend_context(self.attn_backend):
-            y = F.scaled_dot_product_attention(
-                q,
-                k,
-                v,
-                **sdpa_kwargs,
-            )
+        y = None
+        if self.attn_backend in _EXTERNAL_FLASH_BACKENDS:
+            if past_kv is None and attn_mask is None:
+                y = _external_flash_attention(q, k, v, dropout_p=sdpa_kwargs["dropout_p"])
+        if y is None:
+            with sdpa_backend_context(self.attn_backend):
+                y = F.scaled_dot_product_attention(
+                    q,
+                    k,
+                    v,
+                    **sdpa_kwargs,
+                )
         y = y.transpose(1, 2).contiguous().view(batch_size, seq_len, embd_size)
         y = self.dropout(self.proj(y))
         if use_cache:
@@ -472,6 +499,39 @@ class TinyGPT(nn.Module):
 
     def num_parameters(self) -> int:
         return sum(parameter.numel() for parameter in self.parameters())
+
+    def estimate_training_flops_per_token(self) -> int:
+        """Approximate dense forward+backward FLOPs per training token.
+
+        This is a reporting estimate, not a scheduler input. It follows the
+        common training heuristic of 6 FLOPs per trainable parameter per token,
+        plus dense causal attention score/value FLOPs for the configured context.
+        """
+        parameters = self.num_parameters()
+        head_dim = self.config.n_embd // self.config.n_head
+        context = self.config.context_size
+        attention_flops = 12 * self.config.n_layer * self.config.n_head * head_dim * context
+        return int((6 * parameters) + attention_flops)
+
+
+def _external_flash_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    *,
+    dropout_p: float,
+) -> torch.Tensor:
+    flash_attn_func = _external_flash_attn_func()
+    if flash_attn_func is None:
+        raise RuntimeError(
+            "attn_backend='external_flash' requires the optional flash-attn package; "
+            "use attn_backend='flash' for PyTorch SDPA FlashAttention"
+        )
+    q_t = q.transpose(1, 2).contiguous()
+    k_t = k.transpose(1, 2).contiguous()
+    v_t = v.transpose(1, 2).contiguous()
+    y_t = flash_attn_func(q_t, k_t, v_t, dropout_p=dropout_p, causal=True)
+    return y_t.transpose(1, 2)
 
 
 def _apply_repetition_penalty(

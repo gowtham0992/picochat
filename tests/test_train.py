@@ -273,6 +273,59 @@ def test_train_base_can_use_sharded_dataset_mode(tmp_path):
     assert report["coverage"]["actual_steps"] == 1
 
 
+def test_train_base_can_use_packed_dataset_mode(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    manifest_path = tmp_path / "corpus_manifest.json"
+    out_dir = tmp_path / "run"
+    docs = [
+        "packed base training alpha\n" * 12,
+        "packed base training beta\n" * 12,
+        "packed base training gamma\n" * 12,
+        "packed base training delta\n" * 12,
+    ]
+    corpus_text = "\n\n".join(doc.strip() for doc in docs)
+    corpus_path.write_text(f"{corpus_text}\n", encoding="utf-8")
+    CharTokenizer.train([corpus_text]).save(tokenizer_path)
+    offset = 0
+    manifest_docs = []
+    for index, doc in enumerate(doc.strip() for doc in docs):
+        manifest_docs.append({
+            "document_id": index,
+            "path": f"doc-{index}.txt",
+            "char_start": offset,
+            "char_end": offset + len(doc),
+        })
+        offset += len(doc) + 2
+    manifest_path.write_text(json.dumps({"documents": manifest_docs}), encoding="utf-8")
+
+    report = train_base(TrainConfig(
+        corpus_path=str(corpus_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir),
+        context_size=8,
+        batch_size=4,
+        max_steps=1,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        dataset_mode="packed",
+        shard_token_size=64,
+        shard_cache_size=2,
+        corpus_manifest_path=str(manifest_path),
+    ))
+
+    assert report["dataset"]["split_mode"] == "packed"
+    assert report["dataset"]["packing"] == "bos_bestfit_base"
+    assert report["dataset"]["train_documents"] == 3
+    assert report["dataset"]["val_documents"] == 1
+    assert (out_dir / "packed_token_shards" / "packed_shards_manifest.json").exists()
+    assert report["coverage"]["actual_steps"] == 1
+
+
 def test_train_base_resume_reuses_existing_token_shards(tmp_path, monkeypatch):
     import picochat.train as train_module
 

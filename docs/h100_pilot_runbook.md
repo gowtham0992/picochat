@@ -59,6 +59,12 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli sanity preh100 \
 
 Do not continue if this fails.
 
+`--attn-backend flash` uses PyTorch SDPA FlashAttention. If the host has a
+compatible `flash-attn` wheel installed, you can sanity-check the external
+kernel path with `--attn-backend external_flash`. Keep the PyTorch SDPA path as
+the portable default unless the external package passes sanity on that exact
+machine image.
+
 The sanity output should include `modern_init_loss: pass`. For an 8k tokenizer,
 a fresh model should start near `log(vocab)` loss, roughly 9.0. If the first
 base-training line shows a loss in the hundreds, stop: that indicates a model
@@ -97,6 +103,12 @@ embeddings, QK norm, optional parallel residual, bf16, `torch.compile`,
 FlashAttention, high matmul precision, and sharded base-token data. The same
 defaults are also available as `--scale h100-pilot`; the expanded command below
 keeps every important knob visible for auditability.
+
+For very large corpora, `--base-dataset-mode packed` is now available as the
+more auditable disk path: it holds out complete source documents first, then
+writes BOS-bestfit packed rows. `sharded` remains the fastest conservative
+default and preserves BOS/EOS document boundaries when a corpus manifest exists,
+but validates by token shard rather than by complete document.
 
 ```bash
 PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
@@ -386,6 +398,11 @@ timestamps before terminating.
 During base training, the first loss should be near the tokenizer log-vocab
 baseline and then fall quickly. For an 8,192-token vocabulary, seeing the first
 base loss around 8-10 is normal; seeing hundreds is a stop condition.
+
+Training reports include tokens/sec, estimated FLOP/s, and MFU when Picochat
+can identify the GPU family. Set `PICOCHAT_PEAK_TFLOPS=<per-run TFLOP/s>` to
+override the built-in H100/H200/B200/A100 reference when benchmarking a new
+instance type or a multi-GPU box.
 
 For sharded base data, setup now prints `base data: token shard build ...`
 progress while token shards are being written. That stage is CPU/tokenizer

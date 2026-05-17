@@ -41,6 +41,21 @@ def test_preflight_reports_document_boundaries_for_memory_document_split():
     assert checks["document_boundaries"].metric == "bos/eos per document"
 
 
+def test_preflight_reports_packed_base_mode_as_document_holdout():
+    report = assess_run_preflight(
+        _h100_like_config(base_dataset_mode="packed"),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["document_split"].status == "pass"
+    assert checks["document_split"].metric == "packed"
+    assert "BOS-bestfit" in checks["document_split"].message
+    assert checks["document_boundaries"].status == "pass"
+    assert checks["document_boundaries"].metric == "bos-bestfit packed rows"
+    assert "held-out documents" in checks["document_boundaries"].message
+
+
 def test_preflight_does_not_claim_boundaries_for_window_split():
     config = _h100_like_config(base_dataset_mode="memory", split_mode="window")
     report = assess_run_preflight(config, _ready_large_corpus())
@@ -198,6 +213,17 @@ def test_preflight_allows_flash_attention_on_cuda_bf16():
 
     assert checks["attention_backend_runtime"].status == "pass"
     assert report.status == "warn"
+
+
+def test_preflight_allows_external_flash_attention_on_cuda_bf16():
+    report = assess_run_preflight(
+        _h100_like_config(attn_backend="external_flash", device="cuda", precision="bf16"),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["attention_backend_runtime"].status == "pass"
+    assert "flash-attn package" in checks["attention_backend_runtime"].message
 
 
 def test_preflight_parameter_estimate_matches_modern_model():

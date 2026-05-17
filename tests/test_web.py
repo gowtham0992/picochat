@@ -53,6 +53,8 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert 'id="launch-sft-resume-from"' in html
     assert 'id="launch-sft-peft"' in html
     assert 'id="launch-sft-lora-targets"' in html
+    assert 'option value="packed"' in html
+    assert 'option value="external_flash"' in html
     assert 'option value="h100-100m-ddp8"' in html
     assert '"h100-100m-ddp8"' in js
     assert '"--sft-peft"' in js
@@ -73,6 +75,7 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert '"inspect-bundle"' in js
     assert '"--logs-dir"' in js
     assert "base data: token shard build" in js
+    assert "Packed base data holds out complete source documents" in js
     assert "preserves BOS/EOS document boundaries" in js
 
 
@@ -1585,6 +1588,7 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
         "precision": "bf16",
         "matmul_precision": "high",
         "attn_backend": "math",
+        "base_dataset_mode": "packed",
         "torch_compile": True,
         "torch_compile_mode": "reduce-overhead",
         "gradient_checkpointing": True,
@@ -1602,6 +1606,7 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
     assert "--precision bf16" in started["job"]["command"]
     assert "--matmul-precision high" in started["job"]["command"]
     assert "--attn-backend math" in started["job"]["command"]
+    assert "--base-dataset-mode packed" in started["job"]["command"]
     assert "--torch-compile" in started["job"]["command"]
     assert "--torch-compile-mode reduce-overhead" in started["job"]["command"]
     assert "--gradient-checkpointing" in started["job"]["command"]
@@ -1616,6 +1621,7 @@ def test_start_run_plan_accepts_swiglu_activation(tmp_path, monkeypatch):
     assert started["job"]["launch_config"]["precision"] == "bf16"
     assert started["job"]["launch_config"]["matmul_precision"] == "high"
     assert started["job"]["launch_config"]["attn_backend"] == "math"
+    assert started["job"]["launch_config"]["base_dataset_mode"] == "packed"
     assert started["job"]["launch_config"]["torch_compile"] is True
     assert started["job"]["launch_config"]["torch_compile_mode"] == "reduce-overhead"
     assert started["job"]["launch_config"]["gradient_checkpointing"] is True

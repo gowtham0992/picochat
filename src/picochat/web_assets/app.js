@@ -3551,9 +3551,9 @@ function launchReadiness(config = launchConfig()) {
   if (config.base_steps < 1 || config.sft_steps < 1) blockers.push("Base and SFT steps must be at least 1.");
   if (config.base_batch_size < 1 || config.sft_batch_size < 1) blockers.push("Batch sizes must be at least 1.");
   if (config.base_grad_accum_steps < 1 || config.sft_grad_accum_steps < 1) blockers.push("Gradient accumulation must be at least 1.");
-  if (!["memory", "sharded"].includes(config.base_dataset_mode)) blockers.push("Base data mode is invalid.");
-  if (config.base_dataset_mode === "sharded" && config.base_shard_token_size < config.context_size * 4) {
-    blockers.push("Sharded token size should be at least 4x context size.");
+  if (!["memory", "sharded", "packed"].includes(config.base_dataset_mode)) blockers.push("Base data mode is invalid.");
+  if (["sharded", "packed"].includes(config.base_dataset_mode) && config.base_shard_token_size < config.context_size * 4) {
+    blockers.push("Disk token shard size should be at least 4x context size.");
   }
   if (config.base_learning_rate <= 0 || config.sft_learning_rate <= 0) blockers.push("Learning rates must be above zero.");
   if (!["adamw", "muon"].includes(config.base_optimizer) || !["adamw", "muon"].includes(config.sft_optimizer)) {
@@ -3561,10 +3561,10 @@ function launchReadiness(config = launchConfig()) {
   }
   if (!["float32", "bf16", "fp16", "auto"].includes(config.precision)) blockers.push("Precision mode is invalid.");
   if (!["default", "highest", "high", "medium"].includes(config.matmul_precision)) blockers.push("Matmul precision mode is invalid.");
-  if (!["auto", "flash", "efficient", "math", "cudnn"].includes(config.attn_backend)) blockers.push("Attention backend is invalid.");
+  if (!["auto", "flash", "external_flash", "efficient", "math", "cudnn"].includes(config.attn_backend)) blockers.push("Attention backend is invalid.");
   if (!["default", "reduce-overhead", "max-autotune"].includes(config.torch_compile_mode)) blockers.push("Torch compile mode is invalid.");
   if (!["research", "first_release"].includes(config.long_run_gate_profile)) blockers.push("Gate profile is invalid.");
-  if (config.attn_backend === "flash" && !["auto", "cuda"].includes(config.device)) {
+  if (["flash", "external_flash"].includes(config.attn_backend) && !["auto", "cuda"].includes(config.device)) {
     blockers.push("Flash attention requires CUDA or AUTO device selection.");
   }
   if (config.ddp && config.loss_spike_rollback) {
@@ -3619,6 +3619,9 @@ function launchReadiness(config = launchConfig()) {
   }
   if (config.base_dataset_mode === "sharded") {
     cautions.push("Sharded base data preserves BOS/EOS document boundaries when a corpus manifest exists, but validates by token shard rather than complete source document.");
+  }
+  if (config.base_dataset_mode === "packed") {
+    cautions.push("Packed base data holds out complete source documents before BOS-bestfit row packing; use it for large single-node or DDP runs when memory mode is too expensive.");
   }
   const usingBenchmarkPack = Boolean(state.benchmarkPack && state.benchmarkPack.dataset_pack === config.dataset_pack);
   const benchmarkProfile = state.benchmarkPack?.profile || "";

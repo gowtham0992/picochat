@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 import json
 import math
+import os
 from pathlib import Path
 import time
 
@@ -14,6 +15,8 @@ import torch.nn.functional as F
 
 from picochat.batching import (
     DeviceBatchPrefetcher,
+    load_packed_token_shards_manifest,
+    load_packed_token_split,
     load_sharded_token_split,
     load_token_shards_manifest,
     load_token_split,
@@ -217,33 +220,52 @@ def train_base(config: TrainConfig) -> dict:
     ddp_metadata = initialize_ddp(device, enabled=config.ddp)
     main_process = is_main_process(ddp_metadata)
     tokenizer = load_tokenizer(config.tokenizer_path)
-    if config.dataset_mode not in {"memory", "sharded"}:
-        raise ValueError("dataset_mode must be 'memory' or 'sharded'")
+    if config.dataset_mode not in {"memory", "sharded", "packed"}:
+        raise ValueError("dataset_mode must be 'memory', 'sharded', or 'packed'")
     canary_values = _canary_values(config.seed, config.canary_count)
-    if config.dataset_mode == "sharded":
+    if config.dataset_mode in {"sharded", "packed"}:
         if main_process:
-            shard_cache_dir = out_dir / "token_shards"
+            shard_cache_dir = out_dir / (
+                "packed_token_shards" if config.dataset_mode == "packed" else "token_shards"
+            )
             rebuild_token_shards = True
             if config.resume_from:
                 try:
-                    load_token_shards_manifest(
-                        shard_cache_dir,
-                        corpus_path=config.corpus_path,
-                        tokenizer_path=config.tokenizer_path,
-                        shard_token_size=config.shard_token_size,
-                        corpus_manifest_path=config.corpus_manifest_path,
-                    )
+                    if config.dataset_mode == "packed":
+                        load_packed_token_shards_manifest(
+                            shard_cache_dir,
+                            corpus_path=config.corpus_path,
+                            tokenizer_path=config.tokenizer_path,
+                            context_size=config.context_size,
+                            shard_token_size=config.shard_token_size,
+                            corpus_manifest_path=config.corpus_manifest_path,
+                            val_fraction=config.val_fraction,
+                            seed=config.seed,
+                        )
+                    else:
+                        load_token_shards_manifest(
+                            shard_cache_dir,
+                            corpus_path=config.corpus_path,
+                            tokenizer_path=config.tokenizer_path,
+                            shard_token_size=config.shard_token_size,
+                            corpus_manifest_path=config.corpus_manifest_path,
+                        )
                     rebuild_token_shards = False
                 except (FileNotFoundError, ValueError):
                     rebuild_token_shards = True
             print(
-                "base data: preparing sharded token dataset "
+                f"base data: preparing {config.dataset_mode} token dataset "
                 f"({config.shard_token_size:,} tokens/shard, cache={config.shard_cache_size})",
                 flush=True,
             )
             if not rebuild_token_shards:
                 print("base data: reusing existing token shards for resume", flush=True)
-            split = load_sharded_token_split(
+            loader = (
+                load_packed_token_split
+                if config.dataset_mode == "packed"
+                else load_sharded_token_split
+            )
+            split = loader(
                 corpus_path=config.corpus_path,
                 tokenizer_path=config.tokenizer_path,
                 context_size=config.context_size,
@@ -258,11 +280,18 @@ def train_base(config: TrainConfig) -> dict:
             )
         barrier_if_distributed(ddp_metadata)
         if not main_process:
-            split = load_sharded_token_split(
+            loader = (
+                load_packed_token_split
+                if config.dataset_mode == "packed"
+                else load_sharded_token_split
+            )
+            split = loader(
                 corpus_path=config.corpus_path,
                 tokenizer_path=config.tokenizer_path,
                 context_size=config.context_size,
-                cache_dir=out_dir / "token_shards",
+                cache_dir=out_dir / (
+                    "packed_token_shards" if config.dataset_mode == "packed" else "token_shards"
+                ),
                 val_fraction=config.val_fraction,
                 seed=config.seed,
                 shard_token_size=config.shard_token_size,
@@ -354,8 +383,16 @@ def train_base(config: TrainConfig) -> dict:
             "val_fraction": config.val_fraction,
             "seed": config.seed,
             "context_size": config.context_size,
-            "shard_token_size": config.shard_token_size if config.dataset_mode == "sharded" else None,
-            "shard_cache_size": config.shard_cache_size if config.dataset_mode == "sharded" else None,
+            "shard_token_size": (
+                config.shard_token_size
+                if config.dataset_mode in {"sharded", "packed"}
+                else None
+            ),
+            "shard_cache_size": (
+                config.shard_cache_size
+                if config.dataset_mode in {"sharded", "packed"}
+                else None
+            ),
         })
 
     training_fingerprint = None
@@ -401,6 +438,11 @@ def train_base(config: TrainConfig) -> dict:
     local_effective_batch_size = config.batch_size * config.grad_accum_steps
     effective_batch_size = local_effective_batch_size * world_size
     effective_tokens_per_step = effective_batch_size * config.context_size
+    estimated_flops_per_token = model.estimate_training_flops_per_token()
+    estimated_peak_flops_per_sec, peak_flops_source = _estimated_peak_flops_per_sec(
+        device,
+        world_size=world_size,
+    )
 
     losses: list[dict[str, float | int]] = []
     start = time.time()
@@ -568,6 +610,8 @@ def train_base(config: TrainConfig) -> dict:
                 now=now,
                 last_log_wall_time=last_log_wall_time,
                 tokens_per_step=effective_tokens_per_step,
+                flops_per_token=estimated_flops_per_token,
+                peak_flops_per_sec=estimated_peak_flops_per_sec,
             )
             last_log_wall_time = now
             last_log_step = step
@@ -837,6 +881,10 @@ def train_base(config: TrainConfig) -> dict:
             "local_effective_batch_size": local_effective_batch_size,
             "effective_batch_size": effective_batch_size,
             "effective_tokens_per_step": effective_tokens_per_step,
+            "estimated_flops_per_token": estimated_flops_per_token,
+            "estimated_flops_per_step": estimated_flops_per_token * effective_tokens_per_step,
+            "estimated_peak_flops_per_sec": estimated_peak_flops_per_sec,
+            "peak_flops_source": peak_flops_source,
             "optimizer_metadata": optimizer.metadata,
             "precision_runtime": precision_runtime.to_dict(),
             "matmul_precision_runtime": matmul_precision_runtime,
@@ -1000,16 +1048,31 @@ def _interval_throughput(
     now: float,
     last_log_wall_time: float,
     tokens_per_step: int,
+    flops_per_token: int | None = None,
+    peak_flops_per_sec: float | None = None,
 ) -> dict[str, float]:
     interval_steps = max(1, step - last_log_step)
     interval_sec = max(1e-9, now - last_log_wall_time)
     interval_tokens = interval_steps * tokens_per_step
+    tokens_per_sec = interval_tokens / interval_sec
+    flops_per_sec = (
+        tokens_per_sec * flops_per_token
+        if flops_per_token is not None and flops_per_token > 0
+        else None
+    )
+    mfu = (
+        flops_per_sec / peak_flops_per_sec
+        if flops_per_sec is not None and peak_flops_per_sec is not None and peak_flops_per_sec > 0
+        else None
+    )
     return {
         "interval_steps": interval_steps,
         "interval_sec": interval_sec,
         "step_time_sec": interval_sec / interval_steps,
         "steps_per_sec": interval_steps / interval_sec,
-        "tokens_per_sec": interval_tokens / interval_sec,
+        "tokens_per_sec": tokens_per_sec,
+        "flops_per_sec": flops_per_sec,
+        "mfu": mfu,
     }
 
 
@@ -1021,13 +1084,69 @@ def _throughput_summary(losses: list[dict]) -> dict[str, float | None]:
             "final_tokens_per_sec": None,
             "avg_step_time_sec": None,
             "final_step_time_sec": None,
+            "avg_flops_per_sec": None,
+            "final_flops_per_sec": None,
+            "avg_mfu": None,
+            "final_mfu": None,
         }
+    flops_rows = [row for row in rows if row.get("flops_per_sec") is not None]
+    mfu_rows = [row for row in rows if row.get("mfu") is not None]
     return {
         "avg_tokens_per_sec": sum(float(row["tokens_per_sec"]) for row in rows) / len(rows),
         "final_tokens_per_sec": float(rows[-1]["tokens_per_sec"]),
         "avg_step_time_sec": sum(float(row["step_time_sec"]) for row in rows) / len(rows),
         "final_step_time_sec": float(rows[-1]["step_time_sec"]),
+        "avg_flops_per_sec": (
+            sum(float(row["flops_per_sec"]) for row in flops_rows) / len(flops_rows)
+            if flops_rows else None
+        ),
+        "final_flops_per_sec": float(flops_rows[-1]["flops_per_sec"]) if flops_rows else None,
+        "avg_mfu": (
+            sum(float(row["mfu"]) for row in mfu_rows) / len(mfu_rows)
+            if mfu_rows else None
+        ),
+        "final_mfu": float(mfu_rows[-1]["mfu"]) if mfu_rows else None,
     }
+
+
+def _estimated_peak_flops_per_sec(
+    device: torch.device,
+    *,
+    world_size: int,
+) -> tuple[float | None, str | None]:
+    """Return an approximate dense tensor-core peak for MFU reporting.
+
+    Users can override the hardware reference with PICOCHAT_PEAK_TFLOPS when
+    benchmarking rented or new accelerators. The built-in table is intentionally
+    coarse and is used only to contextualize throughput.
+    """
+    override = os.environ.get("PICOCHAT_PEAK_TFLOPS")
+    if override:
+        try:
+            peak = float(override) * 1e12 * max(1, world_size)
+            return peak, "PICOCHAT_PEAK_TFLOPS override"
+        except ValueError:
+            return None, "invalid PICOCHAT_PEAK_TFLOPS override"
+    if device.type != "cuda" or not torch.cuda.is_available():
+        return None, None
+    name = torch.cuda.get_device_name(device).lower()
+    per_gpu_tflops = None
+    source = None
+    if "b200" in name:
+        per_gpu_tflops = 2250.0
+        source = "approx dense BF16/FP16 tensor-core peak for NVIDIA B200"
+    elif "h200" in name:
+        per_gpu_tflops = 989.0
+        source = "approx dense BF16/FP16 tensor-core peak for NVIDIA H200 SXM"
+    elif "h100" in name:
+        per_gpu_tflops = 756.0 if "pcie" in name else 989.0
+        source = "approx dense BF16/FP16 tensor-core peak for NVIDIA H100"
+    elif "a100" in name:
+        per_gpu_tflops = 312.0
+        source = "approx dense BF16/FP16 tensor-core peak for NVIDIA A100"
+    if per_gpu_tflops is None:
+        return None, f"unknown CUDA device peak for {torch.cuda.get_device_name(device)}"
+    return per_gpu_tflops * 1e12 * max(1, world_size), source
 
 
 def _is_loss_spike(loss: float, baseline: float, threshold: float) -> bool:

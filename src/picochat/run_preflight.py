@@ -22,7 +22,7 @@ MIN_LONG_RUN_EVAL_ROWS = 80
 DEFAULT_TARGET_PARAM_DATA_RATIO = 20.0
 BASE_LR_REFERENCE_EFFECTIVE_BATCH = 8
 FIRST_RELEASE_SFT_CATEGORY_PREFIXES = ("identity", "refusal", "bench_choice")
-ACCELERATED_SDPA_BACKENDS = ("flash", "efficient", "cudnn")
+ACCELERATED_ATTENTION_BACKENDS = ("flash", "external_flash", "efficient", "cudnn")
 
 
 @dataclass(frozen=True)
@@ -348,6 +348,18 @@ def _tokenizer_checks(config: Any, stats: CorpusStats, long_run: bool) -> list[R
                 "Use memory mode for strict document holdout."
             ),
         )
+    elif base_dataset_mode == "packed":
+        document_split_check = _check(
+            "document_split",
+            "pass",
+            "packed",
+            "complete-document holdout before BOS-bestfit packing",
+            (
+                "Packed base data splits source documents first, then writes "
+                "BOS-bestfit rows. This preserves the audit trail while avoiding "
+                "the in-memory token tensor path."
+            ),
+        )
     else:
         document_split_check = _check(
             "document_split",
@@ -400,7 +412,7 @@ def _runtime_backend_checks(config: Any) -> list[RunPreflightCheck]:
     device = str(_value(config, "device", "cpu"))
     precision = str(_value(config, "precision", "float32"))
     checks = []
-    if attn_backend not in ACCELERATED_SDPA_BACKENDS:
+    if attn_backend not in ACCELERATED_ATTENTION_BACKENDS:
         checks.append(_check(
             "attention_backend_runtime",
             "pass",
@@ -413,8 +425,8 @@ def _runtime_backend_checks(config: Any) -> list[RunPreflightCheck]:
             "attention_backend_runtime",
             "block",
             f"{attn_backend}/{device}/{precision}",
-            "--device cuda for flash/efficient/cudnn SDPA",
-            "Accelerated SDPA backends are CUDA runtime choices; use auto/math on CPU or MPS.",
+            "--device cuda for accelerated attention",
+            "Accelerated attention backends are CUDA runtime choices; use auto/math on CPU or MPS.",
         ))
     elif precision == "float32":
         checks.append(_check(
@@ -423,17 +435,20 @@ def _runtime_backend_checks(config: Any) -> list[RunPreflightCheck]:
             f"{attn_backend}/{device}/{precision}",
             "--precision bf16, fp16, or auto",
             (
-                "Flash, efficient, and CuDNN SDPA kernels require half/bfloat16 tensors "
+                "Flash, efficient, CuDNN, and external flash-attn kernels require half/bfloat16 tensors "
                 "on the H100/H200 path. Float32 will fail before training starts."
             ),
         ))
     else:
+        runtime_message = "Explicit accelerated attention is paired with CUDA and mixed precision."
+        if attn_backend == "external_flash":
+            runtime_message += " The optional flash-attn package must still pass sanity on this host."
         checks.append(_check(
             "attention_backend_runtime",
             "pass",
             f"{attn_backend}/{device}/{precision}",
             "CUDA mixed precision",
-            "Explicit accelerated attention is paired with CUDA and mixed precision.",
+            runtime_message,
         ))
     if bool(_value(config, "ddp", False)) and bool(_value(config, "loss_spike_rollback", False)):
         checks.append(_check(
@@ -566,7 +581,28 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
                 "prefer a DDP-specific preset or an explicitly chosen LR/step budget."
             ),
         ))
-    if base_dataset_mode == "sharded":
+    if base_dataset_mode == "packed":
+        if stats.num_documents > 1:
+            checks.append(_check(
+                "document_boundaries",
+                "pass",
+                "bos-bestfit packed rows",
+                "complete-document split before packing",
+                (
+                    "Packed base data holds out complete source documents, then "
+                    "packs each split into BOS/EOS-bounded rows. Treat validation "
+                    "BPB as packed-row evaluation over held-out documents."
+                ),
+            ))
+        else:
+            checks.append(_check(
+                "document_boundaries",
+                "block" if budget.long_run else "warn",
+                "packed without manifest documents",
+                "corpus manifest with documents",
+                "Packed base data needs a corpus manifest to make complete-document holdout auditable.",
+            ))
+    elif base_dataset_mode == "sharded":
         if stats.num_documents > 1:
             checks.append(_check(
                 "document_boundaries",
