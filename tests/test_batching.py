@@ -155,6 +155,55 @@ def test_load_sharded_token_split_preserves_document_boundaries_from_manifest(tm
     assert tokens.count(tokenizer.eos_id) == 3
 
 
+def test_manifest_token_shards_stream_document_slices(tmp_path, monkeypatch):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    manifest_path = tmp_path / "corpus_manifest.json"
+    cache_dir = tmp_path / "shards"
+    docs = [
+        "stream alpha " * 8,
+        "stream beta " * 8,
+        "stream gamma " * 8,
+    ]
+    corpus_text = "\n\n".join(doc.strip() for doc in docs)
+    corpus_path.write_text(corpus_text, encoding="utf-8")
+    CharTokenizer.train([corpus_text]).save(tokenizer_path)
+    offset = 0
+    manifest_docs = []
+    for index, doc in enumerate(doc.strip() for doc in docs):
+        manifest_docs.append({
+            "document_id": index,
+            "path": f"doc-{index}.txt",
+            "char_start": offset,
+            "char_end": offset + len(doc),
+        })
+        offset += len(doc) + 2
+    manifest_path.write_text(json.dumps({"documents": manifest_docs}), encoding="utf-8")
+
+    original_read_text = Path.read_text
+
+    def guarded_read_text(self, *args, **kwargs):
+        if self == corpus_path:
+            raise AssertionError("token shard builder should not read the full corpus")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+
+    split = load_sharded_token_split(
+        corpus_path,
+        tokenizer_path,
+        context_size=8,
+        cache_dir=cache_dir,
+        val_fraction=0.34,
+        seed=1,
+        shard_token_size=32,
+        corpus_manifest_path=manifest_path,
+    )
+
+    assert split.stats["document_boundary_tokens"] is True
+    assert split.stats["num_documents"] == 3
+
+
 def test_building_token_shards_removes_stale_generated_shards(tmp_path):
     corpus_path = tmp_path / "corpus.txt"
     tokenizer_path = tmp_path / "tokenizer.json"

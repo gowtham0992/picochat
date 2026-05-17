@@ -671,15 +671,51 @@ def _iter_manifest_document_texts(corpus_path: Path, manifest_path: Path | None)
     documents = _manifest_documents(manifest_path)
     if not documents:
         return None
-    corpus_text = corpus_path.read_text(encoding="utf-8")
+    return _iter_corpus_document_slices(corpus_path, documents)
+
+
+def _iter_corpus_document_slices(corpus_path: Path, documents: list[dict[str, Any]]):
+    """Yield manifest document text without loading the full corpus into memory."""
+    ordered = sorted(documents, key=lambda document: int(document["char_start"]))
 
     def iterator():
-        for document in documents:
-            text = _slice_document(corpus_text, document)
-            if text:
-                yield text
+        position = 0
+        with corpus_path.open("r", encoding="utf-8", errors="replace") as handle:
+            for document in ordered:
+                start = max(0, int(document["char_start"]))
+                end = max(start, int(document["char_end"]))
+                if start < position:
+                    raise ValueError("corpus manifest document ranges overlap or move backwards")
+                _consume_chars(handle, start - position)
+                position = start
+                text = _read_chars(handle, end - start)
+                position += len(text)
+                text = text.strip()
+                if text:
+                    yield text
 
     return iterator()
+
+
+def _consume_chars(handle, count: int, chunk_size: int = 1_000_000) -> None:
+    remaining = count
+    while remaining > 0:
+        chunk = handle.read(min(chunk_size, remaining))
+        if not chunk:
+            return
+        remaining -= len(chunk)
+
+
+def _read_chars(handle, count: int, chunk_size: int = 1_000_000) -> str:
+    remaining = count
+    parts: list[str] = []
+    while remaining > 0:
+        chunk = handle.read(min(chunk_size, remaining))
+        if not chunk:
+            break
+        parts.append(chunk)
+        remaining -= len(chunk)
+    return "".join(parts)
 
 
 def make_dataloader(
