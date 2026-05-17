@@ -194,10 +194,14 @@ def estimate_run_budget(config: Any, stats: CorpusStats, sft_examples: int) -> R
     )
     estimated_parameters = _estimate_parameters(
         vocab_size,
+        context_size,
         n_embd,
         n_layer,
         n_head=n_head,
         n_kv_head=n_kv_head,
+        norm_type=str(_value(config, "norm_type", "layernorm") or "layernorm"),
+        position_encoding=str(_value(config, "position_encoding", "learned") or "learned"),
+        activation=str(_value(config, "activation", "gelu") or "gelu"),
         tie_embeddings=tie_embeddings,
         qk_norm=qk_norm,
         parallel_residual=parallel_residual,
@@ -795,27 +799,47 @@ def _check(name: str, status: str, metric: str, threshold: str, message: str) ->
 
 def _estimate_parameters(
     vocab_size: int,
+    context_size: int,
     n_embd: int,
     n_layer: int,
     *,
     n_head: int = 4,
     n_kv_head: int | None = None,
+    norm_type: str = "layernorm",
+    position_encoding: str = "learned",
+    activation: str = "gelu",
     tie_embeddings: bool = False,
     qk_norm: bool = False,
     parallel_residual: bool = False,
 ) -> int:
-    # Approximate GPT parameter count before the tokenizer exists. Good enough for budget gating.
+    # Keep this in sync with TinyGPT so Chinchilla-style budget gates are not
+    # distorted by modern architecture flags.
     n_kv_head = n_kv_head or n_head
     head_dim = max(1, n_embd // max(1, n_head))
     kv_dim = n_kv_head * head_dim
-    embeddings_and_head = vocab_size * n_embd if tie_embeddings else 2 * vocab_size * n_embd
-    attention = n_embd * (n_embd + 2 * kv_dim) + n_embd * n_embd
-    mlp = 8 * n_embd * n_embd
-    norm_params_per_block = 2 * n_embd if parallel_residual else 4 * n_embd
+
+    token_embedding = vocab_size * n_embd
+    position_embedding = context_size * n_embd if position_encoding == "learned" else 0
+    lm_head = 0 if tie_embeddings else (vocab_size * n_embd + vocab_size)
+
+    qkv_out = n_embd + 2 * kv_dim
+    attention = n_embd * qkv_out + qkv_out
+    attention += n_embd * n_embd + n_embd
+
+    if activation == "swiglu":
+        hidden_size = max(1, int(8 * n_embd / 3))
+        mlp = n_embd * (2 * hidden_size) + (2 * hidden_size)
+        mlp += hidden_size * n_embd + n_embd
+    else:
+        mlp = n_embd * (4 * n_embd) + (4 * n_embd)
+        mlp += (4 * n_embd) * n_embd + n_embd
+
+    norm_size = n_embd if norm_type == "rmsnorm" else 2 * n_embd
+    norm_params_per_block = norm_size if parallel_residual else 2 * norm_size
     blocks = n_layer * (attention + mlp + norm_params_per_block)
     qk_norm_params = n_layer * 2 * head_dim if qk_norm else 0
-    final_norm = 2 * n_embd
-    return int(embeddings_and_head + blocks + qk_norm_params + final_norm)
+    final_norm = norm_size
+    return int(token_embedding + position_embedding + lm_head + blocks + qk_norm_params + final_norm)
 
 
 def _horizon_status(budget: RunBudgetPlan) -> str:

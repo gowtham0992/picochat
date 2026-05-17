@@ -6,6 +6,7 @@ from picochat.data import (
     CorpusTrainingBudget,
     CorpusTrainingCommand,
 )
+from picochat.model import GPTConfig, TinyGPT
 from picochat.run import TinyRunConfig
 from picochat.run_preflight import assess_run_preflight
 from picochat.tuning_data import ChatEvalDataReport, ChatSFTDataReport
@@ -199,6 +200,48 @@ def test_preflight_allows_flash_attention_on_cuda_bf16():
     assert report.status == "warn"
 
 
+def test_preflight_parameter_estimate_matches_modern_model():
+    config = _h100_like_config(
+        tokenizer_vocab_size=1024,
+        context_size=128,
+        n_embd=64,
+        n_head=8,
+        n_kv_head=2,
+        n_layer=3,
+        norm_type="rmsnorm",
+        position_encoding="rope",
+        activation="swiglu",
+        tie_embeddings=True,
+        qk_norm=True,
+        parallel_residual=True,
+        base_steps=100,
+    )
+    report = assess_run_preflight(config, _ready_large_corpus())
+
+    assert report.budget.estimated_parameters == _actual_model_parameters(config)
+
+
+def test_preflight_parameter_estimate_matches_legacy_model():
+    config = _h100_like_config(
+        tokenizer_vocab_size=512,
+        context_size=96,
+        n_embd=48,
+        n_head=4,
+        n_kv_head=None,
+        n_layer=2,
+        norm_type="layernorm",
+        position_encoding="learned",
+        activation="gelu",
+        tie_embeddings=False,
+        qk_norm=False,
+        parallel_residual=False,
+        base_steps=100,
+    )
+    report = assess_run_preflight(config, _ready_large_corpus())
+
+    assert report.budget.estimated_parameters == _actual_model_parameters(config)
+
+
 def _h100_like_config(**overrides) -> TinyRunConfig:
     values = {
         "out_dir": "runs/test-preflight",
@@ -357,3 +400,23 @@ def _ready_large_corpus(
 
 def _checks_by_name(report):
     return {check.name: check for check in report.checks}
+
+
+def _actual_model_parameters(config: TinyRunConfig) -> int:
+    model = TinyGPT(
+        GPTConfig(
+            vocab_size=config.tokenizer_vocab_size,
+            context_size=config.context_size,
+            n_embd=config.n_embd,
+            n_head=config.n_head,
+            n_kv_head=config.n_kv_head,
+            n_layer=config.n_layer,
+            norm_type=config.norm_type,
+            position_encoding=config.position_encoding,
+            activation=config.activation,
+            tie_embeddings=config.tie_embeddings,
+            qk_norm=config.qk_norm,
+            parallel_residual=config.parallel_residual,
+        )
+    )
+    return model.num_parameters()
