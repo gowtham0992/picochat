@@ -2048,7 +2048,7 @@ def _parse_run_progress(log_text: str, state: str = "running", summary_exists: b
             stage = _progress_stage(int(stage_match.group(1)), int(stage_match.group(2)), stage_match.group(3))
             continue
         base_match = re.match(
-            r"^step\s+(\d+)/(\d+)\s+\|\s+train\s+([0-9.]+)\s+\|\s+val\s+([0-9.]+)\s+\|\s+val_bpb\s+([0-9.]+)\s+\|\s+([0-9.]+)s",
+            r"^step\s+(\d+)/(\d+)\s+\|\s+train\s+([0-9.]+)\s+\|\s+val\s+([0-9.]+)\s+\|\s+val_bpb\s+([0-9.]+|--)\s+\|\s+(?:(--|[0-9.]+k?)\s+tok/s\s+\|\s+)?([0-9.]+)s",
             line.strip(),
         )
         if base_match:
@@ -2056,7 +2056,7 @@ def _parse_run_progress(log_text: str, state: str = "running", summary_exists: b
             stage = {**stage, "id": "base", "label": "Base training", "message": "Learning next-token prediction on the corpus."}
             continue
         sft_match = re.match(
-            r"^sft step\s+(\d+)/(\d+)\s+\|\s+train\s+([0-9.]+)\s+\|\s+val\s+([0-9.]+)\s+\|\s+val_bpb\s+([0-9.]+)\s+\|\s+([0-9.]+)s",
+            r"^sft step\s+(\d+)/(\d+)\s+\|\s+train\s+([0-9.]+)\s+\|\s+val\s+([0-9.]+)\s+\|\s+val_bpb\s+([0-9.]+|--)\s+\|\s+(?:(--|[0-9.]+k?)\s+tok/s\s+\|\s+)?([0-9.]+)s",
             line.strip(),
         )
         if sft_match:
@@ -2130,9 +2130,25 @@ def _progress_loss(match: re.Match) -> dict:
         "percent": round((current / total) * 100, 2) if total else 0.0,
         "train_loss": float(match.group(3)),
         "val_loss": float(match.group(4)),
-        "val_bpb": float(match.group(5)),
-        "seconds": float(match.group(6)),
+        "val_bpb": _progress_float(match.group(5)),
+        "tokens_per_sec": _progress_rate(match.group(6)),
+        "seconds": float(match.group(7)),
     }
+
+
+def _progress_float(raw: str | None) -> float | None:
+    if raw in {None, "--"}:
+        return None
+    return float(raw)
+
+
+def _progress_rate(raw: str | None) -> float | None:
+    if raw in {None, "--"}:
+        return None
+    text = str(raw)
+    if text.endswith("k"):
+        return float(text[:-1]) * 1000.0
+    return float(text)
 
 
 def _read_json_if_exists(path: Path) -> dict | None:

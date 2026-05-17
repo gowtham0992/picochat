@@ -1151,7 +1151,7 @@ def test_run_progress_parser_extracts_training_and_eval_steps():
     progress = _parse_run_progress(
         "\n".join([
             "[4/7] train base model",
-            "step 0030/0100 | train 3.0000 | val 3.5000 | val_bpb 1.9000 | 2.5s",
+            "step 0030/0100 | train 3.0000 | val 3.5000 | val_bpb 1.9000 | 12.5k tok/s | 2.5s",
             "[5/7] train chat SFT",
             "sft step 0040/0200 | train 2.0000 | val 2.5000 | val_bpb 1.4000 | 4.0s",
             "[6/7] run SFT fit diagnostic",
@@ -1165,8 +1165,10 @@ def test_run_progress_parser_extracts_training_and_eval_steps():
     assert progress["stage"]["id"] == "complete"
     assert progress["base"]["current"] == 30
     assert progress["base"]["percent"] == 30.0
+    assert progress["base"]["tokens_per_sec"] == 12500.0
     assert progress["sft"]["current"] == 40
     assert progress["sft"]["val_bpb"] == 1.4
+    assert progress["sft"]["tokens_per_sec"] is None
     assert progress["eval"]["passed"] == 7
     assert progress["eval"]["pass_rate"] == 70.0
 
