@@ -1280,6 +1280,22 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_tiny_parser.add_argument(
+        "--base-resume-from",
+        default=None,
+        help=(
+            "Resume the base-training phase from a checkpoint directory, usually "
+            "<run>/base/resume_checkpoint after an interrupted expensive run."
+        ),
+    )
+    run_tiny_parser.add_argument(
+        "--sft-resume-from",
+        default=None,
+        help=(
+            "Resume the chat-SFT phase from a checkpoint directory, usually "
+            "<run>/sft/resume_checkpoint after an interrupted run."
+        ),
+    )
+    run_tiny_parser.add_argument(
         "--min-score",
         type=int,
         default=0,
@@ -2546,6 +2562,8 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         sft_packing=_resolve_tiny_value(args, defaults, "sft_packing"),
         sft_fit_max_rows=_resolve_tiny_value(args, defaults, "sft_fit_max_rows"),
         allow_default_tuning_data=args.allow_default_tuning_data,
+        base_resume_from=args.base_resume_from,
+        sft_resume_from=args.sft_resume_from,
         logit_softcap=_resolve_tiny_value(args, defaults, "logit_softcap"),
         precision=_resolve_tiny_value(args, defaults, "precision"),
         matmul_precision=_resolve_tiny_value(args, defaults, "matmul_precision"),

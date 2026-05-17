@@ -168,6 +168,40 @@ def test_cli_run_tiny_h100_scale_applies_modern_defaults(tmp_path, capsys, monke
     assert "tiny run: 1/1 passed" in capsys.readouterr().out
 
 
+def test_cli_run_tiny_accepts_phase_resume_paths(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run(config):
+        captured["config"] = config
+        return {
+            "eval": {
+                "num_passed": 1,
+                "num_examples": 1,
+                "pass_rate": 1.0,
+            },
+        }
+
+    monkeypatch.setattr("picochat.cli.run_tiny", fake_run)
+
+    base_resume = tmp_path / "run" / "base" / "resume_checkpoint"
+    sft_resume = tmp_path / "run" / "sft" / "resume_checkpoint"
+    exit_code = main([
+        "run",
+        "tiny",
+        "--out-dir",
+        str(tmp_path / "run"),
+        "--base-resume-from",
+        str(base_resume),
+        "--sft-resume-from",
+        str(sft_resume),
+    ])
+
+    assert exit_code == 0
+    config = captured["config"]
+    assert config.base_resume_from == str(base_resume)
+    assert config.sft_resume_from == str(sft_resume)
+
+
 def test_cli_run_tiny_accepts_ddp_world_size_for_preflight(tmp_path, monkeypatch):
     captured = {}
 

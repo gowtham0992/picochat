@@ -404,6 +404,27 @@ For an interrupted 100M run, package the partial checkpoint the same way and
 resume later from `base/resume_checkpoint` after recreating or copying the
 same dataset/corpus.
 
+To resume the top-level `run tiny` pipeline after an interrupted base phase,
+rerun the same command and add `--base-resume-from`. Keep the dataset pack,
+scale, tokenizer settings, seed, split/shard settings, and optimizer schedule
+identical; Picochat validates the training fingerprint and refuses mismatched
+corpus/tokenizer/model settings.
+
+```bash
+PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+  --out-dir runs/h100-climbmix-100m-release-v1 \
+  --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
+  --scale h100-100m \
+  --device cuda \
+  --long-run-gate-profile first_release \
+  --base-resume-from runs/h100-climbmix-100m-release-v1/base/resume_checkpoint \
+  2>&1 | tee logs/train-h100-100m-resume.log
+```
+
+If only chat SFT was interrupted after base training completed, use
+`--sft-resume-from runs/<run>/sft/resume_checkpoint` with the same rule:
+identical SFT data, tokenizer, checkpoint, seed, sampling, and packing.
+
 For model release tests, export the best SFT checkpoint after the run:
 
 ```bash

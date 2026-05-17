@@ -102,6 +102,8 @@ class TinyRunConfig:
     sft_packing: str = "separate"
     sft_fit_max_rows: int = 1000
     allow_default_tuning_data: bool = False
+    base_resume_from: str | None = None
+    sft_resume_from: str | None = None
     logit_softcap: float = 0.0
     precision: str = "float32"
     matmul_precision: str = "default"
@@ -318,6 +320,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         torch_compile_mode=config.torch_compile_mode,
         gradient_checkpointing=config.gradient_checkpointing,
         ddp=config.ddp,
+        resume_from=config.base_resume_from,
         loss_spike_rollback=config.loss_spike_rollback,
         loss_spike_threshold=config.loss_spike_threshold,
         loss_spike_lr_decay=config.loss_spike_lr_decay,
@@ -367,6 +370,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         torch_compile=config.torch_compile,
         torch_compile_mode=config.torch_compile_mode,
         ddp=config.ddp,
+        resume_from=config.sft_resume_from,
         loss_spike_rollback=config.loss_spike_rollback,
         loss_spike_threshold=config.loss_spike_threshold,
         loss_spike_lr_decay=config.loss_spike_lr_decay,
