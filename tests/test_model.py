@@ -594,6 +594,26 @@ def test_attention_backend_fa3_requires_optional_package(monkeypatch):
         model(x)
 
 
+def test_fa3_loader_prefers_direct_flash_attn_interface(monkeypatch):
+    sentinel = object()
+
+    fake_interface = types.ModuleType("flash_attn_interface")
+    fake_interface.flash_attn_func = sentinel
+
+    def fake_get_kernel(*args, **kwargs):
+        raise AssertionError("direct flash_attn_interface should be tried first")
+
+    fake_kernels = types.ModuleType("kernels")
+    fake_kernels.get_kernel = fake_get_kernel
+    monkeypatch.setitem(sys.modules, "flash_attn_interface", fake_interface)
+    monkeypatch.setitem(sys.modules, "kernels", fake_kernels)
+    model_module._fa3_flash_attn_func.cache_clear()
+    try:
+        assert model_module._fa3_flash_attn_func() is sentinel
+    finally:
+        model_module._fa3_flash_attn_func.cache_clear()
+
+
 def test_fa3_loader_uses_kernel_hub_flash_attn3(monkeypatch):
     calls = []
     sentinel = object()

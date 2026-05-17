@@ -109,6 +109,13 @@ def _external_flash_attn_func():
 def _fa3_flash_attn_func():
     """Return the optional FlashAttention-3 kernel loader function when present."""
     try:
+        from flash_attn_interface import flash_attn_func  # type: ignore
+
+        return flash_attn_func
+    except Exception:
+        pass
+
+    try:
         from kernels import get_kernel  # type: ignore
     except Exception:
         return None
