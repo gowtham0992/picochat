@@ -1,7 +1,15 @@
+from contextlib import contextmanager
+
 import pytest
 import torch
 
-from picochat.distributed import barrier_if_distributed, ddp_env_metadata, initialize_ddp, is_main_process
+from picochat.distributed import (
+    barrier_if_distributed,
+    ddp_env_metadata,
+    initialize_ddp,
+    is_main_process,
+    no_sync_if_distributed,
+)
 
 
 def test_is_main_process_uses_ddp_metadata():
@@ -12,6 +20,31 @@ def test_is_main_process_uses_ddp_metadata():
 
 def test_barrier_if_distributed_noops_when_disabled():
     barrier_if_distributed({"enabled": False, "rank": 1})
+
+
+def test_no_sync_if_distributed_uses_ddp_context_when_enabled():
+    events = []
+
+    class FakeDDP:
+        @contextmanager
+        def no_sync(self):
+            events.append("enter")
+            yield
+            events.append("exit")
+
+    with no_sync_if_distributed(FakeDDP(), enabled=True):
+        events.append("body")
+
+    assert events == ["enter", "body", "exit"]
+
+
+def test_no_sync_if_distributed_noops_when_disabled():
+    class FakeDDP:
+        def no_sync(self):  # pragma: no cover - should not be called
+            raise AssertionError("no_sync should not be used when disabled")
+
+    with no_sync_if_distributed(FakeDDP(), enabled=False):
+        pass
 
 
 def test_ddp_env_metadata_requires_torchrun_env(monkeypatch):

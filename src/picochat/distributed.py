@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import timedelta
 import os
 from typing import Any
@@ -118,3 +119,10 @@ def barrier_if_distributed(metadata: dict[str, Any] | None = None) -> None:
         return
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         torch.distributed.barrier()
+
+
+def no_sync_if_distributed(model: torch.nn.Module, *, enabled: bool):
+    """Skip DDP gradient all-reduce for intermediate gradient accumulation microsteps."""
+    if enabled and hasattr(model, "no_sync"):
+        return model.no_sync()
+    return nullcontext()

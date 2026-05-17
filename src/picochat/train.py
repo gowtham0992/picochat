@@ -22,7 +22,13 @@ from picochat.batching import (
 )
 from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
-from picochat.distributed import barrier_if_distributed, initialize_ddp, is_main_process, prepare_ddp_model
+from picochat.distributed import (
+    barrier_if_distributed,
+    initialize_ddp,
+    is_main_process,
+    no_sync_if_distributed,
+    prepare_ddp_model,
+)
 from picochat.memorization import memorization_diagnostics
 from picochat.model import GPTConfig, TinyGPT
 from picochat.optim import (
@@ -431,17 +437,19 @@ def train_base(config: TrainConfig) -> dict:
         set_muon_momentum(optimizer, muon_momentum)
         optimizer.zero_grad(set_to_none=True)
         micro_losses: list[float] = []
-        for _ in range(config.grad_accum_steps):
+        for micro_step in range(config.grad_accum_steps):
             x, y = next(train_batches)
-            with autocast_context(precision_runtime):
-                _, loss = train_model(x, y)
-            assert loss is not None
-            micro_losses.append(float(loss.item()))
-            scaled_loss = loss / config.grad_accum_steps
-            if scaler.is_enabled():
-                scaler.scale(scaled_loss).backward()
-            else:
-                scaled_loss.backward()
+            sync_gradients = micro_step == config.grad_accum_steps - 1
+            with no_sync_if_distributed(ddp_model, enabled=config.ddp and not sync_gradients):
+                with autocast_context(precision_runtime):
+                    _, loss = train_model(x, y)
+                assert loss is not None
+                micro_losses.append(float(loss.item()))
+                scaled_loss = loss / config.grad_accum_steps
+                if scaler.is_enabled():
+                    scaler.scale(scaled_loss).backward()
+                else:
+                    scaled_loss.backward()
         if scaler.is_enabled():
             scaler.unscale_(optimizer)
         grad_norm = maybe_clip_grad_norm(model, config.grad_clip)
