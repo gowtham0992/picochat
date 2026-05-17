@@ -28,6 +28,7 @@ def test_export_hf_checkpoint_writes_release_folder(tmp_path):
         qk_norm=True,
         attn_backend="math",
         parallel_residual=True,
+        linear_bias=False,
     ))
     save_checkpoint(checkpoint_path, model, step=3, train_loss=1.23)
 
@@ -54,6 +55,8 @@ def test_export_hf_checkpoint_writes_release_folder(tmp_path):
     assert config["picochat_model_config"]["qk_norm"] is True
     assert config["picochat_model_config"]["attn_backend"] == "math"
     assert config["picochat_model_config"]["parallel_residual"] is True
+    assert config["picochat_model_config"]["linear_bias"] is False
+    assert config["linear_bias"] is False
     assert config["initializer_range"] == 0.015
     assert config["picochat_model_config"]["initializer_range"] == 0.015
     assert "initializer_range=0.02" in (out_dir / "configuration_picochat.py").read_text(encoding="utf-8")

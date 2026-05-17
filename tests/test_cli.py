@@ -164,6 +164,7 @@ def test_cli_run_tiny_h100_scale_applies_modern_defaults(tmp_path, capsys, monke
     assert config.tie_embeddings is True
     assert config.qk_norm is True
     assert config.parallel_residual is True
+    assert config.linear_bias is False
     assert config.attn_backend == "flash"
     assert config.precision == "bf16"
     assert config.matmul_precision == "high"

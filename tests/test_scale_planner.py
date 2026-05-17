@@ -17,8 +17,9 @@ def test_scale_plan_matches_100m_shape_and_exact_parameter_count():
     assert plan.n_head == 12
     assert plan.n_kv_head == 4
     assert plan.global_batch_tokens == 65_536
-    assert plan.recommended_base_steps == 32_678
+    assert plan.recommended_base_steps == 32_645
     assert 3.1 < plan.estimated_epochs < 3.3
+    assert plan.linear_bias is False
 
     config = GPTConfig(
         vocab_size=8192,
@@ -33,6 +34,7 @@ def test_scale_plan_matches_100m_shape_and_exact_parameter_count():
         tie_embeddings=True,
         qk_norm=True,
         parallel_residual=True,
+        linear_bias=False,
     )
     assert plan.estimated_parameters == estimate_parameters(config)
 
@@ -51,6 +53,7 @@ def test_parameter_estimate_matches_model_on_small_shape():
         tie_embeddings=True,
         qk_norm=True,
         parallel_residual=True,
+        linear_bias=False,
     )
     assert estimate_parameters(config) == TinyGPT(config).num_parameters()
 
@@ -71,6 +74,7 @@ def test_scale_plan_markdown_contains_copyable_command():
 
     assert "# Picochat Scale Plan" in markdown
     assert "--n-embd 768" in markdown
+    assert "--no-linear-bias" in markdown
     assert "--base-dataset-mode" in markdown
     assert "--long-run-gate-profile first_release" in markdown
 

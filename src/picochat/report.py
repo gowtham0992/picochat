@@ -200,6 +200,7 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Tied embeddings: {'enabled' if model_config.get('tie_embeddings') else 'disabled'}")
     lines.append(f"- QK norm: {'enabled' if model_config.get('qk_norm') else 'disabled'}")
     lines.append(f"- Parallel residual: {'enabled' if model_config.get('parallel_residual') else 'disabled'}")
+    lines.append(f"- Linear biases: {'enabled' if model_config.get('linear_bias', True) else 'disabled'}")
     lines.append(f"- Logit softcap: {model_config.get('logit_softcap', 0.0) or 'disabled'}")
     lines.append("")
 
@@ -502,6 +503,7 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Tied embeddings: {'enabled' if model_config.get('tie_embeddings') else 'disabled'}")
     lines.append(f"- QK norm: {'enabled' if model_config.get('qk_norm') else 'disabled'}")
     lines.append(f"- Parallel residual: {'enabled' if model_config.get('parallel_residual') else 'disabled'}")
+    lines.append(f"- Linear biases: {'enabled' if model_config.get('linear_bias', True) else 'disabled'}")
     lines.append(f"- Logit softcap: {model_config.get('logit_softcap', 0.0) or 'disabled'}")
     lines.append("")
 

@@ -34,6 +34,7 @@ class ScalePlan:
     tie_embeddings: bool
     qk_norm: bool
     parallel_residual: bool
+    linear_bias: bool
     global_batch_tokens: int
     per_device_batch_size: int
     grad_accum_steps: int
@@ -80,6 +81,10 @@ class ScalePlan:
             "--tie-embeddings",
             "--qk-norm",
             "--parallel-residual",
+        ]
+        if not self.linear_bias:
+            parts.append("--no-linear-bias")
+        parts.extend([
             "--base-dataset-mode", self.base_dataset_mode,
             "--base-steps", str(self.recommended_base_steps),
             "--base-batch-size", str(self.per_device_batch_size),
@@ -101,7 +106,7 @@ class ScalePlan:
             "--sft-sampling", "category_sqrt",
             "--eval-max-new-tokens", "120",
             "--long-run-gate-profile", "first_release",
-        ]
+        ])
         if self.world_size > 1:
             parts.append("--ddp")
         return parts
@@ -144,6 +149,7 @@ def plan_scale(
     tie_embeddings: bool = True,
     qk_norm: bool = True,
     parallel_residual: bool = True,
+    linear_bias: bool = False,
     base_dataset_mode: str = "sharded",
 ) -> ScalePlan:
     if target_parameters <= 0:
@@ -173,6 +179,7 @@ def plan_scale(
                 tie_embeddings=tie_embeddings,
                 qk_norm=qk_norm,
                 parallel_residual=parallel_residual,
+                linear_bias=linear_bias,
             )
             candidates.append(candidate)
         shape = min(candidates, key=lambda item: abs(item["estimated_parameters"] - target_parameters))
@@ -190,6 +197,7 @@ def plan_scale(
             tie_embeddings=tie_embeddings,
             qk_norm=qk_norm,
             parallel_residual=parallel_residual,
+            linear_bias=linear_bias,
         )
 
     estimated_parameters = int(shape["estimated_parameters"])
@@ -226,6 +234,7 @@ def plan_scale(
         tie_embeddings=tie_embeddings,
         qk_norm=qk_norm,
         parallel_residual=parallel_residual,
+        linear_bias=linear_bias,
         global_batch_tokens=global_batch_tokens,
         per_device_batch_size=per_device_batch_size,
         grad_accum_steps=grad_accum_steps,
@@ -262,7 +271,7 @@ def render_scale_plan_markdown(plan: ScalePlan) -> str:
         f"- Target parameters: {plan.target_parameters:,}",
         f"- Estimated parameters: {plan.estimated_parameters:,} ({plan.parameter_error_rate:+.2%})",
         f"- Shape: {plan.n_layer} layers, {plan.n_embd} embedding, {plan.n_head} query heads, {plan.n_kv_head} KV heads, {plan.head_dim} head dim",
-        f"- Architecture: {plan.norm_type}, {plan.position_encoding}, {plan.activation}, tied embeddings={plan.tie_embeddings}, qk_norm={plan.qk_norm}, parallel_residual={plan.parallel_residual}",
+        f"- Architecture: {plan.norm_type}, {plan.position_encoding}, {plan.activation}, tied embeddings={plan.tie_embeddings}, qk_norm={plan.qk_norm}, parallel_residual={plan.parallel_residual}, linear_bias={plan.linear_bias}",
         "",
         "## Training Budget",
         "",
@@ -319,6 +328,7 @@ def _shape_for_depth(
     tie_embeddings: bool,
     qk_norm: bool,
     parallel_residual: bool,
+    linear_bias: bool,
 ) -> dict[str, int]:
     if n_embd % head_dim != 0:
         raise ValueError("n_embd must be divisible by head_dim")
@@ -337,6 +347,7 @@ def _shape_for_depth(
         tie_embeddings=tie_embeddings,
         qk_norm=qk_norm,
         parallel_residual=parallel_residual,
+        linear_bias=linear_bias,
     )
     return {
         "n_layer": n_layer,
@@ -357,19 +368,23 @@ def estimate_parameters(config: GPTConfig) -> int:
         total += config.context_size * n
     norm_params = n if config.norm_type == "rmsnorm" else 2 * n
     qk_norm_params = 2 * head_dim if config.qk_norm else 0
+    bias = config.linear_bias
     if config.activation == "swiglu":
         hidden = max(1, int(8 * n / 3))
-        mlp_params = n * (2 * hidden) + (2 * hidden) + hidden * n + n
+        mlp_params = n * (2 * hidden) + ((2 * hidden) if bias else 0)
+        mlp_params += hidden * n + (n if bias else 0)
     else:
         hidden = 4 * n
-        mlp_params = n * hidden + hidden + hidden * n + n
-    attn_params = n * (n + 2 * kv_dim) + (n + 2 * kv_dim) + n * n + n
+        mlp_params = n * hidden + (hidden if bias else 0)
+        mlp_params += hidden * n + (n if bias else 0)
+    attn_params = n * (n + 2 * kv_dim) + ((n + 2 * kv_dim) if bias else 0)
+    attn_params += n * n + (n if bias else 0)
     per_block_norms = norm_params if config.parallel_residual else 2 * norm_params
     block_params = per_block_norms + qk_norm_params + attn_params + mlp_params
     total += config.n_layer * block_params
     total += norm_params
     if not config.tie_embeddings:
-        total += config.vocab_size * n + config.vocab_size
+        total += config.vocab_size * n + (config.vocab_size if bias else 0)
     return int(total)
 
 

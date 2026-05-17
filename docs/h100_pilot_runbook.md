@@ -251,7 +251,9 @@ After the 16-shard pilot proves the runtime and release-behavior SFT lane, the
 next single-GPU scale target is the `h100-100m` preset. This is the compact
 form of the 100M recipe used by the Scale Up screen: 768 width, 16 layers, GQA,
 SwiGLU, FlashAttention, sharded base data, bf16, high matmul precision, and
-first-release SFT defaults.
+first-release SFT defaults. The H100 presets also disable transformer linear
+biases to match modern decoder-only LM practice while keeping legacy/local
+scales backwards compatible.
 
 Before launching, generate an explicit scale plan. This is the reproducible
 bridge between a target size, dataset token budget, global batch, and step

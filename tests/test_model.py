@@ -198,6 +198,25 @@ def test_model_can_tie_input_and_output_embeddings():
     assert model.lm_head.bias is None
 
 
+def test_model_can_disable_transformer_linear_biases():
+    config = GPTConfig(
+        vocab_size=20,
+        context_size=8,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+        linear_bias=False,
+    )
+    model = TinyGPT(config)
+
+    block = model.blocks[0]
+    assert block.attn.qkv.bias is None
+    assert block.attn.proj.bias is None
+    assert block.mlp.fc.bias is None
+    assert block.mlp.proj.bias is None
+    assert model.lm_head.bias is None
+
+
 def test_tied_embedding_initialization_keeps_starting_loss_sane():
     config = GPTConfig(
         vocab_size=2048,

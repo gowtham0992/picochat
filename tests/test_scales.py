@@ -26,6 +26,7 @@ def test_h100_scale_uses_modern_runtime_defaults():
     assert scale.tie_embeddings is True
     assert scale.qk_norm is True
     assert scale.attn_backend == "flash"
+    assert scale.linear_bias is False
     assert scale.base_dataset_mode == "sharded"
     assert scale.precision == "bf16"
     assert scale.matmul_precision == "high"
@@ -50,6 +51,7 @@ def test_h100_100m_scale_matches_release_pilot_recipe():
     assert scale.sft_steps == 180
     assert scale.base_dataset_mode == "sharded"
     assert scale.attn_backend == "flash"
+    assert scale.linear_bias is False
     assert scale.precision == "bf16"
 
 

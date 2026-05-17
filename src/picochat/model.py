@@ -45,6 +45,7 @@ class GPTConfig:
     qk_norm: bool = False
     attn_backend: str = "auto"
     parallel_residual: bool = False
+    linear_bias: bool = True
 
     def to_dict(self) -> dict[str, int | float | str | bool | None]:
         return asdict(self)
@@ -143,8 +144,8 @@ class CausalSelfAttention(nn.Module):
         self.attn_backend = config.attn_backend
         self.q_norm = RMSNorm(self.head_dim) if config.qk_norm else nn.Identity()
         self.k_norm = RMSNorm(self.head_dim) if config.qk_norm else nn.Identity()
-        self.qkv = nn.Linear(config.n_embd, config.n_embd + 2 * self.kv_dim)
-        self.proj = nn.Linear(config.n_embd, config.n_embd)
+        self.qkv = nn.Linear(config.n_embd, config.n_embd + 2 * self.kv_dim, bias=config.linear_bias)
+        self.proj = nn.Linear(config.n_embd, config.n_embd, bias=config.linear_bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(
@@ -229,11 +230,11 @@ class MLP(nn.Module):
         self.activation = config.activation
         if self.activation == "swiglu":
             hidden_size = _swiglu_hidden_size(config.n_embd)
-            self.fc = nn.Linear(config.n_embd, 2 * hidden_size)
-            self.proj = nn.Linear(hidden_size, config.n_embd)
+            self.fc = nn.Linear(config.n_embd, 2 * hidden_size, bias=config.linear_bias)
+            self.proj = nn.Linear(hidden_size, config.n_embd, bias=config.linear_bias)
         else:
-            self.fc = nn.Linear(config.n_embd, 4 * config.n_embd)
-            self.proj = nn.Linear(4 * config.n_embd, config.n_embd)
+            self.fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.linear_bias)
+            self.proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.linear_bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.fc(x)
@@ -319,7 +320,11 @@ class TinyGPT(nn.Module):
         )
         self.blocks = nn.ModuleList(Block(config) for _ in range(config.n_layer))
         self.ln_f = make_norm(config.norm_type, config.n_embd)
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=not config.tie_embeddings)
+        self.lm_head = nn.Linear(
+            config.n_embd,
+            config.vocab_size,
+            bias=config.linear_bias and not config.tie_embeddings,
+        )
         self.apply(self._init_weights)
         if config.tie_embeddings:
             self.lm_head.weight = self.token_embedding.weight

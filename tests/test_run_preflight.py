@@ -443,6 +443,7 @@ def _actual_model_parameters(config: TinyRunConfig) -> int:
             tie_embeddings=config.tie_embeddings,
             qk_norm=config.qk_norm,
             parallel_residual=config.parallel_residual,
+            linear_bias=config.linear_bias,
         )
     )
     return model.num_parameters()

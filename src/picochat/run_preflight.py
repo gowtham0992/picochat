@@ -205,6 +205,7 @@ def estimate_run_budget(config: Any, stats: CorpusStats, sft_examples: int) -> R
         tie_embeddings=tie_embeddings,
         qk_norm=qk_norm,
         parallel_residual=parallel_residual,
+        linear_bias=bool(_value(config, "linear_bias", True)),
     )
     corpus_tokens, token_note = _estimate_corpus_tokens(stats, tokenizer_type, vocab_size)
     base_tokens_per_step = base_effective_batch * context_size
@@ -861,6 +862,7 @@ def _estimate_parameters(
     tie_embeddings: bool = False,
     qk_norm: bool = False,
     parallel_residual: bool = False,
+    linear_bias: bool = True,
 ) -> int:
     # Keep this in sync with TinyGPT so Chinchilla-style budget gates are not
     # distorted by modern architecture flags.
@@ -870,19 +872,19 @@ def _estimate_parameters(
 
     token_embedding = vocab_size * n_embd
     position_embedding = context_size * n_embd if position_encoding == "learned" else 0
-    lm_head = 0 if tie_embeddings else (vocab_size * n_embd + vocab_size)
+    lm_head = 0 if tie_embeddings else (vocab_size * n_embd + (vocab_size if linear_bias else 0))
 
     qkv_out = n_embd + 2 * kv_dim
-    attention = n_embd * qkv_out + qkv_out
-    attention += n_embd * n_embd + n_embd
+    attention = n_embd * qkv_out + (qkv_out if linear_bias else 0)
+    attention += n_embd * n_embd + (n_embd if linear_bias else 0)
 
     if activation == "swiglu":
         hidden_size = max(1, int(8 * n_embd / 3))
-        mlp = n_embd * (2 * hidden_size) + (2 * hidden_size)
-        mlp += hidden_size * n_embd + n_embd
+        mlp = n_embd * (2 * hidden_size) + ((2 * hidden_size) if linear_bias else 0)
+        mlp += hidden_size * n_embd + (n_embd if linear_bias else 0)
     else:
-        mlp = n_embd * (4 * n_embd) + (4 * n_embd)
-        mlp += (4 * n_embd) * n_embd + n_embd
+        mlp = n_embd * (4 * n_embd) + ((4 * n_embd) if linear_bias else 0)
+        mlp += (4 * n_embd) * n_embd + (n_embd if linear_bias else 0)
 
     norm_size = n_embd if norm_type == "rmsnorm" else 2 * n_embd
     norm_params_per_block = norm_size if parallel_residual else 2 * norm_size
