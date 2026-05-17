@@ -249,7 +249,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
     stage_started = time.perf_counter()
     if main_process:
         texts = (
-            _iter_text_chunks(corpus_path)
+            _iter_text_chunks(corpus_path, progress=True)
             if config.tokenizer_type == "hf_bpe"
             else [corpus_path.read_text(encoding="utf-8")]
         )
@@ -619,13 +619,23 @@ def run_tiny(config: TinyRunConfig) -> dict:
     return summary
 
 
-def _iter_text_chunks(path: Path, chunk_chars: int = 1_000_000):
+def _iter_text_chunks(path: Path, chunk_chars: int = 1_000_000, progress: bool = False):
     """Stream large tokenizer corpora so compiled tokenizers can train without a giant Python string."""
+    chunks = 0
+    characters = 0
     with path.open("r", encoding="utf-8") as handle:
         while True:
             chunk = handle.read(chunk_chars)
             if not chunk:
                 break
+            chunks += 1
+            characters += len(chunk)
+            if progress and (chunks == 1 or chunks % 250 == 0):
+                print(
+                    "tokenizer data: streamed "
+                    f"{characters:,} chars in {chunks:,} chunk(s)",
+                    flush=True,
+                )
             yield chunk
 
 
