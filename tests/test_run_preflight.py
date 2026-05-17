@@ -153,6 +153,39 @@ def test_preflight_allows_ddp8_scale_with_simulated_world_size(monkeypatch):
     assert checks["ddp_scale_launch"].status == "pass"
 
 
+def test_preflight_blocks_flash_attention_without_cuda_mixed_precision():
+    report = assess_run_preflight(
+        _h100_like_config(attn_backend="flash", device="mps", precision="auto"),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert report.status == "blocked"
+    assert checks["attention_backend_runtime"].status == "block"
+    assert "--device cuda" in checks["attention_backend_runtime"].threshold
+
+    report = assess_run_preflight(
+        _h100_like_config(attn_backend="flash", device="cuda", precision="float32"),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert report.status == "blocked"
+    assert checks["attention_backend_runtime"].status == "block"
+    assert "bf16" in checks["attention_backend_runtime"].threshold
+
+
+def test_preflight_allows_flash_attention_on_cuda_bf16():
+    report = assess_run_preflight(
+        _h100_like_config(attn_backend="flash", device="cuda", precision="bf16"),
+        _ready_large_corpus(),
+    )
+    checks = _checks_by_name(report)
+
+    assert checks["attention_backend_runtime"].status == "pass"
+    assert report.status == "warn"
+
+
 def _h100_like_config(**overrides) -> TinyRunConfig:
     values = {
         "out_dir": "runs/test-preflight",

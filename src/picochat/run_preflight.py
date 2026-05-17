@@ -22,6 +22,7 @@ MIN_LONG_RUN_EVAL_ROWS = 80
 DEFAULT_TARGET_PARAM_DATA_RATIO = 20.0
 BASE_LR_REFERENCE_EFFECTIVE_BATCH = 8
 FIRST_RELEASE_SFT_CATEGORY_PREFIXES = ("identity", "refusal", "bench_choice")
+ACCELERATED_SDPA_BACKENDS = ("flash", "efficient", "cudnn")
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,7 @@ def assess_run_preflight(
     checks: list[RunPreflightCheck] = []
     checks.extend(_data_source_checks(corpus, budget.long_run))
     checks.extend(_tokenizer_checks(config, corpus.stats, budget.long_run))
+    checks.extend(_runtime_backend_checks(config))
     checks.extend(_base_budget_checks(config, corpus.stats, budget))
     checks.extend(_sft_checks(config, corpus, budget))
     checks.extend(_eval_checks(corpus, budget.long_run))
@@ -387,6 +389,46 @@ def _tokenizer_checks(config: Any, stats: CorpusStats, long_run: bool) -> list[R
             "Char/byte tokenizers are educational; compiled hf_bpe is the preferred long-run baseline.",
         ))
     return checks
+
+
+def _runtime_backend_checks(config: Any) -> list[RunPreflightCheck]:
+    attn_backend = str(_value(config, "attn_backend", "auto"))
+    device = str(_value(config, "device", "cpu"))
+    precision = str(_value(config, "precision", "float32"))
+    if attn_backend not in ACCELERATED_SDPA_BACKENDS:
+        return [_check(
+            "attention_backend_runtime",
+            "pass",
+            f"{attn_backend}/{device}/{precision}",
+            "compatible runtime",
+            "Attention backend selection is compatible with this preflight gate.",
+        )]
+    if device != "cuda":
+        return [_check(
+            "attention_backend_runtime",
+            "block",
+            f"{attn_backend}/{device}/{precision}",
+            "--device cuda for flash/efficient/cudnn SDPA",
+            "Accelerated SDPA backends are CUDA runtime choices; use auto/math on CPU or MPS.",
+        )]
+    if precision == "float32":
+        return [_check(
+            "attention_backend_runtime",
+            "block",
+            f"{attn_backend}/{device}/{precision}",
+            "--precision bf16, fp16, or auto",
+            (
+                "Flash, efficient, and CuDNN SDPA kernels require half/bfloat16 tensors "
+                "on the H100/H200 path. Float32 will fail before training starts."
+            ),
+        )]
+    return [_check(
+        "attention_backend_runtime",
+        "pass",
+        f"{attn_backend}/{device}/{precision}",
+        "CUDA mixed precision",
+        "Explicit accelerated attention is paired with CUDA and mixed precision.",
+    )]
 
 
 def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) -> list[RunPreflightCheck]:
