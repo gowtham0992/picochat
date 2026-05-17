@@ -146,7 +146,7 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "limitations": [
             "This is a HF-style release folder for Picochat's custom TinyGPT architecture.",
             "Transformers loading requires trust_remote_code=True and the Picochat package installed.",
-            "The Transformers adapter accepts only unpadded attention masks; batch serving with padding needs a native adapter or uniform-length batches.",
+            "The Transformers adapter supports padded attention masks by compacting padded rows; high-throughput serving still needs a native vLLM/TGI/llama.cpp adapter.",
             "vLLM/TGI/llama.cpp still require native adapters or conversion work.",
         ],
     }
@@ -174,12 +174,12 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
             "adapter": config.transformers_adapter,
             "requires_trust_remote_code": config.transformers_adapter,
             "requires_picochat_package": config.transformers_adapter,
-            "supports_padded_attention_mask": False,
+            "supports_padded_attention_mask": True,
         },
         "limitations": [
             "Dynamic int8 weights are for Picochat/PyTorch CPU serving experiments.",
             "Load dynamic int8 by constructing TinyGPT, applying torch dynamic quantization to Linear layers, then loading the quantized state dict.",
-            "The Transformers adapter rejects padded attention masks; use unpadded batches or a serving adapter that implements padding-aware attention.",
+            "The Transformers adapter compacts padded rows and disables KV-cache for padded batches; use a native serving adapter for high-throughput padded batch decoding.",
             "This export does not create GGUF, TensorRT-LLM, vLLM, or TGI-native artifacts.",
         ],
     }
@@ -397,16 +397,25 @@ class PicochatForCausalLM(PreTrainedModel):
     ):
         if input_ids is None:
             raise ValueError("input_ids are required")
-        if attention_mask is not None and bool((attention_mask == 0).any()):
-            raise NotImplementedError("Picochat Transformers adapter does not support padded attention masks yet")
         if use_cache is None:
             use_cache = bool(getattr(self.config, "use_cache", True))
         if labels is not None:
             use_cache = False
+        has_padding = attention_mask is not None and bool((attention_mask == 0).any())
+        if has_padding:
+            if past_key_values is not None:
+                raise ValueError("padded attention masks with past_key_values are not supported; pass use_cache=False")
+            logits, loss = self._forward_padded(input_ids, attention_mask, labels)
+            return CausalLMOutputWithPast(
+                loss=loss,
+                logits=logits,
+                past_key_values=None,
+            )
+        targets = self._shift_labels(labels, attention_mask) if labels is not None else None
         output = TinyGPT.forward(
             self,
             input_ids,
-            targets=labels,
+            targets=targets,
             past_kv=past_key_values,
             use_cache=use_cache,
         )
@@ -421,11 +430,84 @@ class PicochatForCausalLM(PreTrainedModel):
             past_key_values=present,
         )
 
+    @staticmethod
+    def _shift_labels(labels, attention_mask=None):
+        if labels is None:
+            return None
+        ignore = -100
+        targets = torch.cat(
+            [labels[:, 1:], labels.new_full((labels.size(0), 1), ignore)],
+            dim=1,
+        )
+        if attention_mask is not None:
+            mask = attention_mask.to(device=labels.device).bool()
+            if mask.shape != labels.shape:
+                raise ValueError("attention_mask must have the same shape as input_ids")
+            next_mask = torch.cat(
+                [mask[:, 1:], mask.new_zeros((mask.size(0), 1))],
+                dim=1,
+            )
+            targets = targets.masked_fill(~mask | ~next_mask, ignore)
+        return targets
+
+    def _forward_padded(self, input_ids, attention_mask, labels=None):
+        mask = attention_mask.to(device=input_ids.device).bool()
+        if mask.shape != input_ids.shape:
+            raise ValueError("attention_mask must have the same shape as input_ids")
+
+        records = []
+        weighted_loss = None
+        total_targets = input_ids.new_tensor(0, dtype=torch.long)
+        for batch_index in range(input_ids.size(0)):
+            active = mask[batch_index]
+            if not bool(active.any()):
+                raise ValueError("attention_mask must leave at least one token per row")
+            positions = torch.nonzero(active, as_tuple=False).flatten()
+            row_input = input_ids[batch_index, positions].unsqueeze(0)
+            row_labels = labels[batch_index, positions].unsqueeze(0) if labels is not None else None
+            row_targets = self._shift_labels(row_labels) if row_labels is not None else None
+            row_logits, row_loss = TinyGPT.forward(
+                self,
+                row_input,
+                targets=row_targets,
+                use_cache=False,
+            )
+            records.append((batch_index, positions, row_logits))
+            if row_targets is not None:
+                target_count = (row_targets != -100).sum()
+                if int(target_count.item()) > 0:
+                    weighted = row_loss * target_count.to(device=row_loss.device, dtype=row_loss.dtype)
+                    weighted_loss = weighted if weighted_loss is None else weighted_loss + weighted
+                    total_targets = total_targets + target_count.to(device=total_targets.device)
+
+        vocab_size = records[0][2].size(-1)
+        logits = records[0][2].new_zeros(input_ids.size(0), input_ids.size(1), vocab_size)
+        for batch_index, positions, row_logits in records:
+            logits[batch_index, positions, :] = row_logits.squeeze(0)
+
+        loss = None
+        if labels is not None:
+            if weighted_loss is None or int(total_targets.item()) == 0:
+                loss = logits.sum() * 0.0
+            else:
+                loss = weighted_loss / total_targets.to(device=weighted_loss.device, dtype=weighted_loss.dtype)
+        return logits, loss
+
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, **kwargs):
+        attention_mask = kwargs.get("attention_mask")
+        has_padding = attention_mask is not None and bool((attention_mask == 0).any())
+        if past_key_values is not None and has_padding:
+            return {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "past_key_values": None,
+                "use_cache": False,
+            }
         if past_key_values is not None:
             input_ids = input_ids[:, -1:]
         return {
             "input_ids": input_ids,
+            "attention_mask": attention_mask,
             "past_key_values": past_key_values,
             "use_cache": kwargs.get("use_cache", True),
         }
@@ -456,7 +538,7 @@ from picochat.tokenizer import load_tokenizer
 
 class PicochatTokenizer(PreTrainedTokenizer):
     vocab_files_names = {"tokenizer_file": "tokenizer.json"}
-    model_input_names = ["input_ids"]
+    model_input_names = ["input_ids", "attention_mask"]
 
     def __init__(self, tokenizer_file=None, **kwargs):
         if tokenizer_file is None:
@@ -569,9 +651,9 @@ def _model_card(config: HFExportConfig, model, tokenizer, metadata: dict) -> str
         "",
         "Picochat generation uses KV-cache decoding when the prompt plus requested "
         "completion fits inside the configured context window. See `serving_manifest.json` "
-        "for runtime artifacts and limitations. The Transformers adapter rejects padded "
-        "attention masks, so batch padded serving needs a native adapter before it should "
-        "be presented as production-ready.",
+        "for runtime artifacts and limitations. The Transformers adapter supports padded "
+        "attention masks by compacting padded rows, but high-throughput production serving "
+        "still needs native runtime adapters before it should be presented as production-ready.",
         "",
     ])
 
