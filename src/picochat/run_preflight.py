@@ -567,16 +567,29 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
             ),
         ))
     if base_dataset_mode == "sharded":
-        checks.append(_check(
-            "document_boundaries",
-            "warn",
-            "disabled in sharded mode",
-            "memory document split",
-            (
-                "Sharded token data does not preserve per-document BOS/EOS validation boundaries; "
-                "treat validation BPB as token-shard holdout."
-            ),
-        ))
+        if stats.num_documents > 1:
+            checks.append(_check(
+                "document_boundaries",
+                "pass",
+                "bos/eos in token shards",
+                "corpus manifest available",
+                (
+                    "Run-tiny sharded training builds token shards from the corpus manifest, "
+                    "so source documents still receive BOS/EOS boundary tokens. "
+                    "Validation remains token-shard holdout rather than full-document holdout."
+                ),
+            ))
+        else:
+            checks.append(_check(
+                "document_boundaries",
+                "warn",
+                "disabled in sharded mode",
+                "corpus manifest with documents",
+                (
+                    "Sharded token data has no document manifest to preserve BOS/EOS boundaries; "
+                    "treat validation BPB as token-shard holdout."
+                ),
+            ))
     elif stats.num_documents > 1 and split_mode == "document":
         checks.append(_check(
             "document_boundaries",

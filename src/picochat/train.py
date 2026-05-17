@@ -233,6 +233,7 @@ def train_base(config: TrainConfig) -> dict:
                 seed=config.seed,
                 shard_token_size=config.shard_token_size,
                 shard_cache_size=config.shard_cache_size,
+                corpus_manifest_path=config.corpus_manifest_path,
                 rebuild=True,
             )
         barrier_if_distributed(ddp_metadata)
@@ -246,6 +247,7 @@ def train_base(config: TrainConfig) -> dict:
                 seed=config.seed,
                 shard_token_size=config.shard_token_size,
                 shard_cache_size=config.shard_cache_size,
+                corpus_manifest_path=config.corpus_manifest_path,
                 rebuild=False,
             )
     else:

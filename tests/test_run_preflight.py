@@ -23,8 +23,8 @@ def test_preflight_warns_that_sharded_base_mode_is_not_document_holdout():
     assert checks["document_split"].status == "warn"
     assert checks["document_split"].metric == "sharded"
     assert "token shard" in checks["document_split"].message
-    assert checks["document_boundaries"].status == "warn"
-    assert checks["document_boundaries"].metric == "disabled in sharded mode"
+    assert checks["document_boundaries"].status == "pass"
+    assert checks["document_boundaries"].metric == "bos/eos in token shards"
     assert "token-shard holdout" in checks["document_boundaries"].message
 
 

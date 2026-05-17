@@ -415,12 +415,14 @@ def build_token_shards(
     add_bos: bool = True,
     add_eos: bool = True,
     read_chars: int = 1_000_000,
+    corpus_manifest_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Tokenize a corpus into disk shards without holding all tokens in memory."""
     if shard_token_size < 2:
         raise ValueError("shard_token_size must be at least 2")
     tokenizer = load_tokenizer(tokenizer_path)
     corpus_path = Path(corpus_path)
+    manifest_path = Path(corpus_manifest_path) if corpus_manifest_path else None
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     _clear_stale_token_shards(out_dir)
@@ -428,6 +430,8 @@ def build_token_shards(
     shard_rows: list[dict[str, Any]] = []
     buffer: list[int] = []
     total_tokens = 0
+    num_documents = 0
+    document_boundary_tokens = False
 
     def append_tokens(ids: list[int]) -> None:
         nonlocal buffer, total_tokens
@@ -454,24 +458,37 @@ def build_token_shards(
         })
         buffer = []
 
-    if add_bos:
-        append_tokens([tokenizer.bos_id])
-    with corpus_path.open("r", encoding="utf-8", errors="replace") as handle:
-        while True:
-            chunk = handle.read(read_chars)
-            if not chunk:
-                break
-            append_tokens(tokenizer.encode(chunk, add_bos=False, add_eos=False))
-    if add_eos:
-        append_tokens([tokenizer.eos_id])
+    document_texts = _iter_manifest_document_texts(corpus_path, manifest_path)
+    if document_texts is not None:
+        document_boundary_tokens = True
+        for document in document_texts:
+            text = document.strip()
+            if not text:
+                continue
+            append_tokens(tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos))
+            num_documents += 1
+    else:
+        if add_bos:
+            append_tokens([tokenizer.bos_id])
+        with corpus_path.open("r", encoding="utf-8", errors="replace") as handle:
+            while True:
+                chunk = handle.read(read_chars)
+                if not chunk:
+                    break
+                append_tokens(tokenizer.encode(chunk, add_bos=False, add_eos=False))
+        if add_eos:
+            append_tokens([tokenizer.eos_id])
     flush()
 
     manifest = {
         "corpus_path": str(corpus_path),
         "tokenizer_path": str(tokenizer_path),
+        "corpus_manifest_path": str(manifest_path) if manifest_path and document_boundary_tokens else None,
         "shard_token_size": shard_token_size,
         "add_bos": add_bos,
         "add_eos": add_eos,
+        "document_boundary_tokens": document_boundary_tokens,
+        "num_documents": num_documents if document_boundary_tokens else None,
         "num_tokens": total_tokens,
         "num_shards": len(shard_rows),
         "shards": shard_rows,
@@ -499,6 +516,7 @@ def load_token_shards_manifest(
     corpus_path: str | Path,
     tokenizer_path: str | Path,
     shard_token_size: int,
+    corpus_manifest_path: str | Path | None = None,
     add_bos: bool = True,
     add_eos: bool = True,
 ) -> dict[str, Any]:
@@ -511,6 +529,7 @@ def load_token_shards_manifest(
     expected = {
         "corpus_path": str(Path(corpus_path)),
         "tokenizer_path": str(Path(tokenizer_path)),
+        "corpus_manifest_path": str(Path(corpus_manifest_path)) if corpus_manifest_path else None,
         "shard_token_size": int(shard_token_size),
         "add_bos": bool(add_bos),
         "add_eos": bool(add_eos),
@@ -518,6 +537,11 @@ def load_token_shards_manifest(
     observed = {
         "corpus_path": str(manifest.get("corpus_path")),
         "tokenizer_path": str(manifest.get("tokenizer_path")),
+        "corpus_manifest_path": (
+            str(manifest.get("corpus_manifest_path"))
+            if manifest.get("corpus_manifest_path")
+            else None
+        ),
         "shard_token_size": int(manifest.get("shard_token_size", 0)),
         "add_bos": bool(manifest.get("add_bos", True)),
         "add_eos": bool(manifest.get("add_eos", True)),
@@ -546,6 +570,7 @@ def load_sharded_token_split(
     shard_token_size: int = 1_000_000,
     shard_cache_size: int = 2,
     rebuild: bool = True,
+    corpus_manifest_path: str | Path | None = None,
 ) -> TokenSplitBundle:
     """Build token shards and return train/validation sharded window datasets."""
     if not 0.0 < val_fraction < 1.0:
@@ -556,6 +581,7 @@ def load_sharded_token_split(
             tokenizer_path=tokenizer_path,
             out_dir=cache_dir,
             shard_token_size=shard_token_size,
+            corpus_manifest_path=corpus_manifest_path,
         )
     else:
         manifest = load_token_shards_manifest(
@@ -563,6 +589,7 @@ def load_sharded_token_split(
             corpus_path=corpus_path,
             tokenizer_path=tokenizer_path,
             shard_token_size=shard_token_size,
+            corpus_manifest_path=corpus_manifest_path,
         )
     shards = manifest["shards"]
     if len(shards) < 2:
@@ -586,6 +613,7 @@ def load_sharded_token_split(
         context_size=context_size,
         max_cached_shards=shard_cache_size,
     )
+    document_boundary_tokens = bool(manifest.get("document_boundary_tokens", False))
     stats = {
         "num_tokens": train_dataset.stats().num_tokens + val_dataset.stats().num_tokens,
         "source_num_tokens": manifest["num_tokens"],
@@ -593,13 +621,17 @@ def load_sharded_token_split(
         "num_sequences": len(train_dataset) + len(val_dataset),
         "split_mode": "sharded",
         "split_reason": "disk_token_shards",
-        "packing": "streamed_token_shards",
-        "document_boundary_tokens": False,
+        "packing": (
+            "bos_eos_per_document_token_shards"
+            if document_boundary_tokens
+            else "streamed_token_shards"
+        ),
+        "document_boundary_tokens": document_boundary_tokens,
         "train_sequences": len(train_dataset),
         "val_sequences": len(val_dataset),
         "train_tokens": train_dataset.stats().num_tokens,
         "val_tokens": val_dataset.stats().num_tokens,
-        "num_documents": None,
+        "num_documents": manifest.get("num_documents"),
         "train_documents": None,
         "val_documents": None,
         "val_document_paths": [],
@@ -621,6 +653,23 @@ def load_sharded_token_split(
         val_text="",
         canary_values=(),
     )
+
+
+def _iter_manifest_document_texts(corpus_path: Path, manifest_path: Path | None):
+    if manifest_path is None:
+        return None
+    documents = _manifest_documents(manifest_path)
+    if not documents:
+        return None
+    corpus_text = corpus_path.read_text(encoding="utf-8")
+
+    def iterator():
+        for document in documents:
+            text = _slice_document(corpus_text, document)
+            if text:
+                yield text
+
+    return iterator()
 
 
 def make_dataloader(

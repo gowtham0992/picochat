@@ -106,6 +106,55 @@ def test_load_sharded_token_split_can_reuse_existing_manifest(tmp_path):
     assert reused.stats["train_shards"] == built.stats["train_shards"]
 
 
+def test_load_sharded_token_split_preserves_document_boundaries_from_manifest(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    manifest_path = tmp_path / "corpus_manifest.json"
+    cache_dir = tmp_path / "shards"
+    docs = [
+        "alpha document " * 8,
+        "beta document " * 8,
+        "gamma document " * 8,
+    ]
+    corpus_text = "\n\n".join(doc.strip() for doc in docs)
+    corpus_path.write_text(f"{corpus_text}\n", encoding="utf-8")
+    CharTokenizer.train([corpus_text]).save(tokenizer_path)
+    offset = 0
+    manifest_docs = []
+    for index, doc in enumerate(doc.strip() for doc in docs):
+        manifest_docs.append({
+            "document_id": index,
+            "path": f"doc-{index}.txt",
+            "char_start": offset,
+            "char_end": offset + len(doc),
+        })
+        offset += len(doc) + 2
+    manifest_path.write_text(json.dumps({"documents": manifest_docs}), encoding="utf-8")
+
+    split = load_sharded_token_split(
+        corpus_path,
+        tokenizer_path,
+        context_size=8,
+        cache_dir=cache_dir,
+        val_fraction=0.34,
+        seed=1,
+        shard_token_size=32,
+        corpus_manifest_path=manifest_path,
+    )
+
+    tokenizer = CharTokenizer.load(tokenizer_path)
+    shard_manifest = json.loads((cache_dir / "token_shards_manifest.json").read_text(encoding="utf-8"))
+    tokens = []
+    for shard in shard_manifest["shards"]:
+        tokens.extend(torch.load(shard["path"], weights_only=True).tolist())
+    assert split.stats["document_boundary_tokens"] is True
+    assert split.stats["packing"] == "bos_eos_per_document_token_shards"
+    assert split.stats["num_documents"] == 3
+    assert shard_manifest["corpus_manifest_path"] == str(manifest_path)
+    assert tokens.count(tokenizer.bos_id) == 3
+    assert tokens.count(tokenizer.eos_id) == 3
+
+
 def test_building_token_shards_removes_stale_generated_shards(tmp_path):
     corpus_path = tmp_path / "corpus.txt"
     tokenizer_path = tmp_path / "tokenizer.json"
