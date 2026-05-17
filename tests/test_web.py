@@ -1108,13 +1108,39 @@ def test_start_run_plan_preserves_h100_100m_ddp8_preset(tmp_path, monkeypatch):
     assert "768" in command
     assert "--n-layer" in command
     assert "16" in command
+    assert "--loss-spike-rollback" not in command
     assert started["job"]["launch_config"]["n_embd"] == 768
     assert started["job"]["launch_config"]["n_layer"] == 16
     assert started["job"]["launch_config"]["ddp"] is True
     assert started["job"]["launch_config"]["ddp_world_size"] == 8
+    assert started["job"]["launch_config"]["loss_spike_rollback"] is False
     assert captured["kwargs"]["env"]["OMP_NUM_THREADS"] == "1"
     assert captured["kwargs"]["env"]["PICOCHAT_DDP_TIMEOUT_MINUTES"] == "120"
     assert captured["kwargs"]["env"]["PYTORCH_ALLOC_CONF"] == "expandable_segments:True"
+
+
+def test_start_run_plan_rejects_ddp_loss_spike_rollback_even_when_unsafe_allowed(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    source_path.write_text("lesson\n" * 100, encoding="utf-8")
+    chat_path.write_text(json.dumps({"user": "who", "assistant": "Picochat"}) + "\n", encoding="utf-8")
+    eval_path.write_text(json.dumps({"user": "who", "must_include": ["Picochat"]}) + "\n", encoding="utf-8")
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="loss spike rollback is not supported with DDP"):
+        start_run_plan(tmp_path / "runs", {
+            "dataset_pack": str(pack_path),
+            "run_name": "bad-ddp-rollback",
+            "preset": "h100-100m-ddp8",
+            "loss_spike_rollback": True,
+            "allow_unsafe_long_run": True,
+        })
 
 
 def test_run_progress_parser_extracts_training_and_eval_steps():
@@ -1535,6 +1561,7 @@ def test_run_presets_are_exposed_for_web_launcher():
     assert presets["h100-100m"]["long_run_gate_profile"] == "first_release"
     assert presets["h100-100m-ddp8"]["base_steps"] == 4100
     assert presets["h100-100m-ddp8"]["ddp"] is True
+    assert presets["h100-100m-ddp8"]["loss_spike_rollback"] is False
     assert presets["h100-100m-ddp8"]["long_run_gate_profile"] == "first_release"
 
 

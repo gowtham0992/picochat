@@ -999,6 +999,11 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     ddp = bool(payload.get("ddp", preset.get("ddp", False)))
     ddp_world_size = _bounded_int(payload.get("ddp_world_size", 8 if ddp else 1), 1, 128)
     allow_unsafe_long_run = bool(payload.get("allow_unsafe_long_run", False))
+    if ddp and loss_spike_rollback:
+        raise ValueError(
+            "loss spike rollback is not supported with DDP because rollback decisions "
+            "are rank-local; disable rollback before launching distributed training"
+        )
 
     preflight_config = TinyRunConfig(
         out_dir=str(out_dir),

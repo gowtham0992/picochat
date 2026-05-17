@@ -3539,6 +3539,9 @@ function launchReadiness(config = launchConfig()) {
   if (config.attn_backend === "flash" && !["auto", "cuda"].includes(config.device)) {
     blockers.push("Flash attention requires CUDA or AUTO device selection.");
   }
+  if (config.ddp && config.loss_spike_rollback) {
+    blockers.push("Loss spike rollback is single-process only; disable it for DDP.");
+  }
   if (!["separate", "bos_bestfit"].includes(config.sft_packing)) blockers.push("SFT packing mode is invalid.");
   if (config.base_muon_learning_rate <= 0 || config.sft_muon_learning_rate <= 0) blockers.push("Muon learning rates must be above zero.");
   if (config.base_ema_decay < 0 || config.base_ema_decay >= 1 || config.sft_ema_decay < 0 || config.sft_ema_decay >= 1) {
@@ -3604,7 +3607,7 @@ function launchReadiness(config = launchConfig()) {
   if (config.torch_compile) notes.push(`compile ${config.torch_compile_mode}`);
   if (config.gradient_checkpointing) notes.push("gradient checkpointing");
   if (config.auto_lr_scaling) notes.push("auto LR scaling");
-  if (config.loss_spike_rollback) notes.push("loss rollback");
+  if (config.loss_spike_rollback && !config.ddp) notes.push("loss rollback");
   notes.push(`LR ${config.base_learning_rate} -> ${config.sft_learning_rate}`);
   notes.push(`SFT ${config.sft_sampling.replace("_", " ")}`);
   notes.push(`packing ${config.sft_packing.replace("_", " ")}`);
