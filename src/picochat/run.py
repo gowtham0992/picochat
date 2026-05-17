@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import json
+import os
 from pathlib import Path
 import time
 
@@ -14,7 +15,7 @@ from picochat.data import (
     build_corpus_artifacts,
 )
 from picochat.device import resolve_device
-from picochat.distributed import barrier_if_distributed, initialize_ddp, is_main_process
+from picochat.distributed import barrier_if_distributed, ddp_env_metadata, is_main_process
 from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
 from picochat.external_benchmark import ExternalBenchmarkConvertConfig, convert_external_benchmark
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
@@ -137,6 +138,7 @@ class TinyRunConfig:
 
 def run_tiny(config: TinyRunConfig) -> dict:
     """Run the tiny educational pipeline from corpus to eval report."""
+    run_wall_started = time.time()
     run_started = time.perf_counter()
     stage_timings: list[dict[str, object]] = []
     out_dir = Path(config.out_dir)
@@ -146,20 +148,29 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "or overwrite the base phase before resuming SFT"
         )
     out_dir.mkdir(parents=True, exist_ok=True)
-    ddp_metadata = initialize_ddp(resolve_device(config.device), enabled=config.ddp)
+    ddp_metadata = ddp_env_metadata(config.ddp)
     main_process = is_main_process(ddp_metadata)
     ddp_control_path = out_dir / "ddp_control.json"
+    if config.ddp and main_process:
+        _write_ddp_control(
+            ddp_control_path,
+            {
+                "stage": "setup_started",
+                "blocked": False,
+                "message": "rank 0 is preparing shared corpus, honesty, and tokenizer artifacts",
+            },
+        )
 
     if main_process:
         print("== pico run tiny ==")
     corpus_path = out_dir / "corpus.txt"
     tokenizer_path = out_dir / "tokenizer.json"
 
+    preflight_json_path = out_dir / "preflight.json"
+    preflight_markdown_path = out_dir / "preflight.md"
     if main_process:
         print(f"[1/7] build corpus -> {corpus_path}")
     stage_started = time.perf_counter()
-    preflight_json_path = out_dir / "preflight.json"
-    preflight_markdown_path = out_dir / "preflight.md"
     if main_process:
         corpus_build = build_corpus_artifacts(
             None if config.dataset_pack else config.corpus_input,
@@ -180,25 +191,89 @@ def run_tiny(config: TinyRunConfig) -> dict:
         preflight_json_path.write_text(json.dumps(preflight_payload, indent=2), encoding="utf-8")
         preflight_markdown_path.write_text(preflight_markdown(preflight_report), encoding="utf-8")
         print(f"preflight: {preflight_report.status} | {preflight_report.summary}")
-        ddp_control_path.write_text(
-            json.dumps({
-                "stage": "preflight",
-                "blocked": preflight_report.status == "blocked" and not config.allow_unsafe_long_run,
-                "message": (
-                    "run preflight blocked this plan; inspect "
-                    f"{preflight_markdown_path} or rerun with --allow-unsafe-long-run "
-                    "for a diagnostic-only run"
-                ),
-            }),
-            encoding="utf-8",
-        )
+        if preflight_report.status == "blocked" and not config.allow_unsafe_long_run:
+            _write_ddp_control(
+                ddp_control_path,
+                {
+                    "stage": "preflight",
+                    "blocked": True,
+                    "message": (
+                        "run preflight blocked this plan; inspect "
+                        f"{preflight_markdown_path} or rerun with --allow-unsafe-long-run "
+                        "for a diagnostic-only run"
+                    ),
+                },
+            )
+            raise ValueError(
+                "run preflight blocked this plan; inspect "
+                f"{preflight_markdown_path} or rerun with --allow-unsafe-long-run "
+                "for a diagnostic-only run"
+            )
         _record_stage_timing(stage_timings, "corpus_build_preflight", stage_started)
-    barrier_if_distributed(ddp_metadata)
-    control = _read_ddp_control(ddp_control_path)
-    if control.get("blocked"):
-        raise ValueError(str(control.get("message") or "run preflight blocked this plan"))
 
-    if not main_process:
+        preflight_payload = preflight_report.to_dict()
+
+        print("[2/7] check data honesty")
+        stage_started = time.perf_counter()
+        honesty_report = inspect_data_honesty(
+            corpus_path=corpus_path,
+            chat_input=chat_input,
+            eval_input=eval_input,
+        )
+        honesty_json_path, honesty_markdown_path = write_data_honesty_report(
+            honesty_report,
+            out_dir / "honesty",
+        )
+        if honesty_report.status == "blocked" and not config.allow_leaky_eval:
+            _write_ddp_control(
+                ddp_control_path,
+                {
+                    "stage": "honesty",
+                    "blocked": True,
+                    "message": (
+                        "data honesty blocked this run; inspect "
+                        f"{honesty_markdown_path} or rerun with --allow-leaky-eval for a diagnostic-only run"
+                    ),
+                },
+            )
+            raise ValueError(
+                "data honesty blocked this run; inspect "
+                f"{honesty_markdown_path} or rerun with --allow-leaky-eval for a diagnostic-only run"
+            )
+        _record_stage_timing(stage_timings, "data_honesty", stage_started)
+
+        print(f"[3/7] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
+        stage_started = time.perf_counter()
+        texts = (
+            _iter_text_chunks(corpus_path, progress=True)
+            if config.tokenizer_type == "hf_bpe"
+            else [corpus_path.read_text(encoding="utf-8")]
+        )
+        tokenizer = train_tokenizer(
+            config.tokenizer_type,
+            texts,
+            vocab_size=config.tokenizer_vocab_size,
+            min_freq=config.tokenizer_min_freq,
+            bpe_pretokenizer=config.bpe_pretokenizer,
+        )
+        tokenizer.save(tokenizer_path)
+        _record_stage_timing(stage_timings, "tokenizer", stage_started)
+        _write_ddp_control(
+            ddp_control_path,
+            {
+                "stage": "setup_complete",
+                "blocked": False,
+                "chat_input": chat_input,
+                "eval_input": eval_input,
+                "preflight_json": str(preflight_json_path),
+                "corpus_manifest": str(out_dir / "corpus_manifest.json"),
+                "tokenizer": str(tokenizer_path),
+            },
+        )
+    else:
+        control = _wait_for_ddp_setup(ddp_control_path, started_after=run_wall_started)
+        if control.get("blocked"):
+            raise ValueError(str(control.get("message") or "run setup blocked this plan"))
         manifest = json.loads((out_dir / "corpus_manifest.json").read_text(encoding="utf-8"))
         training_command = manifest.get("training_command", {})
         chat_input = str(training_command["chat_input"])
@@ -206,8 +281,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         external_eval_specs = _validate_external_eval_inputs(config.external_eval_inputs)
         preflight_payload = json.loads(preflight_json_path.read_text(encoding="utf-8"))
         corpus_build = None
-    else:
-        preflight_payload = preflight_report.to_dict()
+
     base_learning_rate = config.base_learning_rate
     sft_learning_rate = config.sft_learning_rate
     if config.auto_lr_scaling:
@@ -227,56 +301,6 @@ def run_tiny(config: TinyRunConfig) -> dict:
     if config.sft_packing not in SFT_PACKING_MODES:
         raise ValueError(f"Unsupported SFT packing mode: {config.sft_packing}")
     corpus_manifest_path = str(out_dir / "corpus_manifest.json")
-
-    if main_process:
-        print("[2/7] check data honesty")
-    stage_started = time.perf_counter()
-    if main_process:
-        honesty_report = inspect_data_honesty(
-            corpus_path=corpus_path,
-            chat_input=chat_input,
-            eval_input=eval_input,
-        )
-        honesty_json_path, honesty_markdown_path = write_data_honesty_report(
-            honesty_report,
-            out_dir / "honesty",
-        )
-        ddp_control_path.write_text(
-            json.dumps({
-                "stage": "honesty",
-                "blocked": honesty_report.status == "blocked" and not config.allow_leaky_eval,
-                "message": (
-                    "data honesty blocked this run; inspect "
-                    f"{honesty_markdown_path} or rerun with --allow-leaky-eval for a diagnostic-only run"
-                ),
-            }),
-            encoding="utf-8",
-        )
-        _record_stage_timing(stage_timings, "data_honesty", stage_started)
-    barrier_if_distributed(ddp_metadata)
-    control = _read_ddp_control(ddp_control_path)
-    if control.get("blocked"):
-        raise ValueError(str(control.get("message") or "data honesty blocked this run"))
-
-    if main_process:
-        print(f"[3/7] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
-    stage_started = time.perf_counter()
-    if main_process:
-        texts = (
-            _iter_text_chunks(corpus_path, progress=True)
-            if config.tokenizer_type == "hf_bpe"
-            else [corpus_path.read_text(encoding="utf-8")]
-        )
-        tokenizer = train_tokenizer(
-            config.tokenizer_type,
-            texts,
-            vocab_size=config.tokenizer_vocab_size,
-            min_freq=config.tokenizer_min_freq,
-            bpe_pretokenizer=config.bpe_pretokenizer,
-        )
-        tokenizer.save(tokenizer_path)
-        _record_stage_timing(stage_timings, "tokenizer", stage_started)
-    barrier_if_distributed(ddp_metadata)
 
     if main_process:
         print("[4/7] train base model")
@@ -665,6 +689,42 @@ def _read_ddp_control(path: Path) -> dict:
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_ddp_control(path: Path, payload: dict) -> None:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _wait_for_ddp_setup(path: Path, *, started_after: float | None = None) -> dict:
+    deadline = time.time() + _ddp_setup_timeout_seconds()
+    while time.time() < deadline:
+        if path.exists():
+            if started_after is not None and path.stat().st_mtime < started_after - 1.0:
+                time.sleep(2.0)
+                continue
+            control = _read_ddp_control(path)
+            if control.get("blocked") or control.get("stage") == "setup_complete":
+                return control
+        time.sleep(2.0)
+    raise TimeoutError(
+        f"timed out waiting for rank 0 setup control at {path}; "
+        "inspect the rank 0 log for corpus, honesty, or tokenizer failures"
+    )
+
+
+def _ddp_setup_timeout_seconds() -> float:
+    raw_seconds = os.environ.get("PICOCHAT_DDP_SETUP_TIMEOUT_SECONDS")
+    if raw_seconds:
+        try:
+            return max(1.0, float(raw_seconds))
+        except ValueError:
+            pass
+    raw_minutes = os.environ.get("PICOCHAT_DDP_TIMEOUT_MINUTES", "120")
+    try:
+        minutes = float(raw_minutes)
+    except ValueError:
+        minutes = 120.0
+    return max(1.0, minutes * 60.0)
 
 
 def _record_stage_timing(stage_timings: list[dict[str, object]], stage: str, started: float) -> None:
