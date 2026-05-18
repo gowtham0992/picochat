@@ -542,6 +542,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             sft_fit_heldout_report["summary"] if sft_fit_heldout_report is not None else None
         ),
         eval_summary=eval_report["summary"],
+        external_eval_reports=external_eval_reports,
         honesty=honesty_report.to_dict(),
         profile=config.long_run_gate_profile,
     )
@@ -1022,6 +1023,7 @@ def _long_run_gate(
     sft_fit_summary: dict,
     sft_fit_heldout_summary: dict | None = None,
     eval_summary: dict,
+    external_eval_reports: list[dict] | None = None,
     honesty: dict,
     profile: str = "research",
 ) -> dict:
@@ -1056,6 +1058,8 @@ def _long_run_gate(
     sft_heldout_fit_threshold = 0.50
     eval_non_choice_threshold = 0.30
     first_release_eval_threshold = 0.45
+    external_eval_threshold = 0.30
+    external_eval_min_examples = 50
     refusal_threshold = 0.75
     if sft_fit_rate < sft_fit_threshold:
         issues.append({
@@ -1171,6 +1175,48 @@ def _long_run_gate(
                         "keep iterating before a release claim."
                     ),
                 })
+    external_eval_results = _external_eval_gate_results(
+        external_eval_reports or [],
+        threshold=external_eval_threshold,
+    )
+    external_release_profile = first_release_profile or skill_release_profile
+    if skill_release_profile and long_run and not external_eval_results:
+        issues.append({
+            "name": "external_eval_missing",
+            "severity": "block",
+            "message": (
+                "Skill-release long runs require at least one external benchmark report; "
+                "run ARC/MMLU-style evals before approving a release recipe."
+            ),
+        })
+    for item in external_eval_results:
+        name = item["name"]
+        num_examples = int(item["num_examples"])
+        score = item["score"]
+        if num_examples <= 0 or score is None:
+            issues.append({
+                "name": f"external_eval_{name}",
+                "severity": "block" if long_run and external_release_profile else "warn",
+                "message": f"External benchmark `{name}` did not produce a scoreable report.",
+            })
+        elif long_run and num_examples < external_eval_min_examples:
+            issues.append({
+                "name": f"external_eval_{name}_sample",
+                "severity": "warn",
+                "message": (
+                    f"External benchmark `{name}` has only {num_examples} rows; "
+                    "treat it as a smoke check, not release evidence."
+                ),
+            })
+        elif score < external_eval_threshold:
+            issues.append({
+                "name": f"external_eval_{name}",
+                "severity": "block" if long_run and external_release_profile else "warn",
+                "message": (
+                    f"External benchmark `{name}` scored below {external_eval_threshold:.0%}; "
+                    "do not claim comparable benchmark strength yet."
+                ),
+            })
     refusal_rate = (
         float(eval_summary.get("refusal_pass_rate"))
         if eval_summary.get("refusal_pass_rate") is not None
@@ -1216,6 +1262,9 @@ def _long_run_gate(
         "eval_non_choice_rate": eval_non_choice_rate,
         "first_release_eval_threshold": first_release_eval_threshold,
         "first_release_eval_rate": first_release_eval_rate,
+        "external_eval_threshold": external_eval_threshold,
+        "external_eval_min_examples": external_eval_min_examples,
+        "external_eval_results": external_eval_results,
         "skill_release_sft_threshold": skill_release_sft_threshold,
         "skill_release_sft_rates": skill_release_sft_rates,
         "skill_release_eval_thresholds": skill_release_eval_thresholds,
@@ -1224,6 +1273,31 @@ def _long_run_gate(
         "refusal_rate": refusal_rate,
         "issues": issues,
     }
+
+
+def _external_eval_gate_results(reports: list[dict], *, threshold: float) -> list[dict]:
+    results = []
+    for index, report in enumerate(reports):
+        summary = report.get("summary") or {}
+        name = str(report.get("name") or f"external-{index + 1}")
+        choice_accuracy = _optional_float(summary.get("choice_accuracy"))
+        pass_rate = _optional_float(summary.get("pass_rate"))
+        score = choice_accuracy if choice_accuracy is not None else pass_rate
+        score_key = "choice_accuracy" if choice_accuracy is not None else "pass_rate"
+        try:
+            num_examples = int(summary.get("num_examples") or 0)
+        except (TypeError, ValueError):
+            num_examples = 0
+        results.append({
+            "name": name,
+            "num_examples": num_examples,
+            "score": score,
+            "score_key": score_key,
+            "pass_rate": pass_rate,
+            "choice_accuracy": choice_accuracy,
+            "threshold": threshold,
+        })
+    return results
 
 
 def _first_release_category_pass_rate(summary: dict) -> float | None:

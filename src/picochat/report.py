@@ -1083,6 +1083,22 @@ def tiny_run_summary_markdown(summary: dict) -> str:
                 f"- Required first-release eval rate: "
                 f"{format_float(float(long_run_gate.get('first_release_eval_threshold', 0.45)) * 100)}%"
             )
+        external_results = long_run_gate.get("external_eval_results") or []
+        if external_results:
+            lines.append("- External benchmark gate:")
+            for item in external_results:
+                score_key = item.get("score_key", "score")
+                score_label = "choice" if score_key == "choice_accuracy" else "pass"
+                threshold = item.get("threshold")
+                suffix = (
+                    f" (required {format_float(float(threshold) * 100)}%)"
+                    if threshold is not None else ""
+                )
+                lines.append(
+                    f"  - `{item.get('name', 'external')}`: "
+                    f"{_format_percent_or_dash(item.get('score'))} {score_label}, "
+                    f"{int(item.get('num_examples') or 0)} rows{suffix}"
+                )
         skill_eval_rates = long_run_gate.get("skill_release_eval_rates") or {}
         skill_eval_thresholds = long_run_gate.get("skill_release_eval_thresholds") or {}
         if skill_eval_rates:

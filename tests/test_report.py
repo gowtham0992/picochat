@@ -484,6 +484,25 @@ def test_tiny_run_summary_markdown_contains_key_sections():
                 "eval_report": "external_eval/arc-mini/report.md",
             },
         }],
+        "long_run_gate": {
+            "status": "warn",
+            "summary": "Promising, but inspect warnings before using this recipe.",
+            "profile": "skill_release",
+            "sft_fit_rate": 0.8,
+            "sft_fit_threshold": 0.7,
+            "external_eval_results": [{
+                "name": "arc-mini",
+                "num_examples": 10,
+                "score": 0.7,
+                "score_key": "choice_accuracy",
+                "threshold": 0.3,
+            }],
+            "issues": [{
+                "name": "external_eval_arc-mini_sample",
+                "severity": "warn",
+                "message": "External benchmark `arc-mini` has only 10 rows.",
+            }],
+        },
         "honesty": {
             "status": "ready",
             "summary": "No obvious eval leakage was detected.",
@@ -509,6 +528,8 @@ def test_tiny_run_summary_markdown_contains_key_sections():
     assert "SFT fit passed: 4 / 5" in markdown
     assert "## SFT Fit Categories" in markdown
     assert "## Data Honesty" in markdown
+    assert "## Approved Long-Run Gate" in markdown
+    assert "External benchmark gate" in markdown
     assert "## External Benchmarks" in markdown
     assert "## Runtime" in markdown
     assert "2m 5.5s" in markdown

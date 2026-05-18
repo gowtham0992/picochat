@@ -216,6 +216,16 @@ def test_long_run_gate_skill_release_approves_when_all_groups_clear():
                 "bench_spelling_count": {"num_passed": 55, "num_examples": 100},
             },
         },
+        external_eval_reports=[
+            {
+                "name": "arc-easy-mini",
+                "summary": {
+                    "num_examples": 100,
+                    "pass_rate": 0.52,
+                    "choice_accuracy": 0.52,
+                },
+            },
+        ],
         honesty={"status": "ready"},
         profile="skill_release",
     )
@@ -224,6 +234,81 @@ def test_long_run_gate_skill_release_approves_when_all_groups_clear():
     assert gate["skill_release_eval_rates"]["refusal"] == pytest.approx(0.90)
     assert gate["skill_release_eval_rates"]["math"] == pytest.approx(0.45)
     assert gate["skill_release_eval_thresholds"]["spelling"] == 0.40
+    assert gate["external_eval_results"][0]["score"] == pytest.approx(0.52)
+
+
+def test_long_run_gate_skill_release_blocks_missing_external_eval():
+    gate = _long_run_gate(
+        preflight_report={"status": "warn", "budget": {"long_run": True}},
+        sft_fit_summary={
+            "pass_rate": 0.90,
+            "category_breakdown": {
+                "identity": {"num_passed": 80, "num_examples": 100},
+                "refusal": {"num_passed": 80, "num_examples": 100},
+                "bench_choice_language": {"num_passed": 80, "num_examples": 100},
+                "bench_math_addition": {"num_passed": 70, "num_examples": 100},
+                "bench_spelling_count": {"num_passed": 75, "num_examples": 100},
+            },
+        },
+        sft_fit_heldout_summary={"pass_rate": 0.70},
+        eval_summary={
+            "pass_rate": 0.72,
+            "non_choice_examples": 300,
+            "non_choice_pass_rate": 0.55,
+            "refusal_pass_rate": 0.90,
+            "prompt_echo_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+            "category_breakdown": {
+                "identity": {"num_passed": 70, "num_examples": 100},
+                "refusal": {"num_passed": 90, "num_examples": 100},
+                "bench_choice_language": {"num_passed": 70, "num_examples": 100},
+                "bench_math_addition": {"num_passed": 45, "num_examples": 100},
+                "bench_spelling_count": {"num_passed": 55, "num_examples": 100},
+            },
+        },
+        honesty={"status": "ready"},
+        profile="skill_release",
+    )
+
+    assert gate["status"] == "blocked"
+    assert any(issue["name"] == "external_eval_missing" for issue in gate["issues"])
+
+
+def test_long_run_gate_blocks_weak_external_eval_for_release_profile():
+    gate = _long_run_gate(
+        preflight_report={"status": "warn", "budget": {"long_run": True}},
+        sft_fit_summary={"pass_rate": 0.80},
+        sft_fit_heldout_summary={"pass_rate": 0.70},
+        eval_summary={
+            "pass_rate": 0.80,
+            "non_choice_examples": 100,
+            "non_choice_pass_rate": 0.70,
+            "refusal_pass_rate": 0.90,
+            "prompt_echo_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+            "category_breakdown": {
+                "bench_choice_language": {"num_passed": 60, "num_examples": 100},
+                "identity": {"num_passed": 70, "num_examples": 100},
+                "refusal": {"num_passed": 80, "num_examples": 100},
+            },
+        },
+        external_eval_reports=[
+            {
+                "name": "arc-easy-mini",
+                "summary": {
+                    "num_examples": 100,
+                    "pass_rate": 0.24,
+                    "choice_accuracy": 0.24,
+                },
+            },
+        ],
+        honesty={"status": "ready"},
+        profile="first_release",
+    )
+
+    assert gate["status"] == "blocked"
+    assert gate["external_eval_results"][0]["score_key"] == "choice_accuracy"
+    assert any(issue["name"] == "external_eval_arc-easy-mini" for issue in gate["issues"])
 
 
 def test_long_run_gate_rejects_unknown_profile():
@@ -390,6 +475,8 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert summary["sft_fit"]["num_examples"] == 1
     assert summary["external_evals"][0]["name"] == "arc-mini"
     assert summary["external_evals"][0]["summary"]["num_examples"] == 1
+    assert summary["long_run_gate"]["external_eval_results"][0]["name"] == "arc-mini"
+    assert summary["long_run_gate"]["external_eval_results"][0]["num_examples"] == 1
     assert "external_eval_reports" in summary["artifacts"]
     assert summary["sft_fit_dataset"]["num_rows"] == 1
     assert summary["config"]["dataset_pack"] == str(pack_path)
