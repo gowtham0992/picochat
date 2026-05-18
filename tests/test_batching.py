@@ -237,7 +237,7 @@ def test_load_sharded_token_split_preserves_document_boundaries_from_manifest(tm
         cache_dir=cache_dir,
         val_fraction=0.34,
         seed=1,
-        shard_token_size=32,
+        shard_token_size=160,
         corpus_manifest_path=manifest_path,
     )
 
@@ -301,6 +301,44 @@ def test_manifest_token_shards_keep_documents_together_when_they_fit(tmp_path):
         assert ids[-1] == tokenizer.eos_id
         assert ids.count(tokenizer.bos_id) == 1
         assert ids.count(tokenizer.eos_id) == 1
+
+
+def test_manifest_token_shards_mark_oversized_documents_unaligned(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    manifest_path = tmp_path / "corpus_manifest.json"
+    cache_dir = tmp_path / "shards"
+    docs = [
+        "short document",
+        "oversized source document " * 20,
+    ]
+    corpus_text = "\n\n".join(doc.strip() for doc in docs)
+    corpus_path.write_text(f"{corpus_text}\n", encoding="utf-8")
+    CharTokenizer.train([corpus_text]).save(tokenizer_path)
+    offset = 0
+    manifest_docs = []
+    for index, doc in enumerate(doc.strip() for doc in docs):
+        manifest_docs.append({
+            "document_id": index,
+            "path": f"doc-{index}.txt",
+            "char_start": offset,
+            "char_end": offset + len(doc),
+        })
+        offset += len(doc) + 2
+    manifest_path.write_text(json.dumps({"documents": manifest_docs}), encoding="utf-8")
+
+    manifest = build_token_shards(
+        corpus_path,
+        tokenizer_path,
+        cache_dir,
+        shard_token_size=32,
+        corpus_manifest_path=manifest_path,
+    )
+
+    assert manifest["document_boundary_tokens"] is True
+    assert manifest["boundary_token_documents"] == 2
+    assert manifest["document_aligned_shards"] is False
+    assert manifest["oversized_documents"] == 1
 
 
 def test_manifest_token_shards_stream_document_slices(tmp_path, monkeypatch):

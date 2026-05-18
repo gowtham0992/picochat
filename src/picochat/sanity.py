@@ -50,6 +50,7 @@ def run_preh100_sanity(config: PreH100SanityConfig) -> dict[str, Any]:
         ("precision_backward", _check_precision_backward),
         ("kv_cache_equivalence", _check_kv_cache_equivalence),
         ("resume_fingerprint_guard", _check_resume_fingerprint_guard),
+        ("resume_loss_determinism", _check_resume_loss_determinism),
         ("sharded_loader", _check_sharded_loader),
         ("ddp_batcher_rank_split", _check_ddp_batcher_rank_split),
         ("hf_export", _check_hf_export),
@@ -358,6 +359,66 @@ def _check_resume_fingerprint_guard(config: PreH100SanityConfig, work_dir: Path)
             "checkpoint": checkpoint,
         }
     raise AssertionError("resume accepted a changed corpus fingerprint")
+
+
+def _check_resume_loss_determinism(config: PreH100SanityConfig, work_dir: Path) -> dict[str, Any]:
+    work_dir.mkdir(parents=True, exist_ok=True)
+    corpus_path, tokenizer_path = _write_training_fixture(work_dir)
+    common = {
+        "corpus_path": str(corpus_path),
+        "tokenizer_path": str(tokenizer_path),
+        "context_size": 8,
+        "batch_size": 2,
+        "learning_rate": 1e-3,
+        "n_embd": 32,
+        "n_head": 4,
+        "n_layer": 1,
+        "log_every": 1,
+        "val_fraction": 0.25,
+        "eval_batches": 1,
+        "sample_tokens": 2,
+        "seed": 123,
+        "device": config.device,
+        "precision": config.precision,
+        "matmul_precision": config.matmul_precision,
+        "attn_backend": config.attn_backend,
+        "dataset_mode": "sharded",
+        "shard_token_size": 24,
+        "shard_cache_size": 2,
+    }
+    full = train_base(TrainConfig(
+        **common,
+        out_dir=str(work_dir / "full"),
+        max_steps=4,
+    ))
+    partial = train_base(TrainConfig(
+        **common,
+        out_dir=str(work_dir / "resume"),
+        max_steps=2,
+    ))
+    resumed = train_base(TrainConfig(
+        **common,
+        out_dir=str(work_dir / "resume"),
+        max_steps=4,
+        resume_from=partial["resume_checkpoint"],
+    ))
+    full_by_step = {int(row["step"]): float(row["train_loss"]) for row in full["losses"]}
+    resumed_by_step = {int(row["step"]): float(row["train_loss"]) for row in resumed["losses"]}
+    compared_steps = sorted(set(full_by_step).intersection(resumed_by_step).difference({1, 2}))
+    if not compared_steps:
+        raise AssertionError("resume determinism check had no overlapping resumed steps")
+    max_diff = max(abs(full_by_step[step] - resumed_by_step[step]) for step in compared_steps)
+    tolerance = 1e-6 if config.precision == "float32" else 5e-3
+    if max_diff > tolerance:
+        raise AssertionError(
+            f"resume loss trace diverged after resume: max_diff={max_diff:.6g}, tolerance={tolerance:.1e}"
+        )
+    return {
+        "detail": f"matched steps={compared_steps}, max_loss_diff={max_diff:.2e}",
+        "compared_steps": compared_steps,
+        "max_loss_diff": max_diff,
+        "tolerance": tolerance,
+    }
 
 
 def _check_sharded_loader(config: PreH100SanityConfig, work_dir: Path) -> dict[str, Any]:

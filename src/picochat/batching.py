@@ -527,6 +527,8 @@ def build_token_shards(
     num_documents = 0
     document_boundary_tokens = False
     document_aligned_shards = False
+    boundary_token_documents = 0
+    oversized_documents = 0
 
     def append_tokens(ids: list[int]) -> None:
         nonlocal buffer, total_tokens
@@ -568,14 +570,26 @@ def build_token_shards(
 
     document_texts = _iter_manifest_document_texts(corpus_path, manifest_path)
     if document_texts is not None:
-        document_boundary_tokens = True
         document_aligned_shards = True
         for document in document_texts:
             text = document.strip()
             if not text:
                 continue
-            append_document_tokens(tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos))
+            ids = tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos)
+            if (
+                add_bos
+                and add_eos
+                and ids
+                and ids[0] == tokenizer.bos_id
+                and ids[-1] == tokenizer.eos_id
+            ):
+                boundary_token_documents += 1
+            if len(ids) > shard_token_size:
+                oversized_documents += 1
+                document_aligned_shards = False
+            append_document_tokens(ids)
             num_documents += 1
+        document_boundary_tokens = num_documents > 0 and boundary_token_documents == num_documents
     else:
         if add_bos:
             append_tokens([tokenizer.bos_id])
@@ -602,6 +616,8 @@ def build_token_shards(
         "document_boundary_tokens": document_boundary_tokens,
         "document_aligned_shards": document_aligned_shards,
         "num_documents": num_documents if document_boundary_tokens else None,
+        "boundary_token_documents": boundary_token_documents if document_texts is not None else None,
+        "oversized_documents": oversized_documents if document_texts is not None else None,
         "num_tokens": total_tokens,
         "num_shards": len(shard_rows),
         "shards": shard_rows,

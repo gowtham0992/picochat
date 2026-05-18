@@ -16,6 +16,7 @@ def test_run_preh100_sanity_writes_reports(tmp_path):
         "precision_backward",
         "kv_cache_equivalence",
         "resume_fingerprint_guard",
+        "resume_loss_determinism",
         "sharded_loader",
         "ddp_batcher_rank_split",
         "hf_export",
