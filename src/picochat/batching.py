@@ -11,6 +11,7 @@ from typing import Any
 
 import torch
 
+from picochat.resume import file_sha256
 from picochat.tokenizer import load_tokenizer
 
 
@@ -592,6 +593,9 @@ def build_token_shards(
         "corpus_path": str(corpus_path),
         "tokenizer_path": str(tokenizer_path),
         "corpus_manifest_path": str(manifest_path) if manifest_path and document_boundary_tokens else None,
+        "corpus_sha256": file_sha256(corpus_path),
+        "tokenizer_sha256": file_sha256(tokenizer_path),
+        "corpus_manifest_sha256": file_sha256(manifest_path) if manifest_path and document_boundary_tokens else None,
         "shard_token_size": shard_token_size,
         "add_bos": add_bos,
         "add_eos": add_eos,
@@ -639,6 +643,9 @@ def load_token_shards_manifest(
         "corpus_path": str(Path(corpus_path)),
         "tokenizer_path": str(Path(tokenizer_path)),
         "corpus_manifest_path": str(Path(corpus_manifest_path)) if corpus_manifest_path else None,
+        "corpus_sha256": file_sha256(corpus_path),
+        "tokenizer_sha256": file_sha256(tokenizer_path),
+        "corpus_manifest_sha256": file_sha256(corpus_manifest_path),
         "shard_token_size": int(shard_token_size),
         "add_bos": bool(add_bos),
         "add_eos": bool(add_eos),
@@ -651,6 +658,9 @@ def load_token_shards_manifest(
             if manifest.get("corpus_manifest_path")
             else None
         ),
+        "corpus_sha256": manifest.get("corpus_sha256"),
+        "tokenizer_sha256": manifest.get("tokenizer_sha256"),
+        "corpus_manifest_sha256": manifest.get("corpus_manifest_sha256"),
         "shard_token_size": int(manifest.get("shard_token_size", 0)),
         "add_bos": bool(manifest.get("add_bos", True)),
         "add_eos": bool(manifest.get("add_eos", True)),
@@ -836,6 +846,9 @@ def build_packed_token_shards(
         "corpus_path": str(corpus_path),
         "tokenizer_path": str(Path(tokenizer_path)),
         "corpus_manifest_path": str(manifest_path),
+        "corpus_sha256": file_sha256(corpus_path),
+        "tokenizer_sha256": file_sha256(tokenizer_path),
+        "corpus_manifest_sha256": file_sha256(manifest_path),
         "context_size": context_size,
         "shard_token_size": shard_token_size,
         "rows_per_shard": rows_per_shard,
@@ -881,6 +894,9 @@ def load_packed_token_shards_manifest(
         "corpus_path": str(Path(corpus_path)),
         "tokenizer_path": str(Path(tokenizer_path)),
         "corpus_manifest_path": str(Path(corpus_manifest_path)) if corpus_manifest_path else None,
+        "corpus_sha256": file_sha256(corpus_path),
+        "tokenizer_sha256": file_sha256(tokenizer_path),
+        "corpus_manifest_sha256": file_sha256(corpus_manifest_path),
         "context_size": int(context_size),
         "shard_token_size": int(shard_token_size),
         "add_bos": bool(add_bos),
@@ -896,6 +912,9 @@ def load_packed_token_shards_manifest(
             if manifest.get("corpus_manifest_path")
             else None
         ),
+        "corpus_sha256": manifest.get("corpus_sha256"),
+        "tokenizer_sha256": manifest.get("tokenizer_sha256"),
+        "corpus_manifest_sha256": manifest.get("corpus_manifest_sha256"),
         "context_size": int(manifest.get("context_size", 0)),
         "shard_token_size": int(manifest.get("shard_token_size", 0)),
         "add_bos": bool(manifest.get("add_bos", True)),

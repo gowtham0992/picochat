@@ -11,6 +11,7 @@ from picochat.batching import (
     TokenWindowDataset,
     build_packed_token_shards,
     build_token_shards,
+    load_packed_token_shards_manifest,
     load_packed_token_split,
     load_sharded_token_split,
     load_token_shards_manifest,
@@ -419,6 +420,85 @@ def test_load_token_shards_manifest_rejects_mismatched_run(tmp_path):
             corpus_path=corpus_path,
             tokenizer_path=tokenizer_path,
             shard_token_size=64,
+        )
+
+
+def test_load_token_shards_manifest_rejects_changed_corpus_content(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    cache_dir = tmp_path / "shards"
+    text = "manifest hashes stale corpus content\n" * 30
+    corpus_path.write_text(text, encoding="utf-8")
+    CharTokenizer.train([text]).save(tokenizer_path)
+    load_sharded_token_split(
+        corpus_path,
+        tokenizer_path,
+        context_size=8,
+        cache_dir=cache_dir,
+        val_fraction=0.25,
+        seed=1,
+        shard_token_size=48,
+    )
+
+    corpus_path.write_text(text + "changed after shard build\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="manifest does not match"):
+        load_token_shards_manifest(
+            cache_dir,
+            corpus_path=corpus_path,
+            tokenizer_path=tokenizer_path,
+            shard_token_size=48,
+        )
+
+
+def test_load_packed_token_shards_manifest_rejects_changed_tokenizer_content(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    manifest_path = tmp_path / "corpus_manifest.json"
+    cache_dir = tmp_path / "packed"
+    docs = [
+        "alpha packed guard " * 4,
+        "beta packed guard " * 4,
+        "gamma packed guard " * 4,
+        "delta packed guard " * 4,
+    ]
+    corpus_text = "\n\n".join(doc.strip() for doc in docs)
+    corpus_path.write_text(f"{corpus_text}\n", encoding="utf-8")
+    CharTokenizer.train([corpus_text]).save(tokenizer_path)
+    offset = 0
+    manifest_docs = []
+    for index, doc in enumerate(doc.strip() for doc in docs):
+        manifest_docs.append({
+            "document_id": index,
+            "path": f"doc-{index}.txt",
+            "char_start": offset,
+            "char_end": offset + len(doc),
+        })
+        offset += len(doc) + 2
+    manifest_path.write_text(json.dumps({"documents": manifest_docs}), encoding="utf-8")
+    load_packed_token_split(
+        corpus_path,
+        tokenizer_path,
+        context_size=8,
+        cache_dir=cache_dir,
+        val_fraction=0.25,
+        seed=1,
+        shard_token_size=18,
+        corpus_manifest_path=manifest_path,
+    )
+
+    CharTokenizer.train([corpus_text + "new token vocabulary"]).save(tokenizer_path)
+
+    with pytest.raises(ValueError, match="packed shard manifest does not match"):
+        load_packed_token_shards_manifest(
+            cache_dir,
+            corpus_path=corpus_path,
+            tokenizer_path=tokenizer_path,
+            context_size=8,
+            shard_token_size=18,
+            corpus_manifest_path=manifest_path,
+            val_fraction=0.25,
+            seed=1,
         )
 
 
