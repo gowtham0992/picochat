@@ -1065,7 +1065,8 @@ textarea.guide-target-focus {
 }
 
 .run-storyline,
-.trust-panel {
+.trust-panel,
+.release-readiness {
   border-top: 1px solid var(--line);
   display: grid;
   gap: 8px;
@@ -1074,6 +1075,7 @@ textarea.guide-target-focus {
 
 .story-head,
 .trust-head,
+.release-head,
 .diff-head {
   align-items: center;
   display: flex;
@@ -1082,12 +1084,14 @@ textarea.guide-target-focus {
 }
 
 .story-head label,
-.trust-head label {
+.trust-head label,
+.release-head label {
   margin-bottom: 3px;
 }
 
 .story-head span,
 .trust-head span,
+.release-head span,
 .diff-head span {
   border: 1px solid var(--dim-line);
   color: var(--accent);
@@ -1095,8 +1099,21 @@ textarea.guide-target-focus {
   padding: 2px 6px;
 }
 
+.release-head.pass strong {
+  color: var(--green);
+}
+
+.release-head.warn strong {
+  color: var(--accent);
+}
+
+.release-head.fail strong {
+  color: var(--red);
+}
+
 .story-grid,
-.trust-grid {
+.trust-grid,
+.release-grid {
   display: grid;
   gap: 8px;
 }
@@ -1169,13 +1186,28 @@ textarea.guide-target-focus {
   grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 
-.trust-check {
+.release-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.trust-check,
+.release-card {
   background: var(--field);
   border: 1px solid var(--dim-line);
   display: grid;
   gap: 5px;
   min-height: 112px;
   padding: 8px;
+}
+
+.release-card label {
+  margin: 0;
+}
+
+.release-card p {
+  color: var(--muted);
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .trust-check.pass span {
@@ -1190,6 +1222,32 @@ textarea.guide-target-focus {
   color: var(--red);
 }
 
+.release-card.pass strong {
+  color: var(--green);
+}
+
+.release-card.warn strong {
+  color: var(--accent);
+}
+
+.release-card.fail strong {
+  color: var(--red);
+}
+
+.release-skill-strip {
+  align-items: center;
+  border: 1px solid var(--dim-line);
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 8px;
+}
+
+.release-skill-strip span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .pipeline-detail-grid {
   display: grid;
   gap: 8px;
@@ -1199,6 +1257,77 @@ textarea.guide-target-focus {
 .pipeline-stat {
   border: 1px solid var(--dim-line);
   padding: 8px;
+}
+
+.loss-chart {
+  display: grid;
+  gap: 8px;
+  min-height: 190px;
+}
+
+.loss-chart svg {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  height: 150px;
+  width: 100%;
+}
+
+.loss-axis {
+  stroke: var(--dim-line);
+  stroke-width: 1;
+}
+
+.loss-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.loss-line.train,
+.loss-dot.train {
+  stroke: var(--accent);
+}
+
+.loss-line.val,
+.loss-dot.val {
+  stroke: var(--green);
+}
+
+.loss-dot.train {
+  fill: var(--accent);
+}
+
+.loss-dot.val {
+  fill: var(--green);
+}
+
+.loss-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.loss-chart-legend span {
+  border: 1px solid var(--dim-line);
+  color: var(--muted);
+  font-weight: 700;
+  padding: 3px 6px;
+}
+
+.loss-chart-legend i {
+  display: inline-block;
+  height: 8px;
+  margin-right: 5px;
+  width: 8px;
+}
+
+.loss-chart-legend i.train {
+  background: var(--accent);
+}
+
+.loss-chart-legend i.val {
+  background: var(--green);
 }
 
 .artifact-ledger {
@@ -2930,6 +3059,7 @@ th {
   .metric-pill-row,
   .story-grid,
   .trust-grid,
+  .release-grid,
   .artifact-row,
   .stat-grid,
   .readiness-summary,

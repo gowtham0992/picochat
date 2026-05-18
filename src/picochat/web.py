@@ -247,6 +247,7 @@ def load_run_detail(runs_dir: str | Path, run_name: str) -> dict:
         "sft_report": _read_json_if_exists(run_dir / "sft" / "sft_report.json"),
         "eval": _read_json_if_exists(run_dir / "eval" / "eval_report.json"),
         "eval_reports": _load_eval_reports(run_dir),
+        "preflight": _preflight_from_run_dir(run_dir),
         "base_sample": _read_text_if_exists(run_dir / "base" / "sample.txt"),
         "sft_sample": _read_text_if_exists(run_dir / "sft" / "sample.txt"),
         "reports": _load_report_status(run_dir, summary),
@@ -839,6 +840,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     if not isinstance(payload, dict):
         raise ValueError("request body must be a JSON object")
 
+    preflight_only = bool(payload.get("preflight_only", False))
     dataset_pack = _optional_string(payload.get("dataset_pack"))
     if not dataset_pack:
         raise ValueError("dataset_pack is required")
@@ -866,7 +868,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         if resume_path and not Path(resume_path).is_dir():
             raise FileNotFoundError(f"{label} must point to a checkpoint directory: {resume_path}")
     is_resume_launch = bool(base_resume_from or sft_resume_from)
-    if out_dir.exists() and any(out_dir.iterdir()) and not is_resume_launch:
+    if out_dir.exists() and any(out_dir.iterdir()) and not is_resume_launch and not preflight_only:
         raise FileExistsError(f"run output already exists: {out_dir}")
 
     preset_name = _optional_string(payload.get("preset")) or "smoke"
@@ -1110,7 +1112,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         long_run_gate_profile=long_run_gate_profile,
     )
     launch_preflight = assess_run_preflight(preflight_config, launch_preview)
-    if launch_preflight.status == "blocked" and not allow_unsafe_long_run:
+    if launch_preflight.status == "blocked" and not allow_unsafe_long_run and not preflight_only:
         blocking = ", ".join(check.name for check in launch_preflight.checks if check.status == "block")
         raise ValueError(
             "long-run preflight blocked this launch. "
@@ -1118,7 +1120,6 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             "Use a smoke run, add more data/tuning rows, reduce exposure, or explicitly allow unsafe diagnostic runs."
         )
 
-    out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "web_run.log"
     command = [
         sys.executable,
@@ -1281,6 +1282,100 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         command.extend(["--base-shard-cache-size", str(base_shard_cache_size)])
     if allow_unsafe_long_run:
         command.append("--allow-unsafe-long-run")
+    launch_config = {
+        "context_size": context_size,
+        "base_steps": base_steps,
+        "sft_steps": sft_steps,
+        "n_embd": n_embd,
+        "n_head": n_head,
+        "n_kv_head": n_kv_head,
+        "n_layer": n_layer,
+        "norm_type": norm_type,
+        "position_encoding": position_encoding,
+        "activation": activation,
+        "tie_embeddings": tie_embeddings,
+        "qk_norm": qk_norm,
+        "parallel_residual": parallel_residual,
+        "xsa_last_n": xsa_last_n,
+        "scaled_residual_init": scaled_residual_init,
+        "attn_backend": attn_backend,
+        "precision": precision,
+        "matmul_precision": matmul_precision,
+        "torch_compile": torch_compile,
+        "torch_compile_mode": torch_compile_mode,
+        "gradient_checkpointing": gradient_checkpointing,
+        "auto_lr_scaling": auto_lr_scaling,
+        "loss_spike_rollback": loss_spike_rollback,
+        "tokenizer_type": tokenizer_type,
+        "tokenizer_vocab_size": tokenizer_vocab_size,
+        "bpe_pretokenizer": bpe_pretokenizer,
+        "base_learning_rate": base_learning_rate,
+        "sft_learning_rate": sft_learning_rate,
+        "base_lr_decay": base_lr_decay,
+        "sft_lr_decay": sft_lr_decay,
+        "base_grad_clip": base_grad_clip,
+        "sft_grad_clip": sft_grad_clip,
+        "base_grad_accum_steps": base_grad_accum_steps,
+        "base_dataset_mode": base_dataset_mode,
+        "base_shard_token_size": base_shard_token_size,
+        "base_shard_cache_size": base_shard_cache_size,
+        "sft_grad_accum_steps": sft_grad_accum_steps,
+        "base_optimizer": base_optimizer,
+        "sft_optimizer": sft_optimizer,
+        "base_muon_learning_rate": base_muon_learning_rate,
+        "sft_muon_learning_rate": sft_muon_learning_rate,
+        "base_ema_decay": base_ema_decay,
+        "sft_ema_decay": sft_ema_decay,
+        "base_early_stop_patience": base_early_stop_patience,
+        "sft_early_stop_patience": sft_early_stop_patience,
+        "sft_sampling": sft_sampling,
+        "sft_packing": sft_packing,
+        "sft_peft": sft_peft,
+        "sft_lora_rank": sft_lora_rank,
+        "sft_lora_alpha": sft_lora_alpha,
+        "sft_lora_dropout": sft_lora_dropout,
+        "sft_lora_targets": list(sft_lora_targets),
+        "target_param_data_ratio": target_param_data_ratio,
+        "long_run_gate_profile": long_run_gate_profile,
+        "device": device,
+        "ddp": ddp,
+        "ddp_world_size": ddp_world_size,
+        "base_resume_from": base_resume_from,
+        "sft_resume_from": sft_resume_from,
+        "allow_unsafe_long_run": allow_unsafe_long_run,
+    }
+    if preflight_only:
+        job = {
+            "id": f"preflight-{uuid.uuid4().hex[:12]}",
+            "run_name": run_name,
+            "out_dir": str(out_dir),
+            "dataset_pack": dataset_pack,
+            "log_path": str(log_path),
+            "command": _shell_command(*command),
+            "started_at": time.time(),
+            "pid": None,
+            "state": "preflight",
+            "returncode": 0 if launch_preflight.status != "blocked" else 2,
+            "elapsed_seconds": 0.0,
+            "summary_exists": False,
+            "log_tail": "Preflight-only dry run. No subprocess was launched.",
+            "progress": None,
+            "can_cancel": False,
+            "source": "preflight",
+            "updated_at": time.time(),
+            "preset": preset_name,
+            "min_quality_score": min_quality_score,
+            "launch_config": launch_config,
+            "launch_readiness": launch_preview.readiness.to_dict(),
+            "launch_tuning": {
+                "chat": launch_preview.chat_data.to_dict(),
+                "eval": launch_preview.eval_data.to_dict(),
+            },
+            "launch_preflight": launch_preflight.to_dict(),
+        }
+        return {"job": job, "jobs": [job]}
+
+    out_dir.mkdir(parents=True, exist_ok=True)
     log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
     log_file = log_path.open("a", encoding="utf-8")
     try:
@@ -1307,68 +1402,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         "process": process,
         "preset": preset_name,
         "min_quality_score": min_quality_score,
-        "launch_config": {
-            "context_size": context_size,
-            "base_steps": base_steps,
-            "sft_steps": sft_steps,
-            "n_embd": n_embd,
-            "n_head": n_head,
-            "n_kv_head": n_kv_head,
-            "n_layer": n_layer,
-            "norm_type": norm_type,
-            "position_encoding": position_encoding,
-            "activation": activation,
-            "tie_embeddings": tie_embeddings,
-            "qk_norm": qk_norm,
-            "parallel_residual": parallel_residual,
-            "xsa_last_n": xsa_last_n,
-            "scaled_residual_init": scaled_residual_init,
-            "attn_backend": attn_backend,
-            "precision": precision,
-            "matmul_precision": matmul_precision,
-            "torch_compile": torch_compile,
-            "torch_compile_mode": torch_compile_mode,
-            "gradient_checkpointing": gradient_checkpointing,
-            "auto_lr_scaling": auto_lr_scaling,
-            "loss_spike_rollback": loss_spike_rollback,
-            "tokenizer_type": tokenizer_type,
-            "tokenizer_vocab_size": tokenizer_vocab_size,
-            "bpe_pretokenizer": bpe_pretokenizer,
-            "base_learning_rate": base_learning_rate,
-            "sft_learning_rate": sft_learning_rate,
-            "base_lr_decay": base_lr_decay,
-            "sft_lr_decay": sft_lr_decay,
-            "base_grad_clip": base_grad_clip,
-            "sft_grad_clip": sft_grad_clip,
-            "base_grad_accum_steps": base_grad_accum_steps,
-            "base_dataset_mode": base_dataset_mode,
-            "base_shard_token_size": base_shard_token_size,
-            "base_shard_cache_size": base_shard_cache_size,
-            "sft_grad_accum_steps": sft_grad_accum_steps,
-            "base_optimizer": base_optimizer,
-            "sft_optimizer": sft_optimizer,
-            "base_muon_learning_rate": base_muon_learning_rate,
-            "sft_muon_learning_rate": sft_muon_learning_rate,
-            "base_ema_decay": base_ema_decay,
-            "sft_ema_decay": sft_ema_decay,
-            "base_early_stop_patience": base_early_stop_patience,
-            "sft_early_stop_patience": sft_early_stop_patience,
-            "sft_sampling": sft_sampling,
-            "sft_packing": sft_packing,
-            "sft_peft": sft_peft,
-            "sft_lora_rank": sft_lora_rank,
-            "sft_lora_alpha": sft_lora_alpha,
-            "sft_lora_dropout": sft_lora_dropout,
-            "sft_lora_targets": list(sft_lora_targets),
-            "target_param_data_ratio": target_param_data_ratio,
-            "long_run_gate_profile": long_run_gate_profile,
-            "device": device,
-            "ddp": ddp,
-            "ddp_world_size": ddp_world_size,
-            "base_resume_from": base_resume_from,
-            "sft_resume_from": sft_resume_from,
-            "allow_unsafe_long_run": allow_unsafe_long_run,
-        },
+        "launch_config": launch_config,
         "launch_readiness": launch_preview.readiness.to_dict(),
         "launch_tuning": {
             "chat": launch_preview.chat_data.to_dict(),

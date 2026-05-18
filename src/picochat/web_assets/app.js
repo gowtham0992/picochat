@@ -556,6 +556,9 @@ function bindControls() {
   $("launch-run-button").addEventListener("click", () => {
     launchRun().catch((error) => renderRunJobError(error));
   });
+  $("preflight-run-button")?.addEventListener("click", () => {
+    preflightRun().catch((error) => renderRunJobError(error));
+  });
   $("refresh-run-job-button").addEventListener("click", () => {
     loadRunJobs().catch((error) => renderRunJobError(error));
   });
@@ -1839,10 +1842,113 @@ function renderPipeline() {
   $("pipeline-strip").innerHTML = stages.map((stage) => renderPipelineStage(stage)).join("");
   const active = stages.find((stage) => stage.id === state.activeStage) || stages[0];
   $("pipeline-verdict").innerHTML = learningVerdict(stages);
+  $("run-release-panel").innerHTML = runReleaseReadinessPanel();
   $("run-storyline").innerHTML = runStoryTimeline(stages);
   $("run-trust-panel").innerHTML = runTrustPanel();
   $("pipeline-detail").innerHTML = active ? stageDetail(active) : "LOAD A RUN TO INSPECT THE PIPELINE.";
   $("run-doctor").innerHTML = runDoctor(stages);
+}
+
+function runReleaseReadinessPanel() {
+  if (!state.detail) return "LOAD A RUN TO SEE RELEASE READINESS.";
+  const summary = state.detail?.summary || {};
+  const preflight = state.detail?.preflight || summary.preflight || {};
+  const budget = preflight.budget || {};
+  const gate = summary.long_run_gate || {};
+  const evalSummary = state.detail?.eval_reports?.at(-1)?.report?.summary || summary.eval || {};
+  const gateStatus = String(gate.status || "not-run").toLowerCase();
+  const statusClass = gateStatus === "approved" ? "pass" : gateStatus === "blocked" ? "fail" : "warn";
+  const issues = gate.issues || [];
+  const externalResults = gate.external_eval_results || [];
+  const skillRates = gate.skill_release_eval_rates || {};
+  const skillThresholds = gate.skill_release_eval_thresholds || {};
+  const weakestSkill = Object.entries(skillRates)
+    .map(([name, rate]) => ({
+      name,
+      rate: Number(rate),
+      threshold: Number(skillThresholds[name] ?? 0),
+    }))
+    .filter((item) => Number.isFinite(item.rate))
+    .sort((left, right) => left.rate - right.rate)[0];
+  const cards = [
+    {
+      label: "Release gate",
+      status: statusClass,
+      value: gate.status ? String(gate.status).toUpperCase() : "NOT RUN",
+      note: issues[0]?.message || "Post-run gate appears after SFT fit, held-out fit, eval, and external checks complete.",
+    },
+    {
+      label: "SFT fit",
+      status: thresholdStatus(gate.sft_fit_rate, gate.sft_fit_threshold),
+      value: metricVsThreshold(gate.sft_fit_rate, gate.sft_fit_threshold),
+      note: "Checks whether SFT examples were actually learned; this is the 70% release tripwire.",
+    },
+    {
+      label: "Held-out SFT",
+      status: thresholdStatus(gate.sft_heldout_fit_rate, gate.sft_heldout_fit_threshold),
+      value: metricVsThreshold(gate.sft_heldout_fit_rate, gate.sft_heldout_fit_threshold),
+      note: "Separates transfer from simple replay of the training SFT rows.",
+    },
+    {
+      label: "Visible eval",
+      status: evalSummary.pass_rate == null ? "warn" : Number(evalSummary.pass_rate) >= 0.3 ? "pass" : "fail",
+      value: evalSummary.num_examples ? `${fmtPercent(evalSummary.pass_rate)} / ${fmtInt(evalSummary.num_examples)} rows` : "NO EVAL",
+      note: "Pass rate needs category breakdown and random baseline context before making claims.",
+    },
+    {
+      label: "Token budget",
+      status: Number(budget.planned_to_target_ratio || 0) >= 0.95 ? "pass" : Number(budget.planned_to_target_ratio || 0) >= 0.5 ? "warn" : "fail",
+      value: budget.planned_to_target_ratio == null ? "NO PREFLIGHT" : `${fmtLoss(budget.planned_to_target_ratio)}x target`,
+      note: budget.target_training_tokens == null
+        ? "Run preflight to show planned tokens, token/parameter ratio, and recommended steps."
+        : `${fmtInt(budget.target_training_tokens)} target tokens; ${fmtInt(budget.recommended_base_steps)} recommended base steps.`,
+    },
+    {
+      label: "External bench",
+      status: externalResults.length ? (externalResults.some((item) => item.status === "block") ? "fail" : "pass") : "warn",
+      value: externalResults.length ? `${externalResults.length} attached` : "MISSING",
+      note: externalResults[0]
+        ? `${externalResults[0].name || "external"} ${fmtPercent(externalResults[0].score)}`
+        : "Skill-release runs need at least one ARC/MMLU-style external benchmark before release claims.",
+    },
+  ];
+  return `
+    <div class="release-head ${statusClass}">
+      <div>
+        <label>RELEASE READINESS</label>
+        <strong>${escapeHtml(gate.status ? String(gate.status).toUpperCase() : "NOT GATED YET")}</strong>
+      </div>
+      <span>${escapeHtml(issues.length ? `${issues.length} gate issue${issues.length === 1 ? "" : "s"}` : "No gate issues reported")}</span>
+    </div>
+    <div class="release-grid">
+      ${cards.map((card) => `
+        <div class="release-card ${escapeHtml(card.status)}">
+          <label>${escapeHtml(card.label)}</label>
+          <strong>${escapeHtml(card.value)}</strong>
+          <p>${escapeHtml(card.note)}</p>
+        </div>
+      `).join("")}
+    </div>
+    ${weakestSkill ? `
+      <div class="release-skill-strip">
+        <strong>WEAKEST RELEASE SKILL</strong>
+        <span>${escapeHtml(weakestSkill.name)} ${fmtPercent(weakestSkill.rate)} / gate ${fmtPercent(weakestSkill.threshold)}</span>
+      </div>
+    ` : ""}
+  `;
+}
+
+function thresholdStatus(value, threshold) {
+  if (value == null || threshold == null) return "warn";
+  const number = Number(value);
+  const target = Number(threshold);
+  if (!Number.isFinite(number) || !Number.isFinite(target)) return "warn";
+  return number >= target ? "pass" : number >= target * 0.8 ? "warn" : "fail";
+}
+
+function metricVsThreshold(value, threshold) {
+  if (value == null) return "NO DATA";
+  return threshold == null ? fmtPercent(value) : `${fmtPercent(value)} / ${fmtPercent(threshold)}`;
 }
 
 function renderPipelineStage(stage) {
@@ -3906,6 +4012,26 @@ async function launchRun() {
   }
 }
 
+async function preflightRun() {
+  const config = launchConfig();
+  const readiness = launchReadiness(config);
+  renderLaunchReadiness();
+  if (readiness.status === "blocked") throw new Error(readiness.notes[0] || "fix launch settings");
+  $("preflight-run-button").disabled = true;
+  $("run-launch-status").innerHTML = 'RUNNING PREFLIGHT<span class="cursor"></span>';
+  try {
+    const payload = await postJson("/api/run/start", runStartPayload(config, { preflight_only: true }));
+    state.runJob = payload.job;
+    state.runJobs = mergeRunJobs(state.runJobs, payload.jobs || [payload.job]);
+    state.runJobLoaded = false;
+    renderRunJob(state.runJob);
+    renderRunJobList();
+    renderStartHere();
+  } finally {
+    $("preflight-run-button").disabled = false;
+  }
+}
+
 async function startRunWithRetry(config) {
   try {
     return await postJson("/api/run/start", runStartPayload(config));
@@ -3919,11 +4045,15 @@ async function startRunWithRetry(config) {
   }
 }
 
-function runStartPayload(config) {
+function runStartPayload(config, extra = {}) {
   return {
     dataset_pack: config.dataset_pack,
     run_name: config.run_name,
+    base_resume_from: config.base_resume_from,
+    sft_resume_from: config.sft_resume_from,
     preset: config.preset,
+    ddp: config.ddp,
+    ddp_world_size: config.ddp_world_size,
     context_size: config.context_size,
     n_embd: config.n_embd,
     n_head: config.n_head,
@@ -3972,6 +4102,11 @@ function runStartPayload(config) {
     sft_early_stop_patience: config.sft_early_stop_patience,
     sft_sampling: config.sft_sampling,
     sft_packing: config.sft_packing,
+    sft_peft: config.sft_peft,
+    sft_lora_rank: config.sft_lora_rank,
+    sft_lora_alpha: config.sft_lora_alpha,
+    sft_lora_dropout: config.sft_lora_dropout,
+    sft_lora_targets: config.sft_lora_targets,
     target_param_data_ratio: config.target_param_data_ratio,
     long_run_gate_profile: config.long_run_gate_profile,
     eval_max_new_tokens: config.eval_max_new_tokens,
@@ -3981,6 +4116,7 @@ function runStartPayload(config) {
     tokenizer_vocab_size: config.tokenizer_vocab_size,
     min_quality_score: config.min_quality_score,
     device: config.device,
+    ...extra,
   };
 }
 
@@ -4433,17 +4569,30 @@ function renderLaunchPreflight(preflight) {
   const budget = preflight.budget || {};
   const blockers = preflight.blocking_checks || [];
   const warnings = preflight.warning_checks || [];
-  const visibleChecks = blockers.length ? blockers : warnings.slice(0, 4);
+  const checks = preflight.checks || [];
+  const passes = checks.filter((check) => check.status === "pass");
+  const namedPasses = checks.filter((check) => [
+    "compute_optimal_horizon",
+    "release_token_budget",
+    "sft_category_balance",
+    "eval_skill_release_coverage",
+    "attention_backend_runtime",
+  ].includes(check.name));
+  const visibleChecks = blockers.length || warnings.length
+    ? [...blockers, ...warnings]
+    : (namedPasses.length ? namedPasses : passes.slice(0, 4));
   return `
     <div class="readiness-summary ${escapeHtml(preflight.status || "unknown")}">
       <strong>LONG-RUN PREFLIGHT ${escapeHtml(String(preflight.status || "--").toUpperCase())}</strong>
       <span>${escapeHtml(preflight.summary || "")}</span>
+      <em>${fmtInt(blockers.length)} block / ${fmtInt(warnings.length)} warn / ${fmtInt(passes.length)} pass</em>
     </div>
     <div class="command-meta">
       <span>PARAMS ${fmtInt(budget.estimated_parameters)}</span>
       <span>TARGET ${fmtInt(budget.target_training_tokens)} TOK</span>
       <span>PLAN/TARGET ${fmtLoss(budget.planned_to_target_ratio)}</span>
       <span>REC ${fmtInt(budget.recommended_base_steps)} STEPS</span>
+      <span>EFFECTIVE BATCH ${fmtInt(budget.base_effective_batch)}</span>
       <span>BASE EPOCHS ${fmtLoss(budget.estimated_base_epochs)}</span>
       <span>SFT EPOCHS ${fmtLoss(budget.estimated_sft_example_epochs)}</span>
       <span>${budget.long_run ? "LONG RUN" : "LOCAL RUN"}</span>
@@ -4535,7 +4684,7 @@ function renderRunJobList() {
         <strong>${escapeHtml(job.run_name)}</strong>
         <span>${escapeHtml(String(job.state || "--").toUpperCase())} | ${job.summary_exists ? "SUMMARY" : "NO SUMMARY"} | ${escapeHtml(job.source || "--")}</span>
       </button>
-      ${job.can_cancel ? "" : `<button class="run-job-archive-button" type="button" data-archive-job-run="${escapeHtml(job.run_name)}">ARCHIVE</button>`}
+      ${job.can_cancel || job.source === "preflight" ? "" : `<button class="run-job-archive-button" type="button" data-archive-job-run="${escapeHtml(job.run_name)}">ARCHIVE</button>`}
     </div>
   `).join("");
   document.querySelectorAll("[data-run-job]").forEach((button) => {
@@ -4587,6 +4736,7 @@ function mergeRunJobs(existing, incoming) {
 
 function renderRunJobError(error) {
   $("launch-run-button").disabled = false;
+  $("preflight-run-button").disabled = false;
   $("run-launch-status").textContent = `RUN LAUNCH FAULT | ${error.message}`;
   $("run-launch-progress").innerHTML = "";
   $("run-launch-command").innerHTML = "";
@@ -5910,28 +6060,41 @@ function renderTraining() {
   const memorized = baseMemorization?.status === "high" || overfit;
   $("training-badge").textContent = memorized ? "MEMORIZATION WARNING" : "LOSS TRACE READY";
   $("training-badge").classList.toggle("warning", Boolean(memorized));
-  $("base-loss-chart").textContent = asciiLossChart(baseLosses);
-  $("sft-loss-chart").textContent = asciiLossChart(sftLosses);
+  $("base-loss-chart").innerHTML = lossTraceChart(baseLosses);
+  $("sft-loss-chart").innerHTML = lossTraceChart(sftLosses);
   $("training-table").innerHTML = trainingDiagnostics(detail) + trainingRows(baseLosses, sftLosses);
 }
 
-function asciiLossChart(losses) {
-  if (!losses.length) return "NO LOSS ARTIFACT FOUND.";
+function lossTraceChart(losses) {
+  if (!losses.length) return '<div class="notice">NO LOSS ARTIFACT FOUND.</div>';
   const vals = losses.flatMap((row) => [row.train_loss, row.val_loss]);
   const min = Math.min(...vals);
   const max = Math.max(...vals);
-  const width = 28;
-  return losses.map((row) => {
-    const train = bar(row.train_loss, min, max, width, "█");
-    const val = bar(row.val_loss, min, max, width, "▓");
-    return `STEP ${String(row.step).padStart(4, "0")}  TRN ${train} ${fmtLoss(row.train_loss)}\n           VAL ${val} ${fmtLoss(row.val_loss)}`;
-  }).join("\n");
-}
-
-function bar(value, min, max, width, glyph) {
-  const spread = Math.max(0.0001, max - min);
-  const count = Math.max(1, Math.round(((value - min) / spread) * width));
-  return glyph.repeat(count).padEnd(width, ".");
+  const width = 360;
+  const height = 142;
+  const pad = 18;
+  const xFor = (index) => pad + (losses.length <= 1 ? 0 : (index / (losses.length - 1)) * (width - pad * 2));
+  const yFor = (value) => {
+    const spread = Math.max(0.0001, max - min);
+    return height - pad - ((Number(value) - min) / spread) * (height - pad * 2);
+  };
+  const points = (key) => losses.map((row, index) => `${xFor(index).toFixed(1)},${yFor(row[key]).toFixed(1)}`).join(" ");
+  const last = losses.at(-1);
+  return `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Training loss chart">
+      <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="loss-axis"></line>
+      <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="loss-axis"></line>
+      <polyline points="${points("train_loss")}" class="loss-line train"></polyline>
+      <polyline points="${points("val_loss")}" class="loss-line val"></polyline>
+      <circle cx="${xFor(losses.length - 1).toFixed(1)}" cy="${yFor(last.train_loss).toFixed(1)}" r="3" class="loss-dot train"></circle>
+      <circle cx="${xFor(losses.length - 1).toFixed(1)}" cy="${yFor(last.val_loss).toFixed(1)}" r="3" class="loss-dot val"></circle>
+    </svg>
+    <div class="loss-chart-legend">
+      <span><i class="train"></i>train ${fmtLoss(last.train_loss)}</span>
+      <span><i class="val"></i>val ${fmtLoss(last.val_loss)}</span>
+      <span>BPB ${fmtLoss(last.val_bpb)} lower is better across tokenizers</span>
+    </div>
+  `;
 }
 
 function trainingRows(baseLosses, sftLosses) {

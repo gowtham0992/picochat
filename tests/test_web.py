@@ -86,6 +86,20 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert "preserves BOS/EOS document boundaries" in js
 
 
+def test_web_ui_exposes_release_readiness_and_preflight_dry_run_controls():
+    html = Path("src/picochat/web_assets/index.html").read_text(encoding="utf-8")
+    js = Path("src/picochat/web_assets/app.js").read_text(encoding="utf-8")
+    css = Path("src/picochat/web_assets/style.css").read_text(encoding="utf-8")
+
+    assert "preflight-run-button" in html
+    assert "run-release-panel" in html
+    assert "preflight_only" in js
+    assert "RELEASE READINESS" in js
+    assert "lower is better across tokenizers" in js
+    assert ".release-grid" in css
+    assert ".loss-chart" in css
+
+
 def write_run(root, name):
     run_dir = root / name
     (run_dir / "eval").mkdir(parents=True)
@@ -1095,6 +1109,83 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert captured["kwargs"]["env"]["PYTHONUNBUFFERED"] == "1"
     assert (tmp_path / "runs" / "ui-run" / "web_run.log").exists()
     assert run_status_plan(job["id"], tmp_path / "runs")["job"]["pid"] == 4321
+
+
+def test_start_run_plan_preflight_only_does_not_launch_or_write_run_dir(tmp_path, monkeypatch):
+    source_path = tmp_path / "lesson.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    source_path.write_text("lesson text " * 40, encoding="utf-8")
+    chat_path.write_text(json.dumps({"user": "hi", "assistant": "hello"}), encoding="utf-8")
+    eval_path.write_text(json.dumps({"user": "hi", "must_include": ["hello"]}), encoding="utf-8")
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    def fail_popen(*args, **kwargs):
+        raise AssertionError("preflight-only must not launch a subprocess")
+
+    monkeypatch.setattr("picochat.web.subprocess.Popen", fail_popen)
+
+    status = start_run_plan(tmp_path / "runs", {
+        "dataset_pack": str(pack_path),
+        "run_name": "dry-run",
+        "preset": "smoke",
+        "context_size": 32,
+        "base_steps": 2,
+        "sft_steps": 2,
+        "n_embd": 32,
+        "n_head": 4,
+        "n_layer": 1,
+        "preflight_only": True,
+    })
+
+    job = status["job"]
+    assert job["state"] == "preflight"
+    assert job["source"] == "preflight"
+    assert job["launch_preflight"]["budget"]["estimated_parameters"] > 0
+    assert "--dataset-pack" in job["command"]
+    assert not (tmp_path / "runs" / "dry-run").exists()
+
+
+def test_start_run_plan_preflight_only_returns_blocked_preflight_without_launch(tmp_path):
+    source_path = tmp_path / "lesson.txt"
+    chat_path = tmp_path / "chat.jsonl"
+    eval_path = tmp_path / "eval.jsonl"
+    pack_path = tmp_path / "dataset_pack.json"
+    source_path.write_text("lesson text about local models\n" * 200, encoding="utf-8")
+    chat_path.write_text(json.dumps({"user": "hi", "assistant": "hello"}), encoding="utf-8")
+    eval_path.write_text(json.dumps({"user": "hi", "must_include": ["hello"]}), encoding="utf-8")
+    pack_path.write_text(json.dumps({
+        "corpus": "lesson.txt",
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    status = start_run_plan(tmp_path / "runs", {
+        "dataset_pack": str(pack_path),
+        "run_name": "unsafe-dry-run",
+        "preset": "small-local",
+        "tokenizer_type": "bpe",
+        "tokenizer_vocab_size": 1024,
+        "context_size": 512,
+        "n_embd": 192,
+        "n_head": 6,
+        "n_layer": 6,
+        "base_steps": 5000,
+        "sft_steps": 1000,
+        "base_batch_size": 8,
+        "sft_batch_size": 8,
+        "preflight_only": True,
+    })
+
+    assert status["job"]["state"] == "preflight"
+    assert status["job"]["returncode"] == 2
+    assert status["job"]["launch_preflight"]["status"] == "blocked"
+    assert not (tmp_path / "runs" / "unsafe-dry-run").exists()
 
 
 def test_start_run_plan_accepts_resume_paths_for_existing_run_dir(tmp_path, monkeypatch):

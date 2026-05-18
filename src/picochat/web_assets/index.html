@@ -204,6 +204,7 @@
             </div>
             <div id="pipeline-strip" class="pipeline-strip"></div>
             <div id="pipeline-verdict" class="learning-verdict learn-only">LOAD A RUN TO SEE THE EXPERIMENT VERDICT.</div>
+            <div id="run-release-panel" class="release-readiness learn-only">LOAD A RUN TO SEE RELEASE READINESS.</div>
             <div id="run-storyline" class="run-storyline learn-only">LOAD A RUN TO SEE THE TRAINING STORY.</div>
             <div id="run-trust-panel" class="trust-panel learn-only">LOAD A RUN TO SEE TRUST CHECKS.</div>
             <div id="pipeline-detail" class="pipeline-detail inspect-only">LOAD A RUN TO INSPECT THE PIPELINE.</div>
@@ -910,6 +911,7 @@
                   <input id="launch-min-score" type="number" min="0" max="100" value="0">
                 </div>
                 <button id="launch-run-button" type="button">LAUNCH RUN</button>
+                <button id="preflight-run-button" type="button">RUN PREFLIGHT</button>
                 <button id="refresh-run-job-button" type="button">REFRESH LOG</button>
                 <button id="cancel-run-job-button" type="button">CANCEL RUN</button>
                 <button id="apply-budget-button" type="button">APPLY BUDGET</button>
@@ -968,11 +970,11 @@
             <div class="two-col">
               <div class="terminal-card">
                 <label>BASE TRAINER LOSS TRACE</label>
-                <pre id="base-loss-chart"></pre>
+                <div id="base-loss-chart" class="loss-chart"></div>
               </div>
               <div class="terminal-card">
                 <label>CHAT TUNER LOSS TRACE</label>
-                <pre id="sft-loss-chart"></pre>
+                <div id="sft-loss-chart" class="loss-chart"></div>
               </div>
             </div>
             <div id="training-table" class="terminal-card"></div>
