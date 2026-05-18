@@ -116,6 +116,42 @@ class ScalePlan:
             parts.append("--ddp")
         return parts
 
+    def lr_range_overrides(self) -> list[str]:
+        parts = [
+            "--device", "cuda",
+            "--precision", "bf16",
+            "--matmul-precision", "high",
+            "--attn-backend", self.attn_backend,
+            "--torch-compile",
+            "--context-size", str(self.context_size),
+            "--n-embd", str(self.n_embd),
+            "--n-head", str(self.n_head),
+            "--n-kv-head", str(self.n_kv_head),
+            "--n-layer", str(self.n_layer),
+            "--norm-type", self.norm_type,
+            "--position-encoding", self.position_encoding,
+            "--activation", self.activation,
+            "--tie-embeddings",
+            "--qk-norm",
+            "--parallel-residual",
+        ]
+        if self.scaled_residual_init:
+            parts.append("--scaled-residual-init")
+        if not self.linear_bias:
+            parts.append("--no-linear-bias")
+        parts.extend([
+            "--dataset-mode", self.base_dataset_mode,
+            "--batch-size", str(self.per_device_batch_size),
+            "--grad-accum-steps", str(self.grad_accum_steps),
+            "--steps", "80",
+            "--min-lr", _format_float(max(1e-7, self.base_learning_rate / 10)),
+            "--max-lr", _format_float(max(self.base_learning_rate * 2, self.batch_scaled_learning_rate)),
+            "--grad-clip", "1.0",
+        ])
+        if self.world_size > 1:
+            parts.append("--ddp")
+        return parts
+
 
 def parse_count(value: str | int | float) -> int:
     """Parse compact counts such as 100m, 2.1b, or 524288."""
@@ -318,6 +354,28 @@ def render_scale_plan_markdown(plan: ScalePlan) -> str:
         "",
         "```bash",
         _wrap_command(["PYTHONPATH=src", "python", "-m", "picochat.cli", "run", "tiny", *plan.run_tiny_overrides()]),
+        "```",
+        "",
+        "## LR Range Probe",
+        "",
+        "Before the full run, train only enough steps to find a stable base LR with the same architecture and data path.",
+        "",
+        "```bash",
+        _wrap_command([
+            "PYTHONPATH=src",
+            "python",
+            "-m",
+            "picochat.cli",
+            "train",
+            "lr-range",
+            "--corpus",
+            "<run-out-dir>/corpus.txt",
+            "--tokenizer",
+            "<run-out-dir>/tokenizer.json",
+            "--out-dir",
+            "<run-out-dir>/lr-range",
+            *plan.lr_range_overrides(),
+        ]),
         "```",
     ])
     if plan.world_size > 1:

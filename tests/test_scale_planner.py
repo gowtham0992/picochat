@@ -66,6 +66,8 @@ def test_scale_plan_marks_ddp_overrides():
     assert plan.recommended_base_steps < 5_000
     assert "--ddp" in plan.run_tiny_overrides()
     assert "--scaled-residual-init" in plan.run_tiny_overrides()
+    assert "--ddp" in plan.lr_range_overrides()
+    assert "--scaled-residual-init" in plan.lr_range_overrides()
     assert plan.base_learning_rate == 0.0002
     assert plan.batch_scaled_learning_rate > plan.base_learning_rate
     assert "--long-run-gate-profile" in plan.run_tiny_overrides()
@@ -81,6 +83,7 @@ def test_scale_plan_markdown_contains_copyable_command():
     assert "--no-linear-bias" in markdown
     assert "--scaled-residual-init" in markdown
     assert "--base-dataset-mode" in markdown
+    assert "train lr-range" in markdown
     assert "--long-run-gate-profile skill_release" in markdown
     assert "--profile release_skills --skill-answer-style scratchpad" in markdown
 

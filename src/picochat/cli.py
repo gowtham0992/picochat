@@ -56,6 +56,7 @@ from picochat.hf_export import HFExportConfig, export_hf_checkpoint
 from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
+from picochat.lr_finder import LRRangeConfig, run_lr_range
 from picochat.model import SDPA_BACKENDS
 from picochat.artifacts import (
     RunBundleConfig,
@@ -772,6 +773,70 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to corpus_manifest.json for document-level holdout.",
     )
+
+    train_lr_parser = train_subparsers.add_parser(
+        "lr-range",
+        help="Run a short exponential base-LM learning-rate range test.",
+    )
+    train_lr_parser.add_argument("--corpus", required=True, help="Path to corpus text.")
+    train_lr_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
+    train_lr_parser.add_argument("--out-dir", required=True, help="Output report directory.")
+    train_lr_parser.add_argument("--context-size", type=int, default=64)
+    train_lr_parser.add_argument("--batch-size", type=int, default=16)
+    train_lr_parser.add_argument("--grad-accum-steps", type=int, default=1)
+    train_lr_parser.add_argument("--steps", type=int, default=100)
+    train_lr_parser.add_argument("--min-lr", type=float, default=1e-6)
+    train_lr_parser.add_argument("--max-lr", type=float, default=3e-4)
+    train_lr_parser.add_argument("--divergence-factor", type=float, default=4.0)
+    train_lr_parser.add_argument("--smoothing-beta", type=float, default=0.98)
+    train_lr_parser.add_argument("--n-embd", type=int, default=128)
+    train_lr_parser.add_argument("--n-head", type=int, default=4)
+    train_lr_parser.add_argument("--n-kv-head", type=int, default=None)
+    train_lr_parser.add_argument("--n-layer", type=int, default=2)
+    train_lr_parser.add_argument("--dropout", type=float, default=0.0)
+    train_lr_parser.add_argument("--norm-type", choices=("layernorm", "rmsnorm"), default="layernorm")
+    train_lr_parser.add_argument("--position-encoding", choices=("learned", "rope"), default="learned")
+    train_lr_parser.add_argument("--activation", choices=("gelu", "relu2", "leaky_relu2", "swiglu"), default="gelu")
+    train_lr_parser.add_argument("--tie-embeddings", action="store_true")
+    train_lr_parser.add_argument("--qk-norm", action="store_true")
+    train_lr_parser.add_argument("--parallel-residual", action="store_true")
+    train_lr_parser.add_argument("--scaled-residual-init", action="store_true")
+    train_lr_parser.add_argument("--xsa-last-n", type=int, default=0)
+    train_lr_parser.add_argument(
+        "--no-linear-bias",
+        dest="linear_bias",
+        action="store_false",
+        default=True,
+    )
+    train_lr_parser.add_argument("--attn-backend", choices=SDPA_BACKENDS, default="auto")
+    train_lr_parser.add_argument("--logit-softcap", type=float, default=0.0)
+    train_lr_parser.add_argument("--gradient-checkpointing", action="store_true")
+    train_lr_parser.add_argument("--seed", type=int, default=42)
+    train_lr_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    train_lr_parser.add_argument("--precision", choices=PRECISION_MODES, default="float32")
+    train_lr_parser.add_argument("--matmul-precision", choices=MATMUL_PRECISION_MODES, default="default")
+    train_lr_parser.add_argument("--torch-compile", action="store_true")
+    train_lr_parser.add_argument("--torch-compile-mode", choices=COMPILE_MODES, default="default")
+    train_lr_parser.add_argument(
+        "--dataset-mode",
+        choices=("memory", "sharded", "packed"),
+        default="memory",
+    )
+    train_lr_parser.add_argument(
+        "--split-mode",
+        choices=("window", "document"),
+        default="window",
+    )
+    train_lr_parser.add_argument("--val-fraction", type=float, default=0.1)
+    train_lr_parser.add_argument("--corpus-manifest", default=None)
+    train_lr_parser.add_argument("--shard-token-size", type=int, default=1_000_000)
+    train_lr_parser.add_argument("--shard-cache-size", type=int, default=2)
+    train_lr_parser.add_argument("--optimizer", choices=OPTIMIZER_TYPES, default="adamw")
+    train_lr_parser.add_argument("--weight-decay", type=float, default=0.01)
+    train_lr_parser.add_argument("--muon-learning-rate", type=float, default=0.02)
+    train_lr_parser.add_argument("--grad-clip", type=float, default=0.0)
+    train_lr_parser.add_argument("--ddp", action="store_true")
+    train_lr_parser.add_argument("--log-every", type=int, default=10)
 
     train_sft_parser = train_subparsers.add_parser("sft", help="Fine-tune on chat JSONL.")
     train_sft_parser.add_argument("--input", required=True, help="Path to chat JSONL.")
@@ -2316,6 +2381,64 @@ def run_train_base(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_train_lr_range(args: argparse.Namespace) -> int:
+    config = LRRangeConfig(
+        corpus_path=args.corpus,
+        tokenizer_path=args.tokenizer,
+        out_dir=args.out_dir,
+        context_size=args.context_size,
+        batch_size=args.batch_size,
+        grad_accum_steps=args.grad_accum_steps,
+        steps=args.steps,
+        min_lr=args.min_lr,
+        max_lr=args.max_lr,
+        divergence_factor=args.divergence_factor,
+        smoothing_beta=args.smoothing_beta,
+        n_embd=args.n_embd,
+        n_head=args.n_head,
+        n_kv_head=args.n_kv_head,
+        n_layer=args.n_layer,
+        dropout=args.dropout,
+        norm_type=args.norm_type,
+        position_encoding=args.position_encoding,
+        activation=args.activation,
+        tie_embeddings=args.tie_embeddings,
+        qk_norm=args.qk_norm,
+        attn_backend=args.attn_backend,
+        parallel_residual=args.parallel_residual,
+        xsa_last_n=args.xsa_last_n,
+        linear_bias=args.linear_bias,
+        scaled_residual_init=args.scaled_residual_init,
+        logit_softcap=args.logit_softcap,
+        gradient_checkpointing=args.gradient_checkpointing,
+        seed=args.seed,
+        device=args.device,
+        precision=args.precision,
+        matmul_precision=args.matmul_precision,
+        torch_compile=args.torch_compile,
+        torch_compile_mode=args.torch_compile_mode,
+        dataset_mode=args.dataset_mode,
+        split_mode=args.split_mode,
+        val_fraction=args.val_fraction,
+        corpus_manifest_path=args.corpus_manifest,
+        shard_token_size=args.shard_token_size,
+        shard_cache_size=args.shard_cache_size,
+        optimizer=args.optimizer,
+        weight_decay=args.weight_decay,
+        muon_learning_rate=args.muon_learning_rate,
+        grad_clip=args.grad_clip,
+        ddp=args.ddp,
+        log_every=args.log_every,
+    )
+    report = run_lr_range(config)
+    if report.get("summary"):
+        summary = report["summary"]
+        recommended = summary.get("recommended_lr")
+        recommended_text = "n/a" if recommended is None else f"{float(recommended):.6g}"
+        print(f"lr range recommended_lr: {recommended_text}")
+    return 0
+
+
 def run_train_sft(args: argparse.Namespace) -> int:
     config = SFTConfig(
         input_path=args.input,
@@ -2994,6 +3117,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "train" and args.train_command == "base":
         return run_train_base(args)
+
+    if args.command == "train" and args.train_command == "lr-range":
+        return run_train_lr_range(args)
 
     if args.command == "train" and args.train_command == "sft":
         return run_train_sft(args)
