@@ -20,6 +20,7 @@ from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
 from picochat.external_benchmark import ExternalBenchmarkConvertConfig, convert_external_benchmark
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.lora import DEFAULT_LORA_TARGETS
+from picochat.model import external_flash_attention_available, fa3_attention_available
 from picochat.report import tiny_run_summary_markdown
 from picochat.run_preflight import assess_run_preflight, preflight_markdown
 from picochat.sft import SFTConfig, SFT_PACKING_MODES, SFT_SAMPLING_MODES, train_sft
@@ -218,6 +219,18 @@ def run_tiny(config: TinyRunConfig) -> dict:
                 f"{preflight_markdown_path} or rerun with --allow-unsafe-long-run "
                 "for a diagnostic-only run"
             )
+        try:
+            _verify_optional_attention_backend(config)
+        except ValueError as error:
+            _write_ddp_control(
+                ddp_control_path,
+                {
+                    "stage": "attention_backend",
+                    "blocked": True,
+                    "message": str(error),
+                },
+            )
+            raise
         _record_stage_timing(stage_timings, "corpus_build_preflight", stage_started)
 
         preflight_payload = preflight_report.to_dict()
@@ -751,6 +764,23 @@ def _ddp_setup_timeout_seconds() -> float:
     except ValueError:
         minutes = 120.0
     return max(1.0, minutes * 60.0)
+
+
+def _verify_optional_attention_backend(config: TinyRunConfig) -> None:
+    """Fail fast when an explicit optional attention kernel is unavailable."""
+    if config.device != "cuda":
+        return
+    if config.attn_backend == "fa3" and not fa3_attention_available():
+        raise ValueError(
+            "attn_backend='fa3' requires FlashAttention-3 to be importable before launch; "
+            "install the optional FA3 kernel and run "
+            "`python -m picochat.cli sanity preh100 --device cuda --precision bf16 --attn-backend fa3`"
+        )
+    if config.attn_backend == "external_flash" and not external_flash_attention_available():
+        raise ValueError(
+            "attn_backend='external_flash' requires the optional flash-attn package before launch; "
+            "install flash-attn or use attn_backend='flash' for PyTorch SDPA FlashAttention"
+        )
 
 
 def _record_stage_timing(stage_timings: list[dict[str, object]], stage: str, started: float) -> None:

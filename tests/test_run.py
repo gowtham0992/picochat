@@ -2,7 +2,14 @@ import json
 
 import pytest
 
-from picochat.run import TinyRunConfig, _long_run_gate, _validation_log_every, run_tiny, run_tiny_multiseed
+from picochat.run import (
+    TinyRunConfig,
+    _long_run_gate,
+    _validation_log_every,
+    _verify_optional_attention_backend,
+    run_tiny,
+    run_tiny_multiseed,
+)
 
 
 def test_validation_log_every_keeps_long_runs_observable():
@@ -10,6 +17,35 @@ def test_validation_log_every_keeps_long_runs_observable():
     assert _validation_log_every(24) == 1
     assert _validation_log_every(240) == 10
     assert _validation_log_every(30000) == 1250
+
+
+def test_optional_attention_backend_check_blocks_missing_fa3(monkeypatch):
+    monkeypatch.setattr("picochat.run.fa3_attention_available", lambda: False)
+
+    with pytest.raises(ValueError, match="FlashAttention-3"):
+        _verify_optional_attention_backend(
+            TinyRunConfig(out_dir="runs/test", device="cuda", attn_backend="fa3")
+        )
+
+
+def test_optional_attention_backend_check_blocks_missing_external_flash(monkeypatch):
+    monkeypatch.setattr("picochat.run.external_flash_attention_available", lambda: False)
+
+    with pytest.raises(ValueError, match="flash-attn"):
+        _verify_optional_attention_backend(
+            TinyRunConfig(out_dir="runs/test", device="cuda", attn_backend="external_flash")
+        )
+
+
+def test_optional_attention_backend_check_skips_non_cuda(monkeypatch):
+    monkeypatch.setattr(
+        "picochat.run.fa3_attention_available",
+        lambda: pytest.fail("FA3 should not be imported for non-CUDA planning"),
+    )
+
+    _verify_optional_attention_backend(
+        TinyRunConfig(out_dir="runs/test", device="cpu", attn_backend="fa3")
+    )
 
 
 def test_long_run_gate_blocks_choice_inflated_eval():
