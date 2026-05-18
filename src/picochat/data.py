@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from fnmatch import fnmatch
+import os
 import json
 from pathlib import Path
 import re
+import shutil
 import zlib
 
 from picochat.dataset_pack import DatasetPack, load_dataset_pack
@@ -750,6 +752,17 @@ def build_corpus_artifacts(
     output_path = Path(output_path)
     manifest_path = Path(manifest_path) if manifest_path else output_path.with_name("corpus_manifest.json")
     report_path = Path(report_path) if report_path else output_path.with_name("corpus_report.md")
+    fast_report = _try_build_imported_dataset_pack_artifacts(
+        dataset_pack=dataset_pack,
+        output_path=output_path,
+        manifest_path=manifest_path,
+        report_path=report_path,
+        write_manifest=write_manifest,
+        min_quality_score=min_quality_score,
+    )
+    if fast_report is not None:
+        return fast_report
+
     collected = _collect_corpus_sources(
         input_path,
         recipe_path,
@@ -789,6 +802,405 @@ def build_corpus_artifacts(
     return report
 
 
+def _try_build_imported_dataset_pack_artifacts(
+    *,
+    dataset_pack: str | Path | None,
+    output_path: Path,
+    manifest_path: Path,
+    report_path: Path,
+    write_manifest: bool,
+    min_quality_score: int,
+) -> CorpusBuildReport | None:
+    """Fast path for HF/ClimbMix imports that already wrote a corpus file.
+
+    Large imports already materialize ``corpus.txt`` at import time. The normal
+    builder re-reads every document into one Python list before writing the same
+    corpus again, which is catastrophically wasteful on rented multi-GPU nodes.
+    This path streams document metadata one source file at a time and links or
+    copies the existing corpus into the run directory.
+    """
+    if dataset_pack is None or int(min_quality_score) != 0:
+        return None
+
+    pack = load_dataset_pack(dataset_pack)
+    pack_path = Path(pack.path)
+    pack_dir = pack_path.parent
+    source_corpus = pack_dir / "corpus.txt"
+    import_report = pack_dir / "hf_import_report.json"
+    if not source_corpus.is_file() or not import_report.is_file():
+        return None
+    import_payload = _load_import_report_payload(import_report)
+
+    if pack.corpus_recipe:
+        recipe = Path(pack.corpus_recipe)
+        candidates: list[_SourceCandidate] | None = None
+        input_display = str(recipe)
+        recipe_display = str(recipe)
+    elif pack.corpus_input:
+        input_root = Path(pack.corpus_input)
+        candidates = None
+        input_display = str(input_root)
+        recipe_display = None
+    else:
+        return None
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _link_or_copy_corpus(source_corpus, output_path)
+
+    imported_metadata = _imported_pack_metadata_from_report(import_payload)
+    if imported_metadata is None:
+        imported_metadata = _legacy_imported_pack_chunk_metadata(import_payload, source_corpus)
+    if imported_metadata is not None:
+        records, document_records, stats, stats_warnings = imported_metadata
+    else:
+        if pack.corpus_recipe:
+            candidates = _recipe_source_candidates(Path(pack.corpus_recipe))
+        elif pack.corpus_input:
+            candidates = _path_source_candidates(Path(pack.corpus_input))
+        else:
+            return None
+        (
+            records,
+            document_records,
+            stats,
+            stats_warnings,
+        ) = _stream_imported_pack_document_metadata(candidates)
+    readiness = assess_corpus_readiness(stats, records)
+    budget = estimate_training_budget(stats)
+    training_command = suggest_training_command(
+        input_display,
+        recipe_display,
+        budget,
+        chat_input=pack.chat_input,
+        eval_input=pack.eval_input,
+        dataset_pack=str(dataset_pack),
+        min_quality_score=min_quality_score,
+    )
+    chat_data = inspect_chat_sft_data(training_command.chat_input)
+    eval_data = inspect_chat_eval_data(training_command.eval_input)
+    warnings = (
+        "fast imported dataset-pack path reused an existing corpus.txt and streamed "
+        "document metadata instead of loading all documents into memory",
+        *stats_warnings,
+        *_corpus_warnings(stats, records),
+    )
+    report = CorpusBuildReport(
+        input_path=input_display,
+        output_path=str(output_path),
+        manifest_path=str(manifest_path),
+        report_path=str(report_path),
+        stats=stats,
+        files=tuple(records),
+        readiness=readiness,
+        budget=budget,
+        training_command=training_command,
+        chat_data=chat_data,
+        eval_data=eval_data,
+        warnings=tuple(warnings),
+        recipe_path=recipe_display,
+        dataset_pack=str(dataset_pack),
+        min_quality_score=min_quality_score,
+        documents=tuple(document_records),
+    )
+    if write_manifest:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+        report_path.write_text(corpus_report_markdown(report), encoding="utf-8")
+    return report
+
+
+def _load_import_report_payload(import_report: Path) -> dict:
+    try:
+        payload = json.loads(import_report.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _imported_pack_metadata_from_report(
+    payload: dict,
+) -> tuple[
+    list[CorpusFileRecord],
+    list[CorpusDocumentRecord],
+    CorpusStats,
+    tuple[str, ...],
+] | None:
+    rows = payload.get("document_files")
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    records: list[CorpusFileRecord] = []
+    document_records: list[CorpusDocumentRecord] = []
+    num_lines = 0
+    shard_chars = 0
+    offset = 0
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        path_value = item.get("path")
+        if not isinstance(path_value, str) or not path_value:
+            continue
+        num_characters = _non_negative_int(item.get("num_characters"))
+        num_document_lines = _non_negative_int(item.get("num_lines"))
+        source_documents = _non_negative_int(item.get("num_documents"))
+        path = Path(path_value)
+        extension = path.suffix.lower() or "(none)"
+        flags = ("imported_document_file", f"{source_documents}_source_document(s)")
+        record = CorpusFileRecord(
+            path=path_value,
+            extension=extension,
+            num_characters=num_characters,
+            num_lines=num_document_lines,
+            included=True,
+            reason="included_import_metadata",
+            quality_score=100,
+            quality_flags=flags,
+            label="corpus",
+        )
+        records.append(record)
+        char_start = offset
+        char_end = char_start + num_characters
+        document_records.append(CorpusDocumentRecord(
+            document_id=len(document_records),
+            path=path_value,
+            label="corpus",
+            char_start=char_start,
+            char_end=char_end,
+            num_characters=num_characters,
+            num_lines=num_document_lines,
+            quality_score=100,
+            quality_flags=flags,
+        ))
+        offset = char_end + 2
+        shard_chars += num_characters
+        num_lines += num_document_lines
+
+    if not records:
+        return None
+
+    rows_written = _non_negative_int(payload.get("rows_written"))
+    source_documents = rows_written or sum(_non_negative_int(item.get("num_documents")) for item in rows if isinstance(item, dict))
+    characters_written = _non_negative_int(payload.get("characters_written")) or (
+        shard_chars + max(0, len(records) - 1) * 2
+    )
+    stats = CorpusStats(
+        num_files=len(records),
+        num_documents=source_documents or len(records),
+        num_characters=characters_written,
+        num_lines=num_lines,
+        average_document_chars=characters_written / max(1, source_documents or len(records)),
+        duplicate_document_rate=0.0,
+        duplicate_line_rate=0.0,
+        non_ascii_rate=0.0,
+        empty_line_rate=0.0,
+        near_duplicate_document_rate=0.0,
+        near_duplicate_document_pairs=0,
+        near_duplicate_documents_checked=0,
+    )
+    warnings = (
+        "fast imported dataset-pack path used import-time document file metadata; "
+        "run a full corpus audit separately when duplicate-line or near-duplicate rates are release-critical",
+        "corpus manifest spans imported document shard files; source document count comes from the HF import report",
+    )
+    return records, document_records, stats, warnings
+
+
+def _legacy_imported_pack_chunk_metadata(
+    payload: dict,
+    source_corpus: Path,
+    *,
+    chunk_chars: int = 50_000_000,
+) -> tuple[
+    list[CorpusFileRecord],
+    list[CorpusDocumentRecord],
+    CorpusStats,
+    tuple[str, ...],
+] | None:
+    rows_written = _non_negative_int(payload.get("rows_written"))
+    characters_written = _non_negative_int(payload.get("characters_written"))
+    if rows_written <= 0 or characters_written <= 0:
+        return None
+
+    chunk_chars = max(1_000_000, int(chunk_chars))
+    records: list[CorpusFileRecord] = []
+    document_records: list[CorpusDocumentRecord] = []
+    offset = 0
+    while offset < characters_written:
+        char_start = offset
+        char_end = min(characters_written, char_start + chunk_chars)
+        num_characters = char_end - char_start
+        chunk_id = len(document_records)
+        path_value = f"{source_corpus}#chunk-{chunk_id:06d}"
+        flags = ("legacy_imported_corpus_chunk", "source_document_boundaries_unavailable")
+        record = CorpusFileRecord(
+            path=path_value,
+            extension=".txt",
+            num_characters=num_characters,
+            num_lines=0,
+            included=True,
+            reason="included_legacy_import_chunk",
+            quality_score=100,
+            quality_flags=flags,
+            label="corpus",
+        )
+        records.append(record)
+        document_records.append(CorpusDocumentRecord(
+            document_id=chunk_id,
+            path=path_value,
+            label="corpus",
+            char_start=char_start,
+            char_end=char_end,
+            num_characters=num_characters,
+            num_lines=0,
+            quality_score=100,
+            quality_flags=flags,
+        ))
+        offset = char_end
+
+    stats = CorpusStats(
+        num_files=len(records),
+        num_documents=rows_written or len(records),
+        num_characters=characters_written,
+        num_lines=0,
+        average_document_chars=characters_written / max(1, rows_written or len(records)),
+        duplicate_document_rate=0.0,
+        duplicate_line_rate=0.0,
+        non_ascii_rate=0.0,
+        empty_line_rate=0.0,
+        near_duplicate_document_rate=0.0,
+        near_duplicate_document_pairs=0,
+        near_duplicate_documents_checked=0,
+    )
+    warnings = (
+        "legacy imported dataset pack has no document-file metadata; using fixed corpus chunks "
+        "to avoid walking a huge documents/ directory during launch",
+        "reimport this dataset with the current Picochat importer before a release-quality run "
+        "to recover shard-level import metadata",
+    )
+    return records, document_records, stats, warnings
+
+
+def _non_negative_int(value: object) -> int:
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    return max(0, parsed)
+
+
+def _link_or_copy_corpus(source: Path, output: Path) -> None:
+    try:
+        if source.resolve() == output.resolve():
+            return
+    except FileNotFoundError:
+        pass
+    if output.exists() or output.is_symlink():
+        output.unlink()
+    try:
+        os.link(source, output)
+    except OSError:
+        shutil.copy2(source, output)
+
+
+def _stream_imported_pack_document_metadata(
+    candidates: list[_SourceCandidate],
+    *,
+    duplicate_line_limit: int = 500_000,
+) -> tuple[
+    list[CorpusFileRecord],
+    list[CorpusDocumentRecord],
+    CorpusStats,
+    tuple[str, ...],
+]:
+    records: list[CorpusFileRecord] = []
+    document_records: list[CorpusDocumentRecord] = []
+    warnings: list[str] = []
+    seen_doc_hashes: set[int] = set()
+    seen_lines: set[str] = set()
+    duplicate_documents = 0
+    duplicate_lines = 0
+    non_empty_lines = 0
+    empty_lines = 0
+    num_lines = 0
+    document_chars = 0
+    non_ascii_chars = 0
+    line_tracking_capped = False
+    offset = 0
+
+    for candidate in candidates:
+        text, record = _read_source_candidate(candidate, min_quality_score=0)
+        records.append(record)
+        if text is None:
+            continue
+
+        doc_hash = zlib.crc32(_normalize_document_for_duplicate_check(text).encode("utf-8"))
+        if doc_hash in seen_doc_hashes:
+            duplicate_documents += 1
+        else:
+            seen_doc_hashes.add(doc_hash)
+
+        lines = text.splitlines()
+        num_lines += len(lines)
+        document_chars += len(text)
+        non_ascii_chars += sum(1 for char in text if ord(char) > 127)
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                empty_lines += 1
+                continue
+            non_empty_lines += 1
+            if not line_tracking_capped:
+                if stripped in seen_lines:
+                    duplicate_lines += 1
+                elif len(seen_lines) < duplicate_line_limit:
+                    seen_lines.add(stripped)
+                else:
+                    line_tracking_capped = True
+
+        char_start = offset
+        char_end = char_start + len(text)
+        document_records.append(CorpusDocumentRecord(
+            document_id=len(document_records),
+            path=record.path,
+            label=record.label,
+            char_start=char_start,
+            char_end=char_end,
+            num_characters=len(text),
+            num_lines=len(lines),
+            quality_score=record.quality_score,
+            quality_flags=record.quality_flags,
+        ))
+        offset = char_end + 2
+
+    num_documents = len(document_records)
+    joined_character_count = document_chars + max(0, num_documents - 1)
+    if line_tracking_capped:
+        warnings.append(
+            "duplicate line tracking was capped for the fast imported-pack path; "
+            "run `picochat.cli data preview` for a full offline corpus audit"
+        )
+    warnings.append(
+        "near-duplicate document estimation is skipped during fast imported-pack run launch; "
+        "the import-time dataset pack remains the provenance source"
+    )
+    stats = CorpusStats(
+        num_files=len(candidates),
+        num_documents=num_documents,
+        num_characters=joined_character_count,
+        num_lines=num_lines,
+        average_document_chars=joined_character_count / max(1, num_documents),
+        duplicate_document_rate=duplicate_documents / max(1, num_documents),
+        duplicate_line_rate=duplicate_lines / max(1, non_empty_lines),
+        non_ascii_rate=non_ascii_chars / max(1, joined_character_count),
+        empty_line_rate=empty_lines / max(1, num_lines),
+        near_duplicate_document_rate=0.0,
+        near_duplicate_document_pairs=0,
+        near_duplicate_documents_checked=0,
+    )
+    return records, document_records, stats, tuple(warnings)
+
+
 def preview_corpus_sources(
     input_path: str | Path | None = None,
     recipe_path: str | Path | None = None,
@@ -799,6 +1211,14 @@ def preview_corpus_sources(
     min_quality_score: int = 0,
 ) -> CorpusPreviewReport:
     """Inspect corpus sources without writing artifacts."""
+    fast_report = _try_preview_imported_dataset_pack_sources(
+        dataset_pack=dataset_pack,
+        preview_chars=max(0, preview_chars),
+        min_quality_score=min_quality_score,
+    )
+    if fast_report is not None:
+        return fast_report
+
     collected = _collect_corpus_sources(
         input_path,
         recipe_path,
@@ -822,6 +1242,97 @@ def preview_corpus_sources(
         preview=_preview_documents(collected.documents, max(0, preview_chars)),
         min_quality_score=collected.min_quality_score,
     )
+
+
+def _try_preview_imported_dataset_pack_sources(
+    *,
+    dataset_pack: str | Path | None,
+    preview_chars: int,
+    min_quality_score: int,
+) -> CorpusPreviewReport | None:
+    if dataset_pack is None or int(min_quality_score) != 0:
+        return None
+
+    pack = load_dataset_pack(dataset_pack)
+    pack_path = Path(pack.path)
+    pack_dir = pack_path.parent
+    source_corpus = pack_dir / "corpus.txt"
+    import_report = pack_dir / "hf_import_report.json"
+    if not source_corpus.is_file() or not import_report.is_file():
+        return None
+    import_payload = _load_import_report_payload(import_report)
+
+    if pack.corpus_recipe:
+        recipe = Path(pack.corpus_recipe)
+        candidates: list[_SourceCandidate] | None = None
+        input_display = str(recipe)
+        recipe_display = str(recipe)
+    elif pack.corpus_input:
+        input_root = Path(pack.corpus_input)
+        candidates = None
+        input_display = str(input_root)
+        recipe_display = None
+    else:
+        return None
+
+    imported_metadata = _imported_pack_metadata_from_report(import_payload)
+    if imported_metadata is None:
+        imported_metadata = _legacy_imported_pack_chunk_metadata(import_payload, source_corpus)
+    if imported_metadata is not None:
+        records, _document_records, stats, stats_warnings = imported_metadata
+    else:
+        if pack.corpus_recipe:
+            candidates = _recipe_source_candidates(Path(pack.corpus_recipe))
+        elif pack.corpus_input:
+            candidates = _path_source_candidates(Path(pack.corpus_input))
+        else:
+            return None
+        (
+            records,
+            _document_records,
+            stats,
+            stats_warnings,
+        ) = _stream_imported_pack_document_metadata(candidates)
+    readiness = assess_corpus_readiness(stats, records)
+    budget = estimate_training_budget(stats)
+    training_command = suggest_training_command(
+        input_display,
+        recipe_display,
+        budget,
+        chat_input=pack.chat_input,
+        eval_input=pack.eval_input,
+        dataset_pack=str(dataset_pack),
+        min_quality_score=min_quality_score,
+    )
+    chat_data = inspect_chat_sft_data(training_command.chat_input)
+    eval_data = inspect_chat_eval_data(training_command.eval_input)
+    warnings = (
+        "fast imported dataset-pack preview streamed document metadata from the imported pack",
+        *stats_warnings,
+        *_corpus_warnings(stats, records),
+    )
+    return CorpusPreviewReport(
+        input_path=input_display,
+        recipe_path=recipe_display,
+        dataset_pack=str(dataset_pack),
+        stats=stats,
+        files=tuple(records),
+        readiness=readiness,
+        budget=budget,
+        training_command=training_command,
+        chat_data=chat_data,
+        eval_data=eval_data,
+        warnings=tuple(warnings),
+        preview=_preview_file(source_corpus, preview_chars),
+        min_quality_score=min_quality_score,
+    )
+
+
+def _preview_file(path: Path, preview_chars: int) -> str:
+    if preview_chars <= 0:
+        return ""
+    with path.open("r", encoding="utf-8") as handle:
+        return handle.read(preview_chars)
 
 
 def corpus_report_markdown(report: CorpusBuildReport) -> str:

@@ -325,6 +325,227 @@ def test_preview_corpus_sources_uses_dataset_pack(tmp_path):
     assert report.eval_data.status == "ready"
 
 
+def test_build_corpus_artifacts_reuses_imported_pack_corpus_without_collecting(tmp_path, monkeypatch):
+    pack_dir = tmp_path / "imported"
+    docs_dir = pack_dir / "documents"
+    out_dir = tmp_path / "run"
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "shard-000000.txt").write_text("alpha document\n\nbeta document\n", encoding="utf-8")
+    (docs_dir / "shard-000001.txt").write_text("gamma document\n", encoding="utf-8")
+    corpus_text = "alpha document\n\nbeta document\n\n\ngamma document\n"
+    (pack_dir / "corpus.txt").write_text(corpus_text, encoding="utf-8")
+    (pack_dir / "hf_import_report.json").write_text("{}", encoding="utf-8")
+    recipe_path = pack_dir / "corpus_recipe.json"
+    recipe_path.write_text(json.dumps({
+        "sources": [{"path": "documents", "label": "climbmix"}],
+    }), encoding="utf-8")
+    chat_path = pack_dir / "chat.jsonl"
+    eval_path = pack_dir / "eval.jsonl"
+    chat_path.write_text(
+        "\n".join(json.dumps({"user": f"q{index}", "assistant": f"a{index}"}) for index in range(8)),
+        encoding="utf-8",
+    )
+    eval_path.write_text(
+        "\n".join([
+            json.dumps({"user": "q1", "must_include": ["a1"]}),
+            json.dumps({"user": "q2", "must_include": ["a2"]}),
+            json.dumps({"user": "q3", "must_not_include": ["bad"]}),
+            json.dumps({"user": "q4", "answerable": False, "must_include_any": [["unknown"]]}),
+        ]),
+        encoding="utf-8",
+    )
+    pack_path = pack_dir / "dataset_pack.json"
+    pack_path.write_text(json.dumps({
+        "corpus": {"recipe": "corpus_recipe.json"},
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    def fail_collect(*_args, **_kwargs):
+        raise AssertionError("imported dataset packs should not collect all documents into memory")
+
+    monkeypatch.setattr("picochat.data._collect_corpus_sources", fail_collect)
+
+    report = build_corpus_artifacts(
+        None,
+        out_dir / "corpus.txt",
+        dataset_pack=pack_path,
+    )
+
+    assert (out_dir / "corpus.txt").read_text(encoding="utf-8") == corpus_text
+    assert report.dataset_pack == str(pack_path)
+    assert report.stats.num_documents == 2
+    assert report.documents[0].path == str(docs_dir / "shard-000000.txt")
+    assert report.documents[0].char_start == 0
+    assert report.documents[0].char_end == len("alpha document\n\nbeta document")
+    assert report.documents[1].char_start == report.documents[0].char_end + 2
+    assert "fast imported dataset-pack path" in report.warnings[0]
+    manifest = json.loads((out_dir / "corpus_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["documents"][1]["path"] == str(docs_dir / "shard-000001.txt")
+
+
+def test_build_corpus_artifacts_uses_import_metadata_without_listing_documents(tmp_path, monkeypatch):
+    pack_dir = tmp_path / "imported"
+    out_dir = tmp_path / "run"
+    pack_dir.mkdir()
+    corpus_text = "alpha document\n\nbeta document\n"
+    (pack_dir / "corpus.txt").write_text(corpus_text, encoding="utf-8")
+    document_path = pack_dir / "documents" / "shard-000000.txt"
+    (pack_dir / "hf_import_report.json").write_text(json.dumps({
+        "rows_written": 2,
+        "characters_written": len(corpus_text.rstrip("\n")),
+        "document_files": [{
+            "path": str(document_path),
+            "num_documents": 2,
+            "num_characters": len(corpus_text.rstrip("\n")),
+            "num_lines": 3,
+        }],
+    }), encoding="utf-8")
+    recipe_path = pack_dir / "corpus_recipe.json"
+    recipe_path.write_text(json.dumps({
+        "sources": [{"path": "documents", "label": "climbmix"}],
+    }), encoding="utf-8")
+    chat_path = pack_dir / "chat.jsonl"
+    eval_path = pack_dir / "eval.jsonl"
+    chat_path.write_text(
+        "\n".join(json.dumps({"user": f"q{index}", "assistant": f"a{index}"}) for index in range(8)),
+        encoding="utf-8",
+    )
+    eval_path.write_text(
+        "\n".join([
+            json.dumps({"user": "q1", "must_include": ["a1"]}),
+            json.dumps({"user": "q2", "must_include": ["a2"]}),
+            json.dumps({"user": "q3", "must_not_include": ["bad"]}),
+            json.dumps({"user": "q4", "answerable": False, "must_include_any": [["unknown"]]}),
+        ]),
+        encoding="utf-8",
+    )
+    pack_path = pack_dir / "dataset_pack.json"
+    pack_path.write_text(json.dumps({
+        "corpus": {"recipe": "corpus_recipe.json"},
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    def fail_candidates(*_args, **_kwargs):
+        raise AssertionError("import metadata should avoid listing document files")
+
+    monkeypatch.setattr("picochat.data._recipe_source_candidates", fail_candidates)
+
+    report = build_corpus_artifacts(
+        None,
+        out_dir / "corpus.txt",
+        dataset_pack=pack_path,
+    )
+
+    assert (out_dir / "corpus.txt").read_text(encoding="utf-8") == corpus_text
+    assert report.stats.num_documents == 2
+    assert len(report.documents) == 1
+    assert report.documents[0].path == str(document_path)
+    assert "import-time document file metadata" in report.warnings[1]
+
+
+def test_build_corpus_artifacts_uses_legacy_import_chunks_without_listing_documents(tmp_path, monkeypatch):
+    pack_dir = tmp_path / "imported"
+    out_dir = tmp_path / "run"
+    pack_dir.mkdir()
+    corpus_text = "alpha document\n\nbeta document\n"
+    (pack_dir / "corpus.txt").write_text(corpus_text, encoding="utf-8")
+    (pack_dir / "hf_import_report.json").write_text(json.dumps({
+        "rows_written": 2,
+        "characters_written": len(corpus_text.rstrip("\n")),
+    }), encoding="utf-8")
+    recipe_path = pack_dir / "corpus_recipe.json"
+    recipe_path.write_text(json.dumps({
+        "sources": [{"path": "documents", "label": "climbmix"}],
+    }), encoding="utf-8")
+    chat_path = pack_dir / "chat.jsonl"
+    eval_path = pack_dir / "eval.jsonl"
+    chat_path.write_text(
+        "\n".join(json.dumps({"user": f"q{index}", "assistant": f"a{index}"}) for index in range(8)),
+        encoding="utf-8",
+    )
+    eval_path.write_text(
+        "\n".join([
+            json.dumps({"user": "q1", "must_include": ["a1"]}),
+            json.dumps({"user": "q2", "must_include": ["a2"]}),
+            json.dumps({"user": "q3", "must_not_include": ["bad"]}),
+            json.dumps({"user": "q4", "answerable": False, "must_include_any": [["unknown"]]}),
+        ]),
+        encoding="utf-8",
+    )
+    pack_path = pack_dir / "dataset_pack.json"
+    pack_path.write_text(json.dumps({
+        "corpus": {"recipe": "corpus_recipe.json"},
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    def fail_candidates(*_args, **_kwargs):
+        raise AssertionError("legacy imported pack should chunk corpus instead of listing document files")
+
+    monkeypatch.setattr("picochat.data._recipe_source_candidates", fail_candidates)
+
+    report = build_corpus_artifacts(
+        None,
+        out_dir / "corpus.txt",
+        dataset_pack=pack_path,
+    )
+
+    assert (out_dir / "corpus.txt").read_text(encoding="utf-8") == corpus_text
+    assert report.stats.num_documents == 2
+    assert len(report.documents) == 1
+    assert report.documents[0].char_start == 0
+    assert report.documents[0].char_end == len(corpus_text.rstrip("\n"))
+    assert "legacy imported dataset pack" in report.warnings[1]
+
+
+def test_preview_corpus_sources_reuses_imported_pack_corpus_without_collecting(tmp_path, monkeypatch):
+    pack_dir = tmp_path / "imported"
+    docs_dir = pack_dir / "documents"
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "shard-000000.txt").write_text("alpha document\n\nbeta document\n", encoding="utf-8")
+    (pack_dir / "corpus.txt").write_text("alpha document\n\nbeta document\n", encoding="utf-8")
+    (pack_dir / "hf_import_report.json").write_text("{}", encoding="utf-8")
+    recipe_path = pack_dir / "corpus_recipe.json"
+    recipe_path.write_text(json.dumps({
+        "sources": [{"path": "documents", "label": "climbmix"}],
+    }), encoding="utf-8")
+    chat_path = pack_dir / "chat.jsonl"
+    eval_path = pack_dir / "eval.jsonl"
+    chat_path.write_text(
+        "\n".join(json.dumps({"user": f"q{index}", "assistant": f"a{index}"}) for index in range(8)),
+        encoding="utf-8",
+    )
+    eval_path.write_text(
+        "\n".join([
+            json.dumps({"user": "q1", "must_include": ["a1"]}),
+            json.dumps({"user": "q2", "must_include": ["a2"]}),
+            json.dumps({"user": "q3", "must_not_include": ["bad"]}),
+            json.dumps({"user": "q4", "answerable": False, "must_include_any": [["unknown"]]}),
+        ]),
+        encoding="utf-8",
+    )
+    pack_path = pack_dir / "dataset_pack.json"
+    pack_path.write_text(json.dumps({
+        "corpus": {"recipe": "corpus_recipe.json"},
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+
+    def fail_collect(*_args, **_kwargs):
+        raise AssertionError("imported dataset pack preview should not collect all documents into memory")
+
+    monkeypatch.setattr("picochat.data._collect_corpus_sources", fail_collect)
+
+    report = preview_corpus_sources(dataset_pack=pack_path, preview_chars=14)
+
+    assert report.preview == "alpha document"
+    assert report.dataset_pack == str(pack_path)
+    assert report.stats.num_documents == 1
+    assert "fast imported dataset-pack preview" in report.warnings[0]
+
+
 def test_build_corpus_artifacts_can_filter_by_quality_score(tmp_path):
     input_dir = tmp_path / "input"
     output_path = tmp_path / "out" / "corpus.txt"

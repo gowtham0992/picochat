@@ -57,6 +57,17 @@ class HFImportRow:
 
 
 @dataclass(frozen=True)
+class HFImportDocumentFile:
+    path: str
+    num_documents: int
+    num_characters: int
+    num_lines: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class HFImportReport:
     dataset: str
     config_name: str | None
@@ -76,15 +87,20 @@ class HFImportReport:
     characters_written: int
     rows: tuple[HFImportRow, ...]
     data_files: tuple[str, ...] = ()
+    rows_reported: int = 0
+    rows_omitted: int = 0
+    document_files: tuple[HFImportDocumentFile, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
             **asdict(self),
             "rows": [row.to_dict() for row in self.rows],
+            "document_files": [document.to_dict() for document in self.document_files],
         }
 
 
 DatasetLoader = Callable[..., Iterable[Any]]
+HF_IMPORT_REPORT_ROW_LIMIT = 10_000
 
 
 def import_hf_dataset(config: HFImportConfig, loader: DatasetLoader | None = None) -> HFImportReport:
@@ -96,47 +112,71 @@ def import_hf_dataset(config: HFImportConfig, loader: DatasetLoader | None = Non
     dataset = _load_dataset(config, loader)
 
     rows: list[HFImportRow] = []
-    documents: list[str] = []
-    document_writes: list[tuple[Path, str]] = []
+    rows_seen = 0
+    rows_written = 0
+    rows_skipped = 0
+    characters_written = 0
+    document_counts: dict[Path, int] = {}
+    document_file_stats: dict[Path, dict[str, int]] = {}
     document_shard_rows = max(1, config.document_shard_rows)
-    for index, record in enumerate(dataset):
-        if index >= config.max_rows:
-            break
-        text, reason = _extract_text(record, config.text_column)
-        if text is None:
-            rows.append(HFImportRow(index=index, included=False, reason=reason, num_characters=0, preview=""))
-            continue
-        text = text.strip()
-        if len(text) < config.min_chars:
-            rows.append(HFImportRow(
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    _clear_document_files(documents_dir)
+
+    with out_path.open("w", encoding="utf-8") as corpus_handle:
+        for index, record in enumerate(dataset):
+            if index >= config.max_rows:
+                break
+            rows_seen += 1
+            text, reason = _extract_text(record, config.text_column)
+            if text is None:
+                rows_skipped += 1
+                _append_report_row(rows, HFImportRow(
+                    index=index,
+                    included=False,
+                    reason=reason,
+                    num_characters=0,
+                    preview="",
+                ))
+                continue
+            text = text.strip()
+            if len(text) < config.min_chars:
+                rows_skipped += 1
+                _append_report_row(rows, HFImportRow(
+                    index=index,
+                    included=False,
+                    reason="below_min_chars",
+                    num_characters=len(text),
+                    preview=_preview(text),
+                ))
+                continue
+
+            included_index = rows_written
+            if document_shard_rows == 1:
+                document_path = documents_dir / f"row-{index:06d}.txt"
+            else:
+                shard_index = included_index // document_shard_rows
+                document_path = documents_dir / f"shard-{shard_index:06d}.txt"
+
+            if rows_written:
+                corpus_handle.write("\n\n")
+                characters_written += 2
+            corpus_handle.write(text)
+            characters_written += len(text)
+            _append_document_file(document_path, text, document_counts, document_file_stats)
+            rows_written += 1
+            _append_report_row(rows, HFImportRow(
                 index=index,
-                included=False,
-                reason="below_min_chars",
+                included=True,
+                reason="included",
                 num_characters=len(text),
                 preview=_preview(text),
+                document_path=str(document_path),
             ))
-            continue
-        included_index = len(documents)
-        if document_shard_rows == 1:
-            document_path = documents_dir / f"row-{index:06d}.txt"
-        else:
-            shard_index = included_index // document_shard_rows
-            document_path = documents_dir / f"shard-{shard_index:06d}.txt"
-        documents.append(text)
-        document_writes.append((document_path, text))
-        rows.append(HFImportRow(
-            index=index,
-            included=True,
-            reason="included",
-            num_characters=len(text),
-            preview=_preview(text),
-            document_path=str(document_path),
-        ))
+        if rows_written:
+            corpus_handle.write("\n")
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    corpus_text = "\n\n".join(documents)
-    out_path.write_text(corpus_text + ("\n" if corpus_text else ""), encoding="utf-8")
-    document_files_written = _write_document_files(documents_dir, document_writes)
+    _finish_document_files(document_counts)
+    document_files_written = len(document_counts)
 
     report = HFImportReport(
         dataset=config.dataset,
@@ -152,11 +192,22 @@ def import_hf_dataset(config: HFImportConfig, loader: DatasetLoader | None = Non
         document_shard_rows=document_shard_rows,
         document_files_written=document_files_written,
         data_files=tuple(config.data_files),
-        rows_seen=len(rows),
-        rows_written=len(documents),
-        rows_skipped=len(rows) - len(documents),
-        characters_written=len(corpus_text),
+        rows_seen=rows_seen,
+        rows_written=rows_written,
+        rows_skipped=rows_skipped,
+        characters_written=characters_written,
         rows=tuple(rows),
+        rows_reported=len(rows),
+        rows_omitted=max(0, rows_seen - len(rows)),
+        document_files=tuple(
+            HFImportDocumentFile(
+                path=str(path),
+                num_documents=stats["num_documents"],
+                num_characters=stats["num_characters"],
+                num_lines=stats["num_lines"],
+            )
+            for path, stats in document_file_stats.items()
+        ),
     )
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
@@ -178,11 +229,14 @@ def hf_import_markdown(report: HFImportReport) -> str:
         f"- Rows inspected: {report.rows_seen}",
         f"- Rows written: {report.rows_written}",
         f"- Rows skipped: {report.rows_skipped}",
+        f"- Rows reported: {report.rows_reported}",
+        f"- Rows omitted from report: {report.rows_omitted}",
         f"- Characters written: {report.characters_written:,}",
         f"- Output corpus: `{report.out_path}`",
         f"- Output documents: `{report.documents_dir}`" if report.documents_dir else "- Output documents: none",
         f"- Document shard rows: {report.document_shard_rows}",
         f"- Document files written: {report.document_files_written}",
+        f"- Document file metadata rows: {len(report.document_files)}",
         "",
         "## Rows",
         "",
@@ -197,7 +251,9 @@ def hf_import_markdown(report: HFImportReport) -> str:
             f"`{row.reason}` | `{document_path}` | {preview} |"
         )
     if len(report.rows) > 20:
-        lines.append(f"| ... | ... | ... | ... | ... | {len(report.rows) - 20} more row(s) omitted |")
+        lines.append(f"| ... | ... | ... | ... | ... | {len(report.rows) - 20} more reported row(s) omitted |")
+    if report.rows_omitted:
+        lines.append(f"| ... | ... | ... | ... | ... | {report.rows_omitted} additional row(s) omitted from the JSON report |")
     lines.append("")
     lines.append("## Next")
     lines.append("")
@@ -285,19 +341,48 @@ def _validate_config(config: HFImportConfig) -> None:
         raise ValueError("document_shard_rows must be at least 1")
 
 
-def _write_document_files(documents_dir: Path, documents: list[tuple[Path, str]]) -> int:
+def _append_report_row(rows: list[HFImportRow], row: HFImportRow) -> None:
+    if len(rows) < HF_IMPORT_REPORT_ROW_LIMIT:
+        rows.append(row)
+
+
+def _clear_document_files(documents_dir: Path) -> None:
     documents_dir.mkdir(parents=True, exist_ok=True)
     for pattern in ("row-*.txt", "shard-*.txt"):
         for stale_path in documents_dir.glob(pattern):
             if stale_path.is_file():
                 stale_path.unlink()
 
-    grouped: dict[Path, list[str]] = {}
-    for document_path, text in documents:
-        grouped.setdefault(document_path, []).append(text)
-    for document_path, parts in grouped.items():
-        document_path.write_text("\n\n".join(parts) + "\n", encoding="utf-8")
-    return len(grouped)
+
+def _append_document_file(
+    document_path: Path,
+    text: str,
+    document_counts: dict[Path, int],
+    document_file_stats: dict[Path, dict[str, int]],
+) -> None:
+    document_path.parent.mkdir(parents=True, exist_ok=True)
+    count = document_counts.get(document_path, 0)
+    with document_path.open("a" if count else "w", encoding="utf-8") as handle:
+        if count:
+            handle.write("\n\n")
+        handle.write(text)
+    document_counts[document_path] = count + 1
+    stats = document_file_stats.setdefault(
+        document_path,
+        {"num_documents": 0, "num_characters": 0, "num_lines": 0},
+    )
+    if count:
+        stats["num_characters"] += 2
+        stats["num_lines"] += 1
+    stats["num_documents"] += 1
+    stats["num_characters"] += len(text)
+    stats["num_lines"] += len(text.splitlines())
+
+
+def _finish_document_files(document_counts: dict[Path, int]) -> None:
+    for document_path in document_counts:
+        with document_path.open("a", encoding="utf-8") as handle:
+            handle.write("\n")
 
 
 def _preview(text: str, limit: int = 90) -> str:

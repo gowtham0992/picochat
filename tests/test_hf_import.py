@@ -160,6 +160,40 @@ def test_import_hf_dataset_clears_stale_row_files(tmp_path):
     assert (documents_dir / "row-000000.txt").exists()
 
 
+def test_import_hf_dataset_streams_large_reports_without_storing_every_row(tmp_path):
+    def fake_loader(*_args, **_kwargs):
+        for index in range(10_005):
+            yield {"text": f"row {index} is long enough"}
+
+    documents_dir = tmp_path / "docs"
+    report = import_hf_dataset(
+        HFImportConfig(
+            dataset="demo/dataset",
+            out_path=str(tmp_path / "corpus.txt"),
+            documents_dir=str(documents_dir),
+            document_shard_rows=10_000,
+            max_rows=10_005,
+            min_chars=1,
+        ),
+        loader=fake_loader,
+    )
+
+    assert report.rows_seen == 10_005
+    assert report.rows_written == 10_005
+    assert report.rows_reported == 10_000
+    assert report.rows_omitted == 5
+    assert len(report.rows) == 10_000
+    assert report.document_files_written == 2
+    assert report.document_files[0].num_documents == 10_000
+    assert report.document_files[1].num_documents == 5
+    assert (documents_dir / "shard-000001.txt").read_text(encoding="utf-8") == (
+        "\n\n".join(f"row {index} is long enough" for index in range(10_000, 10_005)) + "\n"
+    )
+    report_json = json.loads((tmp_path / "hf_import_report.json").read_text(encoding="utf-8"))
+    assert report_json["rows_omitted"] == 5
+    assert report_json["document_files"][1]["num_documents"] == 5
+
+
 def test_import_hf_dataset_reports_missing_optional_dependency(tmp_path, monkeypatch):
     import builtins
 
