@@ -81,10 +81,29 @@ def capture_rng_state(device: torch.device) -> dict[str, Any]:
 def restore_rng_state(state: dict[str, Any]) -> None:
     torch_state = state.get("torch")
     if torch_state is not None:
-        torch.set_rng_state(torch_state)
+        torch.set_rng_state(_coerce_rng_state_tensor(torch_state))
     cuda_state = state.get("cuda_all")
     if cuda_state is not None and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(cuda_state)
+        torch.cuda.set_rng_state_all([
+            _coerce_rng_state_tensor(item) for item in cuda_state
+        ])
+
+
+def _coerce_rng_state_tensor(value: Any) -> torch.ByteTensor:
+    """Normalize checkpoint-loaded RNG state for torch RNG restore APIs.
+
+    Training checkpoints may be loaded with ``map_location=device``. When that
+    device is CUDA, CPU RNG tensors are moved to CUDA as well, but
+    ``torch.set_rng_state`` requires a CPU ByteTensor. Older or manually edited
+    checkpoints can also contain list-like byte payloads, so accept those too.
+    """
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().to(dtype=torch.uint8).contiguous()
+    if isinstance(value, (bytes, bytearray)):
+        return torch.tensor(list(value), dtype=torch.uint8)
+    if isinstance(value, (list, tuple)):
+        return torch.tensor(value, dtype=torch.uint8)
+    raise TypeError(f"unsupported RNG state type: {type(value).__name__}")
 
 
 def make_training_fingerprint(payload: dict[str, Any]) -> dict[str, Any]:

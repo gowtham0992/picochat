@@ -1,7 +1,9 @@
 import pytest
+import torch
 
 from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.model import GPTConfig, TinyGPT
+from picochat.resume import restore_rng_state
 
 
 def test_save_and_load_checkpoint(tmp_path):
@@ -59,3 +61,12 @@ def test_save_checkpoint_keeps_previous_checkpoint_on_failed_write(tmp_path, mon
     assert metadata["step"] == 3
     assert not (tmp_path.parent / f".{tmp_path.name}.previous").exists()
     assert not list(tmp_path.parent.glob(f".{tmp_path.name}.tmp-*"))
+
+
+def test_restore_rng_state_accepts_checkpoint_safe_payloads():
+    expected = torch.get_rng_state()
+    torch.manual_seed(999)
+
+    restore_rng_state({"torch": expected.tolist()})
+
+    assert torch.equal(torch.get_rng_state(), expected)
