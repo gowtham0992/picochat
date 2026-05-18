@@ -311,6 +311,46 @@ def test_long_run_gate_blocks_weak_external_eval_for_release_profile():
     assert any(issue["name"] == "external_eval_arc-easy-mini" for issue in gate["issues"])
 
 
+def test_long_run_gate_blocks_release_corpus_eval_contamination():
+    gate = _long_run_gate(
+        preflight_report={"status": "warn", "budget": {"long_run": True}},
+        sft_fit_summary={"pass_rate": 0.85},
+        sft_fit_heldout_summary={"pass_rate": 0.75},
+        eval_summary={
+            "pass_rate": 0.80,
+            "non_choice_examples": 100,
+            "non_choice_pass_rate": 0.70,
+            "refusal_pass_rate": 0.90,
+            "prompt_echo_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+            "category_breakdown": {
+                "bench_choice_language": {"num_passed": 60, "num_examples": 100},
+                "identity": {"num_passed": 70, "num_examples": 100},
+                "refusal": {"num_passed": 80, "num_examples": 100},
+            },
+        },
+        external_eval_reports=[
+            {
+                "name": "arc-easy-mini",
+                "summary": {
+                    "num_examples": 100,
+                    "pass_rate": 0.52,
+                    "choice_accuracy": 0.52,
+                },
+            },
+        ],
+        honesty={
+            "status": "caution",
+            "corpus_prompt_hits": 1,
+            "corpus_support_phrase_hits": 0,
+        },
+        profile="first_release",
+    )
+
+    assert gate["status"] == "blocked"
+    assert any(issue["name"] == "release_data_honesty" for issue in gate["issues"])
+
+
 def test_long_run_gate_rejects_unknown_profile():
     with pytest.raises(ValueError, match="profile must be one of"):
         _long_run_gate(

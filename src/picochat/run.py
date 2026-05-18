@@ -233,7 +233,21 @@ def run_tiny(config: TinyRunConfig) -> dict:
             honesty_report,
             out_dir / "honesty",
         )
-        if honesty_report.status == "blocked" and not config.allow_leaky_eval:
+        release_honesty_issue = _release_honesty_issue(
+            preflight_payload,
+            honesty_report.to_dict(),
+            profile=config.long_run_gate_profile,
+        )
+        if (
+            (
+                honesty_report.status == "blocked"
+                or (
+                    release_honesty_issue is not None
+                    and release_honesty_issue.get("severity") == "block"
+                )
+            )
+            and not config.allow_leaky_eval
+        ):
             _write_ddp_control(
                 ddp_control_path,
                 {
@@ -1045,6 +1059,9 @@ def _long_run_gate(
             "severity": "block",
             "message": "Data honesty found leakage or tuning contamination.",
         })
+    release_honesty_issue = _release_honesty_issue(preflight_report, honesty, profile=profile)
+    if release_honesty_issue is not None:
+        issues.append(release_honesty_issue)
     first_release_profile = profile == "first_release"
     skill_release_profile = profile == "skill_release"
     sft_fit_rate = (
@@ -1272,6 +1289,25 @@ def _long_run_gate(
         "refusal_threshold": refusal_threshold,
         "refusal_rate": refusal_rate,
         "issues": issues,
+    }
+
+
+def _release_honesty_issue(preflight_report: dict, honesty: dict, *, profile: str) -> dict[str, str] | None:
+    budget = preflight_report.get("budget", {})
+    if not bool(budget.get("long_run")) or profile == "research":
+        return None
+    corpus_prompt_hits = int(honesty.get("corpus_prompt_hits") or 0)
+    corpus_support_hits = int(honesty.get("corpus_support_phrase_hits") or 0)
+    if not corpus_prompt_hits and not corpus_support_hits:
+        return None
+    return {
+        "name": "release_data_honesty",
+        "severity": "block",
+        "message": (
+            "Release-profile long runs cannot use eval rows whose prompts or specific "
+            "support phrases appear in the base corpus "
+            f"({corpus_prompt_hits} prompt hit(s), {corpus_support_hits} support hit(s))."
+        ),
     }
 
 
