@@ -274,6 +274,7 @@ def test_cli_run_tiny_h200_1b_scale_defaults_to_skill_release(tmp_path, monkeypa
     assert config.base_grad_accum_steps == 8
     assert config.target_param_data_ratio == 8.5
     assert config.scaled_residual_init is True
+    assert config.gradient_checkpointing is True
     assert config.long_run_gate_profile == "skill_release"
 
 

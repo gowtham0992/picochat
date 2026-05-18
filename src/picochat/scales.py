@@ -519,6 +519,7 @@ RUN_SCALES: dict[str, RunScale] = {
         matmul_precision="high",
         torch_compile=True,
         torch_compile_mode="default",
+        gradient_checkpointing=True,
         auto_lr_scaling=False,
         loss_spike_rollback=False,
         target_param_data_ratio=8.5,
