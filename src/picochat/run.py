@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
+import threading
 import time
 
 from picochat.data import (
@@ -182,15 +184,22 @@ def run_tiny(config: TinyRunConfig) -> dict:
         print(f"[1/7] build corpus -> {corpus_path}")
     stage_started = time.perf_counter()
     if main_process:
-        corpus_build = build_corpus_artifacts(
-            None if config.dataset_pack else config.corpus_input,
-            corpus_path,
-            recipe_path=None if config.dataset_pack else config.corpus_recipe,
-            chat_input=None if config.dataset_pack else config.chat_input,
-            eval_input=None if config.dataset_pack else config.eval_input,
-            dataset_pack=config.dataset_pack,
-            min_quality_score=config.min_quality_score,
-        )
+        setup_payload = {
+            "stage": "setup_started",
+            "blocked": False,
+            "message": "rank 0 is preparing shared corpus, honesty, and tokenizer artifacts",
+            "corpus": str(corpus_path),
+        }
+        with _ddp_control_heartbeat(ddp_control_path, setup_payload, enabled=config.ddp):
+            corpus_build = build_corpus_artifacts(
+                None if config.dataset_pack else config.corpus_input,
+                corpus_path,
+                recipe_path=None if config.dataset_pack else config.corpus_recipe,
+                chat_input=None if config.dataset_pack else config.chat_input,
+                eval_input=None if config.dataset_pack else config.eval_input,
+                dataset_pack=config.dataset_pack,
+                min_quality_score=config.min_quality_score,
+            )
         _write_ddp_control(
             ddp_control_path,
             {
@@ -246,22 +255,20 @@ def run_tiny(config: TinyRunConfig) -> dict:
         preflight_payload = preflight_report.to_dict()
 
         print("[2/7] check data honesty")
-        _write_ddp_control(
-            ddp_control_path,
-            {
-                "stage": "honesty_started",
-                "blocked": False,
-                "message": "rank 0 is scanning SFT/eval/corpus contamination before tokenizer training",
-                "preflight_json": str(preflight_json_path),
-                "corpus": str(corpus_path),
-            },
-        )
+        honesty_payload = {
+            "stage": "honesty_started",
+            "blocked": False,
+            "message": "rank 0 is scanning SFT/eval/corpus contamination before tokenizer training",
+            "preflight_json": str(preflight_json_path),
+            "corpus": str(corpus_path),
+        }
         stage_started = time.perf_counter()
-        honesty_report = inspect_data_honesty(
-            corpus_path=corpus_path,
-            chat_input=chat_input,
-            eval_input=eval_input,
-        )
+        with _ddp_control_heartbeat(ddp_control_path, honesty_payload, enabled=config.ddp):
+            honesty_report = inspect_data_honesty(
+                corpus_path=corpus_path,
+                chat_input=chat_input,
+                eval_input=eval_input,
+            )
         honesty_json_path, honesty_markdown_path = write_data_honesty_report(
             honesty_report,
             out_dir / "honesty",
@@ -299,30 +306,28 @@ def run_tiny(config: TinyRunConfig) -> dict:
         _record_stage_timing(stage_timings, "data_honesty", stage_started)
 
         print(f"[3/7] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
-        _write_ddp_control(
-            ddp_control_path,
-            {
-                "stage": "tokenizer_started",
-                "blocked": False,
-                "message": "rank 0 passed data honesty and is training the tokenizer",
-                "honesty_json": str(honesty_json_path),
-                "corpus": str(corpus_path),
-            },
-        )
+        tokenizer_payload = {
+            "stage": "tokenizer_started",
+            "blocked": False,
+            "message": "rank 0 passed data honesty and is training the tokenizer",
+            "honesty_json": str(honesty_json_path),
+            "corpus": str(corpus_path),
+        }
         stage_started = time.perf_counter()
-        texts = (
-            _iter_text_chunks(corpus_path, progress=True)
-            if config.tokenizer_type == "hf_bpe"
-            else [corpus_path.read_text(encoding="utf-8")]
-        )
-        tokenizer = train_tokenizer(
-            config.tokenizer_type,
-            texts,
-            vocab_size=config.tokenizer_vocab_size,
-            min_freq=config.tokenizer_min_freq,
-            bpe_pretokenizer=config.bpe_pretokenizer,
-        )
-        tokenizer.save(tokenizer_path)
+        with _ddp_control_heartbeat(ddp_control_path, tokenizer_payload, enabled=config.ddp):
+            texts = (
+                _iter_text_chunks(corpus_path, progress=True)
+                if config.tokenizer_type == "hf_bpe"
+                else [corpus_path.read_text(encoding="utf-8")]
+            )
+            tokenizer = train_tokenizer(
+                config.tokenizer_type,
+                texts,
+                vocab_size=config.tokenizer_vocab_size,
+                min_freq=config.tokenizer_min_freq,
+                bpe_pretokenizer=config.bpe_pretokenizer,
+            )
+            tokenizer.save(tokenizer_path)
         _record_stage_timing(stage_timings, "tokenizer", stage_started)
         _write_ddp_control(
             ddp_control_path,
@@ -774,6 +779,53 @@ def _write_ddp_control(path: Path, payload: dict) -> None:
     os.replace(tmp_path, path)
 
 
+@contextmanager
+def _ddp_control_heartbeat(path: Path, payload: dict, *, enabled: bool = True):
+    """Refresh DDP setup status while rank 0 performs long CPU setup work."""
+    if not enabled:
+        yield
+        return
+
+    interval = _ddp_setup_heartbeat_seconds()
+    started = time.time()
+    stop_event = threading.Event()
+    sequence = 0
+
+    def heartbeat_payload() -> dict:
+        now = time.time()
+        return {
+            **payload,
+            "heartbeat": {
+                "pid": os.getpid(),
+                "sequence": sequence,
+                "started_at": round(started, 3),
+                "updated_at": round(now, 3),
+                "elapsed_seconds": round(now - started, 3),
+                "interval_seconds": interval,
+            },
+        }
+
+    _write_ddp_control(path, heartbeat_payload())
+
+    def loop() -> None:
+        nonlocal sequence
+        while not stop_event.wait(interval):
+            sequence += 1
+            _write_ddp_control(path, heartbeat_payload())
+
+    thread = threading.Thread(
+        target=loop,
+        name="picochat-ddp-setup-heartbeat",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        yield
+    finally:
+        stop_event.set()
+        thread.join(timeout=1.0)
+
+
 def _wait_for_ddp_setup(path: Path, *, started_after: float | None = None) -> dict:
     deadline = time.time() + _ddp_setup_timeout_seconds()
     while time.time() < deadline:
@@ -789,6 +841,15 @@ def _wait_for_ddp_setup(path: Path, *, started_after: float | None = None) -> di
         f"timed out waiting for rank 0 setup control at {path}; "
         "inspect the rank 0 log for corpus, honesty, or tokenizer failures"
     )
+
+
+def _ddp_setup_heartbeat_seconds() -> float:
+    raw = os.environ.get("PICOCHAT_DDP_SETUP_HEARTBEAT_SECONDS", "30")
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = 30.0
+    return max(1.0, seconds)
 
 
 def _ddp_setup_timeout_seconds() -> float:

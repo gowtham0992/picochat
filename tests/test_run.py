@@ -4,7 +4,9 @@ import pytest
 
 from picochat.run import (
     TinyRunConfig,
+    _ddp_control_heartbeat,
     _long_run_gate,
+    _read_ddp_control,
     _validation_log_every,
     _verify_optional_attention_backend,
     run_tiny,
@@ -17,6 +19,34 @@ def test_validation_log_every_keeps_long_runs_observable():
     assert _validation_log_every(24) == 1
     assert _validation_log_every(240) == 10
     assert _validation_log_every(30000) == 1250
+
+
+def test_ddp_control_heartbeat_writes_observable_status(tmp_path, monkeypatch):
+    monkeypatch.setenv("PICOCHAT_DDP_SETUP_HEARTBEAT_SECONDS", "1")
+    control_path = tmp_path / "ddp_control.json"
+
+    with _ddp_control_heartbeat(
+        control_path,
+        {
+            "stage": "tokenizer_started",
+            "blocked": False,
+            "message": "rank 0 is training the tokenizer",
+        },
+    ):
+        payload = _read_ddp_control(control_path)
+
+    assert payload["stage"] == "tokenizer_started"
+    assert payload["blocked"] is False
+    assert payload["heartbeat"]["pid"] > 0
+    assert payload["heartbeat"]["sequence"] == 0
+    assert payload["heartbeat"]["interval_seconds"] == 1.0
+
+
+def test_read_ddp_control_ignores_partial_json(tmp_path):
+    control_path = tmp_path / "ddp_control.json"
+    control_path.write_text("{", encoding="utf-8")
+
+    assert _read_ddp_control(control_path) == {}
 
 
 def test_optional_attention_backend_check_blocks_missing_fa3(monkeypatch):
