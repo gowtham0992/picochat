@@ -152,6 +152,13 @@ class ScalePlan:
             parts.append("--ddp")
         return parts
 
+    def smoke_run_tiny_overrides(self, *, base_steps: int = 50, sft_steps: int = 8) -> list[str]:
+        parts = self.run_tiny_overrides()
+        _replace_option(parts, "--base-steps", str(base_steps))
+        _replace_option(parts, "--sft-steps", str(max(1, min(sft_steps, self.sft_steps))))
+        _replace_option(parts, "--eval-max-new-tokens", "48")
+        return parts
+
 
 def parse_count(value: str | int | float) -> int:
     """Parse compact counts such as 100m, 2.1b, or 524288."""
@@ -377,6 +384,26 @@ def render_scale_plan_markdown(plan: ScalePlan) -> str:
             *plan.lr_range_overrides(),
         ]),
         "```",
+        "",
+        "## Exact Smoke Run",
+        "",
+        "After the LR probe, run a short exact-config training pass before the full spend. Loss should stay finite and the report should show sane grad norms and throughput.",
+        "",
+        "```bash",
+        _wrap_command([
+            "PYTHONPATH=src",
+            "python",
+            "-m",
+            "picochat.cli",
+            "run",
+            "tiny",
+            "--out-dir",
+            "<smoke-out-dir>",
+            "--dataset-pack",
+            "<dataset-pack.json>",
+            *plan.smoke_run_tiny_overrides(),
+        ]),
+        "```",
     ])
     if plan.world_size > 1:
         lines.extend([
@@ -513,3 +540,15 @@ def _wrap_command(parts: list[str]) -> str:
     if current:
         lines.append(current)
     return "\n".join(lines)
+
+
+def _replace_option(parts: list[str], flag: str, value: str) -> None:
+    try:
+        index = parts.index(flag)
+    except ValueError:
+        parts.extend([flag, value])
+        return
+    if index + 1 >= len(parts) or parts[index + 1].startswith("--"):
+        parts.insert(index + 1, value)
+    else:
+        parts[index + 1] = value
