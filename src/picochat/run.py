@@ -395,6 +395,10 @@ def run_tiny(config: TinyRunConfig) -> dict:
         torch_compile_mode=config.torch_compile_mode,
         gradient_checkpointing=config.gradient_checkpointing,
         ddp=config.ddp,
+        require_document_boundary_tokens=(
+            bool((preflight_payload.get("budget") or {}).get("long_run"))
+            and config.base_dataset_mode in {"sharded", "packed"}
+        ),
         resume_from=config.base_resume_from,
         loss_spike_rollback=config.loss_spike_rollback,
         loss_spike_threshold=config.loss_spike_threshold,

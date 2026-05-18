@@ -20,6 +20,7 @@ LONG_RUN_PARAMETER_COUNT = 1_000_000
 MIN_LONG_RUN_SFT_ROWS = 300
 MIN_LONG_RUN_EVAL_ROWS = 80
 DEFAULT_TARGET_PARAM_DATA_RATIO = 20.0
+MIN_RELEASE_TARGET_PARAM_DATA_RATIO = 20.0
 BASE_LR_REFERENCE_EFFECTIVE_BATCH = 8
 FIRST_RELEASE_SFT_CATEGORY_PREFIXES = ("identity", "refusal", "bench_choice")
 SKILL_RELEASE_REQUIRED_CATEGORY_PREFIXES = (
@@ -516,6 +517,23 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
                 f"Target is {budget.target_training_tokens:,} tokens "
                 f"({budget.target_param_data_ratio:.1f} tokens/parameter); "
                 f"recommended base steps: {budget.recommended_base_steps:,}."
+            ),
+        ),
+        _check(
+            "release_token_budget",
+            (
+                "block"
+                if budget.long_run
+                and _is_release_profile(config)
+                and budget.target_param_data_ratio < MIN_RELEASE_TARGET_PARAM_DATA_RATIO
+                else "pass"
+            ),
+            f"{budget.target_param_data_ratio:.2f} tokens/parameter",
+            f">= {MIN_RELEASE_TARGET_PARAM_DATA_RATIO:.0f} tokens/parameter for release profiles",
+            (
+                "Release-profile 1B-class runs use the Chinchilla-style token budget by default. "
+                "If compute is limited, use a research profile or a smaller model rather than "
+                "quietly undertraining a release candidate."
             ),
         ),
         _check(
@@ -1067,6 +1085,10 @@ def _is_first_release_sft_focus(config: Any, categories: tuple[str, ...]) -> boo
 
 def _is_skill_release_profile(config: Any) -> bool:
     return str(_value(config, "long_run_gate_profile", "research")) == "skill_release"
+
+
+def _is_release_profile(config: Any) -> bool:
+    return str(_value(config, "long_run_gate_profile", "research")) in {"first_release", "skill_release"}
 
 
 def _missing_skill_release_groups(categories: tuple[str, ...]) -> tuple[str, ...]:

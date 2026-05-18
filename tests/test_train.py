@@ -58,6 +58,7 @@ def test_train_base_writes_artifacts(tmp_path):
     assert (out_dir / "train_report.json").exists()
     assert (out_dir / "report.md").exists()
     assert (out_dir / "sample.txt").exists()
+    assert (out_dir / "loss_spike_watch.jsonl").exists()
     assert report["model"]["num_parameters"] > 0
     assert "val_loss" in report["losses"][-1]
     assert "val_bpb" in report["losses"][-1]
@@ -67,6 +68,8 @@ def test_train_base_writes_artifacts(tmp_path):
     assert "tokens_per_sec" in report["losses"][-1]
     assert report["throughput"]["avg_tokens_per_sec"] is not None
     assert "loss_spike_warnings" in report
+    assert report["loss_spike_watch"] == str(out_dir / "loss_spike_watch.jsonl")
+    assert len((out_dir / "loss_spike_watch.jsonl").read_text(encoding="utf-8").splitlines()) == 2
     assert report["config"]["weight_decay"] == 0.02
     assert report["config"]["weight_decay_decay"] == "cosine_to_zero"
     assert report["config"]["loss_spike_snapshot_every"] == 2
@@ -272,6 +275,34 @@ def test_train_base_can_use_sharded_dataset_mode(tmp_path):
     assert report["dataset"]["shard_cache_size"] == 3
     assert (out_dir / "token_shards" / "token_shards_manifest.json").exists()
     assert report["coverage"]["actual_steps"] == 1
+
+
+def test_train_base_release_sharded_mode_requires_document_boundaries(tmp_path):
+    corpus_path = tmp_path / "corpus.txt"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    out_dir = tmp_path / "run"
+    text = "release sharded data needs a manifest for document boundaries\n" * 40
+    corpus_path.write_text(text, encoding="utf-8")
+    CharTokenizer.train([text]).save(tokenizer_path)
+
+    with pytest.raises(ValueError, match="document boundary tokens"):
+        train_base(TrainConfig(
+            corpus_path=str(corpus_path),
+            tokenizer_path=str(tokenizer_path),
+            out_dir=str(out_dir),
+            context_size=8,
+            batch_size=4,
+            max_steps=1,
+            n_embd=16,
+            n_head=4,
+            n_layer=1,
+            log_every=1,
+            eval_batches=1,
+            sample_tokens=4,
+            dataset_mode="sharded",
+            shard_token_size=64,
+            require_document_boundary_tokens=True,
+        ))
 
 
 def test_train_base_can_use_packed_dataset_mode(tmp_path):

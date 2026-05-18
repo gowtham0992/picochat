@@ -65,6 +65,7 @@ from picochat.resume import (
 )
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 from picochat.train import (
+    _append_loss_spike_watch,
     _capture_rollback_state,
     _estimated_peak_flops_per_sec,
     _format_rate,
@@ -1011,6 +1012,9 @@ def train_sft(config: SFTConfig) -> dict:
         loss_spike_baseline = float(raw_baseline) if raw_baseline is not None else None
     if loss_spike_baseline is None and math.isfinite(last_loss) and last_loss > 0:
         loss_spike_baseline = last_loss
+    loss_spike_watch_path = out_dir / "loss_spike_watch.jsonl"
+    if main_process and not config.loss_spike_rollback and resume_state is None:
+        loss_spike_watch_path.write_text("", encoding="utf-8")
 
     def save_model_checkpoint(
         path: Path,
@@ -1134,6 +1138,16 @@ def train_sft(config: SFTConfig) -> dict:
             last_loss = loss_spike_baseline
             continue
         spike_ratio = _loss_spike_ratio(last_loss, loss_spike_baseline)
+        if main_process:
+            _append_loss_spike_watch(
+                loss_spike_watch_path,
+                step=step,
+                train_loss=last_loss,
+                baseline_loss=loss_spike_baseline,
+                spike_ratio=spike_ratio,
+                threshold=config.loss_spike_threshold,
+                rollback_enabled=config.loss_spike_rollback,
+            )
         if (
             not config.loss_spike_rollback
             and spike_ratio is not None
@@ -1521,6 +1535,7 @@ def train_sft(config: SFTConfig) -> dict:
         "throughput": _throughput_summary(losses),
         "rollback_events": rollback_events,
         "loss_spike_warnings": loss_spike_warnings,
+        "loss_spike_watch": str(loss_spike_watch_path) if main_process else None,
         "sample": sample,
         "checkpoint": str(checkpoint_dir),
         "resume_checkpoint": str(out_dir / "resume_checkpoint"),

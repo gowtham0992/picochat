@@ -470,8 +470,9 @@ RUN_SCALES: dict[str, RunScale] = {
         label="H200 1B DDP8",
         description=(
             "Eight-H200 1B-class skill-release recipe. Uses nanochat-class 2048 context, "
-            "1M-token global base batches, FA3, 32k HF BPE, and the skill_release gate; "
-            "import substantially more ClimbMix data before treating this as a release candidate."
+            "1M-token global base batches, FA3, 32k HF BPE, a Chinchilla-class "
+            "20 tokens/parameter base budget, and the skill_release gate; import "
+            "substantially more ClimbMix/data-mix tokens before treating this as a release candidate."
         ),
         tokenizer_type="hf_bpe",
         tokenizer_vocab_size=32768,
@@ -490,7 +491,7 @@ RUN_SCALES: dict[str, RunScale] = {
         parallel_residual=True,
         linear_bias=False,
         scaled_residual_init=True,
-        base_steps=9200,
+        base_steps=21400,
         sft_steps=64,
         base_batch_size=8,
         sft_batch_size=8,
@@ -522,7 +523,7 @@ RUN_SCALES: dict[str, RunScale] = {
         gradient_checkpointing=True,
         auto_lr_scaling=False,
         loss_spike_rollback=False,
-        target_param_data_ratio=8.5,
+        target_param_data_ratio=20.0,
         long_run_gate_profile="skill_release",
     ),
 }

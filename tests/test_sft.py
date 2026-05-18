@@ -277,6 +277,7 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert (out_dir / "sft_label_audit.json").exists()
     assert (out_dir / "report.md").exists()
     assert (out_dir / "sample.txt").exists()
+    assert (out_dir / "loss_spike_watch.jsonl").exists()
     assert report["dataset"]["num_examples"] == 2
     assert report["dataset"]["supervised_tokens"] > 0
     assert report["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
@@ -287,6 +288,8 @@ def test_train_sft_writes_artifacts(tmp_path):
     assert "tokens_per_sec" in report["losses"][-1]
     assert report["throughput"]["avg_tokens_per_sec"] is not None
     assert "loss_spike_warnings" in report
+    assert report["loss_spike_watch"] == str(out_dir / "loss_spike_watch.jsonl")
+    assert len((out_dir / "loss_spike_watch.jsonl").read_text(encoding="utf-8").splitlines()) == 2
     assert report["coverage"]["actual_steps"] == 2
     assert report["stop_reason"] == "max_steps"
     assert report["loss_diagnostics"]["final_step"] == 2

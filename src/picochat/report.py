@@ -293,6 +293,8 @@ def training_report_markdown(report: dict) -> str:
     lines.append(f"- Final grad norm: {format_optional_float(stability.get('final_grad_norm'))}")
     lines.append(f"- Loss spikes between checkpoints: {stability.get('loss_spikes', 0)}")
     lines.append(f"- Rollbacks: {len(report.get('rollback_events', []))}")
+    if report.get("loss_spike_watch"):
+        lines.append(f"- Per-step loss spike watch: `{report['loss_spike_watch']}`")
     for warning in stability.get("warnings", []):
         lines.append(f"- Warning: {warning}")
     lines.append("")
@@ -606,6 +608,8 @@ def sft_report_markdown(report: dict) -> str:
     lines.append(f"- Final grad norm: {format_optional_float(stability.get('final_grad_norm'))}")
     lines.append(f"- Loss spikes between checkpoints: {stability.get('loss_spikes', 0)}")
     lines.append(f"- Rollbacks: {len(report.get('rollback_events', []))}")
+    if report.get("loss_spike_watch"):
+        lines.append(f"- Per-step loss spike watch: `{report['loss_spike_watch']}`")
     for warning in stability.get("warnings", []):
         lines.append(f"- Warning: {warning}")
     lines.append("")

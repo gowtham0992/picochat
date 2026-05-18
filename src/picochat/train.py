@@ -128,6 +128,7 @@ class TrainConfig:
     resume_from: str | None = None
     gradient_checkpointing: bool = False
     ddp: bool = False
+    require_document_boundary_tokens: bool = False
     loss_spike_rollback: bool = False
     loss_spike_threshold: float = 2.5
     loss_spike_lr_decay: float = 0.5
@@ -189,6 +190,50 @@ def evaluate_metrics(
     if not losses:
         return {"loss": float("nan"), "bpb": bpb}
     return {"loss": sum(losses) / len(losses), "bpb": bpb}
+
+
+def _validate_base_split_integrity(config: TrainConfig, stats: dict[str, object]) -> None:
+    if not config.require_document_boundary_tokens:
+        return
+    if config.dataset_mode == "sharded":
+        if not bool(stats.get("document_boundary_tokens")):
+            raise ValueError(
+                "release sharded base training requires BOS/EOS document boundary tokens; "
+                "provide a corpus manifest or rebuild the dataset pack"
+            )
+        if not bool(stats.get("document_aligned_shards")):
+            raise ValueError(
+                "release sharded base training requires document-aligned token shards; "
+                "increase --base-shard-token-size or use packed base mode"
+            )
+    elif config.dataset_mode == "packed":
+        if not bool(stats.get("document_boundary_tokens")):
+            raise ValueError(
+                "release packed base training requires document-boundary-aware packed shards"
+            )
+
+
+def _append_loss_spike_watch(
+    path: Path,
+    *,
+    step: int,
+    train_loss: float,
+    baseline_loss: float | None,
+    spike_ratio: float | None,
+    threshold: float,
+    rollback_enabled: bool,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "step": step,
+            "train_loss": train_loss,
+            "baseline_loss": baseline_loss,
+            "spike_ratio": spike_ratio,
+            "threshold": threshold,
+            "rollback_enabled": rollback_enabled,
+            "spike": spike_ratio is not None and spike_ratio >= threshold,
+        }) + "\n")
 
 
 def train_base(config: TrainConfig) -> dict:
@@ -320,6 +365,7 @@ def train_base(config: TrainConfig) -> dict:
             corpus_manifest_path=config.corpus_manifest_path,
             canary_values=canary_values,
         )
+    _validate_base_split_integrity(config, split.stats)
     if main_process:
         print(
             "base data: ready "
@@ -504,6 +550,9 @@ def train_base(config: TrainConfig) -> dict:
         loss_spike_baseline = float(raw_baseline) if raw_baseline is not None else None
     if loss_spike_baseline is None and math.isfinite(last_loss) and last_loss > 0:
         loss_spike_baseline = last_loss
+    loss_spike_watch_path = out_dir / "loss_spike_watch.jsonl"
+    if main_process and not config.loss_spike_rollback and resume_state is None:
+        loss_spike_watch_path.write_text("", encoding="utf-8")
 
     train_batches = DeviceBatchPrefetcher(train_batcher, device)
     model.train()
@@ -592,6 +641,16 @@ def train_base(config: TrainConfig) -> dict:
             last_loss = loss_spike_baseline
             continue
         spike_ratio = _loss_spike_ratio(last_loss, loss_spike_baseline)
+        if main_process:
+            _append_loss_spike_watch(
+                loss_spike_watch_path,
+                step=step,
+                train_loss=last_loss,
+                baseline_loss=loss_spike_baseline,
+                spike_ratio=spike_ratio,
+                threshold=config.loss_spike_threshold,
+                rollback_enabled=config.loss_spike_rollback,
+            )
         if (
             not config.loss_spike_rollback
             and spike_ratio is not None
@@ -948,6 +1007,7 @@ def train_base(config: TrainConfig) -> dict:
         "throughput": _throughput_summary(losses),
         "rollback_events": rollback_events,
         "loss_spike_warnings": loss_spike_warnings,
+        "loss_spike_watch": str(loss_spike_watch_path) if main_process else None,
         "memorization": memorization_report,
         "sample": sample,
         "canary_probe": canary_probe,
