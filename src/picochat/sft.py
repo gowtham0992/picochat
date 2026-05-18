@@ -70,6 +70,7 @@ from picochat.train import (
     _format_rate,
     _interval_throughput,
     _is_loss_spike,
+    _loss_spike_ratio,
     _restore_rollback_state,
     _throughput_summary,
     _update_loss_spike_baseline,
@@ -977,6 +978,8 @@ def train_sft(config: SFTConfig) -> dict:
     stop_reason = "max_steps"
     start_step = 1
     rollback_events: list[dict[str, float | int | None]] = []
+    loss_spike_warnings: list[dict[str, float | int | None]] = []
+    last_loss_spike_warning_step = 0
     rollback_lr_scale = 1.0
     loss_spike_baseline: float | None = None
     rollback_state: dict | None = None
@@ -1000,6 +1003,9 @@ def train_sft(config: SFTConfig) -> dict:
         evals_without_improvement = int(resume_state.get("evals_without_improvement", 0))
         elapsed_offset = float(resume_state.get("elapsed_sec", 0.0))
         rollback_events = list(resume_state.get("rollback_events", []))
+        loss_spike_warnings = list(resume_state.get("loss_spike_warnings", []))
+        if loss_spike_warnings:
+            last_loss_spike_warning_step = int(loss_spike_warnings[-1].get("step", 0))
         rollback_lr_scale = float(resume_state.get("rollback_lr_scale", rollback_lr_scale))
         raw_baseline = resume_state.get("loss_spike_baseline")
         loss_spike_baseline = float(raw_baseline) if raw_baseline is not None else None
@@ -1127,6 +1133,26 @@ def train_sft(config: SFTConfig) -> dict:
                 )
             last_loss = loss_spike_baseline
             continue
+        spike_ratio = _loss_spike_ratio(last_loss, loss_spike_baseline)
+        if (
+            not config.loss_spike_rollback
+            and spike_ratio is not None
+            and spike_ratio >= config.loss_spike_threshold
+            and step - last_loss_spike_warning_step >= max(1, config.loss_spike_snapshot_every)
+        ):
+            loss_spike_warnings.append({
+                "step": step,
+                "train_loss": last_loss,
+                "baseline_loss": loss_spike_baseline,
+                "spike_ratio": spike_ratio,
+            })
+            last_loss_spike_warning_step = step
+            if main_process:
+                print(
+                    f"sft loss spike watch at step {step}: "
+                    f"train {last_loss:.4f} vs baseline {loss_spike_baseline:.4f}; "
+                    "rollback disabled"
+                )
         if math.isfinite(last_loss) and last_loss > 0:
             loss_spike_baseline = _update_loss_spike_baseline(loss_spike_baseline, last_loss)
             if (
@@ -1278,6 +1304,7 @@ def train_sft(config: SFTConfig) -> dict:
                         training_fingerprint=training_fingerprint,
                         extra_state={
                             "rollback_events": rollback_events,
+                            "loss_spike_warnings": loss_spike_warnings,
                             "rollback_lr_scale": rollback_lr_scale,
                             "loss_spike_baseline": loss_spike_baseline,
                         },
@@ -1343,6 +1370,7 @@ def train_sft(config: SFTConfig) -> dict:
                 training_fingerprint=training_fingerprint,
                 extra_state={
                     "rollback_events": rollback_events,
+                    "loss_spike_warnings": loss_spike_warnings,
                     "rollback_lr_scale": rollback_lr_scale,
                     "loss_spike_baseline": loss_spike_baseline,
                 },
@@ -1492,6 +1520,7 @@ def train_sft(config: SFTConfig) -> dict:
         "label_audit": label_audit_report,
         "throughput": _throughput_summary(losses),
         "rollback_events": rollback_events,
+        "loss_spike_warnings": loss_spike_warnings,
         "sample": sample,
         "checkpoint": str(checkpoint_dir),
         "resume_checkpoint": str(out_dir / "resume_checkpoint"),

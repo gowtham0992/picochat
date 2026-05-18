@@ -66,6 +66,7 @@ def test_train_base_writes_artifacts(tmp_path):
     assert "grad_norm" in report["losses"][-1]
     assert "tokens_per_sec" in report["losses"][-1]
     assert report["throughput"]["avg_tokens_per_sec"] is not None
+    assert "loss_spike_warnings" in report
     assert report["config"]["weight_decay"] == 0.02
     assert report["config"]["weight_decay_decay"] == "cosine_to_zero"
     assert report["config"]["loss_spike_snapshot_every"] == 2
