@@ -191,6 +191,16 @@ def run_tiny(config: TinyRunConfig) -> dict:
             dataset_pack=config.dataset_pack,
             min_quality_score=config.min_quality_score,
         )
+        _write_ddp_control(
+            ddp_control_path,
+            {
+                "stage": "corpus_ready",
+                "blocked": False,
+                "message": "rank 0 finished corpus artifact setup and is running preflight",
+                "corpus": str(corpus_path),
+                "corpus_manifest": str(out_dir / "corpus_manifest.json"),
+            },
+        )
         chat_input = corpus_build.training_command.chat_input
         eval_input = corpus_build.training_command.eval_input
         _validate_tuning_data_source(config, chat_input=chat_input, eval_input=eval_input)
@@ -236,6 +246,16 @@ def run_tiny(config: TinyRunConfig) -> dict:
         preflight_payload = preflight_report.to_dict()
 
         print("[2/7] check data honesty")
+        _write_ddp_control(
+            ddp_control_path,
+            {
+                "stage": "honesty_started",
+                "blocked": False,
+                "message": "rank 0 is scanning SFT/eval/corpus contamination before tokenizer training",
+                "preflight_json": str(preflight_json_path),
+                "corpus": str(corpus_path),
+            },
+        )
         stage_started = time.perf_counter()
         honesty_report = inspect_data_honesty(
             corpus_path=corpus_path,
@@ -279,6 +299,16 @@ def run_tiny(config: TinyRunConfig) -> dict:
         _record_stage_timing(stage_timings, "data_honesty", stage_started)
 
         print(f"[3/7] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
+        _write_ddp_control(
+            ddp_control_path,
+            {
+                "stage": "tokenizer_started",
+                "blocked": False,
+                "message": "rank 0 passed data honesty and is training the tokenizer",
+                "honesty_json": str(honesty_json_path),
+                "corpus": str(corpus_path),
+            },
+        )
         stage_started = time.perf_counter()
         texts = (
             _iter_text_chunks(corpus_path, progress=True)
@@ -731,11 +761,17 @@ def _iter_text_chunks(path: Path, chunk_chars: int = 1_000_000, progress: bool =
 def _read_ddp_control(path: Path) -> dict:
     if not path.exists():
         return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
 
 
 def _write_ddp_control(path: Path, payload: dict) -> None:
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(json.dumps(payload), encoding="utf-8")
+    os.replace(tmp_path, path)
 
 
 def _wait_for_ddp_setup(path: Path, *, started_after: float | None = None) -> dict:

@@ -162,6 +162,29 @@ def test_preflight_blocks_undertrained_release_token_budget():
     assert "20 tokens/parameter" in checks["release_token_budget"].threshold
 
 
+def test_preflight_blocks_release_budget_when_steps_under_spend_target():
+    categories = {
+        "identity": 400,
+        "refusal": 160,
+        "bench_choice_language": 160,
+        "bench_math_addition": 240,
+        "bench_spelling_count": 200,
+    }
+    report = assess_run_preflight(
+        _h100_like_config(
+            long_run_gate_profile="skill_release",
+            target_param_data_ratio=20.0,
+            base_steps=500,
+        ),
+        _ready_large_corpus(categories=categories, eval_categories=categories),
+    )
+    checks = _checks_by_name(report)
+
+    assert report.status == "blocked"
+    assert checks["release_token_budget"].status == "block"
+    assert "planned/target" in checks["release_token_budget"].metric
+
+
 def test_preflight_counts_ddp_world_size_in_effective_batch(monkeypatch):
     monkeypatch.setenv("WORLD_SIZE", "8")
     report = assess_run_preflight(

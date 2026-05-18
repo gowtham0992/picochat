@@ -21,6 +21,7 @@ MIN_LONG_RUN_SFT_ROWS = 300
 MIN_LONG_RUN_EVAL_ROWS = 80
 DEFAULT_TARGET_PARAM_DATA_RATIO = 20.0
 MIN_RELEASE_TARGET_PARAM_DATA_RATIO = 20.0
+MIN_RELEASE_PLANNED_TO_TARGET_RATIO = 0.90
 BASE_LR_REFERENCE_EFFECTIVE_BATCH = 8
 FIRST_RELEASE_SFT_CATEGORY_PREFIXES = ("identity", "refusal", "bench_choice")
 SKILL_RELEASE_REQUIRED_CATEGORY_PREFIXES = (
@@ -507,6 +508,18 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
         status = "warn"
     elif budget.long_run and epochs < 0.25:
         status = "warn"
+    release_under_target_ratio = (
+        budget.target_param_data_ratio < MIN_RELEASE_TARGET_PARAM_DATA_RATIO
+    )
+    release_under_planned_ratio = (
+        budget.planned_to_target_ratio is not None
+        and budget.planned_to_target_ratio < MIN_RELEASE_PLANNED_TO_TARGET_RATIO
+    )
+    release_budget_block = (
+        budget.long_run
+        and _is_release_profile(config)
+        and (release_under_target_ratio or release_under_planned_ratio)
+    )
     checks = [
         _check(
             "compute_optimal_horizon",
@@ -521,18 +534,19 @@ def _base_budget_checks(config: Any, stats: CorpusStats, budget: RunBudgetPlan) 
         ),
         _check(
             "release_token_budget",
+            "block" if release_budget_block else "pass",
             (
-                "block"
-                if budget.long_run
-                and _is_release_profile(config)
-                and budget.target_param_data_ratio < MIN_RELEASE_TARGET_PARAM_DATA_RATIO
-                else "pass"
+                f"{budget.target_param_data_ratio:.2f} tokens/parameter; "
+                f"planned/target {_format_optional_float(budget.planned_to_target_ratio)}"
             ),
-            f"{budget.target_param_data_ratio:.2f} tokens/parameter",
-            f">= {MIN_RELEASE_TARGET_PARAM_DATA_RATIO:.0f} tokens/parameter for release profiles",
+            (
+                f">= {MIN_RELEASE_TARGET_PARAM_DATA_RATIO:.0f} tokens/parameter and "
+                f">= {MIN_RELEASE_PLANNED_TO_TARGET_RATIO:.2f} planned/target for release profiles"
+            ),
             (
                 "Release-profile 1B-class runs use the Chinchilla-style token budget by default. "
-                "If compute is limited, use a research profile or a smaller model rather than "
+                "The configured base steps must also spend that budget. If compute is limited, "
+                "use a research profile or a smaller model rather than "
                 "quietly undertraining a release candidate."
             ),
         ),

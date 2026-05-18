@@ -164,6 +164,24 @@ def test_corpus_phrase_scan_reports_nested_phrases():
     assert hits == {short, long}
 
 
+def test_corpus_phrase_scan_respects_token_boundaries():
+    phrase = "cat"
+
+    no_hit = _find_corpus_phrase_hits_in_chunks(
+        "scatter category concatenate",
+        {phrase},
+        chunk_chars=5,
+    )
+    hit = _find_corpus_phrase_hits_in_chunks(
+        "scatter cat category",
+        {phrase},
+        chunk_chars=5,
+    )
+
+    assert no_hit == set()
+    assert hit == {phrase}
+
+
 def test_inspect_data_honesty_checks_generated_nearest_neighbors(tmp_path):
     chat_path = tmp_path / "chat.jsonl"
     eval_path = tmp_path / "eval.jsonl"
