@@ -1,0 +1,51 @@
+# macOS/local editor files
+.DS_Store
+*.swp
+*.swo
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and local environment files
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Packaging/build outputs
+build/
+dist/
+*.egg-info/
+
+# Picochat generated run artifacts
+runs/
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+*.onnx
+*.tgz
+*.tar.gz
+
+# Local scratch dataset packs
+my_pack/
+
+# Logs and temporary output
+*.log
+tmp/
+temp/
+
+# Local/private project notes
+HANDOFF.md
+knowledge/
+*_journey.html
+results.md

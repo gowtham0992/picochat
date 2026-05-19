@@ -1,0 +1,463 @@
+import json
+from collections import Counter
+
+import pytest
+
+from picochat import benchmark_pack
+from picochat.benchmark_pack import BenchmarkSourceError, generate_benchmark_tuning_pack
+from picochat.dataset_pack import load_dataset_pack
+from picochat.honesty import inspect_data_honesty
+from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
+
+
+def write_pack(tmp_path):
+    corpus = tmp_path / "corpus.txt"
+    corpus.write_text("Picochat trains small local language models.\n", encoding="utf-8")
+    chat = tmp_path / "chat.jsonl"
+    chat.write_text(json.dumps({"user": "hi", "assistant": "hello"}) + "\n", encoding="utf-8")
+    eval_path = tmp_path / "eval.jsonl"
+    eval_path.write_text(json.dumps({"user": "hi", "must_include": ["hello"]}) + "\n", encoding="utf-8")
+    pack = tmp_path / "dataset_pack.json"
+    pack.write_text(json.dumps({
+        "name": "test-pack",
+        "corpus": str(corpus),
+        "chat": "chat.jsonl",
+        "eval": "eval.jsonl",
+    }), encoding="utf-8")
+    return pack
+
+
+def test_generate_benchmark_tuning_pack_promotes_heldout_files(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(pack, sft_rows=64, eval_rows=24, seed=7, promote_to_pack=True)
+
+    chat_path = tmp_path / "chat_benchmark.jsonl"
+    eval_path = tmp_path / "eval_benchmark.jsonl"
+    assert chat_path.exists()
+    assert eval_path.exists()
+    assert (tmp_path / "benchmark_tuning_pack.md").exists()
+    assert report.sft_rows == 64
+    assert report.eval_rows == 24
+    assert report.source_status == "offline"
+    assert report.profile == "full"
+    assert report.contamination["status"] == "ready"
+    assert report.promoted_to_pack is True
+    promoted = load_dataset_pack(pack)
+    assert promoted.chat_input == str(chat_path)
+    assert promoted.eval_input == str(eval_path)
+
+    chat_rows = [json.loads(line) for line in chat_path.read_text(encoding="utf-8").splitlines()]
+    eval_rows = [json.loads(line) for line in eval_path.read_text(encoding="utf-8").splitlines()]
+    assert inspect_chat_sft_data(chat_path).status == "ready"
+    assert inspect_chat_eval_data(eval_path).status == "ready"
+    assert inspect_data_honesty(chat_path, eval_path).status == "ready"
+    assert any(row["category"].startswith("bench_choice") for row in chat_rows)
+    assert any(row.get("correct_choice") for row in eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+    assert max(len(row["user"]) + len(row["assistant"]) for row in chat_rows) <= benchmark_pack.SFT_CHAR_BUDGET
+
+
+def test_behavior_profile_excludes_broad_long_form_chat_rows(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=100,
+        eval_rows=40,
+        profile="behavior",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    chat_categories = {row["category"] for row in chat_rows}
+
+    assert report.profile == "behavior"
+    assert report.source_status == "behavior"
+    assert "smoltalk" not in chat_categories
+    assert any(row["category"].startswith("bench_choice") for row in chat_rows)
+    assert any(row["category"].startswith("bench_math_") for row in chat_rows)
+    assert any(row["category"] == "identity" for row in chat_rows)
+    assert len({row["user"] for row in chat_rows}) == len(chat_rows)
+    assert len({row["user"] for row in eval_rows}) == len(eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
+def test_release_behavior_profile_is_narrow_first_release_pack(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=1600,
+        eval_rows=320,
+        profile="release_behavior",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    chat_categories = Counter(row["category"] for row in chat_rows)
+    eval_categories = Counter(row["category"] for row in eval_rows)
+
+    assert report.profile == "release_behavior"
+    assert report.source_status == "release_behavior"
+    assert set(chat_categories) == {"identity", "refusal"}
+    assert set(eval_categories) == {"identity", "refusal"}
+    assert chat_categories["identity"] == 1360
+    assert chat_categories["refusal"] == 240
+    assert eval_categories["identity"] == 272
+    assert eval_categories["refusal"] == 48
+    identity_chat_rows = [row for row in chat_rows if row["category"] == "identity"]
+    identity_eval_rows = [row for row in eval_rows if row["category"] == "identity"]
+    assert {row["curriculum_stage"] for row in identity_chat_rows} == {
+        "release_identity_1",
+        "release_identity_2",
+        "release_identity_3",
+        "release_identity_4",
+        "release_identity_5",
+    }
+    assert all("workbench" not in row["assistant"].lower() for row in identity_chat_rows)
+    assert any("domain-specific" in row["assistant"] for row in identity_chat_rows)
+    assert all(row.get("fit_normalized_answer_required") is True for row in identity_chat_rows)
+    assert all(row.get("fit_must_include") for row in identity_chat_rows)
+    assert sum("?" in row["user"] for row in identity_chat_rows) >= 1000
+    assert sum("?" in row["user"] for row in identity_eval_rows) >= 200
+    assert len({row["user"] for row in chat_rows}) == len(chat_rows)
+    assert len({row["user"] for row in eval_rows}) == len(eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
+def test_release_skills_profile_trains_every_claimed_release_group(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=1600,
+        eval_rows=320,
+        profile="release_skills",
+        skill_answer_style="scratchpad",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    chat_categories = Counter(row["category"] for row in chat_rows)
+    eval_categories = Counter(row["category"] for row in eval_rows)
+
+    assert report.profile == "release_skills"
+    assert report.source_status == "release_skills"
+    assert chat_categories["identity"] == 400
+    assert chat_categories["refusal"] == 160
+    assert _prefix_count(chat_categories, "bench_choice_") == 160
+    assert _prefix_count(chat_categories, "bench_math_") == 480
+    assert _prefix_count(chat_categories, "bench_spelling_") == 400
+    assert eval_categories["identity"] == 80
+    assert eval_categories["refusal"] == 32
+    assert _prefix_count(eval_categories, "bench_choice_") == 32
+    assert _prefix_count(eval_categories, "bench_math_") == 96
+    assert _prefix_count(eval_categories, "bench_spelling_") == 80
+    assert report.chat_stages["math_l1_addition_single_digit"] > 0
+    assert report.chat_stages["spelling_l1_first_letter"] > 0
+    assert report.eval_stages["math_l3_subtraction_borrow"] > 0
+    skill_rows = [
+        row for row in chat_rows
+        if row["category"].startswith(("bench_math_", "bench_spelling_"))
+    ]
+    assert skill_rows
+    assert all(row.get("fit_normalized_answer_required") is True for row in skill_rows)
+    assert all("Final answer:" in row["assistant"] for row in skill_rows)
+    assert len({row["user"] for row in chat_rows}) == len(chat_rows)
+    assert len({row["user"] for row in eval_rows}) == len(eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
+def test_behavior_profile_supports_max_local_curriculum_size(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=2000,
+        eval_rows=500,
+        profile="behavior",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    chat_categories = Counter(row["category"] for row in chat_rows)
+    eval_categories = Counter(row["category"] for row in eval_rows)
+
+    assert report.sft_rows == 2000
+    assert report.eval_rows == 500
+    assert chat_categories["refusal"] == 200
+    assert chat_categories["identity"] == 400
+    assert eval_categories["refusal"] == 50
+    assert eval_categories["identity"] == 100
+    assert len({row["user"] for row in chat_rows}) == len(chat_rows)
+    assert len({row["user"] for row in eval_rows}) == len(eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
+def test_behavior_profile_ceiling_error_is_actionable():
+    with pytest.raises(RuntimeError) as excinfo:
+        benchmark_pack._build_benchmark_sft_result(3000, seed=19, source="offline", profile="behavior")
+
+    message = str(excinfo.value)
+    assert "could not generate enough unique behavior benchmark rows" in message
+    assert "Shortfall:" in message
+    assert "switch --source auto or --source hf" in message
+
+
+def test_weak_skills_profile_overweights_math_and_spelling(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=200,
+        eval_rows=80,
+        profile="weak_skills",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    chat_categories = Counter(row["category"] for row in chat_rows)
+    eval_categories = Counter(row["category"] for row in eval_rows)
+    chat_stages = Counter(row.get("curriculum_stage", "") for row in chat_rows)
+    eval_stages = Counter(row.get("curriculum_stage", "") for row in eval_rows)
+
+    assert report.profile == "weak_skills"
+    assert report.source_status == "weak_skills"
+    assert report.chat_stages["math_l1_addition_single_digit"] > 0
+    assert report.chat_stages["spelling_l1_count"] > 0
+    assert report.eval_stages["math_l3_subtraction_borrow"] > 0
+    assert report.contamination["status"] == "ready"
+    assert _prefix_count(chat_categories, "bench_math_") >= 70
+    assert _prefix_count(chat_categories, "bench_spelling_") >= 55
+    assert chat_categories["identity"] >= 20
+    assert chat_categories["refusal"] >= 15
+    assert _prefix_count(eval_categories, "bench_math_") >= 28
+    assert _prefix_count(eval_categories, "bench_spelling_") >= 22
+    assert len([name for name in chat_categories if name.startswith("bench_math_")]) >= 4
+    assert len([name for name in chat_categories if name.startswith("bench_spelling_")]) >= 5
+    skill_eval_rows = [
+        row for row in eval_rows
+        if row["category"].startswith(("bench_math_", "bench_spelling_"))
+    ]
+    assert skill_eval_rows
+    assert all(row["normalized_answer_required"] is True for row in skill_eval_rows)
+    assert all(row.get("normalized_answer") for row in skill_eval_rows)
+    assert chat_stages["math_l1_addition_single_digit"] >= chat_stages["math_l3_addition_carry"]
+    assert chat_stages["spelling_l1_first_letter"] >= chat_stages["spelling_l3_reverse"]
+    assert eval_stages["spelling_l1_last_letter"] > 0
+    assert "smoltalk" not in chat_categories
+    assert len({row["user"] for row in chat_rows}) == len(chat_rows)
+    assert len({row["user"] for row in eval_rows}) == len(eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
+def test_weak_skills_choice_labels_are_balanced(tmp_path):
+    pack = write_pack(tmp_path)
+
+    generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=800,
+        eval_rows=200,
+        profile="weak_skills",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    chat_choices = Counter(
+        row["assistant"]
+        for row in chat_rows
+        if row["category"].startswith("bench_choice")
+    )
+    eval_choices = Counter(
+        row["correct_choice"]
+        for row in eval_rows
+        if row["category"].startswith("bench_choice")
+    )
+
+    assert set(chat_choices) == {"A", "B", "C", "D"}
+    assert set(eval_choices) == {"A", "B", "C", "D"}
+    assert max(chat_choices.values()) - min(chat_choices.values()) <= 2
+    assert max(eval_choices.values()) - min(eval_choices.values()) <= 2
+
+
+def test_weak_skills_can_use_scratchpad_final_answer_style(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=200,
+        eval_rows=80,
+        profile="weak_skills",
+        skill_answer_style="scratchpad",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    skill_chat_rows = [
+        row for row in chat_rows
+        if row["category"].startswith(("bench_math_", "bench_spelling_"))
+    ]
+    skill_eval_rows = [
+        row for row in eval_rows
+        if row["category"].startswith(("bench_math_", "bench_spelling_"))
+    ]
+
+    assert report.skill_answer_style == "scratchpad"
+    assert skill_chat_rows
+    assert all(row["answer_style"] == "scratchpad" for row in skill_chat_rows)
+    assert all("Scratchpad:" in row["assistant"] for row in skill_chat_rows)
+    assert all("Final answer:" in row["assistant"] for row in skill_chat_rows)
+    assert all(row["fit_must_include"][0] == "Scratchpad:" for row in skill_chat_rows)
+    assert all(row["fit_must_include"][1] == "Final answer:" for row in skill_chat_rows)
+    assert all(row["fit_normalized_answer"] for row in skill_chat_rows)
+    assert all(row["fit_normalized_answer_required"] is True for row in skill_chat_rows)
+    assert all(row["must_include"] == ["Final answer:"] for row in skill_eval_rows)
+    assert all(row["normalized_answer"] for row in skill_eval_rows)
+    assert all(row["normalized_answer_required"] is True for row in skill_eval_rows)
+    assert all(row["max_words"] == 80 for row in skill_eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
+def test_weak_skills_scratchpad_generates_requested_mac_size(tmp_path):
+    pack = write_pack(tmp_path)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=2400,
+        eval_rows=480,
+        profile="weak_skills",
+        skill_answer_style="scratchpad",
+        source="offline",
+        force=True,
+    )
+
+    chat_rows = [
+        json.loads(line)
+        for line in (tmp_path / "chat_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    eval_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval_benchmark.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert report.sft_rows == 2400
+    assert report.eval_rows == 480
+    assert len(chat_rows) == 2400
+    assert len(eval_rows) == 480
+    assert len({row["user"] for row in chat_rows}) == 2400
+    assert sum(count for category, count in report.chat_categories.items() if category.startswith("bench_math_")) == 864
+    assert sum(count for category, count in report.chat_categories.items() if category.startswith("bench_spelling_")) == 672
+    assert report.contamination["status"] in {"ready", "caution"}
+
+
+def test_staged_math_uses_disjoint_train_eval_operand_pools():
+    for stage in benchmark_pack._MATH_STAGE_PAIRS:
+        train_pairs = set(benchmark_pack._math_stage_pair_pool(stage, eval_rows=False))
+        eval_pairs = set(benchmark_pack._math_stage_pair_pool(stage, eval_rows=True))
+
+        assert train_pairs
+        assert eval_pairs
+        assert train_pairs.isdisjoint(eval_pairs)
+
+
+def test_offline_behavior_curriculum_has_unique_skill_coverage():
+    chat_rows = benchmark_pack.build_benchmark_sft_rows(160, seed=19, source="offline")
+    eval_rows = benchmark_pack.build_benchmark_eval_rows(64, seed=29, source="offline")
+
+    assert sum(row["category"].startswith("bench_math_") for row in chat_rows) >= 30
+    assert sum(row["category"].startswith("bench_spelling_") for row in chat_rows) >= 25
+    assert sum(row["category"] == "identity" for row in chat_rows) >= 10
+    assert sum(row["category"].startswith("bench_math_") for row in eval_rows) >= 8
+    assert sum(row["category"].startswith("bench_spelling_") for row in eval_rows) >= 8
+    assert sum(row["category"] == "identity" for row in eval_rows) >= 4
+    assert any(row.get("correct_choice") for row in eval_rows)
+    assert len({row["user"] for row in chat_rows}) == len(chat_rows)
+    assert len({row["user"] for row in eval_rows}) == len(eval_rows)
+    assert {row["user"] for row in chat_rows}.isdisjoint({row["user"] for row in eval_rows})
+
+
+def test_generate_benchmark_tuning_pack_refuses_overwrite_without_force(tmp_path):
+    pack = write_pack(tmp_path)
+    generate_benchmark_tuning_pack(pack, sft_rows=32, eval_rows=16)
+
+    with pytest.raises(FileExistsError):
+        generate_benchmark_tuning_pack(pack, sft_rows=32, eval_rows=16)
+
+
+def test_generate_benchmark_tuning_pack_auto_falls_back_to_offline(tmp_path, monkeypatch):
+    pack = write_pack(tmp_path)
+
+    def fail_sft(count, seed):
+        raise BenchmarkSourceError("hf unavailable")
+
+    def fail_eval(count, seed):
+        raise BenchmarkSourceError("hf unavailable")
+
+    monkeypatch.setattr(benchmark_pack, "_build_hf_sft_result", fail_sft)
+    monkeypatch.setattr(benchmark_pack, "_build_hf_eval_result", fail_eval)
+
+    report = generate_benchmark_tuning_pack(
+        pack,
+        sft_rows=32,
+        eval_rows=16,
+        source="auto",
+        force=True,
+    )
+
+    assert report.source_status == "offline_fallback"
+    assert report.fallback_reason == "hf unavailable"
+    assert (tmp_path / "chat_benchmark.jsonl").exists()
+
+
+def _prefix_count(counter: Counter, prefix: str) -> int:
+    return sum(count for name, count in counter.items() if name.startswith(prefix))

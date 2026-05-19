@@ -1,0 +1,1521 @@
+"""End-to-end experiment runners for Picochat."""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
+import json
+import os
+from pathlib import Path
+import threading
+import time
+
+from picochat.data import (
+    DEFAULT_CHAT_INPUT,
+    DEFAULT_CORPUS_INPUT,
+    DEFAULT_EVAL_INPUT,
+    build_corpus_artifacts,
+)
+from picochat.device import resolve_device
+from picochat.distributed import barrier_if_distributed, ddp_env_metadata, is_main_process
+from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
+from picochat.external_benchmark import ExternalBenchmarkConvertConfig, convert_external_benchmark
+from picochat.honesty import inspect_data_honesty, write_data_honesty_report
+from picochat.lora import DEFAULT_LORA_TARGETS
+from picochat.model import external_flash_attention_available, fa3_attention_available
+from picochat.report import tiny_run_summary_markdown
+from picochat.run_preflight import assess_run_preflight, preflight_markdown
+from picochat.sft import SFTConfig, SFT_PACKING_MODES, SFT_SAMPLING_MODES, train_sft
+from picochat.tokenizer import DEFAULT_BPE_PRETOKENIZER, TOKENIZER_TYPES, train_tokenizer
+from picochat.train import TrainConfig, train_base
+
+
+LONG_RUN_GATE_PROFILES = ("research", "first_release", "skill_release")
+FIRST_RELEASE_CATEGORY_PREFIXES = ("identity", "refusal", "bench_choice")
+SKILL_RELEASE_CATEGORY_GATES = (
+    ("identity", ("identity",), 0.60),
+    ("refusal", ("refusal",), 0.75),
+    ("choice", ("bench_choice", "mmlu_", "arc_"), 0.50),
+    ("math", ("bench_math_", "gsm8k"), 0.30),
+    ("spelling", ("bench_spelling_",), 0.40),
+)
+
+
+@dataclass(frozen=True)
+class TinyRunConfig:
+    out_dir: str
+    scale: str = "custom"
+    dataset_pack: str | None = None
+    corpus_input: str = DEFAULT_CORPUS_INPUT
+    corpus_recipe: str | None = None
+    chat_input: str = "examples/tiny_chat.jsonl"
+    eval_input: str = "examples/tiny_eval.jsonl"
+    context_size: int = 128
+    n_embd: int = 64
+    n_head: int = 4
+    n_kv_head: int | None = None
+    n_layer: int = 2
+    dropout: float = 0.0
+    norm_type: str = "layernorm"
+    position_encoding: str = "learned"
+    activation: str = "gelu"
+    tie_embeddings: bool = False
+    qk_norm: bool = False
+    attn_backend: str = "auto"
+    parallel_residual: bool = False
+    xsa_last_n: int = 0
+    linear_bias: bool = True
+    scaled_residual_init: bool = False
+    base_steps: int = 300
+    sft_steps: int = 600
+    base_batch_size: int = 8
+    sft_batch_size: int = 7
+    base_learning_rate: float = 3e-4
+    sft_learning_rate: float = 1e-3
+    seed: int = 42
+    device: str = "cpu"
+    eval_max_new_tokens: int = 120
+    min_quality_score: int = 0
+    split_mode: str = "document"
+    base_dataset_mode: str = "memory"
+    base_shard_token_size: int = 1_000_000
+    base_shard_cache_size: int = 2
+    tokenizer_type: str = "char"
+    tokenizer_vocab_size: int | None = None
+    tokenizer_min_freq: int = 1
+    bpe_pretokenizer: str = DEFAULT_BPE_PRETOKENIZER
+    base_early_stop_patience: int = 6
+    sft_early_stop_patience: int = 6
+    early_stop_min_delta: float = 0.0
+    base_max_minutes: float | None = None
+    sft_max_minutes: float | None = None
+    canary_count: int = 1
+    allow_leaky_eval: bool = False
+    base_lr_warmup_steps: int = 0
+    sft_lr_warmup_steps: int = 0
+    base_lr_decay: str = "none"
+    sft_lr_decay: str = "none"
+    base_min_lr_ratio: float = 1.0
+    sft_min_lr_ratio: float = 1.0
+    base_grad_clip: float = 0.0
+    sft_grad_clip: float = 0.0
+    base_grad_accum_steps: int = 1
+    sft_grad_accum_steps: int = 1
+    base_optimizer: str = "adamw"
+    sft_optimizer: str = "adamw"
+    base_weight_decay: float = 0.01
+    sft_weight_decay: float = 0.01
+    base_weight_decay_decay: str = "none"
+    sft_weight_decay_decay: str = "none"
+    base_muon_learning_rate: float = 0.02
+    sft_muon_learning_rate: float = 0.02
+    base_muon_momentum_schedule: str = "none"
+    sft_muon_momentum_schedule: str = "none"
+    base_ema_decay: float = 0.0
+    sft_ema_decay: float = 0.0
+    sft_sampling: str = "uniform"
+    sft_packing: str = "separate"
+    sft_fit_max_rows: int = 1000
+    sft_peft: str = "none"
+    sft_lora_rank: int = 8
+    sft_lora_alpha: float = 16.0
+    sft_lora_dropout: float = 0.0
+    sft_lora_targets: tuple[str, ...] = DEFAULT_LORA_TARGETS
+    allow_default_tuning_data: bool = False
+    base_resume_from: str | None = None
+    sft_resume_from: str | None = None
+    logit_softcap: float = 0.0
+    precision: str = "float32"
+    matmul_precision: str = "default"
+    torch_compile: bool = False
+    torch_compile_mode: str = "default"
+    gradient_checkpointing: bool = False
+    ddp: bool = False
+    ddp_world_size: int = 1
+    allow_unsafe_long_run: bool = False
+    target_param_data_ratio: float = 20.0
+    auto_lr_scaling: bool = False
+    loss_spike_rollback: bool = False
+    loss_spike_threshold: float = 2.5
+    loss_spike_lr_decay: float = 0.5
+    loss_spike_min_lr_scale: float = 0.1
+    loss_spike_snapshot_every: int = 10
+    external_eval_inputs: tuple[str, ...] = ()
+    external_eval_format: str = "auto"
+    external_eval_max_rows: int = 0
+    external_eval_shuffle: bool = False
+    external_eval_max_new_tokens: int = 1
+    long_run_gate_profile: str = "research"
+
+
+def run_tiny(config: TinyRunConfig) -> dict:
+    """Run the tiny educational pipeline from corpus to eval report."""
+    run_wall_started = time.time()
+    run_started = time.perf_counter()
+    stage_timings: list[dict[str, object]] = []
+    out_dir = Path(config.out_dir)
+    if config.sft_resume_from and not config.base_resume_from:
+        raise ValueError(
+            "sft_resume_from requires base_resume_from so run tiny does not retrain "
+            "or overwrite the base phase before resuming SFT"
+        )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ddp_metadata = ddp_env_metadata(config.ddp)
+    main_process = is_main_process(ddp_metadata)
+    ddp_control_path = out_dir / "ddp_control.json"
+    if config.ddp and main_process:
+        _write_ddp_control(
+            ddp_control_path,
+            {
+                "stage": "setup_started",
+                "blocked": False,
+                "message": "rank 0 is preparing shared corpus, honesty, and tokenizer artifacts",
+            },
+        )
+
+    if main_process:
+        print("== pico run tiny ==")
+    corpus_path = out_dir / "corpus.txt"
+    tokenizer_path = out_dir / "tokenizer.json"
+
+    preflight_json_path = out_dir / "preflight.json"
+    preflight_markdown_path = out_dir / "preflight.md"
+    if main_process:
+        print(f"[1/7] build corpus -> {corpus_path}")
+    stage_started = time.perf_counter()
+    if main_process:
+        setup_payload = {
+            "stage": "setup_started",
+            "blocked": False,
+            "message": "rank 0 is preparing shared corpus, honesty, and tokenizer artifacts",
+            "corpus": str(corpus_path),
+        }
+        with _ddp_control_heartbeat(ddp_control_path, setup_payload, enabled=config.ddp):
+            corpus_build = build_corpus_artifacts(
+                None if config.dataset_pack else config.corpus_input,
+                corpus_path,
+                recipe_path=None if config.dataset_pack else config.corpus_recipe,
+                chat_input=None if config.dataset_pack else config.chat_input,
+                eval_input=None if config.dataset_pack else config.eval_input,
+                dataset_pack=config.dataset_pack,
+                min_quality_score=config.min_quality_score,
+            )
+        _write_ddp_control(
+            ddp_control_path,
+            {
+                "stage": "corpus_ready",
+                "blocked": False,
+                "message": "rank 0 finished corpus artifact setup and is running preflight",
+                "corpus": str(corpus_path),
+                "corpus_manifest": str(out_dir / "corpus_manifest.json"),
+            },
+        )
+        chat_input = corpus_build.training_command.chat_input
+        eval_input = corpus_build.training_command.eval_input
+        _validate_tuning_data_source(config, chat_input=chat_input, eval_input=eval_input)
+        external_eval_specs = _validate_external_eval_inputs(config.external_eval_inputs)
+
+        preflight_report = assess_run_preflight(config, corpus_build)
+        preflight_payload = preflight_report.to_dict()
+        preflight_json_path.write_text(json.dumps(preflight_payload, indent=2), encoding="utf-8")
+        preflight_markdown_path.write_text(preflight_markdown(preflight_report), encoding="utf-8")
+        print(f"preflight: {preflight_report.status} | {preflight_report.summary}")
+        if preflight_report.status == "blocked" and not config.allow_unsafe_long_run:
+            _write_ddp_control(
+                ddp_control_path,
+                {
+                    "stage": "preflight",
+                    "blocked": True,
+                    "message": (
+                        "run preflight blocked this plan; inspect "
+                        f"{preflight_markdown_path} or rerun with --allow-unsafe-long-run "
+                        "for a diagnostic-only run"
+                    ),
+                },
+            )
+            raise ValueError(
+                "run preflight blocked this plan; inspect "
+                f"{preflight_markdown_path} or rerun with --allow-unsafe-long-run "
+                "for a diagnostic-only run"
+            )
+        try:
+            _verify_optional_attention_backend(config)
+        except ValueError as error:
+            _write_ddp_control(
+                ddp_control_path,
+                {
+                    "stage": "attention_backend",
+                    "blocked": True,
+                    "message": str(error),
+                },
+            )
+            raise
+        _record_stage_timing(stage_timings, "corpus_build_preflight", stage_started)
+
+        preflight_payload = preflight_report.to_dict()
+
+        print("[2/7] check data honesty")
+        honesty_payload = {
+            "stage": "honesty_started",
+            "blocked": False,
+            "message": "rank 0 is scanning SFT/eval/corpus contamination before tokenizer training",
+            "preflight_json": str(preflight_json_path),
+            "corpus": str(corpus_path),
+        }
+        stage_started = time.perf_counter()
+        with _ddp_control_heartbeat(ddp_control_path, honesty_payload, enabled=config.ddp):
+            honesty_report = inspect_data_honesty(
+                corpus_path=corpus_path,
+                chat_input=chat_input,
+                eval_input=eval_input,
+            )
+        honesty_json_path, honesty_markdown_path = write_data_honesty_report(
+            honesty_report,
+            out_dir / "honesty",
+        )
+        release_honesty_issue = _release_honesty_issue(
+            preflight_payload,
+            honesty_report.to_dict(),
+            profile=config.long_run_gate_profile,
+        )
+        if (
+            (
+                honesty_report.status == "blocked"
+                or (
+                    release_honesty_issue is not None
+                    and release_honesty_issue.get("severity") == "block"
+                )
+            )
+            and not config.allow_leaky_eval
+        ):
+            _write_ddp_control(
+                ddp_control_path,
+                {
+                    "stage": "honesty",
+                    "blocked": True,
+                    "message": (
+                        "data honesty blocked this run; inspect "
+                        f"{honesty_markdown_path} or rerun with --allow-leaky-eval for a diagnostic-only run"
+                    ),
+                },
+            )
+            raise ValueError(
+                "data honesty blocked this run; inspect "
+                f"{honesty_markdown_path} or rerun with --allow-leaky-eval for a diagnostic-only run"
+            )
+        _record_stage_timing(stage_timings, "data_honesty", stage_started)
+
+        print(f"[3/7] train {config.tokenizer_type} tokenizer -> {tokenizer_path}")
+        tokenizer_payload = {
+            "stage": "tokenizer_started",
+            "blocked": False,
+            "message": "rank 0 passed data honesty and is training the tokenizer",
+            "honesty_json": str(honesty_json_path),
+            "corpus": str(corpus_path),
+        }
+        stage_started = time.perf_counter()
+        with _ddp_control_heartbeat(ddp_control_path, tokenizer_payload, enabled=config.ddp):
+            texts = (
+                _iter_text_chunks(corpus_path, progress=True)
+                if config.tokenizer_type == "hf_bpe"
+                else [corpus_path.read_text(encoding="utf-8")]
+            )
+            tokenizer = train_tokenizer(
+                config.tokenizer_type,
+                texts,
+                vocab_size=config.tokenizer_vocab_size,
+                min_freq=config.tokenizer_min_freq,
+                bpe_pretokenizer=config.bpe_pretokenizer,
+            )
+            tokenizer.save(tokenizer_path)
+        _record_stage_timing(stage_timings, "tokenizer", stage_started)
+        _write_ddp_control(
+            ddp_control_path,
+            {
+                "stage": "setup_complete",
+                "blocked": False,
+                "chat_input": chat_input,
+                "eval_input": eval_input,
+                "preflight_json": str(preflight_json_path),
+                "corpus_manifest": str(out_dir / "corpus_manifest.json"),
+                "tokenizer": str(tokenizer_path),
+            },
+        )
+    else:
+        control = _wait_for_ddp_setup(ddp_control_path, started_after=run_wall_started)
+        if control.get("blocked"):
+            raise ValueError(str(control.get("message") or "run setup blocked this plan"))
+        manifest = json.loads((out_dir / "corpus_manifest.json").read_text(encoding="utf-8"))
+        training_command = manifest.get("training_command", {})
+        chat_input = str(training_command["chat_input"])
+        eval_input = str(training_command["eval_input"])
+        external_eval_specs = _validate_external_eval_inputs(config.external_eval_inputs)
+        preflight_payload = json.loads(preflight_json_path.read_text(encoding="utf-8"))
+        corpus_build = None
+
+    base_learning_rate = config.base_learning_rate
+    sft_learning_rate = config.sft_learning_rate
+    if config.auto_lr_scaling:
+        budget = preflight_payload.get("budget", {})
+        base_learning_rate *= float(budget.get("base_lr_sqrt_scale", 1.0))
+        sft_learning_rate *= float(budget.get("sft_lr_sqrt_scale", 1.0))
+        if main_process:
+            print(
+                "auto lr scaling: "
+                f"base {base_learning_rate:.6g}, sft {sft_learning_rate:.6g}"
+            )
+
+    if config.tokenizer_type not in TOKENIZER_TYPES:
+        raise ValueError(f"Unsupported tokenizer type: {config.tokenizer_type}")
+    if config.sft_sampling not in SFT_SAMPLING_MODES:
+        raise ValueError(f"Unsupported SFT sampling mode: {config.sft_sampling}")
+    if config.sft_packing not in SFT_PACKING_MODES:
+        raise ValueError(f"Unsupported SFT packing mode: {config.sft_packing}")
+    corpus_manifest_path = str(out_dir / "corpus_manifest.json")
+
+    if main_process:
+        print("[4/7] train base model")
+    stage_started = time.perf_counter()
+    base_report = train_base(TrainConfig(
+        corpus_path=str(corpus_path),
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir / "base"),
+        context_size=config.context_size,
+        batch_size=config.base_batch_size,
+        max_steps=config.base_steps,
+        learning_rate=base_learning_rate,
+        n_embd=config.n_embd,
+        n_head=config.n_head,
+        n_kv_head=config.n_kv_head,
+        n_layer=config.n_layer,
+        dropout=config.dropout,
+        norm_type=config.norm_type,
+        position_encoding=config.position_encoding,
+        activation=config.activation,
+        tie_embeddings=config.tie_embeddings,
+        qk_norm=config.qk_norm,
+        attn_backend=config.attn_backend,
+        parallel_residual=config.parallel_residual,
+        xsa_last_n=config.xsa_last_n,
+        linear_bias=config.linear_bias,
+        scaled_residual_init=config.scaled_residual_init,
+        seed=config.seed,
+        device=config.device,
+        log_every=_validation_log_every(config.base_steps),
+        sample_tokens=160,
+        split_mode=config.split_mode,
+        dataset_mode=config.base_dataset_mode,
+        shard_token_size=config.base_shard_token_size,
+        shard_cache_size=config.base_shard_cache_size,
+        corpus_manifest_path=corpus_manifest_path,
+        early_stop_patience=config.base_early_stop_patience,
+        early_stop_min_delta=config.early_stop_min_delta,
+        max_minutes=config.base_max_minutes,
+        canary_count=config.canary_count,
+        lr_warmup_steps=config.base_lr_warmup_steps,
+        lr_decay=config.base_lr_decay,
+        min_lr_ratio=config.base_min_lr_ratio,
+        grad_clip=config.base_grad_clip,
+        grad_accum_steps=config.base_grad_accum_steps,
+        optimizer=config.base_optimizer,
+        weight_decay=config.base_weight_decay,
+        weight_decay_decay=config.base_weight_decay_decay,
+        muon_learning_rate=config.base_muon_learning_rate,
+        muon_momentum_schedule=config.base_muon_momentum_schedule,
+        ema_decay=config.base_ema_decay,
+        logit_softcap=config.logit_softcap,
+        precision=config.precision,
+        matmul_precision=config.matmul_precision,
+        torch_compile=config.torch_compile,
+        torch_compile_mode=config.torch_compile_mode,
+        gradient_checkpointing=config.gradient_checkpointing,
+        ddp=config.ddp,
+        require_document_boundary_tokens=(
+            bool((preflight_payload.get("budget") or {}).get("long_run"))
+            and config.base_dataset_mode in {"sharded", "packed"}
+        ),
+        resume_from=config.base_resume_from,
+        loss_spike_rollback=config.loss_spike_rollback,
+        loss_spike_threshold=config.loss_spike_threshold,
+        loss_spike_lr_decay=config.loss_spike_lr_decay,
+        loss_spike_min_lr_scale=config.loss_spike_min_lr_scale,
+        loss_spike_snapshot_every=config.loss_spike_snapshot_every,
+    ))
+    base_eval_checkpoint = base_report.get("best_checkpoint", {}).get(
+        "path",
+        str(out_dir / "base" / "checkpoint"),
+    )
+    if main_process:
+        _record_stage_timing(stage_timings, "base_train", stage_started)
+
+    if main_process:
+        print("[5/7] train chat SFT")
+    stage_started = time.perf_counter()
+    sft_report = train_sft(SFTConfig(
+        input_path=chat_input,
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=base_eval_checkpoint,
+        out_dir=str(out_dir / "sft"),
+        batch_size=config.sft_batch_size,
+        max_steps=config.sft_steps,
+        learning_rate=sft_learning_rate,
+        seed=config.seed,
+        device=config.device,
+        log_every=_validation_log_every(config.sft_steps),
+        sample_tokens=160,
+        early_stop_patience=config.sft_early_stop_patience,
+        early_stop_min_delta=config.early_stop_min_delta,
+        max_minutes=config.sft_max_minutes,
+        lr_warmup_steps=config.sft_lr_warmup_steps,
+        lr_decay=config.sft_lr_decay,
+        min_lr_ratio=config.sft_min_lr_ratio,
+        grad_clip=config.sft_grad_clip,
+        sampling=config.sft_sampling,
+        grad_accum_steps=config.sft_grad_accum_steps,
+        optimizer=config.sft_optimizer,
+        weight_decay=config.sft_weight_decay,
+        weight_decay_decay=config.sft_weight_decay_decay,
+        muon_learning_rate=config.sft_muon_learning_rate,
+        muon_momentum_schedule=config.sft_muon_momentum_schedule,
+        ema_decay=config.sft_ema_decay,
+        packing=config.sft_packing,
+        precision=config.precision,
+        matmul_precision=config.matmul_precision,
+        torch_compile=config.torch_compile,
+        torch_compile_mode=config.torch_compile_mode,
+        ddp=config.ddp,
+        resume_from=config.sft_resume_from,
+        loss_spike_rollback=config.loss_spike_rollback,
+        loss_spike_threshold=config.loss_spike_threshold,
+        loss_spike_lr_decay=config.loss_spike_lr_decay,
+        loss_spike_min_lr_scale=config.loss_spike_min_lr_scale,
+        loss_spike_snapshot_every=config.loss_spike_snapshot_every,
+        peft=config.sft_peft,
+        lora_rank=config.sft_lora_rank,
+        lora_alpha=config.sft_lora_alpha,
+        lora_dropout=config.sft_lora_dropout,
+        lora_targets=config.sft_lora_targets,
+    ))
+    sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
+        "path",
+        str(out_dir / "sft" / "checkpoint"),
+    )
+    if main_process:
+        _record_stage_timing(stage_timings, "sft_train", stage_started)
+
+    barrier_if_distributed(ddp_metadata)
+    if config.ddp and not main_process:
+        return {
+            "status": "ddp_worker_complete",
+            "rank": ddp_metadata.get("rank"),
+            "world_size": ddp_metadata.get("world_size"),
+            "out_dir": str(out_dir),
+        }
+
+    print("[6/7] run SFT fit diagnostic")
+    stage_started = time.perf_counter()
+    sft_fit_input = out_dir / "sft_fit" / "sft_fit_eval.jsonl"
+    sft_dataset = sft_report.get("dataset", {})
+    sft_train_indices = sft_dataset.get("train_indices")
+    sft_val_indices = sft_dataset.get("val_indices")
+    sft_fit_dataset = write_sft_fit_eval(
+        chat_input,
+        sft_fit_input,
+        max_rows=None if config.sft_fit_max_rows <= 0 else config.sft_fit_max_rows,
+        include_indices=sft_train_indices if isinstance(sft_train_indices, list) else None,
+        split_label="sft_train",
+    )
+    sft_fit_report = run_chat_eval(ChatEvalConfig(
+        input_path=str(sft_fit_input),
+        checkpoint_path=sft_eval_checkpoint,
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir / "sft_fit"),
+        max_new_tokens=config.eval_max_new_tokens,
+        seed=config.seed,
+        device=config.device,
+        precision=config.precision,
+        matmul_precision=config.matmul_precision,
+        support_corpus_path=str(corpus_path),
+        log_every=_eval_log_every(sft_fit_dataset["num_rows"]),
+    ))
+    sft_fit_heldout_dataset = None
+    sft_fit_heldout_report = None
+    if isinstance(sft_val_indices, list) and sft_val_indices:
+        sft_fit_heldout_input = out_dir / "sft_fit_heldout" / "sft_fit_eval.jsonl"
+        sft_fit_heldout_dataset = write_sft_fit_eval(
+            chat_input,
+            sft_fit_heldout_input,
+            max_rows=None if config.sft_fit_max_rows <= 0 else config.sft_fit_max_rows,
+            include_indices=sft_val_indices,
+            split_label="sft_heldout",
+        )
+        sft_fit_heldout_report = run_chat_eval(ChatEvalConfig(
+            input_path=str(sft_fit_heldout_input),
+            checkpoint_path=sft_eval_checkpoint,
+            tokenizer_path=str(tokenizer_path),
+            out_dir=str(out_dir / "sft_fit_heldout"),
+            max_new_tokens=config.eval_max_new_tokens,
+            seed=config.seed,
+            device=config.device,
+            precision=config.precision,
+            matmul_precision=config.matmul_precision,
+            support_corpus_path=str(corpus_path),
+            log_every=_eval_log_every(sft_fit_heldout_dataset["num_rows"]),
+        ))
+    _record_stage_timing(stage_timings, "sft_fit_eval", stage_started)
+
+    print("[7/7] run chat eval")
+    stage_started = time.perf_counter()
+    eval_report = run_chat_eval(ChatEvalConfig(
+        input_path=eval_input,
+        checkpoint_path=sft_eval_checkpoint,
+        tokenizer_path=str(tokenizer_path),
+        out_dir=str(out_dir / "eval"),
+        max_new_tokens=config.eval_max_new_tokens,
+        seed=config.seed,
+        device=config.device,
+        precision=config.precision,
+        matmul_precision=config.matmul_precision,
+        support_corpus_path=str(corpus_path),
+        log_every=50,
+    ))
+    generated_eval_replies = [
+        str(row.get("reply", ""))
+        for row in eval_report.get("examples", [])
+        if isinstance(row, dict) and str(row.get("reply", "")).strip()
+    ]
+    external_eval_reports = _run_external_evals(
+        config,
+        external_eval_specs,
+        tokenizer_path=tokenizer_path,
+        checkpoint_path=sft_eval_checkpoint,
+        out_dir=out_dir,
+    )
+    honesty_report = inspect_data_honesty(
+        corpus_path=corpus_path,
+        chat_input=chat_input,
+        eval_input=eval_input,
+        generated_texts=generated_eval_replies,
+    )
+    honesty_json_path, honesty_markdown_path = write_data_honesty_report(
+        honesty_report,
+        out_dir / "honesty",
+    )
+    long_run_gate = _long_run_gate(
+        preflight_report=preflight_report.to_dict(),
+        sft_fit_summary=sft_fit_report["summary"],
+        sft_fit_heldout_summary=(
+            sft_fit_heldout_report["summary"] if sft_fit_heldout_report is not None else None
+        ),
+        eval_summary=eval_report["summary"],
+        external_eval_reports=external_eval_reports,
+        honesty=honesty_report.to_dict(),
+        profile=config.long_run_gate_profile,
+    )
+    _record_stage_timing(stage_timings, "chat_eval_gate", stage_started)
+
+    effective_config = {
+        **config.__dict__,
+        "requested_device": config.device,
+        "device": base_report.get("config", {}).get("device", config.device),
+        "corpus_input": corpus_build.input_path,
+        "corpus_recipe": corpus_build.recipe_path,
+        "dataset_pack": corpus_build.dataset_pack,
+        "chat_input": chat_input,
+        "eval_input": eval_input,
+        "base_effective_learning_rate": base_learning_rate,
+        "sft_effective_learning_rate": sft_learning_rate,
+    }
+    summary = {
+        "config": effective_config,
+        "artifacts": {
+            "dataset_pack": corpus_build.dataset_pack,
+            "corpus": str(corpus_path),
+            "corpus_manifest": corpus_build.manifest_path,
+            "corpus_report": corpus_build.report_path,
+            "preflight_json": str(preflight_json_path),
+            "preflight_report": str(preflight_markdown_path),
+            "honesty_json": honesty_json_path,
+            "honesty_report": honesty_markdown_path,
+            "tokenizer": str(tokenizer_path),
+            "base_report": str(out_dir / "base" / "report.md"),
+            "base_best_checkpoint": base_report.get("best_checkpoint", {}).get("path"),
+            "base_ema_checkpoint": base_report.get("ema_checkpoint"),
+            "base_eval_checkpoint": base_eval_checkpoint,
+            "sft_report": str(out_dir / "sft" / "report.md"),
+            "sft_best_checkpoint": sft_report.get("best_checkpoint", {}).get("path"),
+            "sft_ema_checkpoint": sft_report.get("ema_checkpoint"),
+            "sft_eval_checkpoint": sft_eval_checkpoint,
+            "sft_fit_report": str(out_dir / "sft_fit" / "report.md"),
+            "sft_fit_heldout_report": (
+                str(out_dir / "sft_fit_heldout" / "report.md")
+                if sft_fit_heldout_report is not None
+                else None
+            ),
+            "eval_report": str(out_dir / "eval" / "report.md"),
+            "external_eval_reports": {
+                report["name"]: report["artifacts"]["eval_report"]
+                for report in external_eval_reports
+            },
+        },
+        "corpus": corpus_build.stats.to_dict(),
+        "preflight": preflight_report.to_dict(),
+        "honesty": honesty_report.to_dict(),
+        "tokenizer": tokenizer.stats().__dict__,
+        "base": {
+            "checkpoint": base_report["checkpoint"],
+            "best_checkpoint": base_report.get("best_checkpoint", {}),
+            "eval_checkpoint": base_eval_checkpoint,
+            "best_val_loss": base_report.get("best_checkpoint", {}).get("val_loss"),
+            "best_val_bpb": base_report.get("best_checkpoint", {}).get("val_bpb"),
+            "final_train_loss": base_report["losses"][-1]["train_loss"],
+            "final_val_loss": base_report["losses"][-1]["val_loss"],
+            "final_val_bpb": base_report["losses"][-1].get("val_bpb"),
+            "final_ema_val_loss": base_report["losses"][-1].get("ema_val_loss"),
+            "final_ema_val_bpb": base_report["losses"][-1].get("ema_val_bpb"),
+            "num_parameters": base_report["model"]["num_parameters"],
+            "loss_diagnostics": base_report.get("loss_diagnostics", {}),
+            "memorization": base_report.get("memorization", {}),
+            "coverage": base_report.get("coverage", {}),
+            "optimizer": base_report.get("config", {}).get("optimizer"),
+            "optimizer_metadata": base_report.get("config", {}).get("optimizer_metadata", {}),
+            "ema_checkpoint": base_report.get("ema_checkpoint"),
+            "effective_batch_size": base_report.get("config", {}).get("effective_batch_size"),
+            "effective_tokens_per_step": base_report.get("config", {}).get("effective_tokens_per_step"),
+            "throughput": base_report.get("throughput", {}),
+            "stop_reason": base_report.get("stop_reason"),
+        },
+        "sft": {
+            "checkpoint": sft_report["checkpoint"],
+            "best_val_loss": sft_report.get("best_checkpoint", {}).get("val_loss"),
+            "best_val_bpb": sft_report.get("best_checkpoint", {}).get("val_bpb"),
+            "final_train_loss": sft_report["losses"][-1]["train_loss"],
+            "final_val_loss": sft_report["losses"][-1]["val_loss"],
+            "final_val_bpb": sft_report["losses"][-1].get("val_bpb"),
+            "final_ema_val_loss": sft_report["losses"][-1].get("ema_val_loss"),
+            "final_ema_val_bpb": sft_report["losses"][-1].get("ema_val_bpb"),
+            "truncated_examples": sft_report["dataset"]["truncated_examples"],
+            "skipped_long_examples": sft_report["dataset"].get("skipped_long_examples", 0),
+            "loss_diagnostics": sft_report.get("loss_diagnostics", {}),
+            "best_checkpoint": sft_report.get("best_checkpoint", {}),
+            "eval_checkpoint": sft_eval_checkpoint,
+            "coverage": sft_report.get("coverage", {}),
+            "optimizer": sft_report.get("config", {}).get("optimizer"),
+            "optimizer_metadata": sft_report.get("config", {}).get("optimizer_metadata", {}),
+            "ema_checkpoint": sft_report.get("ema_checkpoint"),
+            "effective_batch_size": sft_report.get("config", {}).get("effective_batch_size"),
+            "effective_tokens_per_step": sft_report.get("config", {}).get("effective_tokens_per_step"),
+            "throughput": sft_report.get("throughput", {}),
+            "stop_reason": sft_report.get("stop_reason"),
+            "packing": sft_report.get("config", {}).get("packing"),
+            "packing_efficiency": sft_report.get("dataset", {}).get("packing_efficiency"),
+            "source_examples": sft_report.get("dataset", {}).get("source_examples"),
+            "packed_sequences": sft_report.get("dataset", {}).get("packed_sequences"),
+            "padded_tokens": sft_report.get("dataset", {}).get("padded_tokens"),
+        },
+        "sft_fit": sft_fit_report["summary"],
+        "sft_fit_dataset": sft_fit_dataset,
+        "sft_fit_analysis": sft_fit_report.get("analysis", {}),
+        "sft_fit_heldout": (
+            sft_fit_heldout_report["summary"] if sft_fit_heldout_report is not None else None
+        ),
+        "sft_fit_heldout_dataset": sft_fit_heldout_dataset,
+        "sft_fit_heldout_analysis": (
+            sft_fit_heldout_report.get("analysis", {}) if sft_fit_heldout_report is not None else {}
+        ),
+        "eval": eval_report["summary"],
+        "eval_analysis": eval_report.get("analysis", {}),
+        "external_evals": external_eval_reports,
+        "long_run_gate": long_run_gate,
+        "timing": {
+            "total_seconds": round(time.perf_counter() - run_started, 4),
+            "stages": stage_timings,
+        },
+    }
+
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (out_dir / "summary.md").write_text(tiny_run_summary_markdown(summary), encoding="utf-8")
+    print(
+        f"done: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "
+        f"passed ({summary['eval']['pass_rate'] * 100:.2f}%)"
+    )
+    print(f"summary: {out_dir / 'summary.md'}")
+    return summary
+
+
+def _iter_text_chunks(path: Path, chunk_chars: int = 1_000_000, progress: bool = False):
+    """Stream large tokenizer corpora so compiled tokenizers can train without a giant Python string."""
+    chunks = 0
+    characters = 0
+    with path.open("r", encoding="utf-8") as handle:
+        while True:
+            chunk = handle.read(chunk_chars)
+            if not chunk:
+                break
+            chunks += 1
+            characters += len(chunk)
+            if progress and (chunks == 1 or chunks % 250 == 0):
+                print(
+                    "tokenizer data: streamed "
+                    f"{characters:,} chars in {chunks:,} chunk(s)",
+                    flush=True,
+                )
+            yield chunk
+
+
+def _read_ddp_control(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _write_ddp_control(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(json.dumps(payload), encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+@contextmanager
+def _ddp_control_heartbeat(path: Path, payload: dict, *, enabled: bool = True):
+    """Refresh DDP setup status while rank 0 performs long CPU setup work."""
+    if not enabled:
+        yield
+        return
+
+    interval = _ddp_setup_heartbeat_seconds()
+    started = time.time()
+    stop_event = threading.Event()
+    sequence = 0
+
+    def heartbeat_payload() -> dict:
+        now = time.time()
+        return {
+            **payload,
+            "heartbeat": {
+                "pid": os.getpid(),
+                "sequence": sequence,
+                "started_at": round(started, 3),
+                "updated_at": round(now, 3),
+                "elapsed_seconds": round(now - started, 3),
+                "interval_seconds": interval,
+            },
+        }
+
+    _write_ddp_control(path, heartbeat_payload())
+
+    def loop() -> None:
+        nonlocal sequence
+        while not stop_event.wait(interval):
+            sequence += 1
+            _write_ddp_control(path, heartbeat_payload())
+
+    thread = threading.Thread(
+        target=loop,
+        name="picochat-ddp-setup-heartbeat",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        yield
+    finally:
+        stop_event.set()
+        thread.join(timeout=1.0)
+
+
+def _wait_for_ddp_setup(path: Path, *, started_after: float | None = None) -> dict:
+    deadline = time.time() + _ddp_setup_timeout_seconds()
+    while time.time() < deadline:
+        if path.exists():
+            if started_after is not None and path.stat().st_mtime < started_after - 1.0:
+                time.sleep(2.0)
+                continue
+            control = _read_ddp_control(path)
+            if control.get("blocked") or control.get("stage") == "setup_complete":
+                return control
+        time.sleep(2.0)
+    raise TimeoutError(
+        f"timed out waiting for rank 0 setup control at {path}; "
+        "inspect the rank 0 log for corpus, honesty, or tokenizer failures"
+    )
+
+
+def _ddp_setup_heartbeat_seconds() -> float:
+    raw = os.environ.get("PICOCHAT_DDP_SETUP_HEARTBEAT_SECONDS", "30")
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = 30.0
+    return max(1.0, seconds)
+
+
+def _ddp_setup_timeout_seconds() -> float:
+    raw_seconds = os.environ.get("PICOCHAT_DDP_SETUP_TIMEOUT_SECONDS")
+    if raw_seconds:
+        try:
+            return max(1.0, float(raw_seconds))
+        except ValueError:
+            pass
+    raw_minutes = os.environ.get("PICOCHAT_DDP_TIMEOUT_MINUTES", "120")
+    try:
+        minutes = float(raw_minutes)
+    except ValueError:
+        minutes = 120.0
+    return max(1.0, minutes * 60.0)
+
+
+def _verify_optional_attention_backend(config: TinyRunConfig) -> None:
+    """Fail fast when an explicit optional attention kernel is unavailable."""
+    if config.device != "cuda":
+        return
+    if config.attn_backend == "fa3" and not fa3_attention_available():
+        raise ValueError(
+            "attn_backend='fa3' requires FlashAttention-3 to be importable before launch; "
+            "install the optional FA3 kernel and run "
+            "`python -m picochat.cli sanity preh100 --device cuda --precision bf16 --attn-backend fa3`"
+        )
+    if config.attn_backend == "external_flash" and not external_flash_attention_available():
+        raise ValueError(
+            "attn_backend='external_flash' requires the optional flash-attn package before launch; "
+            "install flash-attn or use attn_backend='flash' for PyTorch SDPA FlashAttention"
+        )
+
+
+def _record_stage_timing(stage_timings: list[dict[str, object]], stage: str, started: float) -> None:
+    seconds = round(time.perf_counter() - started, 4)
+    stage_timings.append({"stage": stage, "seconds": seconds})
+    print(f"timing: {stage} {seconds:.1f}s")
+
+
+def _validate_external_eval_inputs(specs: tuple[str, ...]) -> list[dict[str, str]]:
+    parsed = []
+    names_seen: set[str] = set()
+    for index, spec in enumerate(specs):
+        name, input_path = _parse_external_eval_spec(spec, index)
+        if name in names_seen:
+            raise ValueError(f"duplicate external eval name: {name}")
+        names_seen.add(name)
+        if not Path(input_path).exists():
+            raise FileNotFoundError(input_path)
+        parsed.append({"name": name, "input_path": input_path})
+    return parsed
+
+
+def _parse_external_eval_spec(spec: str, index: int) -> tuple[str, str]:
+    spec = spec.strip()
+    if not spec:
+        raise ValueError("external eval spec cannot be empty")
+    if "=" in spec:
+        name, input_path = spec.split("=", 1)
+        name = _slugify_external_eval_name(name)
+        input_path = input_path.strip()
+        if not input_path:
+            raise ValueError("external eval spec path cannot be empty")
+        return name, input_path
+    path = Path(spec)
+    name = _slugify_external_eval_name(path.stem or f"external-{index + 1}")
+    return name, spec
+
+
+def _slugify_external_eval_name(value: str) -> str:
+    cleaned = "".join(
+        char.lower() if char.isalnum() else "-"
+        for char in value.strip()
+    ).strip("-")
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    if not cleaned:
+        raise ValueError("external eval name cannot be empty")
+    return cleaned
+
+
+def _run_external_evals(
+    config: TinyRunConfig,
+    specs: list[dict[str, str]],
+    *,
+    tokenizer_path: Path,
+    checkpoint_path: str,
+    out_dir: Path,
+) -> list[dict]:
+    if not specs:
+        return []
+    print(f"[7b/7] run {len(specs)} external benchmark eval(s)")
+    reports = []
+    for spec in specs:
+        name = spec["name"]
+        benchmark_out_dir = out_dir / "external_eval" / name
+        converted_path = benchmark_out_dir / "external_eval.jsonl"
+        convert_report = convert_external_benchmark(ExternalBenchmarkConvertConfig(
+            input_path=spec["input_path"],
+            output_path=str(converted_path),
+            source_format=config.external_eval_format,
+            benchmark_name=name,
+            split="external",
+            max_rows=None if config.external_eval_max_rows <= 0 else config.external_eval_max_rows,
+            seed=config.seed,
+            shuffle=config.external_eval_shuffle,
+        ))
+        eval_report = run_chat_eval(ChatEvalConfig(
+            input_path=str(converted_path),
+            checkpoint_path=checkpoint_path,
+            tokenizer_path=str(tokenizer_path),
+            out_dir=str(benchmark_out_dir),
+            max_new_tokens=config.external_eval_max_new_tokens,
+            seed=config.seed,
+            device=config.device,
+            precision=config.precision,
+            matmul_precision=config.matmul_precision,
+            log_every=_eval_log_every(int(convert_report.get("num_rows") or 0)),
+        ))
+        reports.append({
+            "name": name,
+            "input_path": spec["input_path"],
+            "converted_eval": str(converted_path),
+            "convert_report": convert_report,
+            "summary": eval_report["summary"],
+            "analysis": eval_report.get("analysis", {}),
+            "artifacts": {
+                "eval_report": str(benchmark_out_dir / "report.md"),
+                "eval_json": str(benchmark_out_dir / "eval_report.json"),
+                "converted_eval": str(converted_path),
+                "convert_report": convert_report.get("report_path"),
+            },
+        })
+    return reports
+
+
+def _eval_log_every(num_rows: int) -> int:
+    """Choose a useful progress cadence for generation-heavy diagnostics."""
+    if num_rows <= 0:
+        return 0
+    return max(1, min(100, num_rows // 10 or 1))
+
+
+def run_tiny_multiseed(config: TinyRunConfig, n_seeds: int) -> dict:
+    """Run the tiny pipeline for consecutive seeds and summarize variability."""
+    if n_seeds < 1:
+        raise ValueError("n_seeds must be at least 1")
+    if n_seeds == 1:
+        return run_tiny(config)
+
+    out_dir = Path(config.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    seed_rows = []
+    for offset in range(n_seeds):
+        seed = config.seed + offset
+        seed_out_dir = out_dir / f"seed-{seed}"
+        seed_config = replace(config, out_dir=str(seed_out_dir), seed=seed)
+        print(f"== pico run tiny seed {seed} ({offset + 1}/{n_seeds}) ==")
+        summary = run_tiny(seed_config)
+        seed_rows.append(_multi_seed_row(summary, seed=seed, out_dir=seed_out_dir))
+
+    summary = {
+        "type": "multi_seed_tiny",
+        "config": {
+            **config.__dict__,
+            "n_seeds": n_seeds,
+            "seeds": [row["seed"] for row in seed_rows],
+        },
+        "runs": seed_rows,
+        "aggregate": {
+            "eval_pass_rate": _metric_stats(seed_rows, "eval_pass_rate"),
+            "eval_non_choice_pass_rate": _metric_stats(seed_rows, "eval_non_choice_pass_rate"),
+            "sft_fit_rate": _metric_stats(seed_rows, "sft_fit_rate"),
+            "base_val_bpb": _metric_stats(seed_rows, "base_val_bpb"),
+            "sft_val_bpb": _metric_stats(seed_rows, "sft_val_bpb"),
+            "base_val_loss": _metric_stats(seed_rows, "base_val_loss"),
+            "sft_val_loss": _metric_stats(seed_rows, "sft_val_loss"),
+        },
+    }
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (out_dir / "summary.md").write_text(_multi_seed_summary_markdown(summary), encoding="utf-8")
+    return summary
+
+
+def _multi_seed_row(summary: dict, *, seed: int, out_dir: Path) -> dict:
+    eval_summary = summary.get("eval", {})
+    sft_fit = summary.get("sft_fit", {})
+    base = summary.get("base", {})
+    sft = summary.get("sft", {})
+    return {
+        "seed": seed,
+        "out_dir": str(out_dir),
+        "eval_score": f"{eval_summary.get('num_passed', 0)}/{eval_summary.get('num_examples', 0)}",
+        "eval_pass_rate": _optional_float(eval_summary.get("pass_rate")),
+        "eval_pass_rate_ci": eval_summary.get("pass_rate_ci"),
+        "eval_non_choice_pass_rate": _optional_float(eval_summary.get("non_choice_pass_rate")),
+        "eval_non_choice_pass_rate_ci": eval_summary.get("non_choice_pass_rate_ci"),
+        "sft_fit_rate": _optional_float(sft_fit.get("pass_rate")),
+        "sft_fit_rate_ci": sft_fit.get("pass_rate_ci"),
+        "base_val_bpb": _optional_float(_stage_metric(base, "best_val_bpb", "val_bpb", "final_val_bpb")),
+        "sft_val_bpb": _optional_float(_stage_metric(sft, "best_val_bpb", "val_bpb", "final_val_bpb")),
+        "base_val_loss": _optional_float(_stage_metric(base, "best_val_loss", "val_loss", "final_val_loss")),
+        "sft_val_loss": _optional_float(_stage_metric(sft, "best_val_loss", "val_loss", "final_val_loss")),
+        "long_run_gate": summary.get("long_run_gate", {}).get("status"),
+    }
+
+
+def _metric_stats(rows: list[dict], key: str) -> dict:
+    values = [
+        float(row[key])
+        for row in rows
+        if row.get(key) is not None
+    ]
+    if not values:
+        return {"n": 0, "mean": None, "std": None, "min": None, "max": None}
+    mean = sum(values) / len(values)
+    variance = 0.0
+    if len(values) > 1:
+        variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+    return {
+        "n": len(values),
+        "mean": mean,
+        "std": variance ** 0.5,
+        "min": min(values),
+        "max": max(values),
+    }
+
+
+def _multi_seed_summary_markdown(summary: dict) -> str:
+    aggregate = summary["aggregate"]
+    lines = [
+        "# Picochat Multi-Seed Tiny Run",
+        "",
+        f"Seeds: {', '.join(str(seed) for seed in summary['config']['seeds'])}",
+        "",
+        "## Aggregate",
+        "",
+        "| Metric | Mean | Std | Min | Max | N |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for label, key in [
+        ("Eval pass rate", "eval_pass_rate"),
+        ("Eval non-choice pass rate", "eval_non_choice_pass_rate"),
+        ("SFT fit rate", "sft_fit_rate"),
+        ("Base BPB", "base_val_bpb"),
+        ("SFT BPB", "sft_val_bpb"),
+        ("Base val loss", "base_val_loss"),
+        ("SFT val loss", "sft_val_loss"),
+    ]:
+        stats = aggregate[key]
+        lines.append(
+            f"| {label} | {_format_stat(stats.get('mean'))} | {_format_stat(stats.get('std'))} | "
+            f"{_format_stat(stats.get('min'))} | {_format_stat(stats.get('max'))} | {stats.get('n', 0)} |"
+        )
+
+    lines.extend([
+        "",
+        "## Runs",
+        "",
+        "| Seed | Eval | Eval Pass | Non-Choice | SFT Fit | Base BPB | SFT BPB | Gate | Path |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+    ])
+    for row in summary["runs"]:
+        lines.append(
+            f"| {row['seed']} | {row['eval_score']} | {_format_percent(row.get('eval_pass_rate'))} | "
+            f"{_format_percent(row.get('eval_non_choice_pass_rate'))} | "
+            f"{_format_percent(row.get('sft_fit_rate'))} | {_format_stat(row.get('base_val_bpb'))} | "
+            f"{_format_stat(row.get('sft_val_bpb'))} | `{row.get('long_run_gate') or '--'}` | "
+            f"`{row['out_dir']}` |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _optional_float(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _stage_metric(stage: dict, summary_key: str, checkpoint_key: str, final_key: str):
+    if stage.get(summary_key) is not None:
+        return stage.get(summary_key)
+    checkpoint = stage.get("best_checkpoint") or {}
+    if checkpoint.get(checkpoint_key) is not None:
+        return checkpoint.get(checkpoint_key)
+    return stage.get(final_key)
+
+
+def _format_stat(value) -> str:
+    if value is None:
+        return "--"
+    return f"{float(value):.4f}"
+
+
+def _format_percent(value) -> str:
+    if value is None:
+        return "--"
+    return f"{float(value) * 100:.2f}%"
+
+
+def _validation_log_every(max_steps: int, target_points: int = 24) -> int:
+    """Choose enough validation points to catch long-run regressions."""
+    if max_steps <= 1:
+        return 1
+    return max(1, max_steps // target_points)
+
+
+def _long_run_gate(
+    *,
+    preflight_report: dict,
+    sft_fit_summary: dict,
+    sft_fit_heldout_summary: dict | None = None,
+    eval_summary: dict,
+    external_eval_reports: list[dict] | None = None,
+    honesty: dict,
+    profile: str = "research",
+) -> dict:
+    """Decide whether this completed run should be used as a long-run recipe."""
+    if profile not in LONG_RUN_GATE_PROFILES:
+        raise ValueError(f"profile must be one of: {', '.join(LONG_RUN_GATE_PROFILES)}")
+    issues: list[dict[str, str]] = []
+    budget = preflight_report.get("budget", {})
+    long_run = bool(budget.get("long_run"))
+    if preflight_report.get("status") == "blocked":
+        issues.append({
+            "name": "preflight",
+            "severity": "block",
+            "message": "The run was launched despite blocked preflight checks.",
+        })
+    if honesty.get("status") == "blocked":
+        issues.append({
+            "name": "data_honesty",
+            "severity": "block",
+            "message": "Data honesty found leakage or tuning contamination.",
+        })
+    release_honesty_issue = _release_honesty_issue(preflight_report, honesty, profile=profile)
+    if release_honesty_issue is not None:
+        issues.append(release_honesty_issue)
+    first_release_profile = profile == "first_release"
+    skill_release_profile = profile == "skill_release"
+    sft_fit_rate = (
+        _first_release_category_pass_rate(sft_fit_summary)
+        if first_release_profile
+        else None
+    )
+    if sft_fit_rate is None:
+        sft_fit_rate = float(sft_fit_summary.get("pass_rate") or 0.0)
+    sft_fit_threshold = 0.70
+    sft_heldout_fit_threshold = 0.50
+    eval_non_choice_threshold = 0.30
+    first_release_eval_threshold = 0.45
+    external_eval_threshold = 0.30
+    external_eval_min_examples = 50
+    refusal_threshold = 0.75
+    if sft_fit_rate < sft_fit_threshold:
+        issues.append({
+            "name": "sft_fit",
+            "severity": "block" if long_run else "warn",
+            "message": (
+                "First-release SFT fit is below 70%; fix identity, refusal, and release choice behavior before scaling."
+                if first_release_profile
+                else "SFT fit is below 70%; fix behavior data before scaling this recipe."
+            ),
+        })
+    sft_heldout_fit_rate = None
+    if sft_fit_heldout_summary:
+        sft_heldout_fit_rate = (
+            _first_release_category_pass_rate(sft_fit_heldout_summary)
+            if first_release_profile
+            else None
+        )
+        if sft_heldout_fit_rate is None and sft_fit_heldout_summary.get("pass_rate") is not None:
+            sft_heldout_fit_rate = float(sft_fit_heldout_summary.get("pass_rate"))
+    if sft_heldout_fit_rate is not None and sft_heldout_fit_rate < sft_heldout_fit_threshold:
+        issues.append({
+            "name": "sft_heldout_fit",
+            "severity": "block" if long_run else "warn",
+            "message": (
+                "Held-out first-release SFT fit is below 50%; release behavior is not transferring."
+                if first_release_profile
+                else (
+                    "Held-out SFT fit is below 50%; the chat stage is not transferring "
+                    "across its own validation rows."
+                )
+            ),
+        })
+    eval_non_choice_examples = int(eval_summary.get("non_choice_examples") or 0)
+    eval_non_choice_rate = (
+        float(eval_summary.get("non_choice_pass_rate"))
+        if eval_summary.get("non_choice_pass_rate") is not None
+        else None
+    )
+    if (
+        not first_release_profile
+        and eval_non_choice_rate is not None
+        and eval_non_choice_examples >= 20
+        and eval_non_choice_rate < eval_non_choice_threshold
+    ):
+        issues.append({
+            "name": "eval_non_choice",
+            "severity": "block" if long_run else "warn",
+            "message": (
+                "Held-out non-choice eval is below 30%; aggregate pass rate is likely "
+                "being inflated by choice-format items."
+            ),
+        })
+    first_release_eval_rate = (
+        _first_release_category_pass_rate(eval_summary)
+        if first_release_profile
+        else None
+    )
+    if (
+        first_release_eval_rate is not None
+        and first_release_eval_rate < first_release_eval_threshold
+    ):
+        issues.append({
+            "name": "first_release_eval",
+            "severity": "block" if long_run else "warn",
+            "message": (
+                "First-release eval is below 45% across release behavior rows; "
+                "keep math/spelling as diagnostics, but do not scale this release recipe yet."
+            ),
+        })
+    skill_release_sft_rates: dict[str, float | None] = {}
+    skill_release_eval_rates: dict[str, float | None] = {}
+    skill_release_eval_thresholds: dict[str, float] = {}
+    skill_release_sft_threshold = 0.60
+    if skill_release_profile:
+        for name, prefixes, eval_threshold in SKILL_RELEASE_CATEGORY_GATES:
+            sft_group_rate = _category_prefix_pass_rate(sft_fit_summary, prefixes)
+            eval_group_rate = _category_prefix_pass_rate(eval_summary, prefixes)
+            skill_release_sft_rates[name] = sft_group_rate
+            skill_release_eval_rates[name] = eval_group_rate
+            skill_release_eval_thresholds[name] = eval_threshold
+            if sft_group_rate is None:
+                issues.append({
+                    "name": f"skill_release_sft_{name}",
+                    "severity": "block",
+                    "message": (
+                        f"Skill-release SFT fit has no {name} rows; rebuild the tuning pack before launch."
+                    ),
+                })
+            elif sft_group_rate < skill_release_sft_threshold:
+                issues.append({
+                    "name": f"skill_release_sft_{name}",
+                    "severity": "block" if long_run else "warn",
+                    "message": (
+                        f"Skill-release SFT fit for {name} is below "
+                        f"{skill_release_sft_threshold:.0%}; do not claim this behavior is trained."
+                    ),
+                })
+            if eval_group_rate is None:
+                issues.append({
+                    "name": f"skill_release_eval_{name}",
+                    "severity": "block",
+                    "message": (
+                        f"Skill-release eval has no held-out {name} rows; rebuild the eval pack before launch."
+                    ),
+                })
+            elif eval_group_rate < eval_threshold:
+                issues.append({
+                    "name": f"skill_release_eval_{name}",
+                    "severity": "block" if long_run else "warn",
+                    "message": (
+                        f"Skill-release held-out {name} pass rate is below {eval_threshold:.0%}; "
+                        "keep iterating before a release claim."
+                    ),
+                })
+    external_eval_results = _external_eval_gate_results(
+        external_eval_reports or [],
+        threshold=external_eval_threshold,
+    )
+    external_release_profile = first_release_profile or skill_release_profile
+    if skill_release_profile and long_run and not external_eval_results:
+        issues.append({
+            "name": "external_eval_missing",
+            "severity": "block",
+            "message": (
+                "Skill-release long runs require at least one external benchmark report; "
+                "run ARC/MMLU-style evals before approving a release recipe."
+            ),
+        })
+    for item in external_eval_results:
+        name = item["name"]
+        num_examples = int(item["num_examples"])
+        score = item["score"]
+        if num_examples <= 0 or score is None:
+            issues.append({
+                "name": f"external_eval_{name}",
+                "severity": "block" if long_run and external_release_profile else "warn",
+                "message": f"External benchmark `{name}` did not produce a scoreable report.",
+            })
+        elif long_run and num_examples < external_eval_min_examples:
+            issues.append({
+                "name": f"external_eval_{name}_sample",
+                "severity": "warn",
+                "message": (
+                    f"External benchmark `{name}` has only {num_examples} rows; "
+                    "treat it as a smoke check, not release evidence."
+                ),
+            })
+        elif score < external_eval_threshold:
+            issues.append({
+                "name": f"external_eval_{name}",
+                "severity": "block" if long_run and external_release_profile else "warn",
+                "message": (
+                    f"External benchmark `{name}` scored below {external_eval_threshold:.0%}; "
+                    "do not claim comparable benchmark strength yet."
+                ),
+            })
+    refusal_rate = (
+        float(eval_summary.get("refusal_pass_rate"))
+        if eval_summary.get("refusal_pass_rate") is not None
+        else None
+    )
+    if refusal_rate is not None and refusal_rate < refusal_threshold:
+        issues.append({
+            "name": "refusal",
+            "severity": "block" if long_run else "warn",
+            "message": "Refusal/boundary pass rate is below 75%; inspect unsupported-request failures.",
+        })
+    if float(eval_summary.get("prompt_echo_rate") or 0.0) > 0.05:
+        issues.append({
+            "name": "prompt_echo",
+            "severity": "block",
+            "message": "Eval found prompt echoing; this is not a trustworthy long-run recipe.",
+        })
+    if float(eval_summary.get("unsupported_claim_rate") or 0.0) > 0.05:
+        issues.append({
+            "name": "unsupported_claims",
+            "severity": "warn",
+            "message": "Unsupported claim rate is above 5%; inspect failed replies before scaling.",
+        })
+
+    status = "blocked" if any(item["severity"] == "block" for item in issues) else "warn" if issues else "approved"
+    summary = (
+        "Approved long-run recipe."
+        if status == "approved"
+        else "Do not use this as the approved long-run recipe yet."
+        if status == "blocked"
+        else "Promising, but inspect warnings before using this recipe."
+    )
+    return {
+        "status": status,
+        "summary": summary,
+        "long_run": long_run,
+        "profile": profile,
+        "sft_fit_threshold": sft_fit_threshold,
+        "sft_fit_rate": sft_fit_rate,
+        "sft_heldout_fit_threshold": sft_heldout_fit_threshold,
+        "sft_heldout_fit_rate": sft_heldout_fit_rate,
+        "eval_non_choice_threshold": eval_non_choice_threshold,
+        "eval_non_choice_rate": eval_non_choice_rate,
+        "first_release_eval_threshold": first_release_eval_threshold,
+        "first_release_eval_rate": first_release_eval_rate,
+        "external_eval_threshold": external_eval_threshold,
+        "external_eval_min_examples": external_eval_min_examples,
+        "external_eval_results": external_eval_results,
+        "skill_release_sft_threshold": skill_release_sft_threshold,
+        "skill_release_sft_rates": skill_release_sft_rates,
+        "skill_release_eval_thresholds": skill_release_eval_thresholds,
+        "skill_release_eval_rates": skill_release_eval_rates,
+        "refusal_threshold": refusal_threshold,
+        "refusal_rate": refusal_rate,
+        "issues": issues,
+    }
+
+
+def _release_honesty_issue(preflight_report: dict, honesty: dict, *, profile: str) -> dict[str, str] | None:
+    budget = preflight_report.get("budget", {})
+    if not bool(budget.get("long_run")) or profile == "research":
+        return None
+    corpus_prompt_hits = int(honesty.get("corpus_prompt_hits") or 0)
+    corpus_support_hits = int(honesty.get("corpus_support_phrase_hits") or 0)
+    if not corpus_prompt_hits and not corpus_support_hits:
+        return None
+    return {
+        "name": "release_data_honesty",
+        "severity": "block",
+        "message": (
+            "Release-profile long runs cannot use eval rows whose prompts or specific "
+            "support phrases appear in the base corpus "
+            f"({corpus_prompt_hits} prompt hit(s), {corpus_support_hits} support hit(s))."
+        ),
+    }
+
+
+def _external_eval_gate_results(reports: list[dict], *, threshold: float) -> list[dict]:
+    results = []
+    for index, report in enumerate(reports):
+        summary = report.get("summary") or {}
+        name = str(report.get("name") or f"external-{index + 1}")
+        choice_accuracy = _optional_float(summary.get("choice_accuracy"))
+        pass_rate = _optional_float(summary.get("pass_rate"))
+        score = choice_accuracy if choice_accuracy is not None else pass_rate
+        score_key = "choice_accuracy" if choice_accuracy is not None else "pass_rate"
+        try:
+            num_examples = int(summary.get("num_examples") or 0)
+        except (TypeError, ValueError):
+            num_examples = 0
+        results.append({
+            "name": name,
+            "num_examples": num_examples,
+            "score": score,
+            "score_key": score_key,
+            "pass_rate": pass_rate,
+            "choice_accuracy": choice_accuracy,
+            "threshold": threshold,
+        })
+    return results
+
+
+def _first_release_category_pass_rate(summary: dict) -> float | None:
+    return _category_prefix_pass_rate(summary, FIRST_RELEASE_CATEGORY_PREFIXES)
+
+
+def _category_prefix_pass_rate(summary: dict, prefixes: tuple[str, ...]) -> float | None:
+    breakdown = summary.get("category_breakdown") or {}
+    passed = 0
+    total = 0
+    for category, row in breakdown.items():
+        if not str(category).startswith(prefixes):
+            continue
+        total += int(row.get("num_examples", 0) or 0)
+        passed += int(row.get("num_passed", 0) or 0)
+    if total <= 0:
+        return None
+    return passed / total
+
+
+def _validate_tuning_data_source(
+    config: TinyRunConfig,
+    *,
+    chat_input: str,
+    eval_input: str,
+) -> None:
+    if config.dataset_pack or config.allow_default_tuning_data:
+        return
+
+    using_default_corpus = (
+        config.corpus_recipe is None
+        and _same_path_text(config.corpus_input, DEFAULT_CORPUS_INPUT)
+    )
+    using_default_chat = _same_path_text(chat_input, DEFAULT_CHAT_INPUT)
+    using_default_eval = _same_path_text(eval_input, DEFAULT_EVAL_INPUT)
+    if using_default_corpus and using_default_chat and using_default_eval:
+        return
+
+    if using_default_chat or using_default_eval:
+        defaults = []
+        if using_default_chat:
+            defaults.append(DEFAULT_CHAT_INPUT)
+        if using_default_eval:
+            defaults.append(DEFAULT_EVAL_INPUT)
+        raise ValueError(
+            "custom corpus runs must not silently use Picochat demo tuning data; "
+            f"provide domain --chat-input and --eval-input or use --dataset-pack. "
+            f"Default file(s) still selected: {', '.join(defaults)}. "
+            "Use --allow-default-tuning-data only for a diagnostic wiring check."
+        )
+
+
+def _same_path_text(left: str | None, right: str) -> bool:
+    return str(left or "").strip() == right

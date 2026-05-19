@@ -1,0 +1,524 @@
+import json
+
+import pytest
+
+from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
+from picochat.model import GPTConfig, TinyGPT
+from picochat.sft import (
+    ChatExample,
+    ChatSFTDataset,
+    PackedChatSFTDataset,
+    SFTConfig,
+    category_balanced_weights,
+    category_counts,
+    category_sqrt_weights,
+    load_chat_examples,
+    split_chat_dataset,
+    train_sft,
+)
+from picochat.tokenizer import CharTokenizer
+
+
+def write_jsonl(path, rows):
+    path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+
+def test_train_sft_rejects_ddp_loss_spike_rollback(tmp_path):
+    with pytest.raises(ValueError, match="loss_spike_rollback is not supported with DDP"):
+        train_sft(SFTConfig(
+            input_path=str(tmp_path / "missing-chat.jsonl"),
+            tokenizer_path=str(tmp_path / "missing-tokenizer.json"),
+            checkpoint_path=str(tmp_path / "missing-checkpoint"),
+            out_dir=str(tmp_path / "sft"),
+            ddp=True,
+            loss_spike_rollback=True,
+        ))
+
+
+def test_load_chat_examples_from_jsonl(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    write_jsonl(input_path, [{"user": "hi", "assistant": "hello", "category": "greet", "group": "greet-basic"}])
+
+    examples = load_chat_examples(input_path)
+
+    assert examples == [ChatExample(user="hi", assistant="hello", category="greet", group="greet-basic")]
+
+
+def test_chat_sft_dataset_masks_prompt_tokens():
+    tokenizer = CharTokenizer.train(["User: hi\nAssistant: hello"])
+    dataset = ChatSFTDataset(
+        [ChatExample(user="hi", assistant="hello")],
+        tokenizer=tokenizer,
+        context_size=32,
+    )
+
+    x, y = dataset[0]
+    labels = y.tolist()
+
+    assert len(x) == 32
+    assert len(labels) == 32
+    assert -100 in labels
+    assert any(token_id != -100 for token_id in labels)
+    assert dataset.stats().supervised_tokens > 0
+    assert dataset.stats().masked_prompt_tokens > 0
+
+    unmasked_labels = [token_id for token_id in labels if token_id != -100]
+    assert unmasked_labels[0] == tokenizer.encode("hello", add_eos=True)[0]
+
+
+def test_chat_sft_dataset_skips_rows_that_do_not_fit_context():
+    tokenizer = CharTokenizer.train([
+        "User: this prompt is far too long for a tiny context\nAssistant: ok"
+        "User: hi\nAssistant: ok"
+    ])
+
+    dataset = ChatSFTDataset(
+        [
+            ChatExample(user="this prompt is far too long for a tiny context", assistant="ok"),
+            ChatExample(user="hi", assistant="ok"),
+        ],
+        tokenizer=tokenizer,
+        context_size=24,
+    )
+
+    assert len(dataset) == 1
+    assert dataset.stats().truncated_examples == 0
+    assert dataset.stats().skipped_long_examples == 1
+    assert dataset.stats().skipped_long_category_counts == {"chat": 1}
+    assert dataset.stats().supervised_tokens > 0
+
+
+def test_packed_chat_sft_dataset_bestfit_packs_examples():
+    tokenizer = CharTokenizer.train([
+        "User: a\nAssistant: x\n"
+        "User: b\nAssistant: y\n"
+        "User: c\nAssistant: z\n"
+        "User: d\nAssistant: w\n"
+    ])
+    source = ChatSFTDataset(
+        [
+            ChatExample(user="a", assistant="x", category="short"),
+            ChatExample(user="b", assistant="y", category="short"),
+            ChatExample(user="c", assistant="z", category="short"),
+            ChatExample(user="d", assistant="w", category="short"),
+        ],
+        tokenizer=tokenizer,
+        context_size=48,
+    )
+    packed = PackedChatSFTDataset(
+        [source.tokenized_example(index) for index in range(len(source))],
+        tokenizer=tokenizer,
+        context_size=48,
+    )
+
+    assert len(packed) < len(source)
+    assert packed.stats().packing == "bos_bestfit"
+    assert packed.stats().source_examples == 4
+    assert packed.stats().packed_sequences == len(packed)
+    assert packed.stats().padded_tokens < source.stats().padded_tokens
+    assert packed.stats().packing_efficiency > source.stats().packing_efficiency
+
+    _, labels = packed[0]
+    assert any(token_id != -100 for token_id in labels.tolist())
+    assert packed.stats().supervised_tokens == source.stats().supervised_tokens
+
+
+def test_packed_chat_sft_dataset_preserves_category_sampling_keys():
+    tokenizer = CharTokenizer.train([
+        "User: a\nAssistant: x\n"
+        "User: b\nAssistant: y\n"
+        "User: c\nAssistant: z\n"
+        "User: d\nAssistant: w\n"
+    ])
+    source = ChatSFTDataset(
+        [
+            ChatExample(user="a", assistant="x", category="math"),
+            ChatExample(user="b", assistant="y", category="math"),
+            ChatExample(user="c", assistant="z", category="spelling"),
+            ChatExample(user="d", assistant="w", category="spelling"),
+        ],
+        tokenizer=tokenizer,
+        context_size=48,
+    )
+    packed = PackedChatSFTDataset(
+        [source.tokenized_example(index) for index in range(len(source))],
+        tokenizer=tokenizer,
+        context_size=48,
+    )
+
+    packed_categories = {packed.category_key(index) for index in range(len(packed))}
+
+    assert packed_categories == {"math", "spelling"}
+    assert packed.stats().mixed_category_sequences == 0
+    assert category_sqrt_weights(packed).numel() == len(packed)
+
+
+def test_split_chat_dataset_keeps_groups_out_of_both_sides():
+    tokenizer = CharTokenizer.train([
+        "User: a\nAssistant: one\n"
+        "User: b\nAssistant: two\n"
+        "User: c\nAssistant: three\n"
+        "User: d\nAssistant: four\n"
+    ])
+    dataset = ChatSFTDataset(
+        [
+            ChatExample(user="a", assistant="one", group="alpha"),
+            ChatExample(user="b", assistant="two", group="alpha"),
+            ChatExample(user="c", assistant="three", group="beta"),
+            ChatExample(user="d", assistant="four", group="gamma"),
+        ],
+        tokenizer=tokenizer,
+        context_size=32,
+    )
+
+    split = split_chat_dataset(dataset, val_fraction=0.25, seed=1)
+    train_groups = {dataset.group_key(index) for index in split.train.indices}
+    val_groups = {dataset.group_key(index) for index in split.val.indices}
+
+    assert split.method == "group"
+    assert train_groups.isdisjoint(val_groups)
+    assert split.num_groups == 3
+
+
+def test_category_balanced_weights_boost_rare_categories():
+    tokenizer = CharTokenizer.train([
+        "User: a\nAssistant: one\n"
+        "User: b\nAssistant: two\n"
+        "User: c\nAssistant: three\n"
+    ])
+    dataset = ChatSFTDataset(
+        [
+            ChatExample(user="a", assistant="one", category="story"),
+            ChatExample(user="b", assistant="two", category="story"),
+            ChatExample(user="c", assistant="three", category="refusal"),
+        ],
+        tokenizer=tokenizer,
+        context_size=32,
+    )
+
+    weights = category_balanced_weights(dataset).tolist()
+
+    assert category_counts(dataset) == {"refusal": 1, "story": 2}
+    assert weights[2] == weights[0] * 2
+    assert dataset.stats().category_counts == {"refusal": 1, "story": 2}
+
+
+def test_category_sqrt_weights_softly_boost_rare_categories():
+    tokenizer = CharTokenizer.train([
+        "User: a\nAssistant: one\n"
+        "User: b\nAssistant: two\n"
+        "User: c\nAssistant: three\n"
+    ])
+    dataset = ChatSFTDataset(
+        [
+            ChatExample(user="a", assistant="one", category="story"),
+            ChatExample(user="b", assistant="two", category="story"),
+            ChatExample(user="c", assistant="three", category="refusal"),
+        ],
+        tokenizer=tokenizer,
+        context_size=32,
+    )
+
+    balanced = category_balanced_weights(dataset).tolist()
+    sqrt_weights = category_sqrt_weights(dataset).tolist()
+
+    assert sqrt_weights[2] > sqrt_weights[0]
+    assert sqrt_weights[2] / sqrt_weights[0] < balanced[2] / balanced[0]
+
+
+def test_train_sft_writes_artifacts(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "base"
+    out_dir = tmp_path / "sft"
+    rows = [
+        {"user": "What is Picochat?", "assistant": "Picochat is small."},
+        {"user": "What comes next?", "assistant": "Chat tuning comes next."},
+    ]
+    write_jsonl(input_path, rows)
+    tokenizer = CharTokenizer.train([
+        "User: What is Picochat?\nAssistant: Picochat is small.\n"
+        "User: What comes next?\nAssistant: Chat tuning comes next."
+    ])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=64,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    report = train_sft(SFTConfig(
+        input_path=str(input_path),
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=str(checkpoint_path),
+        out_dir=str(out_dir),
+        batch_size=2,
+        max_steps=2,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=8,
+        lr_warmup_steps=1,
+        lr_decay="linear",
+        min_lr_ratio=0.5,
+        grad_clip=1.0,
+        sampling="category_balanced",
+        packing="bos_bestfit",
+    ))
+
+    assert (out_dir / "checkpoint" / "model.pt").exists()
+    assert (out_dir / "checkpoint" / "metadata.json").exists()
+    assert (out_dir / "resume_checkpoint" / "progress.json").exists()
+    assert (out_dir / "resume_checkpoint" / "progress.md").exists()
+    assert (out_dir / "best_checkpoint" / "model.pt").exists()
+    assert (out_dir / "sft_report.json").exists()
+    assert (out_dir / "sft_label_audit.json").exists()
+    assert (out_dir / "report.md").exists()
+    assert (out_dir / "sample.txt").exists()
+    assert (out_dir / "loss_spike_watch.jsonl").exists()
+    assert report["dataset"]["num_examples"] == 2
+    assert report["dataset"]["supervised_tokens"] > 0
+    assert report["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
+    assert "val_bpb" in report["losses"][-1]
+    assert report["config"]["artifacts_written"] is True
+    assert "learning_rate" in report["losses"][-1]
+    assert "grad_norm" in report["losses"][-1]
+    assert "tokens_per_sec" in report["losses"][-1]
+    assert report["throughput"]["avg_tokens_per_sec"] is not None
+    assert "loss_spike_warnings" in report
+    assert report["loss_spike_watch"] == str(out_dir / "loss_spike_watch.jsonl")
+    assert len((out_dir / "loss_spike_watch.jsonl").read_text(encoding="utf-8").splitlines()) == 2
+    assert report["coverage"]["actual_steps"] == 2
+    assert report["stop_reason"] == "max_steps"
+    assert report["loss_diagnostics"]["final_step"] == 2
+    assert report["dataset"]["sampling"] == "category_balanced"
+    assert report["dataset"]["packing"] == "bos_bestfit"
+    assert report["dataset"]["source_examples"] == 2
+    assert report["dataset"]["packed_sequences"] <= 2
+    assert report["dataset"]["padded_tokens"] >= 0
+    assert report["dataset"]["category_counts"] == {"chat": 2}
+    assert report["label_audit"]["full"]["zero_supervised_sequences"] == 0
+    assert report["label_audit"]["train"]["active_label_fraction"] > 0
+    audit = json.loads((out_dir / "sft_label_audit.json").read_text(encoding="utf-8"))
+    assert audit["validation"]["zero_supervised_sequences"] == 0
+    report_text = (out_dir / "report.md").read_text(encoding="utf-8")
+    assert "Loss Diagnostics" in report_text
+    assert "Best validation checkpoint" in report_text
+    assert "SFT sampling" in report_text
+    assert "Packing" in report_text
+    assert "SFT Label Audit" in report_text
+    progress = json.loads((out_dir / "resume_checkpoint" / "progress.json").read_text(encoding="utf-8"))
+    assert progress["stage"] == "sft"
+    assert progress["step"] == 2
+    assert progress["best_checkpoint"]["path"] == str(out_dir / "best_checkpoint")
+
+
+def test_train_sft_lora_writes_adapter_and_merged_checkpoint(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "base"
+    out_dir = tmp_path / "sft-lora"
+    rows = [
+        {"user": "What is Picochat?", "assistant": "Picochat is small."},
+        {"user": "What comes next?", "assistant": "Adapter tuning comes next."},
+    ]
+    write_jsonl(input_path, rows)
+    tokenizer = CharTokenizer.train([
+        "User: What is Picochat?\nAssistant: Picochat is small.\n"
+        "User: What comes next?\nAssistant: Adapter tuning comes next."
+    ])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=64,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    report = train_sft(SFTConfig(
+        input_path=str(input_path),
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=str(checkpoint_path),
+        out_dir=str(out_dir),
+        batch_size=2,
+        max_steps=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        peft="lora",
+        lora_rank=2,
+        lora_alpha=4.0,
+        lora_targets=("attn_qkv",),
+    ))
+
+    assert (out_dir / "checkpoint" / "model.pt").exists()
+    assert (out_dir / "checkpoint" / "adapter_model.pt").exists()
+    assert (out_dir / "checkpoint" / "adapter_config.json").exists()
+    assert (out_dir / "best_checkpoint" / "adapter_model.pt").exists()
+    merged_model, metadata = load_checkpoint(out_dir / "checkpoint")
+    assert merged_model.config.n_layer == 1
+    assert metadata["peft"]["mode"] == "lora"
+    assert report["config"]["peft"]["mode"] == "lora"
+    assert report["config"]["peft_mode"] == "lora"
+    assert report["model"]["parameter_report"]["trainable_fraction"] < 1
+    assert report["adapter_checkpoint"] == str(out_dir / "checkpoint")
+
+
+def test_train_sft_can_resume_from_training_state(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "base"
+    first_dir = tmp_path / "sft-first"
+    resumed_dir = tmp_path / "sft-resumed"
+    rows = [
+        {"user": "What is Picochat?", "assistant": "Picochat is small."},
+        {"user": "What comes next?", "assistant": "Chat tuning comes next."},
+        {"user": "What is tested?", "assistant": "Resume state is tested."},
+    ]
+    write_jsonl(input_path, rows)
+    tokenizer = CharTokenizer.train([
+        "User: What is Picochat?\nAssistant: Picochat is small.\n"
+        "User: What comes next?\nAssistant: Chat tuning comes next.\n"
+        "User: What is tested?\nAssistant: Resume state is tested."
+    ])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=64,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    first = train_sft(SFTConfig(
+        input_path=str(input_path),
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=str(checkpoint_path),
+        out_dir=str(first_dir),
+        batch_size=2,
+        max_steps=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        sampling="category_sqrt",
+    ))
+    resumed = train_sft(SFTConfig(
+        input_path=str(input_path),
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=str(checkpoint_path),
+        out_dir=str(resumed_dir),
+        batch_size=2,
+        max_steps=3,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+        sampling="category_sqrt",
+        resume_from=first["resume_checkpoint"],
+    ))
+
+    assert (first_dir / "resume_checkpoint" / "training_state.pt").exists()
+    assert (resumed_dir / "checkpoint" / "training_state.pt").exists()
+    assert "training_fingerprint" in load_training_state(first["resume_checkpoint"])
+    assert resumed["coverage"]["actual_steps"] == 3
+    assert [row["step"] for row in resumed["losses"]] == [1, 2, 3]
+    assert resumed["config"]["resume_from"] == first["resume_checkpoint"]
+
+
+def test_sft_rejects_resume_with_different_input(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "base"
+    first_dir = tmp_path / "sft-first"
+    resumed_dir = tmp_path / "sft-resumed"
+    rows = [
+        {"user": "hi", "assistant": "hello"},
+        {"user": "bye", "assistant": "goodbye"},
+    ]
+    write_jsonl(input_path, rows)
+    tokenizer = CharTokenizer.train([
+        "User: hi\nAssistant: hello\n"
+        "User: bye\nAssistant: goodbye"
+    ])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=64,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    first = train_sft(SFTConfig(
+        input_path=str(input_path),
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=str(checkpoint_path),
+        out_dir=str(first_dir),
+        batch_size=2,
+        max_steps=1,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+    ))
+    write_jsonl(input_path, rows + [{"user": "new", "assistant": "row"}])
+
+    with pytest.raises(ValueError, match="fingerprint"):
+        train_sft(SFTConfig(
+            input_path=str(input_path),
+            tokenizer_path=str(tokenizer_path),
+            checkpoint_path=str(checkpoint_path),
+            out_dir=str(resumed_dir),
+            batch_size=2,
+            max_steps=2,
+            log_every=1,
+            eval_batches=1,
+            sample_tokens=4,
+            resume_from=first["resume_checkpoint"],
+        ))
+
+
+def test_train_sft_reports_gradient_accumulation(tmp_path):
+    input_path = tmp_path / "chat.jsonl"
+    tokenizer_path = tmp_path / "tokenizer.json"
+    checkpoint_path = tmp_path / "base"
+    out_dir = tmp_path / "sft"
+    rows = [
+        {"user": "one", "assistant": "first"},
+        {"user": "two", "assistant": "second"},
+        {"user": "three", "assistant": "third"},
+    ]
+    write_jsonl(input_path, rows)
+    tokenizer = CharTokenizer.train(["User: one\nAssistant: first\nUser: two\nAssistant: second\nUser: three\nAssistant: third"])
+    tokenizer.save(tokenizer_path)
+    model = TinyGPT(GPTConfig(
+        vocab_size=len(tokenizer),
+        context_size=48,
+        n_embd=16,
+        n_head=4,
+        n_layer=1,
+    ))
+    save_checkpoint(checkpoint_path, model, step=0, train_loss=0.0)
+
+    report = train_sft(SFTConfig(
+        input_path=str(input_path),
+        tokenizer_path=str(tokenizer_path),
+        checkpoint_path=str(checkpoint_path),
+        out_dir=str(out_dir),
+        batch_size=1,
+        grad_accum_steps=2,
+        max_steps=2,
+        log_every=1,
+        eval_batches=1,
+        sample_tokens=4,
+    ))
+
+    assert report["config"]["grad_accum_steps"] == 2
+    assert report["config"]["effective_batch_size"] == 2
+    assert report["coverage"]["examples_per_step_estimate"] == 2
+    assert report["coverage"]["actual_example_updates"] == 4
+    assert report["losses"][-1]["effective_batch_size"] == 2

@@ -1,0 +1,7 @@
+{
+  "name": "TinyStories v5 prompt-conditioning pack (../runs/tinystories-1k/documents)",
+  "description": "TinyStories corpus plus scaffolded SFT examples and split-aware eval. SFT teaches explicit prompt binding; eval separates prompt-conditioned checks from transfer, knowledge, refusal, and memorization safety checks.",
+  "corpus": "../runs/tinystories-1k/documents",
+  "chat": "tinystories_chat_v5.jsonl",
+  "eval": "tinystories_eval_v5.jsonl"
+}

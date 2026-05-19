@@ -1,0 +1,7 @@
+{
+  "name": "TinyStories v6 balanced curriculum pack (../runs/tinystories-1k/documents)",
+  "description": "TinyStories corpus plus a balanced SFT curriculum. The required-word eval pairs are held out of SFT; category-balanced sampling is recommended for refusals, story knowledge, and word binding.",
+  "corpus": "../runs/tinystories-1k/documents",
+  "chat": "tinystories_chat_v6.jsonl",
+  "eval": "tinystories_eval_v6.jsonl"
+}

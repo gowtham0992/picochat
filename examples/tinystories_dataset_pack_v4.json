@@ -1,0 +1,7 @@
+{
+  "name": "TinyStories v4 prompt-anchor pack",
+  "description": "TinyStories corpus plus template-grouped SFT examples. The assistant answers put requested subjects and required words early, so a tiny model can learn visible prompt following without exact eval leakage.",
+  "corpus": "../runs/tinystories-1k/documents",
+  "chat": "tinystories_chat_v4.jsonl",
+  "eval": "tinystories_eval_v4.jsonl"
+}

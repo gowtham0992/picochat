@@ -1,301 +1,194 @@
 # Picochat
 
-Picochat is an educational tiny LLM factory.
+Picochat is an honest SLM training factory: a from-scratch pipeline for
+building, checking, and releasing small language models without hiding data
+leakage, memorization, weak evals, or GPU-wasting launch mistakes.
 
-It trains a small decoder-only language model from local text, tunes it on chat
-examples, evaluates its behavior, and opens a local workbench where every stage
-can be inspected.
+It is inspired by Andrej Karpathy's
+[nanochat](https://github.com/karpathy/nanochat), but the product goal is
+different. Picochat is not trying to claim frontier behavior from a tiny run.
+It is trying to make the whole small-model factory inspectable:
 
 ```text
-dataset -> tokenizer -> base pretraining -> chat SFT -> eval -> chat -> report
+dataset -> tokenizer -> base pretraining -> chat SFT -> eval -> release gate
 ```
 
-Picochat is inspired by nanochat, but it has a different target. It is not a
-small ChatGPT and it is not a GPT-2 race. It is a microscope for understanding
-the whole chat-model pipeline on one machine.
+![Picochat workbench release readiness](docs/screenshots/workbench-release-readiness.jpg)
 
-## What It Is
+## Current Status
 
-- A from-scratch tiny decoder-only Transformer training pipeline.
-- A local experiment factory with reproducible run artifacts.
-- A workbench UI for inspecting data, tokens, losses, evals, generation, reports,
-  and run comparisons.
-- An honesty-oriented eval playground that tracks missing support, forbidden
-  claims, answerable prompts, and unanswerable prompts.
+Picochat is a research-grade training harness and local workbench. The 100M
+pilot path has been exercised on H100/H200 instances. The 1B-class
+`h200-1b-ddp8` path is prepared for an 8xH100/H200 run with explicit preflight,
+DDP dry-run, checkpoint, contamination, token-budget, and post-run release
+gates.
 
-## What It Is Not
+What is ready:
 
-- Not RAG.
-- Not a frontier assistant.
-- Not optimized for multi-GPU training yet.
-- Not trying to hide tiny-model failure modes.
+- 1B-class decoder-only GPT stack: RoPE, RMSNorm, SwiGLU, GQA, QK norm, tied
+  embeddings, parallel residual, scaled residual init, BF16, torch.compile,
+  gradient checkpointing, and CUDA/DDP.
+- ClimbMix import with corpus manifests, document-boundary checks, and sharded
+  token loaders.
+- Release-oriented SFT/eval packs for identity, refusal, choice, arithmetic,
+  and spelling.
+- Preflight checks that block unsafe or dishonest long runs before training.
+- Post-run gates that block release when SFT fit, held-out fit, visible eval,
+  external benchmarks, prompt echo, refusal behavior, or honesty checks fail.
+- A local web dashboard with release readiness, loss curves, preflight output,
+  Scale Up commands, paid-GPU confirmation, and DDP dry-run commands.
 
-The point is to make each failure visible enough to learn from.
+What is not claimed:
+
+- Picochat is not a production assistant.
+- Picochat is not RAG.
+- Picochat does not claim a useful 1B model before the 1B run and gates pass.
+- Synthetic SFT is behavior-focused; it does not magically create knowledge
+  the base model never learned.
+
+## Why Picochat Exists
+
+Small-model projects often fail in predictable ways: eval prompts leak into SFT,
+validation text overlaps training data, tiny corpora are replayed hundreds of
+times, losses are shown without context, checkpoints corrupt on crash, and
+large GPU launches start before anyone has run a real preflight.
+
+Picochat treats those as product problems, not afterthoughts.
+
+The factory is built around four principles:
+
+1. **Train visibly.** Every stage writes artifacts that can be inspected and
+   compared.
+2. **Gate honestly.** Preflight and release checks can block the run or block
+   release.
+3. **Separate practice from scoring.** SFT rows are practice; eval rows are the
+   scoreboard.
+4. **Protect GPU spend.** Scale-up commands include sanity checks, preflight,
+   a short DDP dry run, and explicit paid-launch confirmation.
 
 ## Quick Start
 
-From the repo root:
+Install locally:
+
+```bash
+git clone https://github.com/gowtham0992/picochat.git
+cd picochat
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev,hf]"
+```
+
+Run the tiny demo:
 
 ```bash
 PYTHONPATH=src python -m picochat.cli demo
 ```
 
-This writes a full demo run to:
-
-```text
-runs/pico-demo
-```
-
-Then open the workbench:
+Open the workbench:
 
 ```bash
 PYTHONPATH=src python -m picochat.cli web --runs-dir runs --port 8765
 ```
 
-Visit:
+Then visit:
 
 ```text
 http://127.0.0.1:8765
 ```
 
-If installed as an editable package, the same commands are:
+The same commands are available through the installed `pico` entry point:
 
 ```bash
 pico demo
 pico web --runs-dir runs --port 8765
 ```
 
-## Workbench Stations
+## 8xH100/H200 Path
 
-The local web UI is artifact-backed. It reads files produced by runs; it does
-not show fake training data.
-
-- **Factory Flow:** the real pipeline from dataset to report.
-- **Dataset Bay:** corpus stats, quality checks, training windows, and preview.
-- **Tokenizer Lab:** character-to-token-ID inspection from the trained tokenizer.
-- **Training Dash:** base and SFT loss traces, including memorization warnings.
-- **Generation Deck:** live generation from the selected base or SFT checkpoint.
-- **Eval Scoreboard:** pass/fail results plus honesty metrics.
-- **Report Vault:** generated Markdown reports rendered inside the workbench.
-- **Compare Runs:** side-by-side eval, loss, parameter, and context comparisons.
-
-## Run Artifacts
-
-Each tiny run writes a folder like:
+The 1B-class path is intentionally gated. The short version is:
 
 ```text
-runs/pico-demo/
-  corpus.txt
-  corpus_manifest.json
-  corpus_report.md
-  tokenizer.json
-  summary.json
-  summary.md
-  base/
-    checkpoint/
-    train_report.json
-    report.md
-    sample.txt
-  sft/
-    checkpoint/
-    sft_report.json
-    report.md
-    sample.txt
-  eval/
-    eval_report.json
-    report.md
+setup -> sanity -> ClimbMix import -> release skills pack
+  -> preflight -> 100-step DDP dry run -> full run -> SFT/eval -> release gate
 ```
 
-These artifacts are the contract between the training code, CLI, reports, and
-workbench.
+Read the runbook before spending GPU money:
 
-## Bring Your Own Corpus
+- [8xH200 1B runbook](docs/h200_1b_runbook.md)
+- [Release gates](docs/release_gates.md)
+- [Contamination and honesty checks](docs/contamination_and_honesty.md)
 
-Picochat v1 corpus support is intentionally conservative: local files in
-formats that can be converted into plain training text. Built-in support covers
-`.txt`, `.text`, `.md`, `.jsonl`, `.csv`, and `.py`.
+The current `h200-1b-ddp8` scale targets about 1.12B parameters and 22.4B
+planned training tokens, roughly 20 tokens per parameter.
 
-PDF and Word documents are optional because those extractors add dependencies:
+## Release Readiness
+
+Picochat does not treat a completed run as a release. A run can finish training
+and still be blocked.
+
+The release gate checks:
+
+- preflight status
+- token/parameter budget and corpus replay risk
+- SFT fit and held-out SFT fit
+- visible eval pass rate
+- per-skill thresholds for identity, refusal, choice, math, and spelling
+- external benchmark presence
+- prompt echo and refusal behavior
+- corpus/SFT/eval contamination signals
+- data honesty report issues
+
+![Release gate preview](docs/screenshots/release-readiness-panel.jpg)
+
+## Workbench
+
+The local dashboard reads real run artifacts. It does not display fake training
+progress.
+
+Key stations:
+
+- **Dataset Bay:** corpus preview, import, pack generation, tuning inspection,
+  launch preflight, and CLI command preview.
+- **Tokenizer Lab:** text-to-token-ID inspection.
+- **Training Dash:** base/SFT loss and BPB curves with lower-is-better context.
+- **Eval Scoreboard:** pass/fail rows, failure causes, prompt echo, and repair
+  guidance.
+- **Release Readiness:** the post-run gate in both beginner and research modes.
+- **Scale Up:** remote setup, sanity, import, benchmark, preflight, DDP dry run,
+  full train, bundle, and return commands.
+
+![Training dash loss curves](docs/screenshots/training-dash-loss-curves.jpg)
+
+![Scale Up commands](docs/screenshots/scale-up-commands.jpg)
+
+## Documentation
+
+- [Product page / GitHub Pages entry](docs/index.html)
+- [Architecture](docs/architecture.md)
+- [Pipeline guide](docs/pipeline_guide.md)
+- [Release gates](docs/release_gates.md)
+- [8xH200 1B runbook](docs/h200_1b_runbook.md)
+- [Contamination and honesty](docs/contamination_and_honesty.md)
+- [Task mixture recipe](docs/task_mixture_recipe.md)
+- [Screenshot capture guide](docs/screenshots.md)
+
+To publish the product page with GitHub Pages, set the repository Pages source
+to the `docs/` folder on the `develop` or `main` branch.
+
+## Development
+
+Run tests:
 
 ```bash
-pip install -e ".[docs]"
+PYTHONPATH=src pytest -q
 ```
 
-With the docs extra installed, Picochat also attempts `.pdf` and `.docx`.
-Without it, those files are still listed in the manifest as skipped with
-`missing_pdf_dependency` or `missing_docx_dependency`, so the corpus builder
-does not silently ignore them.
-
-Build a corpus from your own folder:
+Run only web/dashboard checks:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli data build --input my_docs/ --out runs/my-docs/corpus.txt
+PYTHONPATH=src pytest tests/test_web.py -q
 ```
 
-Or build from an explicit JSON recipe:
+## License
 
-```bash
-PYTHONPATH=src python -m picochat.cli data build --recipe examples/corpus_recipe.json --out runs/my-docs/corpus.txt
-```
-
-Preview the same recipe before writing anything:
-
-```bash
-PYTHONPATH=src python -m picochat.cli data preview --recipe examples/corpus_recipe.json
-```
-
-The preview command prints included/skipped files, labels, warnings, corpus
-stats, and the first slice of the combined training text.
-
-Recipe files make the dataset choice reviewable:
-
-```json
-{
-  "sources": [
-    {"path": "notes/lesson-1.md", "label": "lesson"},
-    {"path": "manuals", "label": "manual", "exclude": ["manuals/drafts/**"]},
-    {"path": "archive", "include": false, "reason": "recipe_excluded"}
-  ],
-  "exclude": ["**/.DS_Store", "**/draft-*"]
-}
-```
-
-Each source path is relative to the recipe file unless it is absolute. Labels
-are stored in `corpus_manifest.json`; they do not get inserted into the training
-text.
-
-This writes:
-
-```text
-runs/my-docs/corpus.txt
-runs/my-docs/corpus_manifest.json
-runs/my-docs/corpus_report.md
-```
-
-The manifest records every scanned file, whether it was included or skipped,
-the reason, character count, line count, and corpus warnings. Dataset Bay reads
-this manifest so the workbench can show provenance instead of treating the
-corpus as an anonymous blob of text.
-
-Train a tiny run from that corpus:
-
-```bash
-PYTHONPATH=src python -m picochat.cli run tiny --corpus-input runs/my-docs/corpus.txt --out-dir runs/my-docs-v1
-```
-
-Or run the full tiny pipeline directly from a recipe:
-
-```bash
-PYTHONPATH=src python -m picochat.cli run tiny --corpus-recipe examples/corpus_recipe.json --out-dir runs/my-docs-v1
-```
-
-Use only text you have permission to use. For local experiments, this can be
-your own notes, internal documents you are allowed to process, public-domain
-text, or permissively licensed material. Do not redistribute corpora or models
-trained on copyrighted text unless you have the rights to do so.
-
-## CLI Reference
-
-Run the default demo:
-
-```bash
-PYTHONPATH=src python -m picochat.cli demo
-```
-
-Run a configurable tiny experiment:
-
-```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tiny-v4
-```
-
-Inspect and build a corpus:
-
-```bash
-PYTHONPATH=src python -m picochat.cli data inspect --input examples/tiny_corpus.txt
-PYTHONPATH=src python -m picochat.cli data build --input examples/tiny_corpus.txt --out runs/manual/corpus.txt
-```
-
-Train a tokenizer:
-
-```bash
-PYTHONPATH=src python -m picochat.cli tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer.json
-```
-
-Inspect next-token training windows:
-
-```bash
-PYTHONPATH=src python -m picochat.cli batch inspect --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --context-size 128
-```
-
-Train base and SFT stages manually:
-
-```bash
-PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/base --context-size 128 --n-embd 64 --n-layer 2 --max-steps 300
-PYTHONPATH=src python -m picochat.cli train sft --input examples/tiny_chat.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/base/checkpoint --out-dir runs/manual/sft --max-steps 600
-```
-
-Evaluate and chat:
-
-```bash
-PYTHONPATH=src python -m picochat.cli eval chat --input examples/tiny_eval.jsonl --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/eval
-PYTHONPATH=src python -m picochat.cli chat --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json
-```
-
-Compare runs:
-
-```bash
-PYTHONPATH=src python -m picochat.cli compare runs/tiny-v2 runs/tiny-v3 --out runs/compare-tiny.md
-```
-
-## Eval Philosophy
-
-Picochat uses transparent phrase checks first because they are easy to inspect.
-Each eval row can define:
-
-- `must_include`: phrases that must appear.
-- `must_include_any`: phrase groups where at least one option must appear.
-- `must_not_include`: forbidden phrases.
-- `answerable`: whether the model should answer directly.
-- `category`: a human label such as `project`, `tokenizer`, `honesty`, or
-  `refusal`.
-
-The report tracks:
-
-- pass rate
-- unsupported claim rate
-- missing support rate
-- answerable vs unanswerable examples
-- found forbidden phrases
-
-This does not prove semantic truth. It gives a small, inspectable signal for
-whether the tiny model is following the behavior we trained and asked it to
-show.
-
-## Design Rules
-
-- Start local and readable.
-- Add scale only after the tiny path is explainable.
-- Prefer artifacts over hidden state.
-- Keep UI values tied to real run files.
-- Treat high SFT validation loss as useful signal, not something to hide.
-- Make unsupported answers measurable.
-
-## Roadmap
-
-Near-term v0.1 polish:
-
-- create a clean flagship `runs/tiny-v4` demo with current eval metadata
-- add screenshots of the workbench
-- tighten report language around honesty metrics
-- add a small guide explaining each pipeline stage
-
-After that, dataset and training upgrades should come next:
-
-- Hugging Face dataset import
-- dataset scoring and filtering
-- larger tokenizer option, likely BPE
-- cleaner train/validation split controls
-- longer base pretraining runs
-- better eval suites for unsupported claims
-
-The order matters: first make the tiny factory coherent, then scale the data.
+MIT. See [LICENSE](LICENSE).
