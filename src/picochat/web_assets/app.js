@@ -6157,20 +6157,42 @@ function lossTraceChart(losses) {
   const vals = losses.flatMap((row) => [row.train_loss, row.val_loss]);
   const min = Math.min(...vals);
   const max = Math.max(...vals);
-  const width = 360;
-  const height = 142;
-  const pad = 18;
-  const xFor = (index) => pad + (losses.length <= 1 ? 0 : (index / (losses.length - 1)) * (width - pad * 2));
+  const width = 420;
+  const height = 178;
+  const pad = { left: 48, right: 14, top: 18, bottom: 34 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+  const xFor = (index) => pad.left + (losses.length <= 1 ? 0 : (index / (losses.length - 1)) * plotWidth);
   const yFor = (value) => {
     const spread = Math.max(0.0001, max - min);
-    return height - pad - ((Number(value) - min) / spread) * (height - pad * 2);
+    return height - pad.bottom - ((Number(value) - min) / spread) * plotHeight;
   };
   const points = (key) => losses.map((row, index) => `${xFor(index).toFixed(1)},${yFor(row[key]).toFixed(1)}`).join(" ");
   const last = losses.at(-1);
+  const first = losses[0];
+  const stepLabel = (row, fallback) => fmtInt(row?.step ?? fallback);
+  const yTicks = [max, (min + max) / 2, min];
+  const xTicks = [
+    { label: stepLabel(first, 1), x: xFor(0), anchor: "start" },
+    { label: stepLabel(last, losses.length), x: xFor(losses.length - 1), anchor: "end" },
+  ];
   return `
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Training loss chart">
-      <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="loss-axis"></line>
-      <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="loss-axis"></line>
+      <text x="${pad.left}" y="11" class="loss-axis-label">loss</text>
+      <text x="${width - pad.right}" y="${height - 5}" text-anchor="end" class="loss-axis-label">step</text>
+      ${yTicks.map((value) => {
+        const y = yFor(value);
+        return `
+          <line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${width - pad.right}" y2="${y.toFixed(1)}" class="loss-grid"></line>
+          <text x="${pad.left - 7}" y="${(y + 3).toFixed(1)}" text-anchor="end" class="loss-tick-label">${fmtLoss(value)}</text>
+        `;
+      }).join("")}
+      ${xTicks.map((tick) => `
+        <line x1="${tick.x.toFixed(1)}" y1="${height - pad.bottom}" x2="${tick.x.toFixed(1)}" y2="${height - pad.bottom + 4}" class="loss-axis"></line>
+        <text x="${tick.x.toFixed(1)}" y="${height - 17}" text-anchor="${tick.anchor}" class="loss-tick-label">${tick.label}</text>
+      `).join("")}
+      <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" class="loss-axis"></line>
+      <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" class="loss-axis"></line>
       <polyline points="${points("train_loss")}" class="loss-line train"></polyline>
       <polyline points="${points("val_loss")}" class="loss-line val"></polyline>
       <circle cx="${xFor(losses.length - 1).toFixed(1)}" cy="${yFor(last.train_loss).toFixed(1)}" r="3" class="loss-dot train"></circle>

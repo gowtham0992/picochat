@@ -1268,13 +1268,27 @@ textarea.guide-target-focus {
 .loss-chart svg {
   background: var(--field);
   border: 1px solid var(--dim-line);
-  height: 150px;
+  height: 190px;
   width: 100%;
 }
 
 .loss-axis {
   stroke: var(--dim-line);
   stroke-width: 1;
+}
+
+.loss-grid {
+  stroke: var(--dim-line);
+  stroke-dasharray: 3 4;
+  stroke-width: 0.75;
+}
+
+.loss-axis-label,
+.loss-tick-label {
+  fill: var(--muted);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .loss-line {

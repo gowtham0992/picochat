@@ -105,9 +105,12 @@ def test_web_ui_exposes_release_readiness_and_preflight_dry_run_controls():
     assert "RELEASE READINESS" in js
     assert "requiresGpuLaunchConfirmation" in js
     assert "Confirm paid GPU launch" in js
+    assert "loss-axis-label" in js
+    assert "loss-tick-label" in js
     assert "lower is better across tokenizers" in js
     assert ".release-grid" in css
     assert ".loss-chart" in css
+    assert ".loss-grid" in css
 
 
 def write_run(root, name):
