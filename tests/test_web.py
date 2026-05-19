@@ -98,6 +98,8 @@ def test_web_ui_exposes_release_readiness_and_preflight_dry_run_controls():
 
     assert "preflight-run-button" in html
     assert "run-release-panel" in html
+    assert 'id="run-release-panel" class="release-readiness"' in html
+    assert 'id="run-release-panel" class="release-readiness learn-only"' not in html
     assert "scale-remote-dryrun-command" in html
     assert "preflight_only" in js
     assert "RELEASE READINESS" in js
