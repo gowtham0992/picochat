@@ -43,3 +43,9 @@ my_pack/
 *.log
 tmp/
 temp/
+
+# Local/private project notes
+HANDOFF.md
+knowledge/
+nanochat_journey.html
+results.md
