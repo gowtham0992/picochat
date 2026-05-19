@@ -243,7 +243,7 @@ def test_preflight_warns_that_ddp_muon_needs_dedicated_ablation(monkeypatch):
     assert checks["ddp_muon_optimizer"].status == "warn"
     assert checks["ddp_muon_optimizer"].metric == "base, sft"
     assert "rank-local" in checks["ddp_muon_optimizer"].message
-    assert "distributed Muon/AdamW" in checks["ddp_muon_optimizer"].message
+    assert "default DDP release optimizer" in checks["ddp_muon_optimizer"].message
 
 
 def test_preflight_blocks_ddp8_scale_without_eight_rank_budget(monkeypatch):

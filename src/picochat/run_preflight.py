@@ -488,8 +488,8 @@ def _runtime_backend_checks(config: Any) -> list[RunPreflightCheck]:
                 "AdamW release preset or dedicated Muon ablation",
                 (
                     "Picochat's Muon path is a transparent rank-local Muon+AdamW hybrid. "
-                    "It is not nanochat's specialized distributed Muon/AdamW optimizer, "
-                    "so treat DDP Muon as an ablation before using it for an expensive release run."
+                    "It has not been promoted to the default DDP release optimizer, so treat "
+                    "DDP Muon as an ablation before using it for an expensive release run."
                 ),
             ))
     return checks

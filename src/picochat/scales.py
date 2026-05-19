@@ -269,7 +269,7 @@ RUN_SCALES: dict[str, RunScale] = {
     "climbmix-pilot": RunScale(
         name="climbmix-pilot",
         label="ClimbMix Pilot",
-        description="First closed-book public-data pilot for nanochat-compatible ClimbMix samples.",
+        description="First closed-book public-data pilot for ClimbMix samples.",
         tokenizer_type="bpe",
         tokenizer_vocab_size=8192,
         tokenizer_min_freq=2,
@@ -469,7 +469,7 @@ RUN_SCALES: dict[str, RunScale] = {
         name="h200-1b-ddp8",
         label="H200 1B DDP8",
         description=(
-            "Eight-H200 1B-class skill-release recipe. Uses nanochat-class 2048 context, "
+            "Eight-H200 1B-class skill-release recipe. Uses 2048-token context, "
             "1M-token global base batches, FA3, 32k HF BPE, a Chinchilla-class "
             "20 tokens/parameter base budget, and the skill_release gate; import "
             "substantially more ClimbMix/data-mix tokens before treating this as a release candidate."

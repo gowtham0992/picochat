@@ -11,7 +11,7 @@ import torch
 
 LR_DECAYS = ("none", "linear", "cosine")
 WEIGHT_DECAY_DECAYS = ("none", "cosine_to_zero")
-MUON_MOMENTUM_SCHEDULES = ("none", "nanochat")
+MUON_MOMENTUM_SCHEDULES = ("none", "peaked")
 OPTIMIZER_TYPES = ("adamw", "muon")
 
 
@@ -423,7 +423,7 @@ def muon_momentum_for_step(
         raise ValueError("step must be 1-indexed")
     if schedule == "none":
         return None
-    if schedule != "nanochat":
+    if schedule != "peaked":
         raise ValueError(f"Unsupported Muon momentum schedule: {schedule}")
     progress = min(1.0, max(0.0, (step - 1) / max(1, max_steps - 1)))
     if progress <= 0.5:

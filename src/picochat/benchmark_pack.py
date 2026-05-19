@@ -1,7 +1,7 @@
 """Curated instruction and benchmark tuning packs for Picochat.
 
 This module is intentionally separate from the corpus-derived starter
-generators. Corpus starters are useful for domain packs, but nanochat-style
+generators. Corpus starters are useful for domain packs, but release-oriented
 chat SFT needs a broader curriculum: answer formatting, multiple choice,
 small math, spelling, identity, and refusal behavior.
 """
@@ -220,7 +220,7 @@ def generate_benchmark_tuning_pack(
         contamination=contamination,
         source_notes=(
             "ClimbMix or the selected corpus remains the base pretraining data.",
-            "This pack adds a nanochat-style curated SFT/eval curriculum.",
+            "This pack adds a curated SFT/eval curriculum for transparent release scoring.",
             f"Curriculum source mode: {source}.",
             f"Curriculum profile: {profile}.",
             f"Skill answer style: {skill_answer_style}.",
@@ -2516,7 +2516,7 @@ Skill answer style: `{report.skill_answer_style}`
 ## Why This Exists
 
 Picochat's corpus-derived starters are useful for domain adaptation, but they
-do not replace a curated chat curriculum. This pack adds a nanochat-inspired
+do not replace a curated chat curriculum. This pack adds Picochat's release
 mixture for instruction behavior and transparent held-out scoring.
 
 ## Source Notes

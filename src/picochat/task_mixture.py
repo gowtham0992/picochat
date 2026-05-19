@@ -4,7 +4,7 @@ Benchmark packs answer "can we produce a held-out local eval?". Task mixtures
 answer a slightly different question: which curriculum should be used for a
 given stage after base pretraining? Keeping that distinction explicit prevents
 first-release runs from accidentally claiming broad math/spelling skill while
-still giving research runs a nanochat-style capability mixture.
+still giving research runs an explicit capability curriculum.
 """
 
 from __future__ import annotations

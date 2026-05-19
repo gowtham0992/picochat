@@ -86,9 +86,9 @@ def test_weight_decay_cosine_to_zero():
 
 
 def test_muon_momentum_schedule_warms_and_cools():
-    first = muon_momentum_for_step(schedule="nanochat", step=1, max_steps=11)
-    middle = muon_momentum_for_step(schedule="nanochat", step=6, max_steps=11)
-    final = muon_momentum_for_step(schedule="nanochat", step=11, max_steps=11)
+    first = muon_momentum_for_step(schedule="peaked", step=1, max_steps=11)
+    middle = muon_momentum_for_step(schedule="peaked", step=6, max_steps=11)
+    final = muon_momentum_for_step(schedule="peaked", step=11, max_steps=11)
 
     assert first == pytest.approx(0.85)
     assert middle == pytest.approx(0.97)

@@ -6,9 +6,8 @@ Picochat now separates three objectives that should not be blurred:
 - Capability task mixtures teach fragile closed-book skills such as short arithmetic and spelling.
 - Release behavior SFT teaches identity, boundaries, and refusal without claiming broad skill.
 
-This mirrors the practical lesson from nanochat-style pipelines without copying
-their implementation: reasoning drills are explicit supervised tasks, not magic
-emergence from a tiny base run.
+The practical lesson is simple: reasoning drills are explicit supervised tasks,
+not magic emergence from a tiny base run.
 
 ## Generate Packs
 

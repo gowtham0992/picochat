@@ -293,7 +293,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     data_benchmark_pack = data_subparsers.add_parser(
         "benchmark-pack",
-        help="Generate a nanochat-style curated SFT/eval curriculum for a dataset pack.",
+        help="Generate a curated SFT/eval curriculum for a dataset pack.",
     )
     data_benchmark_pack.add_argument(
         "--dataset-pack",
@@ -519,7 +519,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     data_climbmix_import = data_subparsers.add_parser(
         "climbmix-import",
-        help="Import a bounded nanochat-compatible ClimbMix shard sample into a Picochat dataset pack.",
+        help="Import a bounded ClimbMix shard sample into a Picochat dataset pack.",
     )
     data_climbmix_import.add_argument(
         "--out-dir",
