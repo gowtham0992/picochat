@@ -1,3 +1,8 @@
+---
+layout: default
+title: Contamination and Honesty Checks
+---
+
 # Contamination and Honesty Checks
 
 Picochat assumes small-model evals are easy to fool unless the pipeline makes

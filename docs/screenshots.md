@@ -1,3 +1,8 @@
+---
+layout: default
+title: Screenshot Capture Guide
+---
+
 # Screenshot Capture Guide
 
 Use real screenshots for public posts and outreach. The SVGs in `docs/assets/`

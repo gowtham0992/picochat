@@ -1,3 +1,8 @@
+---
+layout: default
+title: 8xH200 1B Runbook
+---
+
 # 8xH200 1B Runbook
 
 This is the paid-compute path for a 1B-class Picochat run. Do not skip sanity,

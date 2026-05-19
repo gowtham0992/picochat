@@ -2,3 +2,9 @@ title: Picochat
 description: Honest SLM training factory
 markdown: kramdown
 plugins: []
+defaults:
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: default

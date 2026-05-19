@@ -1,3 +1,8 @@
+---
+layout: default
+title: Release Gates
+---
+
 # Release Gates
 
 Picochat separates three ideas that are often blurred together:

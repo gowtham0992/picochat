@@ -1,3 +1,8 @@
+---
+layout: default
+title: Picochat Architecture
+---
+
 # Picochat Architecture
 
 Picochat is a small-language-model factory with one explicit contract: every

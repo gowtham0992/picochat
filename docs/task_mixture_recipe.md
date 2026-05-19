@@ -1,3 +1,8 @@
+---
+layout: default
+title: Picochat Task-Mixture Recipe
+---
+
 # Picochat Task-Mixture Recipe
 
 Picochat now separates three objectives that should not be blurred:

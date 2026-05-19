@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if page.title %}{{ page.title }} - {% endif %}Picochat</title>
+  <meta name="description" content="{{ site.description | default: 'Honest SLM training factory' }}">
+  <style>
+    :root {
+      --ink: #151515;
+      --muted: #5d5d5d;
+      --paper: #f4f0e8;
+      --panel: #fffaf1;
+      --line: #1f1f1f;
+      --green: #2f7d32;
+      --red: #b42318;
+      --amber: #a86500;
+      --blue: #234c91;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      line-height: 1.55;
+    }
+    a { color: var(--blue); text-decoration-thickness: 2px; }
+    .shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 0 24px;
+      border-bottom: 2px solid var(--line);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 900;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      text-decoration: none;
+      color: var(--ink);
+    }
+    .brand-mark {
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--line);
+      background: linear-gradient(135deg, #fff 0 45%, var(--green) 45% 100%);
+      box-shadow: 3px 3px 0 var(--line);
+    }
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 13px;
+      text-transform: uppercase;
+    }
+    .doc {
+      max-width: 930px;
+      margin: 48px auto 0;
+      padding: 28px;
+      border: 2px solid var(--line);
+      background: var(--panel);
+      box-shadow: 8px 8px 0 var(--line);
+    }
+    .doc h1 {
+      margin: 0 0 18px;
+      font-size: clamp(34px, 6vw, 58px);
+      line-height: 0.98;
+      letter-spacing: 0;
+    }
+    .doc h2 {
+      margin: 34px 0 12px;
+      padding-top: 18px;
+      border-top: 2px solid var(--line);
+      font-size: clamp(22px, 3vw, 32px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+    .doc h3 {
+      margin: 24px 0 8px;
+      font-size: 20px;
+      line-height: 1.15;
+    }
+    .doc p,
+    .doc li {
+      color: #262626;
+      font-size: 15px;
+    }
+    .doc ul,
+    .doc ol {
+      padding-left: 24px;
+    }
+    .doc table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 18px 0;
+      background: #fff;
+      font-size: 14px;
+    }
+    .doc th,
+    .doc td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+    .doc th {
+      background: #efe7d8;
+      font-weight: 900;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+    .doc code {
+      padding: 2px 4px;
+      background: #fff;
+      border: 1px solid #c9c0b0;
+      font-size: 0.92em;
+    }
+    .doc pre {
+      overflow: auto;
+      padding: 16px;
+      border: 2px solid var(--line);
+      background: #151515;
+      color: #f8f1df;
+      font-size: 13px;
+    }
+    .doc pre code {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+    }
+    .footer {
+      margin-top: 44px;
+      padding: 24px 0;
+      border-top: 2px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    @media (max-width: 720px) {
+      .shell { padding: 18px; }
+      .nav { align-items: flex-start; flex-direction: column; }
+      .doc { margin-top: 28px; padding: 18px; box-shadow: 5px 5px 0 var(--line); }
+      .doc table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="nav" aria-label="Primary navigation">
+      <a class="brand" href="index.html"><span class="brand-mark"></span> Picochat</a>
+      <div class="nav-links">
+        <a href="https://github.com/gowtham0992/picochat">GitHub</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="release_gates.html">Release Gates</a>
+        <a href="h200_1b_runbook.html">8xH200 Runbook</a>
+      </div>
+    </nav>
+    <main class="doc">
+      {{ content }}
+    </main>
+    <footer class="footer">
+      Picochat is MIT licensed. A completed run is not a release claim until the gates say so.
+    </footer>
+  </div>
+</body>
+</html>

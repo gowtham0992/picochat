@@ -1,3 +1,8 @@
+---
+layout: default
+title: Picochat Pipeline Guide
+---
+
 # Picochat Pipeline Guide
 
 Picochat is an honest small-language-model factory. The goal is not to pretend

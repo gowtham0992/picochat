@@ -1,3 +1,8 @@
+---
+layout: default
+title: Picochat H100 Pilot Runbook
+---
+
 # Picochat H100 Pilot Runbook
 
 This is the current single-GPU H100 path for a serious pilot. It favors a

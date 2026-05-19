@@ -1,3 +1,8 @@
+---
+layout: default
+title: TinyStories Training Plan
+---
+
 # TinyStories Training Plan
 
 This plan is the current Picochat path for turning the local TinyStories sample
