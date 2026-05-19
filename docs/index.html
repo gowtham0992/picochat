@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Picochat - Honest SLM Factory</title>
+  <meta name="description" content="Picochat is an honest small-language-model training factory with preflight gates, contamination checks, DDP dry runs, and release readiness.">
+  <style>
+    :root {
+      --ink: #151515;
+      --muted: #5d5d5d;
+      --paper: #f4f0e8;
+      --panel: #fffaf1;
+      --line: #1f1f1f;
+      --green: #2f7d32;
+      --red: #b42318;
+      --amber: #a86500;
+      --blue: #234c91;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      line-height: 1.5;
+    }
+    a { color: var(--blue); text-decoration-thickness: 2px; }
+    .shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 0 24px;
+      border-bottom: 2px solid var(--line);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 900;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+    .brand-mark {
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--line);
+      background: linear-gradient(135deg, #fff 0 45%, var(--green) 45% 100%);
+      box-shadow: 3px 3px 0 var(--line);
+    }
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 13px;
+      text-transform: uppercase;
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+      gap: 28px;
+      align-items: stretch;
+      padding: 54px 0 28px;
+    }
+    .eyebrow {
+      display: inline-flex;
+      width: fit-content;
+      padding: 5px 8px;
+      border: 2px solid var(--line);
+      background: #fff;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      box-shadow: 3px 3px 0 var(--line);
+    }
+    h1 {
+      max-width: 760px;
+      margin: 18px 0 16px;
+      font-size: clamp(40px, 7vw, 76px);
+      line-height: 0.95;
+      letter-spacing: 0;
+    }
+    .lead {
+      max-width: 760px;
+      font-size: 18px;
+      color: #292929;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 26px;
+    }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 10px 14px;
+      border: 2px solid var(--line);
+      background: var(--ink);
+      color: #fff;
+      font-weight: 900;
+      text-decoration: none;
+      text-transform: uppercase;
+      box-shadow: 4px 4px 0 #777;
+    }
+    .button.secondary {
+      background: var(--panel);
+      color: var(--ink);
+      box-shadow: 4px 4px 0 var(--line);
+    }
+    .terminal {
+      border: 2px solid var(--line);
+      background: var(--panel);
+      box-shadow: 8px 8px 0 var(--line);
+      padding: 18px;
+    }
+    .terminal-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid var(--line);
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+    .stage {
+      display: grid;
+      grid-template-columns: 96px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 11px 0;
+      border-bottom: 1px dashed #8d8d8d;
+      font-size: 13px;
+    }
+    .stage:last-child { border-bottom: 0; }
+    .status {
+      display: inline-flex;
+      justify-content: center;
+      min-width: 64px;
+      padding: 3px 6px;
+      border: 1px solid var(--line);
+      background: #fff;
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+    .pass { color: var(--green); }
+    .warn { color: var(--amber); }
+    .block { color: var(--red); }
+    .section {
+      padding: 42px 0 18px;
+    }
+    .section h2 {
+      margin: 0 0 14px;
+      font-size: clamp(26px, 4vw, 42px);
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .card {
+      min-height: 190px;
+      padding: 18px;
+      border: 2px solid var(--line);
+      background: var(--panel);
+      box-shadow: 5px 5px 0 var(--line);
+    }
+    .card label {
+      display: block;
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 20px;
+      line-height: 1.15;
+    }
+    .card p { margin: 0; color: #2d2d2d; }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .flow div {
+      min-height: 86px;
+      padding: 12px;
+      border: 2px solid var(--line);
+      background: #fff;
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+    .preview {
+      width: 100%;
+      border: 2px solid var(--line);
+      box-shadow: 8px 8px 0 var(--line);
+      background: #fff;
+    }
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+      gap: 22px;
+      align-items: start;
+    }
+    .code {
+      overflow: auto;
+      padding: 16px;
+      border: 2px solid var(--line);
+      background: #151515;
+      color: #f8f1df;
+      font-size: 13px;
+    }
+    .footer {
+      margin-top: 44px;
+      padding: 24px 0;
+      border-top: 2px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    @media (max-width: 860px) {
+      .hero,
+      .split,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      .flow {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .stage {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="nav" aria-label="Primary navigation">
+      <div class="brand"><span class="brand-mark"></span> Picochat</div>
+      <div class="nav-links">
+        <a href="https://github.com/gowtham0992/picochat">GitHub</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="release_gates.html">Release Gates</a>
+        <a href="h200_1b_runbook.html">8xH200 Runbook</a>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <div>
+        <span class="eyebrow">Honest SLM Factory</span>
+        <h1>Train small language models without fooling yourself.</h1>
+        <p class="lead">
+          Picochat is a from-scratch training factory for 100M-1B class language
+          models with preflight gates, contamination checks, DDP dry runs,
+          crash-safe checkpoints, and a release-readiness dashboard.
+        </p>
+        <div class="actions">
+          <a class="button" href="h200_1b_runbook.html">Read the 1B runbook</a>
+          <a class="button secondary" href="release_gates.html">Inspect the gates</a>
+        </div>
+      </div>
+      <div class="terminal" aria-label="Picochat release gate preview">
+        <div class="terminal-head">
+          <span>Release Gate</span>
+          <span class="warn">Warn</span>
+        </div>
+        <div class="stage"><strong>Preflight</strong><span>token budget, corpus replay, coverage</span><span class="status pass">pass</span></div>
+        <div class="stage"><strong>Honesty</strong><span>corpus/SFT/eval contamination scan</span><span class="status pass">pass</span></div>
+        <div class="stage"><strong>SFT Fit</strong><span>training and held-out fit thresholds</span><span class="status warn">watch</span></div>
+        <div class="stage"><strong>Eval</strong><span>identity/refusal/choice/math/spelling</span><span class="status block">gate</span></div>
+        <div class="stage"><strong>External</strong><span>ARC/MMLU-style benchmark required</span><span class="status warn">missing</span></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>The factory flow</h2>
+      <div class="flow" aria-label="Training flow">
+        <div>Dataset<br>import</div>
+        <div>Tokenizer<br>train</div>
+        <div>Base<br>pretrain</div>
+        <div>Chat<br>SFT</div>
+        <div>Eval<br>score</div>
+        <div>Release<br>gate</div>
+      </div>
+    </section>
+
+    <section class="section grid">
+      <div class="card">
+        <label>Before training</label>
+        <h3>Preflight can block the run.</h3>
+        <p>Checks token/parameter budget, replay risk, SFT/eval coverage, attention backend, DDP shape, and contamination before GPU spend.</p>
+      </div>
+      <div class="card">
+        <label>During training</label>
+        <h3>Artifacts stay inspectable.</h3>
+        <p>Crash-safe checkpoints, resume fingerprints, shard SHA256 checks, loss spike warnings, and BPB/loss traces make failures visible.</p>
+      </div>
+      <div class="card">
+        <label>After training</label>
+        <h3>Completion is not release.</h3>
+        <p>The long-run gate can still block release on SFT fit, held-out fit, visible eval, external benchmarks, prompt echo, or honesty issues.</p>
+      </div>
+    </section>
+
+    <section class="section split">
+      <div>
+        <h2>Scale up without guessing.</h2>
+        <p>
+          The Scale Up lane emits remote commands for setup, sanity, ClimbMix
+          import, release-skills SFT/eval pack generation, preflight, 100-step
+          DDP dry run, full training, bundle, and return inspection.
+        </p>
+      </div>
+      <pre class="code">torchrun --standalone --nproc_per_node=8 \
+  -m picochat.cli run tiny \
+  --scale h200-1b-ddp8 \
+  --dataset-pack runs/climbmix-cuda/dataset_pack.json \
+  --ddp --ddp-world-size 8 \
+  --preflight-only</pre>
+    </section>
+
+    <section class="section split">
+      <img class="preview" src="assets/release-gate.svg" alt="Release gate dashboard preview">
+      <img class="preview" src="assets/scale-up.svg" alt="Scale Up command generator preview">
+    </section>
+
+    <footer class="footer">
+      Picochat is MIT licensed. It is a research and training factory, not a
+      claim that a 1B model is useful before the data, eval, and release gates
+      prove it.
+    </footer>
+  </div>
+</body>
+</html>

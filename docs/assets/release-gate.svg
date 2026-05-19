@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="520" viewBox="0 0 900 520" role="img" aria-labelledby="title desc">
+  <title id="title">Picochat release gate preview</title>
+  <desc id="desc">A stylized release readiness panel with gate cards for SFT fit, eval, token budget, and external benchmarks.</desc>
+  <rect width="900" height="520" fill="#f4f0e8"/>
+  <rect x="30" y="30" width="840" height="460" fill="#fffaf1" stroke="#151515" stroke-width="4"/>
+  <rect x="56" y="58" width="788" height="76" fill="#151515"/>
+  <text x="84" y="93" fill="#fffaf1" font-family="Menlo, Consolas, monospace" font-size="24" font-weight="700">RELEASE READINESS</text>
+  <text x="84" y="118" fill="#f4c16e" font-family="Menlo, Consolas, monospace" font-size="15" font-weight="700">WARN - FIX FAILING CATEGORIES BEFORE CLAIMS</text>
+
+  <g font-family="Menlo, Consolas, monospace">
+    <g>
+      <rect x="58" y="164" width="238" height="112" fill="#ffffff" stroke="#151515" stroke-width="3"/>
+      <text x="78" y="194" font-size="13" fill="#5d5d5d" font-weight="700">SFT FIT</text>
+      <text x="78" y="234" font-size="32" fill="#2f7d32" font-weight="700">PASS</text>
+      <text x="78" y="258" font-size="13" fill="#151515">learned practice rows</text>
+    </g>
+    <g>
+      <rect x="330" y="164" width="238" height="112" fill="#ffffff" stroke="#151515" stroke-width="3"/>
+      <text x="350" y="194" font-size="13" fill="#5d5d5d" font-weight="700">VISIBLE EVAL</text>
+      <text x="350" y="234" font-size="32" fill="#b42318" font-weight="700">BLOCK</text>
+      <text x="350" y="258" font-size="13" fill="#151515">math below threshold</text>
+    </g>
+    <g>
+      <rect x="602" y="164" width="238" height="112" fill="#ffffff" stroke="#151515" stroke-width="3"/>
+      <text x="622" y="194" font-size="13" fill="#5d5d5d" font-weight="700">TOKEN BUDGET</text>
+      <text x="622" y="234" font-size="32" fill="#2f7d32" font-weight="700">20:1</text>
+      <text x="622" y="258" font-size="13" fill="#151515">planned/target passes</text>
+    </g>
+    <g>
+      <rect x="58" y="306" width="238" height="112" fill="#ffffff" stroke="#151515" stroke-width="3"/>
+      <text x="78" y="336" font-size="13" fill="#5d5d5d" font-weight="700">HONESTY</text>
+      <text x="78" y="376" font-size="32" fill="#2f7d32" font-weight="700">CLEAN</text>
+      <text x="78" y="400" font-size="13" fill="#151515">no corpus eval hits</text>
+    </g>
+    <g>
+      <rect x="330" y="306" width="238" height="112" fill="#ffffff" stroke="#151515" stroke-width="3"/>
+      <text x="350" y="336" font-size="13" fill="#5d5d5d" font-weight="700">EXTERNAL BENCH</text>
+      <text x="350" y="376" font-size="32" fill="#a86500" font-weight="700">NEEDED</text>
+      <text x="350" y="400" font-size="13" fill="#151515">ARC/MMLU-style check</text>
+    </g>
+    <g>
+      <rect x="602" y="306" width="238" height="112" fill="#ffffff" stroke="#151515" stroke-width="3"/>
+      <text x="622" y="336" font-size="13" fill="#5d5d5d" font-weight="700">WEAKEST SKILL</text>
+      <text x="622" y="376" font-size="32" fill="#b42318" font-weight="700">MATH</text>
+      <text x="622" y="400" font-size="13" fill="#151515">fix category, not score</text>
+    </g>
+  </g>
+</svg>

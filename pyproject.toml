@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "picochat"
 version = "0.1.0"
-description = "A tiny educational LLM factory."
+description = "An honest SLM training factory with preflight, eval, and release gates."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }

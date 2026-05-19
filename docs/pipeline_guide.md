@@ -1,8 +1,8 @@
 # Picochat Pipeline Guide
 
-Picochat is a tiny local LLM factory. The goal is not to pretend this is a
-large assistant. The goal is to make each step of language-model training small
-enough to inspect, rerun, and explain.
+Picochat is an honest small-language-model factory. The goal is not to pretend
+a tiny or pilot model is a large assistant. The goal is to make each step of
+language-model training visible enough to inspect, rerun, and explain.
 
 The pipeline is:
 
