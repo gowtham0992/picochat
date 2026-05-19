@@ -3987,11 +3987,47 @@ function renderLaunchCommandPreview() {
   `;
 }
 
+function requiresGpuLaunchConfirmation(config) {
+  return Boolean(
+    config.ddp
+    || config.device === "cuda"
+    || H100_SCALE_PRESETS.has(config.preset)
+    || DDP_SCALE_PRESETS.has(config.preset)
+  );
+}
+
+function gpuLaunchConfirmationMessage(config) {
+  const globalMultiplier = config.ddp ? (config.ddp_world_size || 1) : 1;
+  const baseSequences = config.base_batch_size * config.base_grad_accum_steps * globalMultiplier;
+  const baseTokens = baseSequences * config.context_size * config.base_steps;
+  const sftSequences = config.sft_batch_size * config.sft_grad_accum_steps * globalMultiplier;
+  return [
+    "Confirm paid GPU launch.",
+    "",
+    `Preset: ${config.preset}`,
+    `Device: ${String(config.device || "auto").toUpperCase()}${config.ddp ? ` / DDP x${globalMultiplier}` : ""}`,
+    `Base: ${fmtInt(config.base_steps)} steps, about ${fmtInt(baseTokens)} planned tokens`,
+    `SFT: ${fmtInt(config.sft_steps)} steps, ${fmtInt(sftSequences)} sequences per optimizer step`,
+    `Gate: ${config.long_run_gate_profile.replace("_", " ")}`,
+    "",
+    "Run PREFLIGHT first if this is not an intentional tiny local proof.",
+  ].join("\n");
+}
+
 async function launchRun() {
   const config = launchConfig();
   const readiness = launchReadiness(config);
   renderLaunchReadiness();
   if (readiness.status === "blocked") throw new Error(readiness.notes[0] || "fix launch settings");
+  if (
+    requiresGpuLaunchConfirmation(config)
+    && typeof window !== "undefined"
+    && typeof window.confirm === "function"
+    && !window.confirm(gpuLaunchConfirmationMessage(config))
+  ) {
+    $("run-launch-status").textContent = "LAUNCH CANCELLED BEFORE GPU DISPATCH.";
+    return;
+  }
   $("launch-run-button").disabled = true;
   state.runJob = null;
   state.runJobLoaded = false;
@@ -4193,8 +4229,8 @@ function renderScalePlan() {
     : "";
   $("scale-readiness").className = `readiness-summary ${status}`;
   $("scale-readiness").innerHTML = `
-    <strong>${status === "ready" ? "GPU PLAN READY" : "GPU PLAN BLOCKED"}</strong>
-    <span>${escapeHtml(blockers.join(" | ") || `${config.preset} | ${config.device.toUpperCase()} | ${config.dataset_pack}${localProofNote}`)}</span>
+    <strong>${status === "ready" ? "GPU COMMANDS READY" : "GPU PLAN BLOCKED"}</strong>
+    <span>${escapeHtml(blockers.join(" | ") || `${config.preset} | ${config.device.toUpperCase()} | ${config.dataset_pack}${localProofNote} | run remote preflight and DDP dry run before train`)}</span>
   `;
 
   const mpsParts = [
@@ -4320,6 +4356,24 @@ function renderScalePlan() {
   if (config.long_run_gate_profile && config.long_run_gate_profile !== "research") {
     remoteRunArgs.push("--long-run-gate-profile", config.long_run_gate_profile);
   }
+  const remoteDryRunArgs = [
+    "run",
+    "tiny",
+    "--out-dir",
+    `runs/${config.run_name}-dryrun`,
+    "--dataset-pack",
+    "runs/climbmix-cuda/dataset_pack.json",
+    "--scale",
+    config.preset,
+    "--device",
+    "cuda",
+    "--base-steps",
+    100,
+    "--sft-steps",
+    1,
+    "--long-run-gate-profile",
+    "research",
+  ];
   const remotePreflightParts = [
     ...(usesDdp ? ["OMP_NUM_THREADS=1"] : []),
     ...(usesDdp ? ["PICOCHAT_DDP_TIMEOUT_MINUTES=120"] : []),
@@ -4360,6 +4414,38 @@ function renderScalePlan() {
       ...remoteRunArgs,
     ];
   const remotePreflight = `${shellCommand([...remotePreflightParts, "--preflight-only"])} 2>&1 | tee logs/preflight-${config.run_name}.log`;
+  const remoteDryRunParts = usesDdp
+    ? [
+      "OMP_NUM_THREADS=1",
+      "PICOCHAT_DDP_TIMEOUT_MINUTES=120",
+      "TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
+      "PYTORCH_ALLOC_CONF=expandable_segments:True",
+      "PYTHONUNBUFFERED=1",
+      "PYTHONPATH=src",
+      "torchrun",
+      "--standalone",
+      `--nproc_per_node=${ddpWorldSize}`,
+      "-m",
+      "picochat.cli",
+      ...remoteDryRunArgs,
+      "--ddp",
+      "--ddp-world-size",
+      ddpWorldSize,
+    ]
+    : [
+      "PYTORCH_ALLOC_CONF=expandable_segments:True",
+      "PYTHONUNBUFFERED=1",
+      "PYTHONPATH=src",
+      "python",
+      "-m",
+      "picochat.cli",
+      ...remoteDryRunArgs,
+    ];
+  const remoteDryRun = [
+    "# Short dry run uses the research gate because release token-budget gates should block 100-step runs.",
+    "# It still exercises CUDA/DDP, compile, checkpointing, tokenizer, sharded data, and resume-safe artifacts.",
+    `${shellCommand(remoteDryRunParts)} 2>&1 | tee logs/dryrun-${config.run_name}.log`,
+  ].join("\n");
   const remoteRun = [
     "# Sharded setup prints 'base data: token shard build ...' before the first train step.",
     `${shellCommand(remoteRunParts)} 2>&1 | tee logs/train-${config.run_name}.log`,
@@ -4408,6 +4494,7 @@ function renderScalePlan() {
     remoteBenchmark,
   );
   renderScaleCommand("scale-remote-preflight-command", "REMOTE PREFLIGHT", remotePreflight);
+  renderScaleCommand("scale-remote-dryrun-command", usesDdp ? "REMOTE DDP DRY RUN" : "REMOTE CUDA DRY RUN", remoteDryRun);
   renderScaleCommand("scale-remote-run-command", "REMOTE TRAIN", remoteRun);
   renderScaleCommand("scale-remote-return-command", "REMOTE RETURN / INSPECT", remoteReturn);
 }

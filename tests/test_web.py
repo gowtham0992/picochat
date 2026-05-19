@@ -84,6 +84,11 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert "base data: token shard build" in js
     assert "Packed base data holds out complete source documents" in js
     assert "preserves BOS/EOS document boundaries" in js
+    assert 'id="scale-remote-dryrun-command"' in html
+    assert "REMOTE DDP DRY RUN" in js
+    assert "release token-budget gates should block 100-step runs" in js
+    assert '"--base-steps"' in js
+    assert '"--sft-steps"' in js
 
 
 def test_web_ui_exposes_release_readiness_and_preflight_dry_run_controls():
@@ -93,8 +98,11 @@ def test_web_ui_exposes_release_readiness_and_preflight_dry_run_controls():
 
     assert "preflight-run-button" in html
     assert "run-release-panel" in html
+    assert "scale-remote-dryrun-command" in html
     assert "preflight_only" in js
     assert "RELEASE READINESS" in js
+    assert "requiresGpuLaunchConfirmation" in js
+    assert "Confirm paid GPU launch" in js
     assert "lower is better across tokenizers" in js
     assert ".release-grid" in css
     assert ".loss-chart" in css
