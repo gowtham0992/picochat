@@ -4,15 +4,16 @@ Picochat is an honest SLM training factory: a from-scratch pipeline for
 building, checking, and releasing small language models without hiding data
 leakage, memorization, weak evals, or GPU-wasting launch mistakes.
 
-It is inspired by nanochat, but the product goal is different. Picochat is not
-trying to claim frontier behavior from a tiny run. It is trying to make the
-whole small-model factory inspectable:
+It is inspired by Andrej Karpathy's
+[nanochat](https://github.com/karpathy/nanochat), but the product goal is
+different. Picochat is not trying to claim frontier behavior from a tiny run.
+It is trying to make the whole small-model factory inspectable:
 
 ```text
 dataset -> tokenizer -> base pretraining -> chat SFT -> eval -> release gate
 ```
 
-![Picochat product preview](docs/assets/picochat-product.svg)
+![Picochat workbench release readiness](docs/screenshots/workbench-release-readiness.jpg)
 
 ## Current Status
 
@@ -137,7 +138,7 @@ The release gate checks:
 - corpus/SFT/eval contamination signals
 - data honesty report issues
 
-![Release gate preview](docs/assets/release-gate.svg)
+![Release gate preview](docs/screenshots/release-readiness-panel.jpg)
 
 ## Workbench
 
@@ -156,7 +157,9 @@ Key stations:
 - **Scale Up:** remote setup, sanity, import, benchmark, preflight, DDP dry run,
   full train, bundle, and return commands.
 
-![Scale Up preview](docs/assets/scale-up.svg)
+![Training dash loss curves](docs/screenshots/training-dash-loss-curves.jpg)
+
+![Scale Up commands](docs/screenshots/scale-up-commands.jpg)
 
 ## Documentation
 

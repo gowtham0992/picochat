@@ -33,15 +33,21 @@ Save final screenshots under:
 docs/screenshots/
 ```
 
-Suggested filenames:
+Current public screenshots:
 
 ```text
-home.png
-workbench-release-readiness.png
-training-dash-loss-curves.png
-eval-scoreboard.png
-scale-up-commands.png
-preflight-checklist.png
+workbench-release-readiness.jpg
+release-readiness-panel.jpg
+training-dash-loss-curves.jpg
+scale-up-commands.jpg
+```
+
+Additional useful screenshots before a public launch:
+
+```text
+home.jpg
+eval-scoreboard.jpg
+preflight-checklist.jpg
 ```
 
 ## Screenshot Rules
