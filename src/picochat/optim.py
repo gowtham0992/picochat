@@ -15,6 +15,10 @@ MUON_MOMENTUM_SCHEDULES = ("none", "peaked")
 OPTIMIZER_TYPES = ("adamw", "muon")
 
 
+def _is_lora_parameter_name(name: str) -> bool:
+    return name.endswith(".lora_a") or name.endswith(".lora_b") or ".lora_" in name
+
+
 def zeropower_via_newtonschulz5(
     gradient: torch.Tensor,
     steps: int = 5,
@@ -192,7 +196,7 @@ def create_optimizer(
     for name, parameter in model.named_parameters():
         if not parameter.requires_grad:
             continue
-        if parameter.ndim == 2 and name.startswith("blocks."):
+        if parameter.ndim == 2 and name.startswith("blocks.") and not _is_lora_parameter_name(name):
             matrix_params.append(parameter)
             matrix_names.append(name)
         else:

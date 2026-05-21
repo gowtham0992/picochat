@@ -65,8 +65,11 @@ class RMSNorm(nn.Module):
         self.eps = eps
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        scale = torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
-        return self.weight * x * scale
+        dtype = x.dtype
+        x_float = x.float()
+        scale = torch.rsqrt(x_float.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        normalized = (x_float * scale).to(dtype=dtype)
+        return normalized * self.weight.to(dtype=dtype)
 
 
 def sdpa_backend_context(attn_backend: str):
