@@ -25,9 +25,12 @@
             <button id="learn-mode-button" class="active" type="button">BEGINNER</button>
             <button id="inspect-mode-button" type="button">RESEARCH</button>
           </div>
-          <div class="theme-toggle" aria-label="Workbench theme">
-            <button id="classic-theme-button" class="active" type="button">CLASSIC</button>
-            <button id="paper-theme-button" type="button">PAPER</button>
+          <div class="theme-control">
+            <span class="control-label">THEME</span>
+            <div class="theme-toggle" aria-label="Workbench theme">
+              <button id="classic-theme-button" class="active" type="button">CLASSIC</button>
+              <button id="paper-theme-button" type="button">PAPER</button>
+            </div>
           </div>
           <button id="refresh-button" type="button">REFRESH</button>
         </div>
@@ -113,12 +116,12 @@
               <div>
                 <label for="scale-preset">PRESET</label>
                 <select id="scale-preset">
-                  <option value="h200-1b-ddp8">H200 1B DDP8</option>
-                  <option value="h100-100m-ddp8">H100 100M DDP8</option>
-                  <option value="h100-100m">H100 100M</option>
                   <option value="h100-pilot">H100 PILOT</option>
                   <option value="climbmix-pilot">CLIMBMIX PILOT</option>
                   <option value="mps-local">MPS LOCAL</option>
+                  <option value="h200-1b-ddp8">H200 1B DDP8 ADVANCED</option>
+                  <option value="h100-100m-ddp8">H100 100M DDP8</option>
+                  <option value="h100-100m">H100 100M</option>
                   <option value="medium">MEDIUM</option>
                   <option value="small">SMALL</option>
                 </select>
@@ -133,19 +136,29 @@
                 </select>
               </div>
               <div>
+                <label for="scale-attn-backend">ATTN BACKEND</label>
+                <select id="scale-attn-backend">
+                  <option value="preset">PRESET DEFAULT</option>
+                  <option value="flash">PYTORCH FLASH</option>
+                  <option value="fa3">FLASHATTENTION 3</option>
+                  <option value="auto">AUTO</option>
+                  <option value="math">MATH DEBUG</option>
+                </select>
+              </div>
+              <div>
                 <label for="scale-climbmix-shards">CLIMBMIX SHARDS</label>
-                <input id="scale-climbmix-shards" type="number" min="1" max="6543" value="170">
+                <input id="scale-climbmix-shards" type="number" min="1" max="6543" value="16">
               </div>
               <div>
                 <label for="scale-max-rows">MAX ROWS</label>
-                <input id="scale-max-rows" type="number" min="1" max="20000000" value="800000">
+                <input id="scale-max-rows" type="number" min="1" max="20000000" value="80000">
               </div>
               <button id="scale-use-launcher-button" type="button">USE LAUNCHER SETTINGS</button>
               <button id="scale-refresh-button" type="button">REFRESH COMMANDS</button>
             </div>
             <div id="scale-readiness" class="readiness-summary caution">
-              <strong>GPU PLAN WAITING</strong>
-              <span>Choose a dataset pack and run name.</span>
+              <strong>SCALE PLAN WAITING</strong>
+              <span>Choose a dataset pack and run name. Preflight and dry run are required before training.</span>
             </div>
           </div>
           <div class="terminal-card scale-card">
@@ -191,7 +204,7 @@
             <span id="run-count">BOOTING</span>
           </div>
           <div class="run-bank-actions">
-            <button id="archive-selected-button" type="button" disabled>ARCHIVE SELECTED</button>
+            <button id="archive-selected-button" type="button" disabled>ARCHIVE MARKED</button>
           </div>
           <div id="run-list" class="run-list"></div>
         </aside>
@@ -911,8 +924,8 @@
                   <label for="launch-min-score">MIN SCORE</label>
                   <input id="launch-min-score" type="number" min="0" max="100" value="0">
                 </div>
-                <button id="launch-run-button" type="button">LAUNCH RUN</button>
                 <button id="preflight-run-button" type="button">RUN PREFLIGHT</button>
+                <button id="launch-run-button" type="button">LAUNCH RUN</button>
                 <button id="refresh-run-job-button" type="button">REFRESH LOG</button>
                 <button id="cancel-run-job-button" type="button">CANCEL RUN</button>
                 <button id="apply-budget-button" type="button">APPLY BUDGET</button>

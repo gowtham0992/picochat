@@ -204,7 +204,8 @@ h2 {
 .header-actions,
 .mode-toggle,
 .view-toggle,
-.theme-toggle {
+.theme-toggle,
+.theme-control {
   align-items: center;
   display: flex;
   gap: 8px;
@@ -221,6 +222,17 @@ h2 {
 .theme-toggle {
   border: 1px solid var(--line);
   gap: 0;
+}
+
+.theme-control {
+  gap: 6px;
+}
+
+.control-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
 .mode-toggle button,
@@ -647,7 +659,7 @@ h2 {
 .run-row {
   border: 1px solid var(--line);
   display: grid;
-  grid-template-columns: 82px minmax(0, 1fr);
+  grid-template-columns: 92px minmax(0, 1fr);
 }
 
 .run-row.active {
@@ -3030,11 +3042,17 @@ th {
 
   .view-toggle,
   .mode-toggle,
-  .theme-toggle {
+  .theme-toggle,
+  .theme-control {
     display: grid;
     grid-auto-columns: minmax(0, 1fr);
     grid-auto-flow: column;
     width: 100%;
+  }
+
+  .theme-control {
+    align-items: center;
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   .view-toggle button,
