@@ -74,6 +74,7 @@ from picochat.precision import COMPILE_MODES, MATMUL_PRECISION_MODES, PRECISION_
 from picochat.sanity import PreH100SanityConfig, run_preh100_sanity
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.scale_planner import parse_count, plan_scale, render_scale_plan_markdown
+from picochat.serve import ServeConfig, serve_model
 from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep
 from picochat.skills_corpus import generate_skills_corpus
 from picochat.tuning_slice import (
@@ -620,6 +621,11 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
     train_base_parser.add_argument("--out-dir", required=True, help="Output run directory.")
     train_base_parser.add_argument(
+        "--tensorboard-log-dir",
+        default=None,
+        help="Optional TensorBoard event directory. Requires picochat[monitor].",
+    )
+    train_base_parser.add_argument(
         "--resume-from",
         default=None,
         help="Resumable checkpoint directory containing training_state.pt.",
@@ -843,6 +849,11 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
     train_sft_parser.add_argument("--checkpoint", required=True, help="Base checkpoint directory.")
     train_sft_parser.add_argument("--out-dir", required=True, help="Output run directory.")
+    train_sft_parser.add_argument(
+        "--tensorboard-log-dir",
+        default=None,
+        help="Optional TensorBoard event directory. Requires picochat[monitor].",
+    )
     train_sft_parser.add_argument(
         "--resume-from",
         default=None,
@@ -1140,6 +1151,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable incremental KV-cache decoding during chat generation.",
     )
 
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Serve a checkpoint through a local OpenAI-compatible API.",
+    )
+    serve_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
+    serve_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host. Defaults to local-only.")
+    serve_parser.add_argument("--port", type=int, default=8000)
+    serve_parser.add_argument("--model-name", default="picochat")
+    serve_parser.add_argument("--max-new-tokens", type=int, default=256)
+    serve_parser.add_argument("--temperature", type=float, default=0.8)
+    serve_parser.add_argument("--top-k", type=int, default=20)
+    serve_parser.add_argument("--top-p", type=float, default=1.0)
+    serve_parser.add_argument("--repetition-penalty", type=float, default=1.0)
+    serve_parser.add_argument("--seed", type=int, default=42)
+    serve_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    serve_parser.add_argument(
+        "--no-kv-cache",
+        action="store_true",
+        help="Disable incremental KV-cache decoding during serving.",
+    )
+    serve_parser.add_argument(
+        "--allow-origin",
+        default="*",
+        help="CORS Access-Control-Allow-Origin value for local integrations.",
+    )
+
     eval_parser = subparsers.add_parser("eval", help="Evaluation commands.")
     eval_subparsers = eval_parser.add_subparsers(dest="eval_command")
     eval_chat_parser = eval_subparsers.add_parser("chat", help="Run transparent chat eval.")
@@ -1259,6 +1297,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_subparsers = run_parser.add_subparsers(dest="run_command")
     run_tiny_parser = run_subparsers.add_parser("tiny", help="Run the full tiny pipeline.")
     run_tiny_parser.add_argument("--out-dir", required=True, help="Output run directory.")
+    run_tiny_parser.add_argument(
+        "--tensorboard-log-dir",
+        default=None,
+        help=(
+            "Optional TensorBoard root directory. run tiny writes base/ and sft/ "
+            "subdirectories. Requires picochat[monitor]."
+        ),
+    )
     run_tiny_parser.add_argument(
         "--scale",
         choices=("custom", *RUN_SCALE_NAMES),
@@ -2315,6 +2361,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         corpus_path=args.corpus,
         tokenizer_path=args.tokenizer,
         out_dir=args.out_dir,
+        tensorboard_log_dir=args.tensorboard_log_dir,
         context_size=args.context_size,
         batch_size=args.batch_size,
         max_steps=args.max_steps,
@@ -2445,6 +2492,7 @@ def run_train_sft(args: argparse.Namespace) -> int:
         tokenizer_path=args.tokenizer,
         checkpoint_path=args.checkpoint,
         out_dir=args.out_dir,
+        tensorboard_log_dir=args.tensorboard_log_dir,
         batch_size=args.batch_size,
         max_steps=args.max_steps,
         learning_rate=args.learning_rate,
@@ -2697,6 +2745,27 @@ def run_chat(args: argparse.Namespace) -> int:
         device=args.device,
         use_kv_cache=not args.no_kv_cache,
     ))
+
+
+def run_serve(args: argparse.Namespace) -> int:
+    top_k = None if args.top_k <= 0 else args.top_k
+    serve_model(ServeConfig(
+        checkpoint_path=args.checkpoint,
+        tokenizer_path=args.tokenizer,
+        host=args.host,
+        port=args.port,
+        model_name=args.model_name,
+        device=args.device,
+        max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
+        top_k=top_k,
+        top_p=args.top_p,
+        repetition_penalty=args.repetition_penalty,
+        seed=args.seed,
+        use_kv_cache=not args.no_kv_cache,
+        allow_origin=args.allow_origin,
+    ))
+    return 0
 
 
 def run_eval_chat(args: argparse.Namespace) -> int:
@@ -3010,6 +3079,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         loss_spike_min_lr_scale=_resolve_tiny_value(args, defaults, "loss_spike_min_lr_scale"),
         loss_spike_snapshot_every=_resolve_tiny_value(args, defaults, "loss_spike_snapshot_every"),
         long_run_gate_profile=_resolve_tiny_value(args, defaults, "long_run_gate_profile"),
+        tensorboard_log_dir=args.tensorboard_log_dir,
     )
 
 
@@ -3138,6 +3208,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "chat":
         return run_chat(args)
+
+    if args.command == "serve":
+        return run_serve(args)
 
     if args.command == "eval" and args.eval_command == "chat":
         return run_eval_chat(args)

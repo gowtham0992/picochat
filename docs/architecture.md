@@ -112,3 +112,23 @@ The workbench reads real run artifacts. It exposes:
 
 The dashboard is an operator surface, not a marketing page. If a gate blocks,
 the UI should show what failed and what to fix.
+
+## Serving
+
+Picochat includes a native PyTorch serving path for local integrations:
+
+```bash
+pico serve --checkpoint runs/<run>/sft/checkpoint --tokenizer runs/<run>/tokenizer.json
+```
+
+The server loads the checkpoint once and exposes:
+
+- `GET /healthz`
+- `GET /v1/models`
+- `POST /v1/completions`
+- `POST /v1/chat/completions`
+
+This is intentionally a local smoke-serving layer, not a high-throughput
+inference stack. Production adapters for vLLM, TGI, TensorRT-LLM, or llama.cpp
+are separate future work because Picochat uses a custom audited model
+implementation.

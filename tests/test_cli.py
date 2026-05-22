@@ -89,6 +89,44 @@ def test_cli_eval_chat_accepts_runtime_precision(tmp_path, capsys, monkeypatch):
     assert "chat eval: 1/2 passed (50.00%)" in output
 
 
+def test_cli_serve_builds_openai_compatible_server_config(monkeypatch):
+    captured = {}
+
+    def fake_serve(config):
+        captured["config"] = config
+
+    monkeypatch.setattr("picochat.cli.serve_model", fake_serve)
+
+    exit_code = main([
+        "serve",
+        "--checkpoint",
+        "runs/demo/sft/checkpoint",
+        "--tokenizer",
+        "runs/demo/tokenizer.json",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9000",
+        "--model-name",
+        "pico-demo",
+        "--device",
+        "cpu",
+        "--top-k",
+        "0",
+        "--no-kv-cache",
+    ])
+
+    assert exit_code == 0
+    config = captured["config"]
+    assert config.checkpoint_path == "runs/demo/sft/checkpoint"
+    assert config.tokenizer_path == "runs/demo/tokenizer.json"
+    assert config.host == "0.0.0.0"
+    assert config.port == 9000
+    assert config.model_name == "pico-demo"
+    assert config.top_k is None
+    assert config.use_kv_cache is False
+
+
 def test_cli_run_tiny_multiseed(tmp_path, capsys, monkeypatch):
     def fake_run(config, n_seeds):
         assert config.out_dir == str(tmp_path / "multi")

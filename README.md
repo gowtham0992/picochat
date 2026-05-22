@@ -37,6 +37,9 @@ What is ready:
   external benchmarks, prompt echo, refusal behavior, or honesty checks fail.
 - A local web dashboard with release readiness, loss curves, preflight output,
   Scale Up commands, paid-GPU confirmation, and DDP dry-run commands.
+- Native PyTorch serving through `pico serve`, including local
+  OpenAI-compatible `/v1/completions`, `/v1/chat/completions`, and `/v1/models`
+  endpoints for smoke integrations.
 
 What is not claimed:
 
@@ -102,6 +105,28 @@ The same commands are available through the installed `pico` entry point:
 pico demo
 pico web --runs-dir runs --port 8765
 ```
+
+Serve a trained checkpoint through a local OpenAI-compatible API:
+
+```bash
+pico serve \
+  --checkpoint runs/pico-demo/sft/checkpoint \
+  --tokenizer runs/pico-demo/tokenizer.json \
+  --host 127.0.0.1 \
+  --port 8000
+```
+
+Then call:
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"picochat","messages":[{"role":"user","content":"What is Picochat?"}],"max_tokens":80}'
+```
+
+This native server is for local smoke tests and integration work. High-throughput
+production serving through vLLM, TGI, TensorRT-LLM, or llama.cpp remains future
+adapter work.
 
 ## 8xH100/H200 Path
 
@@ -187,6 +212,16 @@ Run only web/dashboard checks:
 
 ```bash
 PYTHONPATH=src pytest tests/test_web.py -q
+```
+
+Optional TensorBoard logging:
+
+```bash
+python -m pip install -e ".[monitor]"
+PYTHONPATH=src python -m picochat.cli run tiny \
+  --out-dir runs/monitored-smoke \
+  --tensorboard-log-dir runs/monitored-smoke/tensorboard
+tensorboard --logdir runs/monitored-smoke/tensorboard
 ```
 
 ## License

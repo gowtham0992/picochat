@@ -27,6 +27,52 @@ class GenerateConfig:
     use_kv_cache: bool = True
 
 
+class LoadedGenerator:
+    """Reusable checkpoint-backed generator for CLI, web, and serving paths."""
+
+    def __init__(
+        self,
+        *,
+        checkpoint_path: str,
+        tokenizer_path: str,
+        device: str = "cpu",
+    ) -> None:
+        self.checkpoint_path = checkpoint_path
+        self.tokenizer_path = tokenizer_path
+        self.tokenizer = load_tokenizer(tokenizer_path)
+        self.device = resolve_device(device)
+        self.model, _ = load_checkpoint(checkpoint_path, map_location=self.device)
+        self.model.to(self.device)
+        self.model.eval()
+
+    @torch.no_grad()
+    def generate(
+        self,
+        *,
+        prompt: str = "",
+        max_new_tokens: int = 100,
+        temperature: float = 0.8,
+        top_k: int | None = 20,
+        top_p: float = 1.0,
+        repetition_penalty: float = 1.0,
+        seed: int = 42,
+        use_kv_cache: bool = True,
+    ) -> dict:
+        return _generate_with_loaded(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            device=self.device,
+            prompt=prompt,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            seed=seed,
+            use_kv_cache=use_kv_cache,
+        )
+
+
 def generate_text(config: GenerateConfig) -> str:
     """Load a checkpoint and generate text from a prompt."""
     return generate_text_with_trace(config)["text"]
@@ -35,40 +81,68 @@ def generate_text(config: GenerateConfig) -> str:
 @torch.no_grad()
 def generate_text_with_trace(config: GenerateConfig) -> dict:
     """Generate text and return token-level sampling details."""
-    tokenizer = load_tokenizer(config.tokenizer_path)
-    device = resolve_device(config.device)
-    model, _ = load_checkpoint(config.checkpoint_path, map_location=device)
-    model.to(device)
-    model.eval()
+    engine = LoadedGenerator(
+        checkpoint_path=config.checkpoint_path,
+        tokenizer_path=config.tokenizer_path,
+        device=config.device,
+    )
+    return engine.generate(
+        prompt=config.prompt,
+        max_new_tokens=config.max_new_tokens,
+        temperature=config.temperature,
+        top_k=config.top_k,
+        top_p=config.top_p,
+        repetition_penalty=config.repetition_penalty,
+        seed=config.seed,
+        use_kv_cache=config.use_kv_cache,
+    )
 
-    prompt_ids = tokenizer.encode(config.prompt, add_bos=True)
+
+@torch.no_grad()
+def _generate_with_loaded(
+    *,
+    model,
+    tokenizer,
+    device: torch.device,
+    prompt: str = "",
+    max_new_tokens: int = 100,
+    temperature: float = 0.8,
+    top_k: int | None = 20,
+    top_p: float = 1.0,
+    repetition_penalty: float = 1.0,
+    seed: int = 42,
+    use_kv_cache: bool = True,
+) -> dict:
+    """Generate text with already-loaded model/tokenizer objects."""
+    if max_new_tokens < 0:
+        raise ValueError("max_new_tokens must be non-negative")
+    if temperature < 0:
+        raise ValueError("temperature must be non-negative")
+    if not 0 < top_p <= 1:
+        raise ValueError("top_p must be in (0, 1]")
+    if repetition_penalty <= 0:
+        raise ValueError("repetition_penalty must be positive")
+
+    prompt_ids = tokenizer.encode(prompt, add_bos=True)
     ids = torch.tensor([prompt_ids], dtype=torch.long, device=device)
     generator = torch.Generator(device=device)
-    generator.manual_seed(config.seed)
+    generator.manual_seed(seed)
 
     generated_ids: list[int] = []
     generated_tokens: list[dict] = []
-
-    if config.max_new_tokens < 0:
-        raise ValueError("max_new_tokens must be non-negative")
-    if config.temperature < 0:
-        raise ValueError("temperature must be non-negative")
-    if not 0 < config.top_p <= 1:
-        raise ValueError("top_p must be in (0, 1]")
-    if config.repetition_penalty <= 0:
-        raise ValueError("repetition_penalty must be positive")
+    stopped_eos = False
 
     use_cache = (
-        config.use_kv_cache
+        use_kv_cache
         and ids.size(1) > 0
-        and ids.size(1) + config.max_new_tokens <= model.config.context_size
+        and ids.size(1) + max_new_tokens <= model.config.context_size
     )
     past_kv = None
     logits = None
-    if use_cache and config.max_new_tokens > 0:
+    if use_cache and max_new_tokens > 0:
         logits, _, past_kv = model(ids, use_cache=True)
 
-    for step in range(config.max_new_tokens):
+    for step in range(max_new_tokens):
         if not use_cache:
             context = ids[:, -model.config.context_size:]
             logits, _ = model(context)
@@ -76,21 +150,21 @@ def generate_text_with_trace(config: GenerateConfig) -> dict:
         next_logits = _apply_repetition_penalty(
             next_logits,
             ids,
-            config.repetition_penalty,
+            repetition_penalty,
         )
 
-        if config.temperature == 0:
+        if temperature == 0:
             probs = F.softmax(next_logits, dim=-1)
             next_id = torch.argmax(next_logits, dim=-1, keepdim=True)
         else:
-            sample_logits = next_logits / config.temperature
-            if config.top_k is not None and config.top_k > 0:
-                values, _ = torch.topk(sample_logits, min(config.top_k, sample_logits.size(-1)))
+            sample_logits = next_logits / temperature
+            if top_k is not None and top_k > 0:
+                values, _ = torch.topk(sample_logits, min(top_k, sample_logits.size(-1)))
                 sample_logits = sample_logits.masked_fill(
                     sample_logits < values[:, [-1]],
                     float("-inf"),
                 )
-            sample_logits = _apply_top_p(sample_logits, config.top_p)
+            sample_logits = _apply_top_p(sample_logits, top_p)
             probs = F.softmax(sample_logits, dim=-1)
             next_id = torch.multinomial(probs, num_samples=1, generator=generator)
 
@@ -106,8 +180,9 @@ def generate_text_with_trace(config: GenerateConfig) -> dict:
 
         ids = torch.cat([ids, next_id], dim=1)
         if token_id == tokenizer.eos_id:
+            stopped_eos = True
             break
-        if use_cache and step != config.max_new_tokens - 1:
+        if use_cache and step != max_new_tokens - 1:
             logits, _, past_kv = model(
                 next_id,
                 past_kv=past_kv,
@@ -120,7 +195,9 @@ def generate_text_with_trace(config: GenerateConfig) -> dict:
         "completion": tokenizer.decode(generated_ids),
         "generated_tokens": generated_tokens,
         "prompt_tokens": len(prompt_ids),
+        "completion_tokens": len(generated_ids),
         "total_tokens": len(output_ids),
+        "finish_reason": "stop" if stopped_eos else "length",
         "used_kv_cache": use_cache,
     }
 
