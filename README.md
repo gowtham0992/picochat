@@ -10,7 +10,7 @@ different. Picochat is not trying to claim frontier behavior from a tiny run.
 It is trying to make the whole small-model factory inspectable:
 
 ```text
-dataset -> tokenizer -> base pretraining -> chat SFT -> eval -> release gate
+dataset -> tokenizer -> base pretraining -> chat SFT -> optional DPO -> eval -> release gate
 ```
 
 ![Picochat workbench release readiness](docs/screenshots/workbench-release-readiness.jpg)
@@ -40,6 +40,8 @@ What is ready:
 - Native PyTorch serving through `pico serve`, including local
   OpenAI-compatible `/v1/completions`, `/v1/chat/completions`, and `/v1/models`
   endpoints for smoke integrations.
+- Optional post-SFT DPO through `pico train dpo` for curated preference pairs
+  when teams have real chosen/rejected examples.
 
 What is not claimed:
 
@@ -127,6 +129,22 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 This native server is for local smoke tests and integration work. High-throughput
 production serving through vLLM, TGI, TensorRT-LLM, or llama.cpp remains future
 adapter work.
+
+Run optional DPO after SFT when you have real preference pairs:
+
+```bash
+pico train dpo \
+  --input data/preferences.jsonl \
+  --tokenizer runs/pico-demo/tokenizer.json \
+  --checkpoint runs/pico-demo/sft/checkpoint \
+  --out-dir runs/pico-demo/dpo \
+  --learning-rate 0.000005 \
+  --beta 0.1
+```
+
+Preference rows are JSONL with `user` or `prompt`, `chosen`, and `rejected`
+fields. DPO improves preference alignment after SFT; it does not replace base
+pretraining, SFT coverage, or the release gates.
 
 ## 8xH100/H200 Path
 
