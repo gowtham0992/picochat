@@ -11,11 +11,11 @@
 </p>
 
 <p align="center">
-  <a href="docs/index.html">Product Page</a> ·
-  <a href="docs/pipeline_guide.md">Pipeline Guide</a> ·
-  <a href="docs/h200_1b_runbook.md">1B Runbook</a> ·
-  <a href="docs/release_gates.md">Release Gates</a> ·
-  <a href="docs/contamination_and_honesty.md">Honesty Checks</a>
+  <a href="https://gowtham0992.github.io/picochat/">Product Page</a> ·
+  <a href="https://gowtham0992.github.io/picochat/pipeline_guide.html">Pipeline Guide</a> ·
+  <a href="https://gowtham0992.github.io/picochat/h200_1b_runbook.html">1B Runbook</a> ·
+  <a href="https://gowtham0992.github.io/picochat/release_gates.html">Release Gates</a> ·
+  <a href="https://gowtham0992.github.io/picochat/contamination_and_honesty.html">Honesty Checks</a>
 </p>
 
 <p align="center">
@@ -185,9 +185,9 @@ setup -> sanity -> ClimbMix import -> release skills pack
 
 Read the runbook before spending GPU money:
 
-- [8xH200 1B runbook](docs/h200_1b_runbook.md)
-- [Release gates](docs/release_gates.md)
-- [Contamination and honesty checks](docs/contamination_and_honesty.md)
+- [8xH200 1B runbook](https://gowtham0992.github.io/picochat/h200_1b_runbook.html)
+- [Release gates](https://gowtham0992.github.io/picochat/release_gates.html)
+- [Contamination and honesty checks](https://gowtham0992.github.io/picochat/contamination_and_honesty.html)
 
 The current `h200-1b-ddp8` scale targets about 1.12B parameters and 22.4B
 planned training tokens, roughly 20 tokens per parameter.
@@ -234,14 +234,14 @@ Key stations:
 
 ## Documentation
 
-- [Product page / GitHub Pages entry](docs/index.html)
-- [Architecture](docs/architecture.md)
-- [Pipeline guide](docs/pipeline_guide.md)
-- [Release gates](docs/release_gates.md)
-- [8xH200 1B runbook](docs/h200_1b_runbook.md)
-- [Contamination and honesty](docs/contamination_and_honesty.md)
-- [Task mixture recipe](docs/task_mixture_recipe.md)
-- [Screenshot capture guide](docs/screenshots.md)
+- [Product page](https://gowtham0992.github.io/picochat/)
+- [Architecture](https://gowtham0992.github.io/picochat/architecture.html)
+- [Pipeline guide](https://gowtham0992.github.io/picochat/pipeline_guide.html)
+- [Release gates](https://gowtham0992.github.io/picochat/release_gates.html)
+- [8xH200 1B runbook](https://gowtham0992.github.io/picochat/h200_1b_runbook.html)
+- [Contamination and honesty](https://gowtham0992.github.io/picochat/contamination_and_honesty.html)
+- [Task mixture recipe](https://gowtham0992.github.io/picochat/task_mixture_recipe.html)
+- [Screenshot capture guide](https://gowtham0992.github.io/picochat/screenshots.html)
 
 To publish the product page with GitHub Pages, set the repository Pages source
 to the `docs/` folder on the `develop` or `main` branch.
