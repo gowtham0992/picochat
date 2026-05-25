@@ -22,6 +22,7 @@ from picochat.tokenizer import (
     train_tokenizer as build_tokenizer,
 )
 from picochat.train import TrainConfig, train_base
+from picochat.dpo import DPOConfig, train_dpo
 from picochat.sft import SFTConfig, SFT_PACKING_MODES, SFT_SAMPLING_MODES, train_sft
 from picochat.generate import GenerateConfig, generate_text
 from picochat.chat import ChatConfig, chat_loop
@@ -74,6 +75,7 @@ from picochat.precision import COMPILE_MODES, MATMUL_PRECISION_MODES, PRECISION_
 from picochat.sanity import PreH100SanityConfig, run_preh100_sanity
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.scale_planner import parse_count, plan_scale, render_scale_plan_markdown
+from picochat.serve import ServeConfig, serve_model
 from picochat.sft_sweep import SFTSweepConfig, run_sft_sweep
 from picochat.skills_corpus import generate_skills_corpus
 from picochat.tuning_slice import (
@@ -620,6 +622,11 @@ def build_parser() -> argparse.ArgumentParser:
     train_base_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
     train_base_parser.add_argument("--out-dir", required=True, help="Output run directory.")
     train_base_parser.add_argument(
+        "--tensorboard-log-dir",
+        default=None,
+        help="Optional TensorBoard event directory. Requires picochat[monitor].",
+    )
+    train_base_parser.add_argument(
         "--resume-from",
         default=None,
         help="Resumable checkpoint directory containing training_state.pt.",
@@ -844,6 +851,11 @@ def build_parser() -> argparse.ArgumentParser:
     train_sft_parser.add_argument("--checkpoint", required=True, help="Base checkpoint directory.")
     train_sft_parser.add_argument("--out-dir", required=True, help="Output run directory.")
     train_sft_parser.add_argument(
+        "--tensorboard-log-dir",
+        default=None,
+        help="Optional TensorBoard event directory. Requires picochat[monitor].",
+    )
+    train_sft_parser.add_argument(
         "--resume-from",
         default=None,
         help="Resumable SFT checkpoint directory containing training_state.pt.",
@@ -940,6 +952,73 @@ def build_parser() -> argparse.ArgumentParser:
         default=",".join(DEFAULT_LORA_TARGETS),
         help=f"Comma-separated LoRA targets: {', '.join(LORA_TARGETS)}.",
     )
+
+    train_dpo_parser = train_subparsers.add_parser(
+        "dpo",
+        help="Align an SFT checkpoint with prompt/chosen/rejected preference JSONL.",
+    )
+    train_dpo_parser.add_argument("--input", required=True, help="Path to preference JSONL.")
+    train_dpo_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
+    train_dpo_parser.add_argument("--checkpoint", required=True, help="Policy checkpoint directory.")
+    train_dpo_parser.add_argument(
+        "--reference-checkpoint",
+        default=None,
+        help="Frozen reference checkpoint. Defaults to --checkpoint.",
+    )
+    train_dpo_parser.add_argument("--out-dir", required=True, help="Output DPO run directory.")
+    train_dpo_parser.add_argument(
+        "--tensorboard-log-dir",
+        default=None,
+        help="Optional TensorBoard event directory. Requires picochat[monitor].",
+    )
+    train_dpo_parser.add_argument("--batch-size", type=int, default=4)
+    train_dpo_parser.add_argument("--max-steps", type=int, default=100)
+    train_dpo_parser.add_argument("--learning-rate", type=float, default=5e-6)
+    train_dpo_parser.add_argument("--beta", type=float, default=0.1)
+    train_dpo_parser.add_argument("--seed", type=int, default=42)
+    train_dpo_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    train_dpo_parser.add_argument("--log-every", type=int, default=10)
+    train_dpo_parser.add_argument("--val-fraction", type=float, default=0.2)
+    train_dpo_parser.add_argument("--eval-batches", type=int, default=10)
+    train_dpo_parser.add_argument("--early-stop-patience", type=int, default=0)
+    train_dpo_parser.add_argument("--early-stop-min-delta", type=float, default=0.0)
+    train_dpo_parser.add_argument("--max-minutes", type=float, default=None)
+    train_dpo_parser.add_argument("--lr-warmup-steps", type=int, default=0)
+    train_dpo_parser.add_argument("--lr-decay", choices=LR_DECAYS, default="none")
+    train_dpo_parser.add_argument("--min-lr-ratio", type=float, default=1.0)
+    train_dpo_parser.add_argument("--grad-clip", type=float, default=0.0)
+    train_dpo_parser.add_argument("--grad-accum-steps", type=int, default=1)
+    train_dpo_parser.add_argument("--weight-decay", type=float, default=0.01)
+    train_dpo_parser.add_argument("--weight-decay-decay", choices=WEIGHT_DECAY_DECAYS, default="none")
+    train_dpo_parser.add_argument(
+        "--precision",
+        choices=PRECISION_MODES,
+        default="float32",
+        help="Training precision. Use bf16/fp16/auto only on supported accelerators.",
+    )
+    train_dpo_parser.add_argument(
+        "--matmul-precision",
+        choices=MATMUL_PRECISION_MODES,
+        default="default",
+        help="torch.set_float32_matmul_precision setting.",
+    )
+    train_dpo_parser.add_argument(
+        "--torch-compile",
+        action="store_true",
+        help="Compile the policy model forward path with torch.compile.",
+    )
+    train_dpo_parser.add_argument(
+        "--torch-compile-mode",
+        choices=COMPILE_MODES,
+        default="default",
+        help="torch.compile mode when --torch-compile is enabled.",
+    )
+    train_dpo_parser.add_argument(
+        "--length-normalize",
+        action="store_true",
+        help="Average completion log-probabilities by answer length before DPO comparison.",
+    )
+
     train_sft_sweep_parser = train_subparsers.add_parser(
         "sft-sweep",
         help="Run a controlled SFT schedule sweep from one base checkpoint.",
@@ -1140,6 +1219,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable incremental KV-cache decoding during chat generation.",
     )
 
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Serve a checkpoint through a local OpenAI-compatible API.",
+    )
+    serve_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
+    serve_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host. Defaults to local-only.")
+    serve_parser.add_argument("--port", type=int, default=8000)
+    serve_parser.add_argument("--model-name", default="picochat")
+    serve_parser.add_argument("--max-new-tokens", type=int, default=256)
+    serve_parser.add_argument("--temperature", type=float, default=0.8)
+    serve_parser.add_argument("--top-k", type=int, default=20)
+    serve_parser.add_argument("--top-p", type=float, default=1.0)
+    serve_parser.add_argument("--repetition-penalty", type=float, default=1.0)
+    serve_parser.add_argument("--seed", type=int, default=42)
+    serve_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+    serve_parser.add_argument(
+        "--no-kv-cache",
+        action="store_true",
+        help="Disable incremental KV-cache decoding during serving.",
+    )
+    serve_parser.add_argument(
+        "--allow-origin",
+        default="*",
+        help="CORS Access-Control-Allow-Origin value for local integrations.",
+    )
+
     eval_parser = subparsers.add_parser("eval", help="Evaluation commands.")
     eval_subparsers = eval_parser.add_subparsers(dest="eval_command")
     eval_chat_parser = eval_subparsers.add_parser("chat", help="Run transparent chat eval.")
@@ -1259,6 +1365,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_subparsers = run_parser.add_subparsers(dest="run_command")
     run_tiny_parser = run_subparsers.add_parser("tiny", help="Run the full tiny pipeline.")
     run_tiny_parser.add_argument("--out-dir", required=True, help="Output run directory.")
+    run_tiny_parser.add_argument(
+        "--tensorboard-log-dir",
+        default=None,
+        help=(
+            "Optional TensorBoard root directory. run tiny writes base/ and sft/ "
+            "subdirectories. Requires picochat[monitor]."
+        ),
+    )
     run_tiny_parser.add_argument(
         "--scale",
         choices=("custom", *RUN_SCALE_NAMES),
@@ -2315,6 +2429,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         corpus_path=args.corpus,
         tokenizer_path=args.tokenizer,
         out_dir=args.out_dir,
+        tensorboard_log_dir=args.tensorboard_log_dir,
         context_size=args.context_size,
         batch_size=args.batch_size,
         max_steps=args.max_steps,
@@ -2445,6 +2560,7 @@ def run_train_sft(args: argparse.Namespace) -> int:
         tokenizer_path=args.tokenizer,
         checkpoint_path=args.checkpoint,
         out_dir=args.out_dir,
+        tensorboard_log_dir=args.tensorboard_log_dir,
         batch_size=args.batch_size,
         max_steps=args.max_steps,
         learning_rate=args.learning_rate,
@@ -2492,6 +2608,47 @@ def run_train_sft(args: argparse.Namespace) -> int:
     if report.get("config", {}).get("artifacts_written", True):
         print(f"saved sft checkpoint: {report['checkpoint']}")
         print(f"sample: {report['sample']!r}")
+    return 0
+
+
+def run_train_dpo(args: argparse.Namespace) -> int:
+    config = DPOConfig(
+        input_path=args.input,
+        tokenizer_path=args.tokenizer,
+        checkpoint_path=args.checkpoint,
+        reference_checkpoint_path=args.reference_checkpoint,
+        out_dir=args.out_dir,
+        tensorboard_log_dir=args.tensorboard_log_dir,
+        batch_size=args.batch_size,
+        max_steps=args.max_steps,
+        learning_rate=args.learning_rate,
+        beta=args.beta,
+        seed=args.seed,
+        device=args.device,
+        log_every=args.log_every,
+        val_fraction=args.val_fraction,
+        eval_batches=args.eval_batches,
+        early_stop_patience=args.early_stop_patience,
+        early_stop_min_delta=args.early_stop_min_delta,
+        max_minutes=args.max_minutes,
+        lr_warmup_steps=args.lr_warmup_steps,
+        lr_decay=args.lr_decay,
+        min_lr_ratio=args.min_lr_ratio,
+        grad_clip=args.grad_clip,
+        grad_accum_steps=args.grad_accum_steps,
+        weight_decay=args.weight_decay,
+        weight_decay_decay=args.weight_decay_decay,
+        precision=args.precision,
+        matmul_precision=args.matmul_precision,
+        torch_compile=args.torch_compile,
+        torch_compile_mode=args.torch_compile_mode,
+        length_normalize=args.length_normalize,
+    )
+    report = train_dpo(config)
+    print(f"saved dpo checkpoint: {report['checkpoint']}")
+    best = report.get("best_checkpoint") or {}
+    if best.get("path"):
+        print(f"best dpo checkpoint: {best['path']}")
     return 0
 
 
@@ -2697,6 +2854,27 @@ def run_chat(args: argparse.Namespace) -> int:
         device=args.device,
         use_kv_cache=not args.no_kv_cache,
     ))
+
+
+def run_serve(args: argparse.Namespace) -> int:
+    top_k = None if args.top_k <= 0 else args.top_k
+    serve_model(ServeConfig(
+        checkpoint_path=args.checkpoint,
+        tokenizer_path=args.tokenizer,
+        host=args.host,
+        port=args.port,
+        model_name=args.model_name,
+        device=args.device,
+        max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
+        top_k=top_k,
+        top_p=args.top_p,
+        repetition_penalty=args.repetition_penalty,
+        seed=args.seed,
+        use_kv_cache=not args.no_kv_cache,
+        allow_origin=args.allow_origin,
+    ))
+    return 0
 
 
 def run_eval_chat(args: argparse.Namespace) -> int:
@@ -3010,6 +3188,7 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         loss_spike_min_lr_scale=_resolve_tiny_value(args, defaults, "loss_spike_min_lr_scale"),
         loss_spike_snapshot_every=_resolve_tiny_value(args, defaults, "loss_spike_snapshot_every"),
         long_run_gate_profile=_resolve_tiny_value(args, defaults, "long_run_gate_profile"),
+        tensorboard_log_dir=args.tensorboard_log_dir,
     )
 
 
@@ -3124,6 +3303,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "train" and args.train_command == "sft":
         return run_train_sft(args)
 
+    if args.command == "train" and args.train_command == "dpo":
+        return run_train_dpo(args)
+
     if args.command == "train" and args.train_command == "sft-sweep":
         return run_train_sft_sweep(args)
 
@@ -3138,6 +3320,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "chat":
         return run_chat(args)
+
+    if args.command == "serve":
+        return run_serve(args)
 
     if args.command == "eval" and args.eval_command == "chat":
         return run_eval_chat(args)

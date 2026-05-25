@@ -89,6 +89,44 @@ def test_cli_eval_chat_accepts_runtime_precision(tmp_path, capsys, monkeypatch):
     assert "chat eval: 1/2 passed (50.00%)" in output
 
 
+def test_cli_serve_builds_openai_compatible_server_config(monkeypatch):
+    captured = {}
+
+    def fake_serve(config):
+        captured["config"] = config
+
+    monkeypatch.setattr("picochat.cli.serve_model", fake_serve)
+
+    exit_code = main([
+        "serve",
+        "--checkpoint",
+        "runs/demo/sft/checkpoint",
+        "--tokenizer",
+        "runs/demo/tokenizer.json",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9000",
+        "--model-name",
+        "pico-demo",
+        "--device",
+        "cpu",
+        "--top-k",
+        "0",
+        "--no-kv-cache",
+    ])
+
+    assert exit_code == 0
+    config = captured["config"]
+    assert config.checkpoint_path == "runs/demo/sft/checkpoint"
+    assert config.tokenizer_path == "runs/demo/tokenizer.json"
+    assert config.host == "0.0.0.0"
+    assert config.port == 9000
+    assert config.model_name == "pico-demo"
+    assert config.top_k is None
+    assert config.use_kv_cache is False
+
+
 def test_cli_run_tiny_multiseed(tmp_path, capsys, monkeypatch):
     def fake_run(config, n_seeds):
         assert config.out_dir == str(tmp_path / "multi")
@@ -1450,6 +1488,59 @@ def test_cli_train_sft(tmp_path, capsys):
     assert report["dataset"]["packing"] == "bos_bestfit"
     assert report["config"]["peft"]["mode"] == "lora"
     assert "saved sft checkpoint" in capsys.readouterr().out
+
+
+def test_cli_train_dpo_builds_config(tmp_path, capsys, monkeypatch):
+    captured = {}
+
+    def fake_train(config):
+        captured["config"] = config
+        return {
+            "checkpoint": str(tmp_path / "dpo" / "checkpoint"),
+            "best_checkpoint": {"path": str(tmp_path / "dpo" / "best_checkpoint")},
+        }
+
+    monkeypatch.setattr("picochat.cli.train_dpo", fake_train)
+
+    exit_code = main([
+        "train",
+        "dpo",
+        "--input",
+        "prefs.jsonl",
+        "--tokenizer",
+        "tokenizer.json",
+        "--checkpoint",
+        "sft/checkpoint",
+        "--reference-checkpoint",
+        "sft/reference",
+        "--out-dir",
+        str(tmp_path / "dpo"),
+        "--batch-size",
+        "2",
+        "--max-steps",
+        "3",
+        "--learning-rate",
+        "0.000005",
+        "--beta",
+        "0.2",
+        "--precision",
+        "bf16",
+        "--length-normalize",
+    ])
+
+    assert exit_code == 0
+    config = captured["config"]
+    assert config.input_path == "prefs.jsonl"
+    assert config.reference_checkpoint_path == "sft/reference"
+    assert config.batch_size == 2
+    assert config.max_steps == 3
+    assert config.learning_rate == 0.000005
+    assert config.beta == 0.2
+    assert config.precision == "bf16"
+    assert config.length_normalize is True
+    output = capsys.readouterr().out
+    assert "saved dpo checkpoint" in output
+    assert "best dpo checkpoint" in output
 
 
 def test_cli_eval_chat(tmp_path, capsys):

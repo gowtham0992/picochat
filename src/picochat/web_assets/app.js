@@ -57,9 +57,15 @@ const MUON_EMA_TRIAL_DEFAULTS = {
 };
 const APP_VIEWS = ["home", "guide", "workbench", "scale"];
 const PICOCHAT_REPO_URL = "https://github.com/gowtham0992/picochat.git";
-const SCALE_PRESETS = ["h200-1b-ddp8", "h100-100m-ddp8", "h100-100m", "h100-pilot", "climbmix-pilot", "mps-local", "medium", "small"];
+const SCALE_PRESETS = ["h100-pilot", "climbmix-pilot", "mps-local", "h200-1b-ddp8", "h100-100m-ddp8", "h100-100m", "medium", "small"];
 const H100_SCALE_PRESETS = new Set(["h200-1b-ddp8", "h100-100m-ddp8", "h100-100m", "h100-pilot"]);
 const DDP_SCALE_PRESETS = new Set(["h200-1b-ddp8", "h100-100m-ddp8"]);
+const SCALE_ATTN_DEFAULTS = {
+  "h200-1b-ddp8": "fa3",
+  "h100-100m-ddp8": "flash",
+  "h100-100m": "flash",
+  "h100-pilot": "flash",
+};
 const SCALE_GATE_DEFAULTS = {
   "h200-1b-ddp8": "skill_release",
   "h100-100m-ddp8": "skill_release",
@@ -518,6 +524,7 @@ function bindControls() {
     "scale-run-name",
     "scale-preset",
     "scale-device",
+    "scale-attn-backend",
     "scale-climbmix-shards",
     "scale-max-rows",
     "scale-import-source",
@@ -638,7 +645,7 @@ function renderRuns() {
     <div class="run-row ${run.name === state.selectedRun ? "active" : ""} ${state.archiveSelection.has(run.name) ? "marked" : ""}">
       <label class="run-archive-toggle">
         <input type="checkbox" data-archive-run="${escapeHtml(run.name)}" ${state.archiveSelection.has(run.name) ? "checked" : ""}>
-        <span>${state.archiveSelection.has(run.name) ? "SELECTED" : "SELECT"}</span>
+        <span>${state.archiveSelection.has(run.name) ? "MARKED" : "ARCHIVE?"}</span>
       </label>
       <button class="run-button ${run.name === state.selectedRun ? "active" : ""}" type="button" data-run="${escapeHtml(run.name)}">
         <span>${escapeHtml(run.name)}</span>
@@ -678,7 +685,7 @@ function renderRunArchiveAction() {
     ? `CONFIRM ARCHIVE ${runNames.length} RUN${runNames.length === 1 ? "" : "S"}`
     : runNames.length
       ? `ARCHIVE ${runNames.length} RUN${runNames.length === 1 ? "" : "S"}`
-      : "ARCHIVE SELECTED";
+      : "ARCHIVE MARKED";
   button.classList.toggle("armed", armed);
 }
 
@@ -709,7 +716,7 @@ async function archiveSelectedRun() {
     flashStatus(`ARCHIVED ${archivedNames.size} RUN${archivedNames.size === 1 ? "" : "S"}. | ${payload.archive_root || "ARCHIVE READY"}`);
     await loadRuns();
   } finally {
-    button.textContent = "ARCHIVE SELECTED";
+    button.textContent = "ARCHIVE MARKED";
     renderRunArchiveAction();
   }
 }
@@ -4168,7 +4175,7 @@ function seedScaleFromLauncher() {
 }
 
 function applyScalePresetDefaults() {
-  const preset = $("scale-preset")?.value || "h100-100m";
+  const preset = $("scale-preset")?.value || "h100-pilot";
   const defaults = SCALE_IMPORT_DEFAULTS[preset];
   if (!defaults) return;
   if ($("scale-climbmix-shards")) $("scale-climbmix-shards").value = String(defaults.shards);
@@ -4179,11 +4186,13 @@ function scaleConfig() {
   const datasetPack = $("scale-dataset-pack")?.value.trim() || state.hfImport?.dataset_pack || $("launch-pack-path")?.value.trim() || "";
   const runName = $("scale-run-name")?.value.trim() || $("launch-run-name")?.value.trim() || suggestedRunName(datasetPack || "climbmix");
   const preset = $("scale-preset")?.value || "h100-pilot";
+  const attnBackend = $("scale-attn-backend")?.value || "preset";
   return {
     dataset_pack: datasetPack,
     run_name: runName,
     preset,
     device: $("scale-device")?.value || "auto",
+    attn_backend: attnBackend,
     long_run_gate_profile: H100_SCALE_PRESETS.has(preset)
       ? (SCALE_GATE_DEFAULTS[preset] || "first_release")
       : $("launch-long-run-gate-profile")?.value || "research",
@@ -4192,6 +4201,13 @@ function scaleConfig() {
     shards: boundedScaleNumber("scale-climbmix-shards", 1, 1, 6543),
     max_rows: boundedScaleNumber("scale-max-rows", 1000, 1, 20000000),
   };
+}
+
+function resolvedScaleAttnBackend(config) {
+  if (!config.attn_backend || config.attn_backend === "preset") {
+    return SCALE_ATTN_DEFAULTS[config.preset] || "auto";
+  }
+  return config.attn_backend;
 }
 
 function boundedScaleNumber(id, fallback, min, max) {
@@ -4219,7 +4235,8 @@ function renderScalePlan() {
   const blockers = [];
   if (!config.dataset_pack) blockers.push("Choose or import a dataset pack first.");
   if (!config.run_name) blockers.push("Name the GPU run.");
-  const status = blockers.length ? "blocked" : "ready";
+  const status = blockers.length ? "blocked" : "caution";
+  const attnBackend = resolvedScaleAttnBackend(config);
   const localProofPreset = H100_SCALE_PRESETS.has(config.preset) ? "mps-local" : config.preset;
   const localProofRunName = H100_SCALE_PRESETS.has(config.preset)
     ? `${config.run_name}-local-proof`
@@ -4229,8 +4246,8 @@ function renderScalePlan() {
     : "";
   $("scale-readiness").className = `readiness-summary ${status}`;
   $("scale-readiness").innerHTML = `
-    <strong>${status === "ready" ? "GPU COMMANDS READY" : "GPU PLAN BLOCKED"}</strong>
-    <span>${escapeHtml(blockers.join(" | ") || `${config.preset} | ${config.device.toUpperCase()} | ${config.dataset_pack}${localProofNote} | run remote preflight and DDP dry run before train`)}</span>
+    <strong>${status === "caution" ? "COMMANDS GENERATED" : "SCALE PLAN BLOCKED"}</strong>
+    <span>${escapeHtml(blockers.join(" | ") || `${config.preset} | ${config.device.toUpperCase()} | attn ${attnBackend.toUpperCase()} | ${config.dataset_pack}${localProofNote} | sanity, preflight, and dry run required before train`)}</span>
   `;
 
   const mpsParts = [
@@ -4253,7 +4270,7 @@ function renderScalePlan() {
     mpsParts.push("--long-run-gate-profile", config.long_run_gate_profile);
   }
   const mpsCommand = shellCommand(mpsParts);
-  const wantsFa3Setup = config.preset === "h200-1b-ddp8";
+  const wantsFa3Setup = attnBackend === "fa3";
   const remoteSetup = [
     `git clone ${PICOCHAT_REPO_URL}`,
     "cd picochat",
@@ -4288,7 +4305,7 @@ function renderScalePlan() {
       "--matmul-precision",
       "high",
       "--attn-backend",
-      wantsFa3Setup ? "fa3" : "flash",
+      attnBackend,
       "--include-compile",
     ])} 2>&1 | tee logs/preh100-sanity.log`,
   ].join("\n");
@@ -4374,6 +4391,10 @@ function renderScalePlan() {
     "--long-run-gate-profile",
     "research",
   ];
+  if (attnBackend) {
+    remoteRunArgs.push("--attn-backend", attnBackend);
+    remoteDryRunArgs.push("--attn-backend", attnBackend);
+  }
   const remotePreflightParts = [
     ...(usesDdp ? ["OMP_NUM_THREADS=1"] : []),
     ...(usesDdp ? ["PICOCHAT_DDP_TIMEOUT_MINUTES=120"] : []),

@@ -1,8 +1,38 @@
-# Picochat
+<p align="center">
+  <img src="docs/assets/picochat-os-wordmark.svg" width="560" alt="Picochat">
+</p>
 
-Picochat is an honest SLM training factory: a from-scratch pipeline for
-building, checking, and releasing small language models without hiding data
-leakage, memorization, weak evals, or GPU-wasting launch mistakes.
+<h3 align="center">Build small language models without hiding the evidence.</h3>
+
+<p align="center">
+  Picochat is an honest SLM training factory: dataset import, tokenizer
+  training, base pretraining, SFT, optional DPO, eval, serving, and release
+  gates in one inspectable repo.
+</p>
+
+<p align="center">
+  <a href="docs/index.html">Product Page</a> ·
+  <a href="docs/pipeline_guide.md">Pipeline Guide</a> ·
+  <a href="docs/h200_1b_runbook.md">1B Runbook</a> ·
+  <a href="docs/release_gates.md">Release Gates</a> ·
+  <a href="docs/contamination_and_honesty.md">Honesty Checks</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/gowtham0992/picochat/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/gowtham0992/picochat?style=social"></a>
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-151515.svg">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-234c91.svg">
+  <img alt="H100/H200 ready" src="https://img.shields.io/badge/H100%2FH200-ready-2f7d32.svg">
+  <img alt="Status: research factory" src="https://img.shields.io/badge/status-research%20factory-a86500.svg">
+</p>
+
+![Picochat workbench release readiness](docs/screenshots/workbench-release-readiness.jpg)
+
+## What is Picochat?
+
+Picochat is a from-scratch pipeline for building, checking, and releasing small
+language models without hiding data leakage, memorization, weak evals, or
+GPU-wasting launch mistakes.
 
 It is inspired by Andrej Karpathy's
 [nanochat](https://github.com/karpathy/nanochat), but the product goal is
@@ -10,10 +40,8 @@ different. Picochat is not trying to claim frontier behavior from a tiny run.
 It is trying to make the whole small-model factory inspectable:
 
 ```text
-dataset -> tokenizer -> base pretraining -> chat SFT -> eval -> release gate
+dataset -> tokenizer -> base pretraining -> chat SFT -> optional DPO -> eval -> release gate
 ```
-
-![Picochat workbench release readiness](docs/screenshots/workbench-release-readiness.jpg)
 
 ## Current Status
 
@@ -37,6 +65,11 @@ What is ready:
   external benchmarks, prompt echo, refusal behavior, or honesty checks fail.
 - A local web dashboard with release readiness, loss curves, preflight output,
   Scale Up commands, paid-GPU confirmation, and DDP dry-run commands.
+- Native PyTorch serving through `pico serve`, including local
+  OpenAI-compatible `/v1/completions`, `/v1/chat/completions`, and `/v1/models`
+  endpoints for smoke integrations.
+- Optional post-SFT DPO through `pico train dpo` for curated preference pairs
+  when teams have real chosen/rejected examples.
 
 What is not claimed:
 
@@ -102,6 +135,44 @@ The same commands are available through the installed `pico` entry point:
 pico demo
 pico web --runs-dir runs --port 8765
 ```
+
+Serve a trained checkpoint through a local OpenAI-compatible API:
+
+```bash
+pico serve \
+  --checkpoint runs/pico-demo/sft/checkpoint \
+  --tokenizer runs/pico-demo/tokenizer.json \
+  --host 127.0.0.1 \
+  --port 8000
+```
+
+Then call:
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"picochat","messages":[{"role":"user","content":"What is Picochat?"}],"max_tokens":80}'
+```
+
+This native server is for local smoke tests and integration work. High-throughput
+production serving through vLLM, TGI, TensorRT-LLM, or llama.cpp remains future
+adapter work.
+
+Run optional DPO after SFT when you have real preference pairs:
+
+```bash
+pico train dpo \
+  --input data/preferences.jsonl \
+  --tokenizer runs/pico-demo/tokenizer.json \
+  --checkpoint runs/pico-demo/sft/checkpoint \
+  --out-dir runs/pico-demo/dpo \
+  --learning-rate 0.000005 \
+  --beta 0.1
+```
+
+Preference rows are JSONL with `user` or `prompt`, `chosen`, and `rejected`
+fields. DPO improves preference alignment after SFT; it does not replace base
+pretraining, SFT coverage, or the release gates.
 
 ## 8xH100/H200 Path
 
@@ -187,6 +258,16 @@ Run only web/dashboard checks:
 
 ```bash
 PYTHONPATH=src pytest tests/test_web.py -q
+```
+
+Optional TensorBoard logging:
+
+```bash
+python -m pip install -e ".[monitor]"
+PYTHONPATH=src python -m picochat.cli run tiny \
+  --out-dir runs/monitored-smoke \
+  --tensorboard-log-dir runs/monitored-smoke/tensorboard
+tensorboard --logdir runs/monitored-smoke/tensorboard
 ```
 
 ## License

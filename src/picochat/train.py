@@ -67,6 +67,7 @@ from picochat.resume import (
     restore_training_state,
     validate_training_fingerprint,
 )
+from picochat.telemetry import TensorBoardLogger
 from picochat.tokenizer import Tokenizer, load_tokenizer, token_byte_lengths
 
 
@@ -134,6 +135,7 @@ class TrainConfig:
     loss_spike_lr_decay: float = 0.5
     loss_spike_min_lr_scale: float = 0.1
     loss_spike_snapshot_every: int = 10
+    tensorboard_log_dir: str | None = None
 
 
 @torch.no_grad()
@@ -484,6 +486,7 @@ def train_base(config: TrainConfig) -> dict:
     ddp_model, ddp_metadata = prepare_ddp_model(compiled_model, device, enabled=config.ddp)
     main_process = is_main_process(ddp_metadata)
     train_model = ddp_model
+    tensorboard = TensorBoardLogger(config.tensorboard_log_dir if main_process else None)
     scaler = make_grad_scaler(precision_runtime)
     optimizer = create_optimizer(
         model,
@@ -750,6 +753,21 @@ def train_base(config: TrainConfig) -> dict:
                     "ema_decay": config.ema_decay,
                 } if ema_val_metrics is not None else {}),
             })
+            if main_process:
+                latest = losses[-1]
+                tensorboard.scalars({
+                    "loss/train": latest.get("train_loss"),
+                    "loss/train_eval": latest.get("train_eval_loss"),
+                    "loss/val": latest.get("val_loss"),
+                    "bpb/train": latest.get("train_bpb"),
+                    "bpb/val": latest.get("val_bpb"),
+                    "optim/learning_rate": latest.get("learning_rate"),
+                    "optim/weight_decay": latest.get("weight_decay"),
+                    "optim/grad_norm": latest.get("grad_norm"),
+                    "throughput/tokens_per_sec": latest.get("tokens_per_sec"),
+                    "throughput/mfu": latest.get("mfu"),
+                    "stability/loss_spike_ratio": spike_ratio,
+                }, step)
             if ema_val_metrics is not None:
                 ema_val_loss = float(ema_val_metrics["loss"])
                 ema_val_bpb = ema_val_metrics["bpb"]
@@ -1023,6 +1041,7 @@ def train_base(config: TrainConfig) -> dict:
         (out_dir / "sample.txt").write_text(sample, encoding="utf-8")
         if canary_probe:
             (out_dir / "canary_probe.txt").write_text(canary_probe, encoding="utf-8")
+        tensorboard.close()
     barrier_if_distributed(ddp_metadata)
     return report
 

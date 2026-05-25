@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from picochat.generate import GenerateConfig, generate_text
+from picochat.generate import GenerateConfig, LoadedGenerator, generate_text
 
 
 @dataclass(frozen=True)
@@ -67,9 +67,35 @@ def generate_reply(
     return extract_assistant_reply(prompt, generated_text)
 
 
+def generate_reply_with_engine(
+    engine: LoadedGenerator,
+    config: ChatConfig,
+    history: list[tuple[str, str]],
+    user_message: str,
+) -> str:
+    """Generate one chat reply with an already-loaded checkpoint."""
+    prompt = render_chat_prompt(history, user_message)
+    result = engine.generate(
+        prompt=prompt,
+        max_new_tokens=config.max_new_tokens,
+        temperature=config.temperature,
+        top_k=config.top_k,
+        top_p=config.top_p,
+        repetition_penalty=config.repetition_penalty,
+        seed=config.seed,
+        use_kv_cache=config.use_kv_cache,
+    )
+    return extract_assistant_reply(prompt, result["text"])
+
+
 def chat_loop(config: ChatConfig) -> int:
     """Run an interactive terminal chat session."""
     history: list[tuple[str, str]] = []
+    engine = LoadedGenerator(
+        checkpoint_path=config.checkpoint_path,
+        tokenizer_path=config.tokenizer_path,
+        device=config.device,
+    )
     print("Picochat CLI. Type 'quit' or 'exit' to leave. Type 'clear' to reset.")
     while True:
         try:
@@ -87,6 +113,6 @@ def chat_loop(config: ChatConfig) -> int:
             print("Conversation cleared.")
             continue
 
-        reply = generate_reply(config, history, user_message)
+        reply = generate_reply_with_engine(engine, config, history, user_message)
         print(f"Assistant: {reply}")
         history.append((user_message, reply))

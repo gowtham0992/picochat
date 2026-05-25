@@ -146,6 +146,7 @@ class TinyRunConfig:
     external_eval_shuffle: bool = False
     external_eval_max_new_tokens: int = 1
     long_run_gate_profile: str = "research"
+    tensorboard_log_dir: str | None = None
 
 
 def run_tiny(config: TinyRunConfig) -> dict:
@@ -372,6 +373,8 @@ def run_tiny(config: TinyRunConfig) -> dict:
     if config.sft_packing not in SFT_PACKING_MODES:
         raise ValueError(f"Unsupported SFT packing mode: {config.sft_packing}")
     corpus_manifest_path = str(out_dir / "corpus_manifest.json")
+    base_tensorboard_dir = str(Path(config.tensorboard_log_dir) / "base") if config.tensorboard_log_dir else None
+    sft_tensorboard_dir = str(Path(config.tensorboard_log_dir) / "sft") if config.tensorboard_log_dir else None
 
     if main_process:
         print("[4/7] train base model")
@@ -440,6 +443,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         loss_spike_lr_decay=config.loss_spike_lr_decay,
         loss_spike_min_lr_scale=config.loss_spike_min_lr_scale,
         loss_spike_snapshot_every=config.loss_spike_snapshot_every,
+        tensorboard_log_dir=base_tensorboard_dir,
     ))
     base_eval_checkpoint = base_report.get("best_checkpoint", {}).get(
         "path",
@@ -495,6 +499,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         lora_alpha=config.sft_lora_alpha,
         lora_dropout=config.sft_lora_dropout,
         lora_targets=config.sft_lora_targets,
+        tensorboard_log_dir=sft_tensorboard_dir,
     ))
     sft_eval_checkpoint = sft_report.get("best_checkpoint", {}).get(
         "path",

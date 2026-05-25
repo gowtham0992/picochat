@@ -1,0 +1,14 @@
+<svg width="96" height="96" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Picochat symbol</title>
+  <desc id="desc">Picochat retro terminal prompt symbol</desc>
+  <rect x="13" y="17" width="70" height="62" fill="#151515"/>
+  <rect x="8" y="12" width="70" height="62" fill="#F7F2E8"/>
+  <rect x="8" y="12" width="70" height="62" stroke="#151515" stroke-width="3"/>
+  <rect x="8" y="12" width="70" height="16" fill="#151515"/>
+  <rect x="17" y="18" width="8" height="4" fill="#22C55E"/>
+  <rect x="31" y="18" width="8" height="4" fill="#F59E0B"/>
+  <rect x="45" y="18" width="8" height="4" fill="#F7F2E8"/>
+  <path d="M21 42H34L42 48L34 54H21" stroke="#151515" stroke-width="6" stroke-linecap="square" stroke-linejoin="miter"/>
+  <rect x="49" y="52" width="13" height="5" fill="#22C55E"/>
+  <rect x="17" y="64" width="46" height="4" fill="#22C55E"/>
+</svg>

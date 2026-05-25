@@ -306,6 +306,16 @@ def test_model_supports_qk_norm():
     assert isinstance(model.blocks[0].attn.k_norm, RMSNorm)
 
 
+def test_rmsnorm_upcasts_rms_for_half_precision_stability():
+    norm = RMSNorm(4)
+    x = torch.full((2, 4), 256.0, dtype=torch.float16)
+
+    y = norm(x)
+
+    assert y.dtype == torch.float16
+    assert torch.allclose(y.float(), torch.ones_like(y.float()), atol=1e-3)
+
+
 def test_qk_norm_preserves_attention_dtype_under_autocast(monkeypatch):
     observed = {}
 

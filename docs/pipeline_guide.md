@@ -213,7 +213,37 @@ LoRA is for adapting an existing base checkpoint to a domain or behavior style.
 It does not replace base pretraining or make the base model know facts it never
 saw.
 
-## 5. Eval
+## 5. Optional DPO
+
+Purpose: improve post-SFT preference behavior when you have curated
+chosen/rejected answers for the same prompt.
+
+DPO is optional. Use it for alignment preferences such as safer refusals,
+clearer tone, shorter answers, or domain style. Do not use it as a substitute
+for base pretraining, SFT coverage, or held-out eval.
+
+Inputs:
+
+- preference JSONL with `user` or `prompt`, `chosen`, and `rejected`
+- `tokenizer.json`
+- policy checkpoint, usually the SFT checkpoint
+- optional frozen reference checkpoint, otherwise the policy checkpoint is used
+  as the reference starting point
+
+Output artifacts:
+
+- `dpo/checkpoint/`
+- `dpo/best_checkpoint/`
+- `dpo/dpo_report.json`
+- `dpo/report.md`
+
+Useful command:
+
+```bash
+PYTHONPATH=src python -m picochat.cli train dpo --input data/preferences.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/sft/checkpoint --out-dir runs/manual/dpo --max-steps 200 --learning-rate 0.000005 --beta 0.1 --early-stop-patience 4
+```
+
+## 6. Eval
 
 Purpose: score generated replies with transparent rules.
 
@@ -263,7 +293,7 @@ PYTHONPATH=src python -m picochat.cli eval chat --input examples/tiny_eval.jsonl
 PYTHONPATH=src python -m picochat.cli eval chat --input examples/tiny_eval.jsonl --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/eval --support-corpus runs/manual/corpus.txt
 ```
 
-## 6. Chat And Generation
+## 7. Chat And Generation
 
 Purpose: sample text from a checkpoint and inspect behavior manually.
 
@@ -292,7 +322,7 @@ Useful command:
 PYTHONPATH=src python -m picochat.cli chat --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json
 ```
 
-## 7. Report
+## 8. Report
 
 Purpose: make the run explainable after it finishes.
 

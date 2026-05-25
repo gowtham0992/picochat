@@ -58,6 +58,9 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert 'option value="fa3"' in html
     assert 'option value="release_skills"' in html
     assert 'option value="skill_release"' in html
+    assert 'id="scale-attn-backend"' in html
+    assert "COMMANDS GENERATED" in js
+    assert "SCALE_ATTN_DEFAULTS" in js
     assert 'option value="h200-1b-ddp8"' in html
     assert 'option value="h100-100m-ddp8"' in html
     assert '"h200-1b-ddp8"' in js
@@ -87,6 +90,7 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert 'id="scale-remote-dryrun-command"' in html
     assert "REMOTE DDP DRY RUN" in js
     assert "release token-budget gates should block 100-step runs" in js
+    assert "sanity, preflight, and dry run required before train" in js
     assert '"--base-steps"' in js
     assert '"--sft-steps"' in js
 
@@ -108,6 +112,8 @@ def test_web_ui_exposes_release_readiness_and_preflight_dry_run_controls():
     assert "loss-axis-label" in js
     assert "loss-tick-label" in js
     assert "lower is better across tokenizers" in js
+    assert "ARCHIVE MARKED" in html
+    assert "ARCHIVE?" in js
     assert ".release-grid" in css
     assert ".loss-chart" in css
     assert ".loss-grid" in css

@@ -1,6 +1,7 @@
 import torch
 import pytest
 
+from picochat.lora import LoRAConfig, apply_lora
 from picochat.model import GPTConfig, TinyGPT
 from picochat.optim import (
     ExponentialMovingAverage,
@@ -132,6 +133,47 @@ def test_muon_optimizer_updates_block_matrices_and_tracks_adamw_fallback():
 
     after = model.blocks[0].attn.qkv.weight.detach()
     assert not torch.allclose(before, after)
+
+
+def test_muon_optimizer_keeps_lora_adapters_on_adamw():
+    model = TinyGPT(GPTConfig(vocab_size=16, context_size=8, n_embd=16, n_head=4, n_layer=1))
+    apply_lora(
+        model,
+        LoRAConfig(rank=2, alpha=4.0, targets=("attn_qkv",), freeze_base=False),
+    )
+
+    optimizer = create_optimizer(
+        model,
+        optimizer_type="muon",
+        learning_rate=3e-4,
+        muon_learning_rate=0.02,
+    )
+
+    lora_ids = {
+        id(parameter)
+        for name, parameter in model.named_parameters()
+        if ".lora_" in name
+    }
+    muon_ids = {
+        id(parameter)
+        for inner in optimizer.optimizers
+        if inner.__class__.__name__ == "Muon"
+        for group in inner.param_groups
+        for parameter in group["params"]
+    }
+    adamw_ids = {
+        id(parameter)
+        for inner in optimizer.optimizers
+        if inner.__class__.__name__ != "Muon"
+        for group in inner.param_groups
+        for parameter in group["params"]
+    }
+
+    assert optimizer.metadata["muon_parameters"] > 0
+    assert lora_ids
+    assert lora_ids.isdisjoint(muon_ids)
+    assert lora_ids <= adamw_ids
+    assert all(".lora_" not in name for name in optimizer.metadata["muon_matrix_names"])
 
 
 def test_ema_weights_swap_and_restore_model_state():
