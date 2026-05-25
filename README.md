@@ -1,8 +1,37 @@
-# Picochat
+<p align="center">
+  <img src="docs/assets/picochat-logo.svg" width="520" alt="Picochat">
+</p>
 
-Picochat is an honest SLM training factory: a from-scratch pipeline for
-building, checking, and releasing small language models without hiding data
-leakage, memorization, weak evals, or GPU-wasting launch mistakes.
+<h3 align="center">Build small language models without hiding the evidence.</h3>
+
+<p align="center">
+  Picochat is an honest SLM training factory: dataset import, tokenizer
+  training, base pretraining, SFT, optional DPO, eval, serving, and release
+  gates in one inspectable repo.
+</p>
+
+<p align="center">
+  <a href="docs/index.html">Product Page</a> ·
+  <a href="docs/pipeline_guide.md">Pipeline Guide</a> ·
+  <a href="docs/h200_1b_runbook.md">1B Runbook</a> ·
+  <a href="docs/release_gates.md">Release Gates</a> ·
+  <a href="docs/contamination_and_honesty.md">Honesty Checks</a>
+</p>
+
+<p align="center">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-151515.svg">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-234c91.svg">
+  <img alt="H100/H200 ready" src="https://img.shields.io/badge/H100%2FH200-ready-2f7d32.svg">
+  <img alt="Status: research factory" src="https://img.shields.io/badge/status-research%20factory-a86500.svg">
+</p>
+
+![Picochat workbench release readiness](docs/screenshots/workbench-release-readiness.jpg)
+
+## What is Picochat?
+
+Picochat is a from-scratch pipeline for building, checking, and releasing small
+language models without hiding data leakage, memorization, weak evals, or
+GPU-wasting launch mistakes.
 
 It is inspired by Andrej Karpathy's
 [nanochat](https://github.com/karpathy/nanochat), but the product goal is
@@ -12,8 +41,6 @@ It is trying to make the whole small-model factory inspectable:
 ```text
 dataset -> tokenizer -> base pretraining -> chat SFT -> optional DPO -> eval -> release gate
 ```
-
-![Picochat workbench release readiness](docs/screenshots/workbench-release-readiness.jpg)
 
 ## Current Status
 

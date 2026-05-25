@@ -47,13 +47,7 @@
       letter-spacing: 0;
       text-transform: uppercase;
     }
-    .brand-mark {
-      width: 18px;
-      height: 18px;
-      border: 2px solid var(--line);
-      background: linear-gradient(135deg, #fff 0 45%, var(--green) 45% 100%);
-      box-shadow: 3px 3px 0 var(--line);
-    }
+    .brand-mark { width: 24px; height: 24px; }
     .nav-links {
       display: flex;
       flex-wrap: wrap;
@@ -197,7 +191,7 @@
     .card p { margin: 0; color: #2d2d2d; }
     .flow {
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(7, minmax(0, 1fr));
       gap: 8px;
     }
     .flow div {
@@ -259,7 +253,7 @@
 <body>
   <div class="shell">
     <nav class="nav" aria-label="Primary navigation">
-      <div class="brand"><span class="brand-mark"></span> Picochat</div>
+      <div class="brand"><img class="brand-mark" src="assets/picochat-mark.svg" alt=""> Picochat</div>
       <div class="nav-links">
         <a href="https://github.com/gowtham0992/picochat">GitHub</a>
         <a href="architecture.html">Architecture</a>
@@ -305,6 +299,7 @@
         <div>Tokenizer<br>train</div>
         <div>Base<br>pretrain</div>
         <div>Chat<br>SFT</div>
+        <div>Optional<br>DPO</div>
         <div>Eval<br>score</div>
         <div>Release<br>gate</div>
       </div>
