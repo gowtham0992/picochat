@@ -38,6 +38,7 @@ from picochat.lora import DEFAULT_LORA_TARGETS, PEFT_MODES, parse_lora_targets
 from picochat.model import SDPA_BACKENDS
 from picochat.optim import LR_DECAYS, OPTIMIZER_TYPES
 from picochat.precision import COMPILE_MODES, MATMUL_PRECISION_MODES, PRECISION_MODES
+from picochat.preference_starter import PreferenceStarterConfig, generate_preference_starter
 from picochat.run import LONG_RUN_GATE_PROFILES, TinyRunConfig
 from picochat.run_preflight import assess_run_preflight
 from picochat.scales import RUN_SCALES
@@ -806,6 +807,56 @@ def benchmark_tuning_pack_plan(payload: dict) -> dict:
             "Preview the dataset pack again so the launcher reads the curated chat/eval files.",
             "Run a smoke or small-local experiment before scaling the base run.",
             "Use failed eval categories to add targeted non-eval SFT rows, not copied eval prompts.",
+        ],
+    }
+
+
+def preference_starter_plan(payload: dict) -> dict:
+    """Generate starter DPO preference pairs from chat SFT rows."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+
+    input_path = _optional_string(payload.get("input_path"))
+    out_path = _optional_string(payload.get("out_path"))
+    if not input_path:
+        raise ValueError("input_path is required")
+    if not out_path:
+        raise ValueError("out_path is required")
+    max_rows = _bounded_int(payload.get("max_rows", 0), 0, 10_000)
+    force = payload.get("force", False)
+    if not isinstance(force, bool):
+        raise ValueError("force must be true or false")
+
+    report = generate_preference_starter(PreferenceStarterConfig(
+        input_path=input_path,
+        output_path=out_path,
+        max_rows=max_rows,
+        force=force,
+    ))
+    command_parts = [
+        "PYTHONPATH=src",
+        "python",
+        "-m",
+        "picochat.cli",
+        "data",
+        "preference-starter",
+        "--input",
+        input_path,
+        "--out",
+        out_path,
+    ]
+    if max_rows:
+        command_parts.extend(["--max-rows", str(max_rows)])
+    if force:
+        command_parts.append("--force")
+    return {
+        **report,
+        "force": force,
+        "command": _shell_command(*command_parts),
+        "next_actions": [
+            "Use this only for DPO plumbing smoke tests unless a human or judge has reviewed the preferences.",
+            "Point DPO PREFS at this file, run a short DPO stage, then compare eval and refusal behavior.",
+            "For release alignment, replace synthetic rejected answers with curated preference pairs.",
         ],
     }
 
@@ -1718,6 +1769,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(sft_starter_plan(self._read_json_body()))
                 elif parsed.path == "/api/eval/starter":
                     self._send_json(eval_starter_plan(self._read_json_body()))
+                elif parsed.path == "/api/preference/starter":
+                    self._send_json(preference_starter_plan(self._read_json_body()))
                 elif parsed.path == "/api/tuning/benchmark-pack":
                     self._send_json(benchmark_tuning_pack_plan(self._read_json_body()))
                 elif parsed.path == "/api/pack/editor/load":

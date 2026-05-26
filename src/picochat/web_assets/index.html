@@ -317,6 +317,10 @@
                   <label for="flight-sft-out-path">SFT STARTER OUT</label>
                   <input id="flight-sft-out-path" type="text" spellcheck="false" placeholder="my_pack/chat_starter.jsonl">
                 </div>
+                <div class="beginner-secondary">
+                  <label for="flight-preference-out-path">DPO PREF OUT</label>
+                  <input id="flight-preference-out-path" type="text" spellcheck="false" placeholder="my_pack/preferences.jsonl">
+                </div>
                 <div>
                   <label for="flight-sft-max-items">SFT ROWS</label>
                   <input id="flight-sft-max-items" type="number" min="8" max="2000" value="300">
@@ -369,6 +373,7 @@
                 <button id="flight-check-button" type="button">CHECK DATASET</button>
                 <button id="flight-sft-button" type="button">CREATE SFT STARTER</button>
                 <button id="flight-eval-button" type="button">CREATE EVAL STARTER</button>
+                <button id="flight-preference-button" type="button">CREATE DPO PREFS</button>
                 <button id="flight-benchmark-button" type="button">CREATE CURATED SFT + EVAL</button>
                 <button id="flight-apply-button" type="button">APPLY PLAN</button>
               </div>
@@ -381,6 +386,7 @@
               <div id="flight-plan" class="flight-plan"></div>
               <div id="flight-command" class="command-tape source-command"></div>
               <div id="flight-sft-result" class="flight-starter-result"></div>
+              <div id="flight-preference-result" class="flight-starter-result"></div>
               <div id="flight-eval-result" class="flight-eval-result"></div>
             </div>
             <div id="hf-import-card" class="terminal-card dataset-preview-card learn-only">

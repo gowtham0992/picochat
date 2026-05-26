@@ -21,6 +21,7 @@ from picochat.web import (
     load_run_detail,
     load_run_report,
     preview_corpus_plan,
+    preference_starter_plan,
     _parse_run_progress,
     run_presets_plan,
     run_status_plan,
@@ -56,6 +57,8 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert 'id="launch-dpo-input"' in html
     assert 'id="launch-dpo-length-normalize"' in html
     assert 'id="launch-tensorboard-log-dir"' in html
+    assert 'id="flight-preference-out-path"' in html
+    assert 'id="flight-preference-button"' in html
     assert 'option value="packed"' in html
     assert 'option value="external_flash"' in html
     assert 'option value="fa3"' in html
@@ -74,6 +77,7 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert '"--dpo-input"' in js
     assert '"--dpo-length-normalize"' in js
     assert '"--tensorboard-log-dir"' in js
+    assert "/api/preference/starter" in js
     assert "const DDP_SCALE_PRESETS" in js
     assert '"torchrun"' in js
     assert "--nproc_per_node=${ddpWorldSize}" in js
@@ -823,6 +827,33 @@ def test_sft_starter_plan_accepts_dataset_pack(tmp_path):
     assert report["input_path"] == str(source_path)
     assert "--dataset-pack" in report["command"]
     assert report["force"] is True
+
+
+def test_preference_starter_plan_generates_dpo_pairs(tmp_path):
+    chat_path = tmp_path / "chat.jsonl"
+    out_path = tmp_path / "preferences.jsonl"
+    chat_path.write_text(
+        json.dumps({"user": "Who are you?", "assistant": "I am Picochat.", "category": "identity"}) + "\n"
+        + json.dumps({"user": "Say hello", "assistant": "Hello.", "category": "style"}) + "\n",
+        encoding="utf-8",
+    )
+
+    report = preference_starter_plan({
+        "input_path": str(chat_path),
+        "out_path": str(out_path),
+        "force": True,
+    })
+
+    assert report["output_path"] == str(out_path)
+    assert report["num_examples"] == 2
+    assert report["force"] is True
+    assert "synthetic negatives" in report["warning"]
+    assert "--input" in report["command"]
+    assert "--out" in report["command"]
+    assert out_path.exists()
+    assert out_path.with_suffix(".jsonl.report.md").exists()
+    rows = [json.loads(line) for line in out_path.read_text(encoding="utf-8").splitlines()]
+    assert all("chosen" in row and "rejected" in row for row in rows)
 
 
 def test_benchmark_tuning_pack_plan_generates_and_promotes_curriculum(tmp_path):

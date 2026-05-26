@@ -508,6 +508,9 @@ function bindControls() {
   $("flight-eval-button").addEventListener("click", () => {
     createEvalStarter().catch((error) => renderEvalStarterError(error));
   });
+  $("flight-preference-button").addEventListener("click", () => {
+    createPreferenceStarter().catch((error) => renderPreferenceStarterError(error));
+  });
   $("flight-benchmark-button").addEventListener("click", () => {
     createBenchmarkTuningPack().catch((error) => renderBenchmarkPackError(error));
   });
@@ -519,6 +522,7 @@ function bindControls() {
     "flight-input-path",
     "flight-chat-path",
     "flight-eval-path",
+    "flight-preference-out-path",
     "flight-sft-max-items",
     "flight-eval-max-items",
   ].forEach((id) => {
@@ -2909,6 +2913,9 @@ function syncFlightStarterDefaults() {
   }
   if (sourcePath && !$("flight-eval-out-path").value.trim()) {
     $("flight-eval-out-path").value = suggestedEvalStarterPath(evalPath || sourcePath);
+  }
+  if ((chatPath || $("flight-sft-out-path").value.trim()) && !$("flight-preference-out-path").value.trim()) {
+    $("flight-preference-out-path").value = suggestedPreferenceStarterPath(chatPath || $("flight-sft-out-path").value.trim());
   }
   if (packPath) {
     if (!$("preview-pack-path").value.trim()) $("preview-pack-path").value = packPath;
@@ -5422,6 +5429,9 @@ async function createSftStarter() {
     const chatPath = report.pack_chat_input || report.output_path || outPath;
     const evalPath = report.pack_eval_input || $("flight-eval-path").value.trim();
     $("flight-chat-path").value = chatPath;
+    if (!$("flight-preference-out-path").value.trim()) {
+      $("flight-preference-out-path").value = suggestedPreferenceStarterPath(chatPath);
+    }
     $("preview-chat-path").value = chatPath;
     if (report.promoted_to_pack && packPath) {
       $("tuning-pack-path").value = packPath;
@@ -5472,6 +5482,69 @@ function renderSftStarter(report) {
     <div class="command-tape source-command">
       <div class="command-head">
         <label>SFT STARTER COMMAND</label>
+        ${copyCommandButton(report.command)}
+      </div>
+      <code>${escapeHtml(report.command || "")}</code>
+      ${(report.next_actions || []).map((action) => `<p>${escapeHtml(action)}</p>`).join("")}
+    </div>
+  `;
+}
+
+async function createPreferenceStarter() {
+  syncFlightStarterDefaults();
+  const inputPath = $("flight-chat-path").value.trim() || $("flight-sft-out-path").value.trim();
+  const outPath = $("flight-preference-out-path").value.trim();
+  if (!inputPath) {
+    throw new Error("create or select a chat SFT JSONL file first");
+  }
+  if (!outPath) {
+    throw new Error("enter a DPO preference output path");
+  }
+  $("flight-preference-button").disabled = true;
+  $("flight-preference-result").innerHTML = 'CREATING DPO PREF STARTER<span class="cursor"></span>';
+  try {
+    const report = await postJson("/api/preference/starter", {
+      input_path: inputPath,
+      out_path: outPath,
+      max_rows: 0,
+      force: Boolean($("flight-starter-force")?.checked),
+    });
+    state.preferenceStarter = report;
+    $("flight-preference-out-path").value = report.output_path || outPath;
+    $("launch-dpo-input").value = report.output_path || outPath;
+    if (Number($("launch-dpo-steps").value || 0) <= 0) $("launch-dpo-steps").value = "60";
+    renderPreferenceStarter(report);
+    renderLaunchReadiness();
+    renderStartHere();
+  } finally {
+    $("flight-preference-button").disabled = false;
+  }
+}
+
+function renderPreferenceStarter(report) {
+  if (!report) {
+    $("flight-preference-result").innerHTML = "";
+    return;
+  }
+  $("flight-preference-result").innerHTML = `
+    <label>DPO PREF STARTER RESULT</label>
+    <div class="flight-eval-grid">
+      <div><strong>${fmtInt(report.num_examples)}</strong><span>preference rows</span></div>
+      <div><strong>${escapeHtml(shortPath(report.output_path))}</strong><span>jsonl</span></div>
+      <div><strong>${escapeHtml(shortPath(report.report_path))}</strong><span>report</span></div>
+      <div><strong>${report.force ? "OVERWRITE" : "SAFE"}</strong><span>write mode</span></div>
+    </div>
+    <div class="starter-handoff caution">
+      <strong>SYNTHETIC DPO SMOKE DATA</strong>
+      <span>This file is connected to the launcher's DPO PREFS field so you can test DPO mechanics.</span>
+      <em>Do not claim release alignment from synthetic rejected answers; replace them with reviewed preferences.</em>
+    </div>
+    <div class="mini-stat-row">
+      ${Object.entries(report.rejected_type_counts || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
+    </div>
+    <div class="command-tape source-command">
+      <div class="command-head">
+        <label>DPO PREF STARTER COMMAND</label>
         ${copyCommandButton(report.command)}
       </div>
       <code>${escapeHtml(report.command || "")}</code>
@@ -5767,6 +5840,7 @@ function renderDatasetFlightPlanError(error) {
   $("flight-plan").innerHTML = "";
   $("flight-command").innerHTML = "";
   $("flight-sft-result").innerHTML = "";
+  $("flight-preference-result").innerHTML = "";
   $("flight-eval-result").innerHTML = `<div class="notice">FAULT: ${escapeHtml(error.message)}</div>`;
 }
 
@@ -5780,6 +5854,11 @@ function renderEvalStarterError(error) {
   $("flight-eval-result").innerHTML = `<div class="notice">EVAL STARTER FAULT: ${escapeHtml(error.message)}</div>`;
 }
 
+function renderPreferenceStarterError(error) {
+  $("flight-preference-button").disabled = false;
+  $("flight-preference-result").innerHTML = `<div class="notice">DPO PREF STARTER FAULT: ${escapeHtml(error.message)}</div>`;
+}
+
 function renderBenchmarkPackError(error) {
   $("flight-benchmark-button").disabled = false;
   $("flight-sft-result").innerHTML = `<div class="notice">CURATED PACK FAULT: ${escapeHtml(error.message)}</div>`;
@@ -5791,6 +5870,19 @@ function suggestedSftStarterPath(path) {
 
 function suggestedEvalStarterPath(path) {
   return suggestedStarterPath(path, "eval");
+}
+
+function suggestedPreferenceStarterPath(path) {
+  const text = String(path || "").trim();
+  if (!text) return "my_pack/preferences.jsonl";
+  const slash = text.lastIndexOf("/");
+  const dir = slash >= 0 ? text.slice(0, slash + 1) : "";
+  const file = slash >= 0 ? text.slice(slash + 1) : text;
+  const stem = file.replace(/\.jsonl$/i, "").replace(/\.json$/i, "");
+  if (!stem || /^(chat|chat_starter|chat_benchmark|sft|sft_starter)$/i.test(stem)) {
+    return `${dir}preferences.jsonl`;
+  }
+  return `${dir}${stem}_preferences.jsonl`;
 }
 
 function suggestedStarterPath(path, kind) {
