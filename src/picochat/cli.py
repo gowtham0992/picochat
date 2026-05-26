@@ -55,7 +55,7 @@ from picochat.compare import compare_runs, comparison_table, write_comparison_re
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.device import DEVICE_CHOICES
 from picochat.distributed import DISTRIBUTED_STRATEGIES
-from picochat.hf_export import HFExportConfig, export_hf_checkpoint
+from picochat.hf_export import HFExportConfig, export_hf_checkpoint, push_hf_export_to_hub
 from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
@@ -1204,6 +1204,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-transformers-adapter",
         action="store_true",
         help="Do not write Transformers trust_remote_code adapter files.",
+    )
+    export_hf_parser.add_argument(
+        "--push-to-hub",
+        action="store_true",
+        help="Upload the exported folder to the Hugging Face Hub after writing it.",
+    )
+    export_hf_parser.add_argument("--repo-id", default=None, help="Hugging Face model repo id, for example user/model.")
+    export_hf_parser.add_argument("--private", action="store_true", help="Create or update the Hub repo as private.")
+    export_hf_parser.add_argument("--token-env", default="HF_TOKEN", help="Environment variable containing the Hugging Face token.")
+    export_hf_parser.add_argument(
+        "--commit-message",
+        default="Upload Picochat export",
+        help="Commit message for --push-to-hub uploads.",
     )
 
     sanity_parser = subparsers.add_parser("sanity", help="Run local readiness sanity checks.")
@@ -2927,6 +2940,17 @@ def run_export_hf(args: argparse.Namespace) -> int:
     print(f"exported: {report['out_dir']}")
     print(f"manifest: {report['manifest']}")
     print(f"model_card: {report['model_card']}")
+    if args.push_to_hub:
+        if not args.repo_id:
+            raise ValueError("--push-to-hub requires --repo-id")
+        hub_report = push_hf_export_to_hub(
+            report["out_dir"],
+            repo_id=args.repo_id,
+            private=args.private,
+            token_env=args.token_env,
+            commit_message=args.commit_message,
+        )
+        print(f"hub_repo: {hub_report['url']}")
     return 0
 
 

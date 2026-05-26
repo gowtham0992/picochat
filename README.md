@@ -73,6 +73,9 @@ What is ready:
 - Optional post-SFT DPO through `picochat train dpo` for curated preference pairs
   when teams have real chosen/rejected examples.
 - Dockerized local workbench and serving smoke paths for reproducible demos.
+- HF-style export with model card, release manifest, Transformers
+  `trust_remote_code` adapter, optional safetensors, and optional
+  `--push-to-hub` publishing.
 - Public benchmark protocol, CI, and contribution templates for external review.
 
 What is not claimed:

@@ -107,6 +107,24 @@ picochat export hf \
   --out-dir exports/<run>
 ```
 
+After the model card and manifests look correct, publish the exact export
+folder to a Hub repo:
+
+```bash
+export HF_TOKEN="hf_..."
+
+picochat export hf \
+  --checkpoint runs/<run>/sft/checkpoint \
+  --tokenizer runs/<run>/tokenizer.json \
+  --out-dir exports/<run> \
+  --model-name picochat-<run> \
+  --license mit \
+  --dataset-summary "See release_manifest.json and preflight report." \
+  --eval-summary "See release gate and external benchmark reports." \
+  --push-to-hub \
+  --repo-id <user-or-org>/picochat-<run>
+```
+
 Then write a reproducible EleutherAI `lm-eval-harness` command:
 
 ```bash

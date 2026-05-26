@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import shutil
 from typing import Any
@@ -165,8 +166,8 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
             "vocab_size": len(tokenizer),
         },
         "entrypoints": {
-            "generate": "pico generate --checkpoint <checkpoint_dir> --tokenizer <tokenizer.json>",
-            "chat": "pico chat --checkpoint <checkpoint_dir> --tokenizer <tokenizer.json>",
+            "generate": "picochat generate --checkpoint <checkpoint_dir> --tokenizer <tokenizer.json>",
+            "chat": "picochat chat --checkpoint <checkpoint_dir> --tokenizer <tokenizer.json>",
         },
         "artifacts": {
             "fp32_weights": "pytorch_model.bin",
@@ -209,6 +210,64 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
         "safetensors": files.get("weights_safetensors") is not None,
         "safetensors_error": safetensors_error,
         "transformers_adapter": config.transformers_adapter,
+    }
+
+
+def push_hf_export_to_hub(
+    export_dir: str | Path,
+    *,
+    repo_id: str,
+    private: bool = False,
+    token: str | None = None,
+    token_env: str = "HF_TOKEN",
+    commit_message: str = "Upload Picochat export",
+) -> dict[str, Any]:
+    """Upload an existing HF-style export folder to the Hugging Face Hub."""
+    if not repo_id.strip():
+        raise ValueError("repo_id is required when pushing a Picochat export to the Hub")
+    try:
+        from huggingface_hub import HfApi
+    except ImportError as exc:
+        raise RuntimeError(
+            "pushing to the Hugging Face Hub requires huggingface_hub; "
+            "install Picochat with `pip install -e '.[hf]'`"
+        ) from exc
+
+    export_path = Path(export_dir)
+    if not export_path.exists():
+        raise FileNotFoundError(f"export folder not found: {export_path}")
+    auth_token = token or os.environ.get(token_env)
+    publish_report = {
+        "repo_id": repo_id,
+        "private": private,
+        "token_env": token_env if token is None else None,
+        "commit_message": commit_message,
+        "source_dir": str(export_path),
+    }
+    (export_path / "hub_publish.json").write_text(
+        json.dumps(publish_report, indent=2),
+        encoding="utf-8",
+    )
+
+    api = HfApi(token=auth_token) if auth_token else HfApi()
+    api.create_repo(
+        repo_id=repo_id,
+        repo_type="model",
+        private=private,
+        exist_ok=True,
+        token=auth_token,
+    )
+    upload_info = api.upload_folder(
+        folder_path=str(export_path),
+        repo_id=repo_id,
+        repo_type="model",
+        commit_message=commit_message,
+        token=auth_token,
+    )
+    return {
+        **publish_report,
+        "url": f"https://huggingface.co/{repo_id}",
+        "upload_info": str(upload_info),
     }
 
 

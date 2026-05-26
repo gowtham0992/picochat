@@ -81,6 +81,31 @@ Do not deploy a checkpoint as a product claim until the run includes:
 The server can load an experimental model for smoke tests, but serving does not
 turn an experimental run into a release.
 
+## Hub Publishing
+
+For public review, export the checkpoint and publish the exact folder that
+contains the model card, release manifest, serving manifest, tokenizer, and
+weights:
+
+```bash
+export HF_TOKEN="hf_..."
+
+picochat export hf \
+  --checkpoint runs/<run>/sft/checkpoint \
+  --tokenizer runs/<run>/tokenizer.json \
+  --out-dir exports/<run> \
+  --model-name picochat-<run> \
+  --license mit \
+  --dataset-summary "See release_manifest.json and preflight report." \
+  --eval-summary "See release gate and external benchmark reports." \
+  --push-to-hub \
+  --repo-id <user-or-org>/picochat-<run>
+```
+
+This is a publication path, not a production-serving path. The exported
+Transformers adapter requires `trust_remote_code=True`, and high-throughput
+serving still needs a native vLLM/TGI/llama.cpp adapter.
+
 ## Current Limits
 
 - native `picochat serve` is single-process PyTorch serving
