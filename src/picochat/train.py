@@ -27,14 +27,16 @@ from picochat.batching import (
 from picochat.checkpoint import load_checkpoint, load_training_state, save_checkpoint
 from picochat.device import resolve_device
 from picochat.distributed import (
+    DISTRIBUTED_STRATEGIES,
     barrier_if_distributed,
     broadcast_object_if_distributed,
     ddp_env_metadata,
+    fsdp_full_state_dict,
     initialize_ddp,
     is_main_process,
     mean_scalar_if_distributed,
     no_sync_if_distributed,
-    prepare_ddp_model,
+    prepare_distributed_model,
 )
 from picochat.memorization import memorization_diagnostics
 from picochat.model import GPTConfig, TinyGPT
@@ -129,6 +131,7 @@ class TrainConfig:
     resume_from: str | None = None
     gradient_checkpointing: bool = False
     ddp: bool = False
+    distributed_strategy: str = "ddp"
     require_document_boundary_tokens: bool = False
     loss_spike_rollback: bool = False
     loss_spike_threshold: float = 2.5
@@ -238,12 +241,67 @@ def _append_loss_spike_watch(
         }) + "\n")
 
 
+def _save_checkpoint_for_distributed(
+    path: Path,
+    *,
+    model: TinyGPT,
+    checkpoint_model: torch.nn.Module,
+    distributed_metadata: dict,
+    main_process: bool,
+    step: int,
+    train_loss: float,
+    extra_metadata: dict | None = None,
+    training_state: dict | None = None,
+) -> None:
+    model_state_dict = None
+    if distributed_metadata.get("strategy") == "fsdp":
+        model_state_dict = fsdp_full_state_dict(checkpoint_model, distributed_metadata)
+    if main_process:
+        save_checkpoint(
+            path,
+            model,
+            step=step,
+            train_loss=train_loss,
+            extra_metadata=extra_metadata,
+            training_state=training_state,
+            model_state_dict=model_state_dict,
+            model_config=model.config,
+        )
+
+
 def train_base(config: TrainConfig) -> dict:
     """Train a tiny next-token model and save artifacts."""
+    if config.distributed_strategy not in DISTRIBUTED_STRATEGIES:
+        raise ValueError(
+            "distributed_strategy must be one of "
+            f"{', '.join(DISTRIBUTED_STRATEGIES)}"
+        )
     if config.ddp and config.loss_spike_rollback:
         raise ValueError(
-            "loss_spike_rollback is not supported with DDP because rollback "
-            "decisions are rank-local; disable rollback for distributed runs"
+            "loss_spike_rollback is not supported with DDP/FSDP distributed training "
+            "because rollback decisions are rank-local; disable rollback for distributed runs"
+        )
+    if config.distributed_strategy == "fsdp" and not config.ddp:
+        raise ValueError("distributed_strategy='fsdp' requires --ddp and a torchrun launch")
+    if config.distributed_strategy == "fsdp" and config.torch_compile:
+        raise ValueError(
+            "FSDP support is experimental and currently requires --torch-compile to be disabled "
+            "until compile+FSDP checkpointing is validated"
+        )
+    if config.distributed_strategy == "fsdp" and config.ema_decay > 0:
+        raise ValueError(
+            "FSDP support is experimental and currently requires ema_decay=0.0; "
+            "EMA over sharded parameters needs a dedicated implementation"
+        )
+    if config.distributed_strategy == "fsdp" and config.optimizer != "adamw":
+        raise ValueError(
+            "FSDP support is experimental and currently requires optimizer='adamw'; "
+            "Muon parameter grouping needs a dedicated FSDP path"
+        )
+    if config.distributed_strategy == "fsdp" and config.resume_from:
+        raise ValueError(
+            "FSDP support is experimental and does not support resume_from yet; "
+            "use DDP for resumable release runs"
         )
     validate_optim_controls(
         max_steps=config.max_steps,
@@ -483,13 +541,19 @@ def train_base(config: TrainConfig) -> dict:
         enabled=config.torch_compile,
         mode=config.torch_compile_mode,
     )
-    ddp_model, ddp_metadata = prepare_ddp_model(compiled_model, device, enabled=config.ddp)
+    ddp_model, ddp_metadata = prepare_distributed_model(
+        compiled_model,
+        device,
+        enabled=config.ddp,
+        strategy=config.distributed_strategy,
+    )
     main_process = is_main_process(ddp_metadata)
     train_model = ddp_model
     tensorboard = TensorBoardLogger(config.tensorboard_log_dir if main_process else None)
     scaler = make_grad_scaler(precision_runtime)
+    optimizer_model = train_model if ddp_metadata.get("strategy") == "fsdp" else model
     optimizer = create_optimizer(
-        model,
+        optimizer_model,
         optimizer_type=config.optimizer,
         learning_rate=config.learning_rate,
         weight_decay=config.weight_decay,
@@ -600,7 +664,7 @@ def train_base(config: TrainConfig) -> dict:
                     scaled_loss.backward()
         if scaler.is_enabled():
             scaler.unscale_(optimizer)
-        grad_norm = maybe_clip_grad_norm(model, config.grad_clip)
+        grad_norm = maybe_clip_grad_norm(optimizer_model, config.grad_clip)
         if scaler.is_enabled():
             scaler.step(optimizer)
             scaler.update()
@@ -783,24 +847,26 @@ def train_base(config: TrainConfig) -> dict:
             if metric < best_metric - config.early_stop_min_delta:
                 best_metric = metric
                 evals_without_improvement = 0
-                if main_process:
-                    with using_ema_weights(model, ema):
-                        save_checkpoint(
-                            best_checkpoint_dir,
-                            model,
-                            step=step,
-                            train_loss=last_loss,
-                            extra_metadata={
-                                "checkpoint_kind": "best_validation",
-                                "weights": checkpoint_weights,
-                                "val_loss": checkpoint_val_loss,
-                                "val_bpb": checkpoint_val_bpb,
-                                "raw_val_loss": val_loss,
-                                "raw_val_bpb": val_bpb,
-                                "ema_decay": config.ema_decay if ema is not None else None,
-                                "ema_updates": ema.num_updates if ema is not None else 0,
-                            },
-                        )
+                with using_ema_weights(model, ema):
+                    _save_checkpoint_for_distributed(
+                        best_checkpoint_dir,
+                        model=model,
+                        checkpoint_model=train_model,
+                        distributed_metadata=ddp_metadata,
+                        main_process=main_process,
+                        step=step,
+                        train_loss=last_loss,
+                        extra_metadata={
+                            "checkpoint_kind": "best_validation",
+                            "weights": checkpoint_weights,
+                            "val_loss": checkpoint_val_loss,
+                            "val_bpb": checkpoint_val_bpb,
+                            "raw_val_loss": val_loss,
+                            "raw_val_bpb": val_bpb,
+                            "ema_decay": config.ema_decay if ema is not None else None,
+                            "ema_updates": ema.num_updates if ema is not None else 0,
+                        },
+                    )
                 best_checkpoint = {
                     "path": str(best_checkpoint_dir),
                     "step": step,
@@ -821,39 +887,47 @@ def train_base(config: TrainConfig) -> dict:
                     f"val_bpb {_format_optional(val_bpb)} | "
                     f"{_format_rate(throughput['tokens_per_sec'])} tok/s | {elapsed:.1f}s"
                 )
-                save_checkpoint(
-                    out_dir / "resume_checkpoint",
-                    model,
+            resume_training_state = None
+            if main_process and ddp_metadata.get("strategy") != "fsdp":
+                resume_training_state = make_training_state(
                     step=final_step,
-                    train_loss=last_loss,
-                    extra_metadata={
-                        "checkpoint_kind": "resume",
-                        "weights": "raw",
-                        "best_checkpoint": best_checkpoint,
-                        "resume_source": config.resume_from,
+                    losses=losses,
+                    best_metric=best_metric,
+                    best_checkpoint=best_checkpoint,
+                    evals_without_improvement=evals_without_improvement,
+                    stop_reason=stop_reason,
+                    elapsed_sec=elapsed,
+                    optimizer=optimizer,
+                    scaler=scaler,
+                    ema=ema,
+                    batcher=train_batches,
+                    device=device,
+                    training_fingerprint=training_fingerprint,
+                    extra_state={
+                        "rollback_events": rollback_events,
+                        "loss_spike_warnings": loss_spike_warnings,
+                        "rollback_lr_scale": rollback_lr_scale,
+                        "loss_spike_baseline": loss_spike_baseline,
                     },
-                    training_state=make_training_state(
-                        step=final_step,
-                        losses=losses,
-                        best_metric=best_metric,
-                        best_checkpoint=best_checkpoint,
-                        evals_without_improvement=evals_without_improvement,
-                        stop_reason=stop_reason,
-                        elapsed_sec=elapsed,
-                        optimizer=optimizer,
-                        scaler=scaler,
-                        ema=ema,
-                        batcher=train_batches,
-                        device=device,
-                        training_fingerprint=training_fingerprint,
-                        extra_state={
-                            "rollback_events": rollback_events,
-                            "loss_spike_warnings": loss_spike_warnings,
-                            "rollback_lr_scale": rollback_lr_scale,
-                            "loss_spike_baseline": loss_spike_baseline,
-                        },
-                    ),
                 )
+            _save_checkpoint_for_distributed(
+                out_dir / "resume_checkpoint",
+                model=model,
+                checkpoint_model=train_model,
+                distributed_metadata=ddp_metadata,
+                main_process=main_process,
+                step=final_step,
+                train_loss=last_loss,
+                extra_metadata={
+                    "checkpoint_kind": "resume",
+                    "weights": "raw",
+                    "best_checkpoint": best_checkpoint,
+                    "resume_source": config.resume_from,
+                    "resume_supported": ddp_metadata.get("strategy") != "fsdp",
+                },
+                training_state=resume_training_state,
+            )
+            if main_process:
                 write_checkpoint_progress(
                     out_dir / "resume_checkpoint",
                     stage="base",
@@ -886,41 +960,47 @@ def train_base(config: TrainConfig) -> dict:
     checkpoint_dir = out_dir / "checkpoint"
     ema_checkpoint_dir = out_dir / "ema_checkpoint"
     elapsed_final = elapsed_offset + time.time() - start
-    if main_process:
-        save_checkpoint(
-            checkpoint_dir,
-            model,
+    final_training_state = None
+    if main_process and ddp_metadata.get("strategy") != "fsdp":
+        final_training_state = make_training_state(
             step=final_step,
-            train_loss=last_loss,
-            extra_metadata={
-                "checkpoint_kind": "final",
-                "weights": "raw",
-                "stop_reason": stop_reason,
-                "best_checkpoint": best_checkpoint,
-                "ema_checkpoint": str(ema_checkpoint_dir) if ema is not None else None,
+            losses=losses,
+            best_metric=best_metric,
+            best_checkpoint=best_checkpoint,
+            evals_without_improvement=evals_without_improvement,
+            stop_reason=stop_reason,
+            elapsed_sec=elapsed_final,
+            optimizer=optimizer,
+            scaler=scaler,
+            ema=ema,
+            batcher=train_batches,
+            device=device,
+            training_fingerprint=training_fingerprint,
+            extra_state={
+                "rollback_events": rollback_events,
+                "loss_spike_warnings": loss_spike_warnings,
+                "rollback_lr_scale": rollback_lr_scale,
+                "loss_spike_baseline": loss_spike_baseline,
             },
-            training_state=make_training_state(
-                step=final_step,
-                losses=losses,
-                best_metric=best_metric,
-                best_checkpoint=best_checkpoint,
-                evals_without_improvement=evals_without_improvement,
-                stop_reason=stop_reason,
-                elapsed_sec=elapsed_final,
-                optimizer=optimizer,
-                scaler=scaler,
-                ema=ema,
-                batcher=train_batches,
-                device=device,
-                training_fingerprint=training_fingerprint,
-                extra_state={
-                    "rollback_events": rollback_events,
-                    "loss_spike_warnings": loss_spike_warnings,
-                    "rollback_lr_scale": rollback_lr_scale,
-                    "loss_spike_baseline": loss_spike_baseline,
-                },
-            ),
         )
+    _save_checkpoint_for_distributed(
+        checkpoint_dir,
+        model=model,
+        checkpoint_model=train_model,
+        distributed_metadata=ddp_metadata,
+        main_process=main_process,
+        step=final_step,
+        train_loss=last_loss,
+        extra_metadata={
+            "checkpoint_kind": "final",
+            "weights": "raw",
+            "stop_reason": stop_reason,
+            "best_checkpoint": best_checkpoint,
+            "ema_checkpoint": str(ema_checkpoint_dir) if ema is not None else None,
+            "resume_supported": ddp_metadata.get("strategy") != "fsdp",
+        },
+        training_state=final_training_state,
+    )
     barrier_if_distributed(ddp_metadata)
     if ema is not None and main_process:
         with using_ema_weights(model, ema):
@@ -941,20 +1021,22 @@ def train_base(config: TrainConfig) -> dict:
             )
     barrier_if_distributed(ddp_metadata)
     if best_checkpoint is None:
-        if main_process:
-            with using_ema_weights(model, ema):
-                save_checkpoint(
-                    best_checkpoint_dir,
-                    model,
-                    step=final_step,
-                    train_loss=last_loss,
-                    extra_metadata={
-                        "checkpoint_kind": "best_validation_fallback",
-                        "weights": "ema" if ema is not None else "raw",
-                        "ema_decay": config.ema_decay if ema is not None else None,
-                        "ema_updates": ema.num_updates if ema is not None else 0,
-                    },
-                )
+        with using_ema_weights(model, ema):
+            _save_checkpoint_for_distributed(
+                best_checkpoint_dir,
+                model=model,
+                checkpoint_model=train_model,
+                distributed_metadata=ddp_metadata,
+                main_process=main_process,
+                step=final_step,
+                train_loss=last_loss,
+                extra_metadata={
+                    "checkpoint_kind": "best_validation_fallback",
+                    "weights": "ema" if ema is not None else "raw",
+                    "ema_decay": config.ema_decay if ema is not None else None,
+                    "ema_updates": ema.num_updates if ema is not None else 0,
+                },
+            )
         barrier_if_distributed(ddp_metadata)
         best_checkpoint = {
             "path": str(best_checkpoint_dir),
@@ -969,8 +1051,12 @@ def train_base(config: TrainConfig) -> dict:
     canary_probe = ""
     memorization_report = {}
     if main_process:
+        sample_model = model
+        if ddp_metadata.get("strategy") == "fsdp":
+            sample_model, _ = load_checkpoint(checkpoint_dir, map_location=device)
+            sample_model = sample_model.to(device)
         sample = _generate_sample(
-            model,
+            sample_model,
             tokenizer,
             device,
             config.sample_tokens,
@@ -979,7 +1065,7 @@ def train_base(config: TrainConfig) -> dict:
         )
         if split.canary_values:
             canary_probe = _generate_sample(
-                model,
+                sample_model,
                 tokenizer,
                 device,
                 min(config.sample_tokens, 80),

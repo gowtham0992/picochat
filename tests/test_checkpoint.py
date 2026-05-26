@@ -35,6 +35,28 @@ def test_save_and_load_training_state(tmp_path):
     assert state["losses"] == [{"step": 3}]
 
 
+def test_save_checkpoint_accepts_materialized_state_dict(tmp_path):
+    model = TinyGPT(GPTConfig(vocab_size=10, context_size=4, n_embd=8, n_head=2, n_layer=1))
+    override = {
+        name: torch.zeros_like(value)
+        for name, value in model.state_dict().items()
+    }
+
+    save_checkpoint(
+        tmp_path,
+        model,
+        step=5,
+        train_loss=0.5,
+        model_state_dict=override,
+        model_config=model.config,
+    )
+    loaded, metadata = load_checkpoint(tmp_path)
+
+    assert metadata["step"] == 5
+    for value in loaded.state_dict().values():
+        assert torch.count_nonzero(value).item() == 0
+
+
 def test_save_checkpoint_keeps_previous_checkpoint_on_failed_write(tmp_path, monkeypatch):
     model = TinyGPT(GPTConfig(vocab_size=10, context_size=4, n_embd=8, n_head=2, n_layer=1))
     save_checkpoint(tmp_path, model, step=3, train_loss=1.23)

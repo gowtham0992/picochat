@@ -7,10 +7,12 @@ from picochat.distributed import (
     barrier_if_distributed,
     broadcast_object_if_distributed,
     ddp_env_metadata,
+    fsdp_full_state_dict,
     initialize_ddp,
     is_main_process,
     mean_scalar_if_distributed,
     no_sync_if_distributed,
+    prepare_distributed_model,
     prepare_ddp_model,
 )
 
@@ -198,7 +200,11 @@ def test_initialize_ddp_passes_cuda_device_id(monkeypatch):
     monkeypatch.setenv("MASTER_PORT", "29500")
     captured = {}
 
-    monkeypatch.setattr(torch.cuda, "set_device", lambda local_rank: captured.setdefault("set_device", local_rank))
+    monkeypatch.setattr(
+        torch.cuda,
+        "set_device",
+        lambda local_rank: captured.setdefault("set_device", local_rank),
+    )
     monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
     monkeypatch.setattr(torch.distributed, "is_initialized", lambda: False)
     monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 2)
@@ -309,3 +315,128 @@ def test_prepare_ddp_model_falls_back_for_old_ddp_kwargs(monkeypatch):
 
     assert calls[0]["static_graph"] is True
     assert calls[1] == {"device_ids": [0], "output_device": 0}
+
+
+def test_prepare_distributed_model_rejects_unknown_strategy():
+    with pytest.raises(ValueError, match="distributed_strategy"):
+        prepare_distributed_model(
+            torch.nn.Linear(2, 2),
+            torch.device("cpu"),
+            enabled=True,
+            strategy="zero",
+        )
+
+
+def test_prepare_distributed_model_disabled_records_strategy():
+    model = torch.nn.Linear(2, 2)
+
+    wrapped, metadata = prepare_distributed_model(
+        model,
+        torch.device("cpu"),
+        enabled=False,
+        strategy="fsdp",
+    )
+
+    assert wrapped is model
+    assert metadata["enabled"] is False
+    assert metadata["strategy"] == "fsdp"
+
+
+def test_prepare_distributed_model_wraps_fsdp_with_full_shard(monkeypatch):
+    monkeypatch.setenv("RANK", "1")
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setenv("LOCAL_RANK", "1")
+    monkeypatch.setenv("MASTER_ADDR", "127.0.0.1")
+    monkeypatch.setenv("MASTER_PORT", "29500")
+    captured = {}
+
+    monkeypatch.setattr(torch.cuda, "set_device", lambda local_rank: captured.setdefault("set_device", local_rank))
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: False)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 1)
+    monkeypatch.setattr(torch.distributed, "get_backend", lambda: "nccl")
+    monkeypatch.setattr(torch.distributed, "init_process_group", lambda **_kwargs: None)
+
+    class FakeShardingStrategy:
+        FULL_SHARD = object()
+
+    class FakeFSDP:
+        def __init__(self, module, **kwargs):
+            self.module = module
+            captured["fsdp_kwargs"] = kwargs
+
+    import picochat.distributed as distributed_module
+
+    monkeypatch.setattr(
+        distributed_module,
+        "_fsdp_components",
+        lambda: (FakeFSDP, FakeShardingStrategy),
+    )
+    model = torch.nn.Linear(2, 2)
+
+    wrapped, metadata = prepare_distributed_model(
+        model,
+        torch.device("cuda"),
+        enabled=True,
+        strategy="fsdp",
+    )
+
+    assert wrapped.module is model
+    assert captured["set_device"] == 1
+    assert captured["fsdp_kwargs"]["device_id"] == torch.device("cuda", 1)
+    assert captured["fsdp_kwargs"]["sharding_strategy"] is FakeShardingStrategy.FULL_SHARD
+    assert captured["fsdp_kwargs"]["use_orig_params"] is True
+    assert metadata["strategy"] == "fsdp"
+    assert metadata["fsdp_sharding_strategy"] == "full_shard"
+
+
+def test_fsdp_full_state_dict_collects_on_all_ranks(monkeypatch):
+    calls = []
+
+    class FakeStateDictType:
+        FULL_STATE_DICT = object()
+
+    class FakeFullStateDictConfig:
+        def __init__(self, **kwargs):
+            calls.append(("config", kwargs))
+
+    class FakeContext:
+        def __enter__(self):
+            calls.append(("enter", None))
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append(("exit", None))
+
+    class FakeFSDP:
+        @staticmethod
+        def state_dict_type(model, state_dict_type, config):
+            calls.append(("state_dict_type", state_dict_type, config))
+            return FakeContext()
+
+    class FakeModel(torch.nn.Module):
+        def state_dict(self, *args, **kwargs):
+            calls.append(("state_dict", None))
+            return {"weight": torch.tensor([1.0])}
+
+    import picochat.distributed as distributed_module
+
+    monkeypatch.setattr(
+        distributed_module,
+        "_fsdp_state_dict_components",
+        lambda: (FakeFSDP, FakeStateDictType, FakeFullStateDictConfig),
+    )
+
+    main_state = fsdp_full_state_dict(
+        FakeModel(),
+        {"enabled": True, "strategy": "fsdp", "rank": 0},
+    )
+    worker_state = fsdp_full_state_dict(
+        FakeModel(),
+        {"enabled": True, "strategy": "fsdp", "rank": 1},
+    )
+
+    assert main_state is not None
+    assert torch.equal(main_state["weight"], torch.tensor([1.0]))
+    assert worker_state is None
+    assert [call[0] for call in calls].count("state_dict") == 2

@@ -20,6 +20,8 @@ def save_checkpoint(
     train_loss: float,
     extra_metadata: dict | None = None,
     training_state: dict | None = None,
+    model_state_dict: dict | None = None,
+    model_config: GPTConfig | None = None,
 ) -> None:
     """Save model weights and lightweight metadata with crash-safe directory replacement."""
     path = Path(path)
@@ -31,10 +33,11 @@ def save_checkpoint(
     metadata = {
         "step": step,
         "train_loss": train_loss,
-        "model_config": model.config.to_dict(),
+        "model_config": (model_config or model.config).to_dict(),
     }
     try:
-        torch.save(model.state_dict(), tmp_path / "model.pt")
+        state_dict = model_state_dict if model_state_dict is not None else model.state_dict()
+        torch.save(state_dict, tmp_path / "model.pt")
         if training_state is not None:
             torch.save(training_state, tmp_path / "training_state.pt")
             metadata["has_training_state"] = True

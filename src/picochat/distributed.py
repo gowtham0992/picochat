@@ -1,4 +1,4 @@
-"""Small DDP helpers for single-node Picochat training."""
+"""Small distributed helpers for single-node Picochat training."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import torch
 TORCHRUN_REQUIRED_ENV = ("RANK", "WORLD_SIZE", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT")
 DEFAULT_DDP_TIMEOUT_MINUTES = 120
 DDP_TIMEOUT_ENV = "PICOCHAT_DDP_TIMEOUT_MINUTES"
+DISTRIBUTED_STRATEGIES = ("ddp", "fsdp")
 
 
 def initialize_ddp(
@@ -92,7 +93,111 @@ def prepare_ddp_model(
             )
         else:
             wrapped = torch.nn.parallel.DistributedDataParallel(model)
+    metadata = {**metadata, "strategy": "ddp"}
     return wrapped, metadata
+
+
+def prepare_distributed_model(
+    model: torch.nn.Module,
+    device: torch.device,
+    *,
+    enabled: bool = False,
+    strategy: str = "ddp",
+) -> tuple[torch.nn.Module, dict[str, Any]]:
+    """Wrap a model with the requested distributed strategy.
+
+    FSDP is deliberately exposed as an experimental base-training path first.
+    Full run-tiny/SFT support needs separate checkpoint and post-training
+    validation before it should be used for paid release runs.
+    """
+    if strategy not in DISTRIBUTED_STRATEGIES:
+        raise ValueError(
+            f"distributed_strategy must be one of {', '.join(DISTRIBUTED_STRATEGIES)}"
+        )
+    if not enabled:
+        return model, {
+            "enabled": False,
+            "world_size": 1,
+            "rank": 0,
+            "local_rank": 0,
+            "strategy": strategy,
+        }
+    if strategy == "ddp":
+        return prepare_ddp_model(model, device, enabled=True)
+    return _prepare_fsdp_model(model, device)
+
+
+def _prepare_fsdp_model(
+    model: torch.nn.Module,
+    device: torch.device,
+) -> tuple[torch.nn.Module, dict[str, Any]]:
+    if device.type != "cuda":
+        raise ValueError(
+            "FSDP currently requires CUDA in Picochat; "
+            "use --distributed-strategy ddp for CPU debugging"
+        )
+    metadata = initialize_ddp(device, enabled=True)
+    fsdp_cls, sharding_strategy_cls = _fsdp_components()
+    local_rank = int(metadata["local_rank"])
+    wrapped = fsdp_cls(
+        model,
+        device_id=torch.device("cuda", local_rank),
+        sharding_strategy=sharding_strategy_cls.FULL_SHARD,
+        use_orig_params=True,
+    )
+    metadata = {
+        **metadata,
+        "strategy": "fsdp",
+        "fsdp_sharding_strategy": "full_shard",
+        "fsdp_use_orig_params": True,
+    }
+    return wrapped, metadata
+
+
+def _fsdp_components():
+    try:
+        from torch.distributed.fsdp import FullyShardedDataParallel, ShardingStrategy
+    except Exception as exc:  # pragma: no cover - depends on local torch build.
+        raise RuntimeError(
+            "FSDP requires torch.distributed.fsdp in this PyTorch build"
+        ) from exc
+    return FullyShardedDataParallel, ShardingStrategy
+
+
+def fsdp_full_state_dict(
+    model: torch.nn.Module,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, torch.Tensor] | None:
+    """Collect a full FSDP state dict on rank 0.
+
+    Every rank must call this helper because FSDP full-state export performs
+    distributed communication even when only rank 0 writes the result.
+    """
+    if metadata is None or metadata.get("strategy") != "fsdp":
+        return model.state_dict()
+    (
+        fsdp_cls,
+        state_dict_type_cls,
+        full_state_dict_config_cls,
+    ) = _fsdp_state_dict_components()
+    config = full_state_dict_config_cls(offload_to_cpu=True, rank0_only=True)
+    with fsdp_cls.state_dict_type(model, state_dict_type_cls.FULL_STATE_DICT, config):
+        state_dict = model.state_dict()
+    return state_dict if is_main_process(metadata) else None
+
+
+def _fsdp_state_dict_components():
+    try:
+        from torch.distributed.fsdp import (
+            FullStateDictConfig,
+            FullyShardedDataParallel,
+            StateDictType,
+        )
+    except Exception as exc:  # pragma: no cover - depends on local torch build.
+        raise RuntimeError(
+            "FSDP checkpoint export requires torch.distributed.fsdp in this PyTorch build"
+        ) from exc
+    return FullyShardedDataParallel, StateDictType, FullStateDictConfig
 
 
 def ddp_env_metadata(enabled: bool = False) -> dict[str, Any]:

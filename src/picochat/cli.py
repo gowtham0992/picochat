@@ -53,6 +53,7 @@ from picochat.run_preflight import assess_run_preflight, preflight_markdown
 from picochat.compare import compare_runs, comparison_table, write_comparison_report
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.device import DEVICE_CHOICES
+from picochat.distributed import DISTRIBUTED_STRATEGIES
 from picochat.hf_export import HFExportConfig, export_hf_checkpoint
 from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
@@ -758,6 +759,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--ddp",
         action="store_true",
         help="Wrap training in DistributedDataParallel. Launch with torchrun.",
+    )
+    train_base_parser.add_argument(
+        "--distributed-strategy",
+        choices=DISTRIBUTED_STRATEGIES,
+        default="ddp",
+        help=(
+            "Distributed wrapper for base training when --ddp is set. "
+            "fsdp is experimental and not wired into run tiny/SFT yet."
+        ),
     )
     train_base_parser.add_argument(
         "--logit-softcap",
@@ -2557,6 +2567,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         resume_from=args.resume_from,
         gradient_checkpointing=args.gradient_checkpointing,
         ddp=args.ddp,
+        distributed_strategy=args.distributed_strategy,
         loss_spike_rollback=args.loss_spike_rollback,
         loss_spike_threshold=args.loss_spike_threshold,
         loss_spike_lr_decay=args.loss_spike_lr_decay,

@@ -19,6 +19,40 @@ def test_train_base_rejects_ddp_loss_spike_rollback(tmp_path):
         ))
 
 
+def test_train_base_rejects_fsdp_without_ddp_launch(tmp_path):
+    with pytest.raises(ValueError, match="requires --ddp"):
+        train_base(TrainConfig(
+            corpus_path=str(tmp_path / "missing.txt"),
+            tokenizer_path=str(tmp_path / "missing-tokenizer.json"),
+            out_dir=str(tmp_path / "run"),
+            distributed_strategy="fsdp",
+        ))
+
+
+def test_train_base_rejects_fsdp_with_torch_compile(tmp_path):
+    with pytest.raises(ValueError, match="requires --torch-compile to be disabled"):
+        train_base(TrainConfig(
+            corpus_path=str(tmp_path / "missing.txt"),
+            tokenizer_path=str(tmp_path / "missing-tokenizer.json"),
+            out_dir=str(tmp_path / "run"),
+            ddp=True,
+            distributed_strategy="fsdp",
+            torch_compile=True,
+        ))
+
+
+def test_train_base_rejects_fsdp_with_ema(tmp_path):
+    with pytest.raises(ValueError, match="ema_decay=0.0"):
+        train_base(TrainConfig(
+            corpus_path=str(tmp_path / "missing.txt"),
+            tokenizer_path=str(tmp_path / "missing-tokenizer.json"),
+            out_dir=str(tmp_path / "run"),
+            ddp=True,
+            distributed_strategy="fsdp",
+            ema_decay=0.99,
+        ))
+
+
 def test_train_base_writes_artifacts(tmp_path):
     corpus_path = tmp_path / "corpus.txt"
     tokenizer_path = tmp_path / "tokenizer.json"
@@ -468,7 +502,11 @@ def test_train_base_ddp_worker_reuses_rank_zero_token_shards(tmp_path, monkeypat
 
     monkeypatch.setattr(train_module, "initialize_ddp", lambda device, enabled=False: ddp_metadata)
     monkeypatch.setattr(train_module, "ddp_env_metadata", lambda enabled=False: ddp_metadata)
-    monkeypatch.setattr(train_module, "prepare_ddp_model", lambda model, device, enabled=False: (model, ddp_metadata))
+    monkeypatch.setattr(
+        train_module,
+        "prepare_distributed_model",
+        lambda model, device, enabled=False, strategy="ddp": (model, {**ddp_metadata, "strategy": strategy}),
+    )
     monkeypatch.setattr(train_module, "barrier_if_distributed", lambda metadata=None: None)
     monkeypatch.setattr(
         train_module,

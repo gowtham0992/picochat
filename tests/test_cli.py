@@ -12,6 +12,38 @@ def test_cli_version(capsys):
     assert "picochat" in capsys.readouterr().out
 
 
+def test_cli_train_base_accepts_experimental_fsdp_strategy(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_train(config):
+        captured["config"] = config
+        return {
+            "checkpoint": str(tmp_path / "run" / "checkpoint"),
+            "sample": "ok",
+            "config": {"artifacts_written": True},
+        }
+
+    monkeypatch.setattr("picochat.cli.train_base", fake_train)
+
+    exit_code = main([
+        "train",
+        "base",
+        "--corpus",
+        str(tmp_path / "corpus.txt"),
+        "--tokenizer",
+        str(tmp_path / "tokenizer.json"),
+        "--out-dir",
+        str(tmp_path / "run"),
+        "--ddp",
+        "--distributed-strategy",
+        "fsdp",
+    ])
+
+    assert exit_code == 0
+    assert captured["config"].ddp is True
+    assert captured["config"].distributed_strategy == "fsdp"
+
+
 def test_cli_sanity_preh100(tmp_path, capsys, monkeypatch):
     def fake_run(config):
         assert config.out_dir == str(tmp_path / "sanity")

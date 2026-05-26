@@ -42,14 +42,15 @@ The current 1B-class scale is `h200-1b-ddp8`.
 The scale targets roughly 1.12B parameters and 22.4B planned base-training
 tokens, about 20 tokens per parameter.
 
-## DDP Strategy
+## Distributed Strategy
 
 Picochat uses plain DDP, not FSDP or tensor parallelism, for the 1B path.
 
 That is not the most memory-efficient possible setup, but it is simpler,
 debuggable, and fits comfortably on 8xH100/H200 for this model size. The next
-scaling step can add FSDP, but the 1B launch should avoid introducing another
-distributed system unless needed.
+scaling step is experimental FSDP for base pretraining; release `run tiny`
+remains DDP until SFT, checkpoint export, and post-run gates are validated
+under sharded parameter ownership.
 
 DDP safeguards:
 
@@ -60,6 +61,25 @@ DDP safeguards:
 - rank-0 setup coordination through `ddp_control.json`
 - setup heartbeat every 30 seconds during long CPU setup phases
 - worker timeout with explicit rank-0 log guidance
+
+Experimental base-training FSDP is available through:
+
+```bash
+torchrun --standalone --nproc_per_node=8 -m picochat.cli train base \
+  --ddp --distributed-strategy fsdp \
+  --corpus data/corpus.txt \
+  --tokenizer runs/tokenizer.json \
+  --out-dir runs/base-fsdp-smoke \
+  --device cuda \
+  --precision bf16
+```
+
+Current FSDP guardrails:
+
+- CUDA-only
+- base pretraining only, not full `run tiny`
+- `torch.compile` disabled until compile+FSDP checkpointing is validated
+- EMA disabled until sharded-parameter averaging has its own implementation
 
 ## Dataset Modes
 

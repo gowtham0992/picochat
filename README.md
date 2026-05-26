@@ -103,6 +103,10 @@ The factory is built around four principles:
 4. **Protect GPU spend.** Scale-up commands include sanity checks, preflight,
    a short DDP dry run, and explicit paid-launch confirmation.
 
+Picochat's paid-run path is still deliberately conservative: the 1B release
+recipe uses DDP, while experimental FSDP is exposed for base-training smoke
+tests before it graduates into the full factory.
+
 ## Quick Start
 
 Install locally:
