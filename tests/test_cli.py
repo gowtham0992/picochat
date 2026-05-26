@@ -154,6 +154,8 @@ def test_cli_serve_builds_openai_compatible_server_config(monkeypatch):
         "cpu",
         "--top-k",
         "0",
+        "--api-key",
+        "local-secret",
         "--no-kv-cache",
     ])
 
@@ -166,6 +168,7 @@ def test_cli_serve_builds_openai_compatible_server_config(monkeypatch):
     assert config.model_name == "pico-demo"
     assert config.top_k is None
     assert config.use_kv_cache is False
+    assert config.api_key == "local-secret"
 
 
 def test_cli_run_tiny_multiseed(tmp_path, capsys, monkeypatch):

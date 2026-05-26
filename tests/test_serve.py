@@ -2,10 +2,12 @@ import pytest
 
 from picochat.serve import (
     ServeConfig,
+    _auth_error,
     _chat_completion_response,
     _chat_completion_stream_events,
     _completion_response,
     _completion_stream_events,
+    _is_authorized,
     _render_openai_messages,
 )
 
@@ -115,3 +117,11 @@ def test_completion_stream_events_match_openai_text_chunk_shape():
 def test_render_openai_messages_rejects_unknown_roles():
     with pytest.raises(ValueError, match="unsupported message role"):
         _render_openai_messages([{"role": "tool", "content": "nope"}])
+
+
+def test_bearer_auth_helper_accepts_exact_token_only():
+    assert _is_authorized({}, None) is True
+    assert _is_authorized({"Authorization": "Bearer secret"}, "secret") is True
+    assert _is_authorized({"Authorization": "secret"}, "secret") is False
+    assert _is_authorized({}, "secret") is False
+    assert _auth_error()["error"]["type"] == "authentication_error"

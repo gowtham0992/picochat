@@ -29,6 +29,7 @@ class ServeConfig:
     seed: int = 42
     use_kv_cache: bool = True
     allow_origin: str = "*"
+    api_key: str | None = None
 
 
 def serve_model(config: ServeConfig) -> None:
@@ -67,6 +68,9 @@ def _handler_factory(config: ServeConfig, engine: LoadedGenerator):
                     "device": str(engine.device),
                 })
                 return
+            if self.path.startswith("/v1/") and not _is_authorized(self.headers, config.api_key):
+                self._write_json(_auth_error(), status=401)
+                return
             if self.path == "/v1/models":
                 self._write_json(_models_response(config.model_name))
                 return
@@ -74,6 +78,9 @@ def _handler_factory(config: ServeConfig, engine: LoadedGenerator):
 
         def do_POST(self) -> None:  # noqa: N802
             try:
+                if self.path.startswith("/v1/") and not _is_authorized(self.headers, config.api_key):
+                    self._write_json(_auth_error(), status=401)
+                    return
                 payload = self._read_json()
                 if self.path == "/v1/completions":
                     with generation_lock:
@@ -136,6 +143,22 @@ def _handler_factory(config: ServeConfig, engine: LoadedGenerator):
             self.wfile.flush()
 
     return PicoServeHandler
+
+
+def _is_authorized(headers, api_key: str | None) -> bool:
+    if not api_key:
+        return True
+    observed = headers.get("Authorization", "")
+    return observed == f"Bearer {api_key}"
+
+
+def _auth_error() -> dict:
+    return {
+        "error": {
+            "message": "missing or invalid bearer token",
+            "type": "authentication_error",
+        },
+    }
 
 
 def _models_response(model_name: str) -> dict:

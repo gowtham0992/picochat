@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from picochat.data import (
@@ -1298,6 +1299,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-origin",
         default="*",
         help="CORS Access-Control-Allow-Origin value for local integrations.",
+    )
+    serve_parser.add_argument(
+        "--api-key",
+        default=None,
+        help="Optional bearer token required for /v1 API requests.",
+    )
+    serve_parser.add_argument(
+        "--api-key-env",
+        default=None,
+        help="Read the bearer token from this environment variable instead of --api-key.",
     )
 
     eval_parser = subparsers.add_parser("eval", help="Evaluation commands.")
@@ -2986,6 +2997,11 @@ def run_chat(args: argparse.Namespace) -> int:
 
 def run_serve(args: argparse.Namespace) -> int:
     top_k = None if args.top_k <= 0 else args.top_k
+    api_key = args.api_key
+    if args.api_key_env:
+        api_key = os.environ.get(args.api_key_env)
+        if not api_key:
+            raise ValueError(f"environment variable {args.api_key_env} is not set")
     serve_model(ServeConfig(
         checkpoint_path=args.checkpoint,
         tokenizer_path=args.tokenizer,
@@ -3001,6 +3017,7 @@ def run_serve(args: argparse.Namespace) -> int:
         seed=args.seed,
         use_kv_cache=not args.no_kv_cache,
         allow_origin=args.allow_origin,
+        api_key=api_key,
     ))
     return 0
 

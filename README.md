@@ -156,11 +156,14 @@ docker compose up --build picochat-web
 Serve a trained checkpoint through a local OpenAI-compatible API:
 
 ```bash
+export PICOCHAT_API_KEY="replace-me"
+
 pico serve \
   --checkpoint runs/pico-demo/sft/checkpoint \
   --tokenizer runs/pico-demo/tokenizer.json \
   --host 127.0.0.1 \
-  --port 8000
+  --port 8000 \
+  --api-key-env PICOCHAT_API_KEY
 ```
 
 Then call:
@@ -168,6 +171,7 @@ Then call:
 ```bash
 curl http://127.0.0.1:8000/v1/chat/completions \
   -H 'content-type: application/json' \
+  -H "authorization: Bearer $PICOCHAT_API_KEY" \
   -d '{"model":"picochat","messages":[{"role":"user","content":"What is Picochat?"}],"max_tokens":80}'
 ```
 
