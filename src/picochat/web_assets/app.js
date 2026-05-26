@@ -164,6 +164,15 @@ const LAUNCH_CONTROL_IDS = [
   "launch-seed",
   "launch-min-score",
 ];
+const HF_SFT_CONTROL_IDS = [
+  "hf-sft-model",
+  "hf-sft-input",
+  "hf-sft-out-dir",
+  "hf-sft-steps",
+  "hf-sft-max-length",
+  "hf-sft-device",
+  "hf-sft-precision",
+];
 
 const $ = (id) => document.getElementById(id);
 
@@ -403,6 +412,7 @@ async function boot() {
   await loadRuns();
   await loadRunJobs();
   renderScalePlan();
+  renderHFSFTCommandPreview();
   renderGuide();
 }
 
@@ -574,8 +584,18 @@ function bindControls() {
   $("add-eval-row-button").addEventListener("click", addEvalEditorRow);
   $("launch-preset").addEventListener("change", applyLaunchPreset);
   LAUNCH_CONTROL_IDS.forEach((id) => {
-    $(id)?.addEventListener("input", renderLaunchReadiness);
-    $(id)?.addEventListener("change", renderLaunchReadiness);
+    $(id)?.addEventListener("input", () => {
+      renderLaunchReadiness();
+      if (id === "launch-pack-path") renderHFSFTCommandPreview();
+    });
+    $(id)?.addEventListener("change", () => {
+      renderLaunchReadiness();
+      if (id === "launch-pack-path") renderHFSFTCommandPreview();
+    });
+  });
+  HF_SFT_CONTROL_IDS.forEach((id) => {
+    $(id)?.addEventListener("input", renderHFSFTCommandPreview);
+    $(id)?.addEventListener("change", renderHFSFTCommandPreview);
   });
   $("launch-run-button").addEventListener("click", () => {
     launchRun().catch((error) => renderRunJobError(error));
@@ -3601,6 +3621,65 @@ function applyPreviewBudgetToLauncher() {
 function launchNumber(id) {
   const value = Number($(id).value);
   return Number.isFinite(value) ? value : 0;
+}
+
+function hfSftConfig() {
+  return {
+    model: $("hf-sft-model")?.value.trim() || "",
+    input: $("hf-sft-input")?.value.trim() || $("launch-pack-path")?.value.trim().replace(/dataset_pack\.json$/, "chat_benchmark.jsonl") || "",
+    out_dir: $("hf-sft-out-dir")?.value.trim() || "runs/hf-sft-v1",
+    steps: boundedNumberInput("hf-sft-steps", 200, 1, 20000),
+    max_length: boundedNumberInput("hf-sft-max-length", 1024, 8, 8192),
+    device: $("hf-sft-device")?.value || "auto",
+    precision: $("hf-sft-precision")?.value || "auto",
+  };
+}
+
+function hfSftCommand(config = hfSftConfig()) {
+  const parts = [
+    "picochat",
+    "train",
+    "hf-sft",
+    "--model",
+    config.model || "<hf-model>",
+    "--input",
+    config.input || "<chat.jsonl>",
+    "--out-dir",
+    config.out_dir || "runs/hf-sft-v1",
+    "--max-steps",
+    config.steps,
+    "--max-length",
+    config.max_length,
+    "--device",
+    config.device,
+    "--precision",
+    config.precision,
+    "--gradient-checkpointing",
+  ];
+  return shellCommand(parts);
+}
+
+function renderHFSFTCommandPreview() {
+  const target = $("hf-sft-command-preview");
+  if (!target) return;
+  const config = hfSftConfig();
+  const blockers = [];
+  if (!config.model) blockers.push("choose a Hugging Face model id");
+  if (!config.input) blockers.push("choose a chat JSONL");
+  const command = hfSftCommand(config);
+  target.innerHTML = `
+    <div class="command-head">
+      <label>HF SFT COMMAND PREVIEW</label>
+      ${blockers.length ? "" : copyCommandButton(command)}
+    </div>
+    <div class="command-meta">
+      <span>${blockers.length ? `NEEDS ${escapeHtml(blockers.join(" + ").toUpperCase())}` : "READY TO COPY"}</span>
+      <span>EXISTING MODEL PATH</span>
+      <span>ASSISTANT-ONLY LOSS</span>
+    </div>
+    <code>${escapeHtml(command)}</code>
+    <p>This path writes Hugging Face model folders. Use the native launcher below when you want Picochat base pretraining and release-gated checkpoints.</p>
+  `;
 }
 
 function boundedNumberInput(id, fallback, min, max) {

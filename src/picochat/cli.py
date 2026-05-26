@@ -57,6 +57,7 @@ from picochat.device import DEVICE_CHOICES
 from picochat.distributed import DISTRIBUTED_STRATEGIES
 from picochat.hf_export import HFExportConfig, export_hf_checkpoint, push_hf_export_to_hub
 from picochat.hf_import import HFImportConfig, import_hf_dataset
+from picochat.hf_sft import HFSFTConfig, train_hf_sft
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
 from picochat.lm_harness import (
@@ -115,6 +116,41 @@ CLIMBMIX_DATASET = "karpathy/climbmix-400b-shuffle"
 CLIMBMIX_MAX_SHARD = 6542
 CLIMBMIX_LARGE_IMPORT_ROWS = 100_000
 CLIMBMIX_LARGE_IMPORT_DOCUMENT_SHARD_ROWS = 1000
+TRAINING_PATHS = (
+    {
+        "id": "scratch",
+        "title": "Train from scratch",
+        "status": "native",
+        "best_for": "Creating a Picochat-native base model with visible corpus, tokenizer, SFT, eval, and release gates.",
+        "entrypoint": "picochat run tiny --dataset-pack <pack.json> --out-dir runs/<name>",
+        "notes": (
+            "Runs Picochat's own tokenizer, GPT stack, checkpoints, honesty checks, and release gate.",
+            "Use this for 100M/1B proof runs and domain-base experiments.",
+        ),
+    },
+    {
+        "id": "existing",
+        "title": "Fine-tune an existing HF model",
+        "status": "supported",
+        "best_for": "Hackathons, SmolLM/Qwen/Llama adapters, and cases where pretraining from zero is not the goal.",
+        "entrypoint": "picochat train hf-sft --model <hf-id> --input <chat.jsonl> --out-dir runs/<name>",
+        "notes": (
+            "Loads an AutoModelForCausalLM and AutoTokenizer from Hugging Face optional deps.",
+            "Uses Picochat chat JSONL and assistant-only loss masking, but writes HF model folders instead of Picochat checkpoints.",
+        ),
+    },
+    {
+        "id": "evaluate",
+        "title": "Evaluate, gate, and serve",
+        "status": "native",
+        "best_for": "Checking model evidence, publishing release cards, and running local OpenAI-compatible smoke APIs.",
+        "entrypoint": "picochat eval chat --checkpoint <checkpoint> --tokenizer <tokenizer.json> --input <eval.jsonl> --out-dir runs/<eval>",
+        "notes": (
+            "Native eval/gating expects Picochat checkpoints today; HF models should use HF/lm-eval for external eval until a direct HF eval bridge is added.",
+            "Use picochat serve for Picochat-native checkpoints after a gate passes.",
+        ),
+    },
+)
 
 
 def _add_eval_runtime_args(parser: argparse.ArgumentParser) -> None:
@@ -130,6 +166,28 @@ def _add_eval_runtime_args(parser: argparse.ArgumentParser) -> None:
         default="default",
         help="torch.set_float32_matmul_precision setting for eval forward passes.",
     )
+
+
+def training_paths_markdown() -> str:
+    lines = [
+        "# Picochat Training Paths",
+        "",
+        "Picochat separates scratch pretraining, existing-model fine-tuning, and release evidence so users pick the right tool before spending GPU time.",
+        "",
+    ]
+    for path in TRAINING_PATHS:
+        lines.extend([
+            f"## {path['title']}",
+            "",
+            f"- ID: `{path['id']}`",
+            f"- Status: `{path['status']}`",
+            f"- Best for: {path['best_for']}",
+            f"- Entrypoint: `{path['entrypoint']}`",
+            "- Notes:",
+        ])
+        lines.extend(f"  - {note}" for note in path["notes"])
+        lines.append("")
+    return "\n".join(lines)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -152,6 +210,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output run directory for the demo artifacts.",
     )
     demo_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+
+    paths_parser = subparsers.add_parser("paths", help="Show Picochat training path choices.")
+    paths_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the path guide as JSON instead of Markdown.",
+    )
 
     data_parser = subparsers.add_parser("data", help="Dataset commands.")
     data_subparsers = data_parser.add_subparsers(dest="data_command")
@@ -899,7 +964,10 @@ def build_parser() -> argparse.ArgumentParser:
     train_lr_parser.add_argument("--ddp", action="store_true")
     train_lr_parser.add_argument("--log-every", type=int, default=10)
 
-    train_sft_parser = train_subparsers.add_parser("sft", help="Fine-tune on chat JSONL.")
+    train_sft_parser = train_subparsers.add_parser(
+        "sft",
+        help="Fine-tune a Picochat-native checkpoint on chat JSONL.",
+    )
     train_sft_parser.add_argument("--input", required=True, help="Path to chat JSONL.")
     train_sft_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
     train_sft_parser.add_argument("--checkpoint", required=True, help="Base checkpoint directory.")
@@ -1006,6 +1074,39 @@ def build_parser() -> argparse.ArgumentParser:
         default=",".join(DEFAULT_LORA_TARGETS),
         help=f"Comma-separated LoRA targets: {', '.join(LORA_TARGETS)}.",
     )
+
+    train_hf_sft_parser = train_subparsers.add_parser(
+        "hf-sft",
+        help="Fine-tune an existing Hugging Face causal LM on Picochat chat JSONL.",
+    )
+    train_hf_sft_parser.add_argument("--model", required=True, help="Hugging Face model id or local model folder.")
+    train_hf_sft_parser.add_argument("--input", required=True, help="Picochat chat JSONL with user and assistant fields.")
+    train_hf_sft_parser.add_argument("--out-dir", required=True, help="Output directory for final_model, best_model, and reports.")
+    train_hf_sft_parser.add_argument("--max-steps", type=int, default=100)
+    train_hf_sft_parser.add_argument("--batch-size", type=int, default=1)
+    train_hf_sft_parser.add_argument("--grad-accum-steps", type=int, default=1)
+    train_hf_sft_parser.add_argument("--learning-rate", type=float, default=2e-5)
+    train_hf_sft_parser.add_argument("--weight-decay", type=float, default=0.01)
+    train_hf_sft_parser.add_argument("--lr-warmup-steps", type=int, default=0)
+    train_hf_sft_parser.add_argument("--lr-decay", choices=LR_DECAYS, default="cosine")
+    train_hf_sft_parser.add_argument("--min-lr-ratio", type=float, default=0.1)
+    train_hf_sft_parser.add_argument("--max-length", type=int, default=1024)
+    train_hf_sft_parser.add_argument("--val-fraction", type=float, default=0.05)
+    train_hf_sft_parser.add_argument("--eval-batches", type=int, default=10)
+    train_hf_sft_parser.add_argument("--log-every", type=int, default=10)
+    train_hf_sft_parser.add_argument("--seed", type=int, default=42)
+    train_hf_sft_parser.add_argument("--device", choices=DEVICE_CHOICES, default="auto")
+    train_hf_sft_parser.add_argument("--precision", choices=PRECISION_MODES, default="auto")
+    train_hf_sft_parser.add_argument("--matmul-precision", choices=MATMUL_PRECISION_MODES, default="default")
+    train_hf_sft_parser.add_argument("--torch-compile", action="store_true")
+    train_hf_sft_parser.add_argument("--torch-compile-mode", choices=COMPILE_MODES, default="default")
+    train_hf_sft_parser.add_argument("--gradient-checkpointing", action="store_true")
+    train_hf_sft_parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="Allow custom HF model/tokenizer code. Use only for repositories you trust.",
+    )
+    train_hf_sft_parser.add_argument("--revision", default=None, help="Optional HF revision, branch, or commit.")
 
     train_dpo_parser = train_subparsers.add_parser(
         "dpo",
@@ -2796,6 +2897,41 @@ def run_train_sft(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_train_hf_sft(args: argparse.Namespace) -> int:
+    report = train_hf_sft(HFSFTConfig(
+        model=args.model,
+        input_path=args.input,
+        out_dir=args.out_dir,
+        max_steps=args.max_steps,
+        batch_size=args.batch_size,
+        grad_accum_steps=args.grad_accum_steps,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        lr_warmup_steps=args.lr_warmup_steps,
+        lr_decay=args.lr_decay,
+        min_lr_ratio=args.min_lr_ratio,
+        max_length=args.max_length,
+        val_fraction=args.val_fraction,
+        eval_batches=args.eval_batches,
+        log_every=args.log_every,
+        seed=args.seed,
+        device=args.device,
+        precision=args.precision,
+        matmul_precision=args.matmul_precision,
+        torch_compile=args.torch_compile,
+        torch_compile_mode=args.torch_compile_mode,
+        gradient_checkpointing=args.gradient_checkpointing,
+        trust_remote_code=args.trust_remote_code,
+        revision=args.revision,
+    ))
+    print(f"saved HF final model: {Path(args.out_dir) / 'final_model'}")
+    if report.get("best_val_loss") is not None:
+        print(f"saved HF best model: {Path(args.out_dir) / 'best_model'}")
+        print(f"best val loss: {report['best_val_loss']:.4f}")
+    print(f"report: {Path(args.out_dir) / 'report.md'}")
+    return 0
+
+
 def run_train_dpo(args: argparse.Namespace) -> int:
     config = DPOConfig(
         input_path=args.input,
@@ -3499,6 +3635,14 @@ def run_web(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_paths(args: argparse.Namespace) -> int:
+    if args.json:
+        print(json.dumps(TRAINING_PATHS, indent=2))
+    else:
+        print(training_paths_markdown())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -3517,6 +3661,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "demo":
         return run_demo(args)
+
+    if args.command == "paths":
+        return run_paths(args)
 
     if args.command == "data" and args.data_command == "build":
         return build_data(args)
@@ -3571,6 +3718,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "train" and args.train_command == "sft":
         return run_train_sft(args)
+
+    if args.command == "train" and args.train_command == "hf-sft":
+        return run_train_hf_sft(args)
 
     if args.command == "train" and args.train_command == "dpo":
         return run_train_dpo(args)

@@ -9,14 +9,24 @@ Picochat is an honest small-language-model factory. The goal is not to pretend
 a tiny or pilot model is a large assistant. The goal is to make each step of
 language-model training visible enough to inspect, rerun, and explain.
 
-The pipeline is:
+The native scratch pipeline is:
 
 ```text
-dataset -> tokenizer -> base pretraining -> chat SFT -> eval -> chat -> report
+dataset -> tokenizer -> base pretraining -> chat SFT -> optional DPO -> eval -> chat -> report
 ```
 
 Each stage writes artifacts to a run folder so the next stage has visible
 inputs instead of hidden state.
+
+If you are starting from an existing Hugging Face model instead of creating a
+Picochat-native base model, use the separate path:
+
+```bash
+picochat train hf-sft --model <hf-model-id> --input <chat.jsonl> --out-dir runs/<hf-sft-name>
+```
+
+That path writes Hugging Face model folders and intentionally skips Picochat's
+native tokenizer/base-pretraining stages.
 
 ## 1. Dataset
 

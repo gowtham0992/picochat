@@ -256,6 +256,7 @@
       <div class="brand"><img class="brand-mark" src="assets/picochat-os-symbol.svg" alt=""> Picochat</div>
       <div class="nav-links">
         <a href="https://github.com/gowtham0992/picochat">GitHub</a>
+        <a href="training_paths.html">Training Paths</a>
         <a href="model_evidence.html">Evidence</a>
         <a href="architecture.html">Architecture</a>
         <a href="benchmark_protocol.html">Benchmarks</a>
@@ -281,6 +282,7 @@
         </p>
         <div class="actions">
           <a class="button" href="model_evidence.html">Model evidence</a>
+          <a class="button" href="training_paths.html">Choose a training path</a>
           <a class="button" href="h100_100m_runbook.html">Read the 100M runbook</a>
           <a class="button secondary" href="h200_1b_runbook.html">1B runbook</a>
           <a class="button secondary" href="release_gates.html">Inspect the gates</a>
@@ -297,6 +299,27 @@
         <div class="stage"><strong>SFT Fit</strong><span>training and held-out fit thresholds</span><span class="status warn">watch</span></div>
         <div class="stage"><strong>Eval</strong><span>identity/refusal/choice/math/spelling</span><span class="status block">gate</span></div>
         <div class="stage"><strong>External</strong><span>ARC/MMLU-style benchmark required</span><span class="status warn">missing</span></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Pick the path before the GPU.</h2>
+      <div class="grid">
+        <div class="card">
+          <label>Path A</label>
+          <h3>Train from scratch.</h3>
+          <p><code>picochat run tiny</code> owns the full native factory: tokenizer, base pretraining, SFT, optional DPO, eval, and release gate.</p>
+        </div>
+        <div class="card">
+          <label>Path B</label>
+          <h3>Fine-tune an existing model.</h3>
+          <p><code>picochat train hf-sft</code> starts from a Hugging Face causal LM such as SmolLM and writes HF model folders.</p>
+        </div>
+        <div class="card">
+          <label>Path C</label>
+          <h3>Evaluate and publish evidence.</h3>
+          <p><code>picochat eval</code>, <code>picochat registry</code>, and <code>picochat serve</code> keep release claims inspectable.</p>
+        </div>
       </div>
     </section>
 

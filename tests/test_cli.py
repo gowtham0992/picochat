@@ -12,6 +12,57 @@ def test_cli_version(capsys):
     assert "picochat" in capsys.readouterr().out
 
 
+def test_cli_paths_command_explains_training_routes(capsys):
+    exit_code = main(["paths"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Train from scratch" in output
+    assert "Fine-tune an existing HF model" in output
+    assert "picochat train hf-sft" in output
+
+
+def test_cli_hf_sft_routes_to_existing_model_trainer(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_train(config):
+        captured["config"] = config
+        return {
+            "best_val_loss": 1.25,
+        }
+
+    monkeypatch.setattr("picochat.cli.train_hf_sft", fake_train)
+    chat_path = tmp_path / "chat.jsonl"
+    chat_path.write_text(json.dumps({"user": "hi", "assistant": "hello"}) + "\n", encoding="utf-8")
+
+    exit_code = main([
+        "train",
+        "hf-sft",
+        "--model",
+        "HuggingFaceTB/SmolLM2-135M-Instruct",
+        "--input",
+        str(chat_path),
+        "--out-dir",
+        str(tmp_path / "hf-sft"),
+        "--max-steps",
+        "7",
+        "--max-length",
+        "256",
+        "--device",
+        "cpu",
+        "--precision",
+        "float32",
+        "--gradient-checkpointing",
+    ])
+
+    assert exit_code == 0
+    assert captured["config"].model == "HuggingFaceTB/SmolLM2-135M-Instruct"
+    assert captured["config"].input_path == str(chat_path)
+    assert captured["config"].max_steps == 7
+    assert captured["config"].max_length == 256
+    assert captured["config"].gradient_checkpointing is True
+
+
 def test_cli_train_base_accepts_experimental_fsdp_strategy(tmp_path, monkeypatch):
     captured = {}
 

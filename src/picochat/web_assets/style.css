@@ -276,6 +276,7 @@ h2 {
 
 .home-hero,
 .home-choice,
+.training-path-card,
 .home-signal-grid > div,
 .scale-card,
 .guide-shell,
@@ -314,8 +315,52 @@ h2 {
 .home-choice-grid {
   display: grid;
   gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.training-path-grid {
+  display: grid;
+  gap: 12px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-bottom: 12px;
+}
+
+.training-path-card {
+  display: grid;
+  gap: 8px;
+  min-height: 150px;
+  padding: 14px;
+}
+
+.training-path-card span,
+.training-path-panel span {
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.training-path-card strong,
+.training-path-panel strong {
+  font-size: 14px;
+}
+
+.training-path-card p,
+.training-path-panel p {
+  color: var(--muted);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.training-path-card code {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  display: block;
+  font-size: 11px;
+  padding: 6px;
+}
+
+.training-path-card.ready {
+  background: var(--field);
 }
 
 .home-choice {
@@ -1845,6 +1890,37 @@ textarea.guide-target-focus {
   font-weight: 800;
 }
 
+.training-path-panel {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 10px;
+}
+
+.training-path-panel > div,
+.hf-sft-card {
+  background: var(--field);
+  border: 1px solid var(--dim-line);
+  padding: 8px;
+}
+
+.hf-sft-card {
+  grid-column: 1 / -1;
+  margin-bottom: 10px;
+}
+
+.hf-sft-card summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 800;
+  list-style-position: inside;
+}
+
+.hf-sft-grid {
+  grid-template-columns: minmax(220px, 1.3fr) minmax(190px, 1fr) minmax(190px, 1fr) repeat(4, minmax(82px, 0.6fr));
+  margin: 10px 0;
+}
+
 .preview-controls {
   align-items: end;
   display: grid;
@@ -3070,6 +3146,8 @@ th {
   .terminal-grid,
   .two-col,
   .home-choice-grid,
+  .training-path-grid,
+  .training-path-panel,
   .home-signal-grid,
   .scale-grid,
   .scale-controls,
@@ -3109,6 +3187,7 @@ th {
   .tuning-inspector-controls,
   .pack-editor-controls,
   .run-launch-controls,
+  .hf-sft-grid,
   .advanced-launch-grid,
   .editor-grid,
   .run-job-list,

@@ -12,6 +12,7 @@
 
 <p align="center">
   <a href="https://gowtham0992.github.io/picochat/">Product Page</a> ·
+  <a href="https://gowtham0992.github.io/picochat/training_paths.html">Training Paths</a> ·
   <a href="https://gowtham0992.github.io/picochat/model_evidence.html">Model Evidence</a> ·
   <a href="https://gowtham0992.github.io/picochat/pipeline_guide.html">Pipeline Guide</a> ·
   <a href="https://gowtham0992.github.io/picochat/h100_100m_runbook.html">100M Runbook</a> ·
@@ -46,6 +47,18 @@ It is trying to make the whole small-model factory inspectable:
 ```text
 dataset -> tokenizer -> base pretraining -> chat SFT -> optional DPO -> eval -> release gate
 ```
+
+Picochat now exposes two different training starts:
+
+- **Train from scratch:** `picochat run tiny` builds a Picochat-native model
+  from dataset pack through tokenizer, base pretraining, SFT, eval, and release
+  gates.
+- **Fine-tune an existing model:** `picochat train hf-sft` starts from an
+  existing Hugging Face causal LM such as SmolLM and trains on Picochat chat
+  JSONL with assistant-only labels.
+
+See the [Training Paths](https://gowtham0992.github.io/picochat/training_paths.html)
+page before choosing a GPU workflow.
 
 ## Current Status
 

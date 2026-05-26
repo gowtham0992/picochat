@@ -54,6 +54,10 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert 'id="launch-sft-resume-from"' in html
     assert 'id="launch-sft-peft"' in html
     assert 'id="launch-sft-lora-targets"' in html
+    assert 'id="hf-sft-model"' in html
+    assert 'id="hf-sft-command-preview"' in html
+    assert "Fine-tune existing HF model" in html
+    assert "picochat train hf-sft" in html
     assert 'id="launch-dpo-input"' in html
     assert 'id="launch-dpo-length-normalize"' in html
     assert 'id="launch-tensorboard-log-dir"' in html
@@ -67,6 +71,9 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert 'id="scale-attn-backend"' in html
     assert "COMMANDS GENERATED" in js
     assert "SCALE_ATTN_DEFAULTS" in js
+    assert "HF_SFT_CONTROL_IDS" in js
+    assert "function renderHFSFTCommandPreview" in js
+    assert '"hf-sft"' in js
     assert 'option value="h200-1b-ddp8"' in html
     assert 'option value="h100-100m-ddp8"' in html
     assert '"h200-1b-ddp8"' in js

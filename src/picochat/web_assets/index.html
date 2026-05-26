@@ -39,8 +39,28 @@
       <section id="home-view" class="app-view home-view active" aria-label="Picochat home">
         <div class="home-hero">
           <p class="kicker">PICOCHAT ONBOARDING</p>
-          <h2>Train a tiny domain model.</h2>
-          <p>Start guided if you want Picochat to explain each step. Open the workbench when you want every run, artifact, metric, and knob in one place.</p>
+          <h2>Choose the right training path.</h2>
+          <p>Scratch pretraining, existing-model fine-tuning, and release evidence are different jobs. Picochat keeps them separate so you do not spend GPU time on the wrong workflow.</p>
+        </div>
+        <div class="training-path-grid" aria-label="Picochat training paths">
+          <div class="training-path-card ready">
+            <span>PATH A</span>
+            <strong>Train from scratch</strong>
+            <p>Build a Picochat-native model from dataset pack to tokenizer, base pretraining, SFT, eval, and release gate.</p>
+            <code>picochat run tiny</code>
+          </div>
+          <div class="training-path-card ready">
+            <span>PATH B</span>
+            <strong>Fine-tune existing HF model</strong>
+            <p>Start from SmolLM, Qwen, Llama, or another causal LM and train on Picochat chat JSONL with assistant-only labels.</p>
+            <code>picochat train hf-sft</code>
+          </div>
+          <div class="training-path-card">
+            <span>PATH C</span>
+            <strong>Evaluate and release</strong>
+            <p>Run visible eval, external benchmarks, honesty checks, model registry, release cards, and local serving smoke tests.</p>
+            <code>picochat eval / serve</code>
+          </div>
         </div>
         <div class="home-choice-grid">
           <button class="home-choice primary" type="button" data-app-view="guide">
@@ -57,6 +77,11 @@
             <span>03</span>
             <strong>Use GPU / Colab</strong>
             <p>Prepare a Mac GPU, Colab, or remote GPU run, then import completed artifacts back into the run bank.</p>
+          </button>
+          <button class="home-choice" type="button" data-app-view="workbench" data-workbench-mode="inspect">
+            <span>04</span>
+            <strong>Existing model path</strong>
+            <p>Open the launcher panel for the Hugging Face SFT command path when you want to tune a model you did not pretrain here.</p>
           </button>
         </div>
         <div class="home-signal-grid">
@@ -575,6 +600,62 @@
                 <strong>Research mode is where a run actually starts.</strong>
                 <span>Beginner mode prepares and explains the dataset. This panel is the launch console: review the pack, preset, run name, and then start a small smoke run before scaling.</span>
               </div>
+              <div class="training-path-panel">
+                <div>
+                  <span>NATIVE SCRATCH PATH</span>
+                  <strong>Dataset pack -> tokenizer -> base -> SFT -> eval -> gate</strong>
+                  <p>Use the launcher below for Picochat-native checkpoints and release-gated scratch runs.</p>
+                </div>
+                <div>
+                  <span>EXISTING MODEL PATH</span>
+                  <strong>HF model -> chat SFT -> HF output folder</strong>
+                  <p>Use the HF SFT command card when the goal is SmolLM/Qwen/Llama fine-tuning, not base pretraining.</p>
+                </div>
+              </div>
+              <details class="hf-sft-card" open>
+                <summary>EXISTING HF MODEL FINE-TUNE COMMAND</summary>
+                <div class="run-launch-controls hf-sft-grid">
+                  <div>
+                    <label for="hf-sft-model">HF MODEL</label>
+                    <input id="hf-sft-model" type="text" spellcheck="false" placeholder="HuggingFaceTB/SmolLM2-135M-Instruct">
+                  </div>
+                  <div>
+                    <label for="hf-sft-input">CHAT JSONL</label>
+                    <input id="hf-sft-input" type="text" spellcheck="false" placeholder="runs/pack/chat_benchmark.jsonl">
+                  </div>
+                  <div>
+                    <label for="hf-sft-out-dir">OUT DIR</label>
+                    <input id="hf-sft-out-dir" type="text" spellcheck="false" placeholder="runs/smollm-hf-sft-v1">
+                  </div>
+                  <div>
+                    <label for="hf-sft-steps">STEPS</label>
+                    <input id="hf-sft-steps" type="number" min="1" max="20000" value="200">
+                  </div>
+                  <div>
+                    <label for="hf-sft-max-length">MAX LEN</label>
+                    <input id="hf-sft-max-length" type="number" min="8" max="8192" value="1024">
+                  </div>
+                  <div>
+                    <label for="hf-sft-device">DEVICE</label>
+                    <select id="hf-sft-device">
+                      <option value="auto">AUTO</option>
+                      <option value="cuda">CUDA</option>
+                      <option value="mps">MPS</option>
+                      <option value="cpu">CPU</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label for="hf-sft-precision">PRECISION</label>
+                    <select id="hf-sft-precision">
+                      <option value="auto">AUTO</option>
+                      <option value="bf16">BF16</option>
+                      <option value="fp16">FP16</option>
+                      <option value="float32">FLOAT32</option>
+                    </select>
+                  </div>
+                </div>
+                <div id="hf-sft-command-preview" class="command-tape"></div>
+              </details>
               <div class="run-launch-controls">
                 <div>
                   <label for="launch-pack-path">DATASET PACK</label>
