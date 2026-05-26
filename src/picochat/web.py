@@ -1015,6 +1015,36 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         or sft_lora_targets != DEFAULT_LORA_TARGETS
     ):
         raise ValueError("LoRA options require sft_peft=lora")
+    dpo_input = _optional_string(payload.get("dpo_input"))
+    if dpo_input and not Path(dpo_input).is_file():
+        raise FileNotFoundError(f"dpo_input must point to a preference JSONL file: {dpo_input}")
+    dpo_steps = _bounded_int(payload.get("dpo_steps", preset.get("dpo_steps", 0)), 0, 10000)
+    if dpo_input and dpo_steps <= 0:
+        raise ValueError("dpo_input requires dpo_steps > 0")
+    dpo_batch_size = _bounded_int(payload.get("dpo_batch_size", preset.get("dpo_batch_size", 4)), 1, 64)
+    dpo_learning_rate = _bounded_float(payload.get("dpo_learning_rate", preset.get("dpo_learning_rate", 5e-6)), 0.000001, 1.0)
+    dpo_beta = _bounded_float(payload.get("dpo_beta", preset.get("dpo_beta", 0.1)), 0.000001, 10.0)
+    dpo_grad_accum_steps = _bounded_int(
+        payload.get("dpo_grad_accum_steps", preset.get("dpo_grad_accum_steps", 1)),
+        1,
+        128,
+    )
+    dpo_lr_warmup_steps = _bounded_int(
+        payload.get("dpo_lr_warmup_steps", preset.get("dpo_lr_warmup_steps", 0)),
+        0,
+        max(1, dpo_steps),
+    )
+    dpo_lr_decay = str(payload.get("dpo_lr_decay", preset.get("dpo_lr_decay", "none")))
+    if dpo_lr_decay not in LR_DECAYS:
+        raise ValueError(f"dpo_lr_decay must be one of {', '.join(LR_DECAYS)}")
+    dpo_grad_clip = _bounded_float(payload.get("dpo_grad_clip", preset.get("dpo_grad_clip", 0.0)), 0.0, 100.0)
+    dpo_early_stop_patience = _bounded_int(
+        payload.get("dpo_early_stop_patience", preset.get("dpo_early_stop_patience", 4)),
+        0,
+        100,
+    )
+    dpo_eval_batches = _bounded_int(payload.get("dpo_eval_batches", preset.get("dpo_eval_batches", 10)), 0, 200)
+    dpo_length_normalize = bool(payload.get("dpo_length_normalize", preset.get("dpo_length_normalize", False)))
     target_param_data_ratio = _bounded_float(
         payload.get("target_param_data_ratio", preset.get("target_param_data_ratio", 20.0)),
         1.0,
@@ -1103,6 +1133,18 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         sft_lora_alpha=sft_lora_alpha,
         sft_lora_dropout=sft_lora_dropout,
         sft_lora_targets=sft_lora_targets,
+        dpo_input=dpo_input,
+        dpo_steps=dpo_steps,
+        dpo_batch_size=dpo_batch_size,
+        dpo_learning_rate=dpo_learning_rate,
+        dpo_beta=dpo_beta,
+        dpo_grad_accum_steps=dpo_grad_accum_steps,
+        dpo_lr_warmup_steps=dpo_lr_warmup_steps,
+        dpo_lr_decay=dpo_lr_decay,
+        dpo_grad_clip=dpo_grad_clip,
+        dpo_early_stop_patience=dpo_early_stop_patience,
+        dpo_eval_batches=dpo_eval_batches,
+        dpo_length_normalize=dpo_length_normalize,
         auto_lr_scaling=auto_lr_scaling,
         loss_spike_rollback=loss_spike_rollback,
         allow_unsafe_long_run=allow_unsafe_long_run,
@@ -1280,6 +1322,33 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     if base_dataset_mode == "sharded":
         command.extend(["--base-shard-token-size", str(base_shard_token_size)])
         command.extend(["--base-shard-cache-size", str(base_shard_cache_size)])
+    if dpo_input:
+        command.extend([
+            "--dpo-input",
+            dpo_input,
+            "--dpo-steps",
+            str(dpo_steps),
+            "--dpo-batch-size",
+            str(dpo_batch_size),
+            "--dpo-learning-rate",
+            str(dpo_learning_rate),
+            "--dpo-beta",
+            str(dpo_beta),
+            "--dpo-grad-accum-steps",
+            str(dpo_grad_accum_steps),
+            "--dpo-lr-warmup-steps",
+            str(dpo_lr_warmup_steps),
+            "--dpo-lr-decay",
+            dpo_lr_decay,
+            "--dpo-grad-clip",
+            str(dpo_grad_clip),
+            "--dpo-early-stop-patience",
+            str(dpo_early_stop_patience),
+            "--dpo-eval-batches",
+            str(dpo_eval_batches),
+        ])
+        if dpo_length_normalize:
+            command.append("--dpo-length-normalize")
     if allow_unsafe_long_run:
         command.append("--allow-unsafe-long-run")
     launch_config = {
@@ -1335,6 +1404,18 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         "sft_lora_alpha": sft_lora_alpha,
         "sft_lora_dropout": sft_lora_dropout,
         "sft_lora_targets": list(sft_lora_targets),
+        "dpo_input": dpo_input,
+        "dpo_steps": dpo_steps,
+        "dpo_batch_size": dpo_batch_size,
+        "dpo_learning_rate": dpo_learning_rate,
+        "dpo_beta": dpo_beta,
+        "dpo_grad_accum_steps": dpo_grad_accum_steps,
+        "dpo_lr_warmup_steps": dpo_lr_warmup_steps,
+        "dpo_lr_decay": dpo_lr_decay,
+        "dpo_grad_clip": dpo_grad_clip,
+        "dpo_early_stop_patience": dpo_early_stop_patience,
+        "dpo_eval_batches": dpo_eval_batches,
+        "dpo_length_normalize": dpo_length_normalize,
         "target_param_data_ratio": target_param_data_ratio,
         "long_run_gate_profile": long_run_gate_profile,
         "device": device,

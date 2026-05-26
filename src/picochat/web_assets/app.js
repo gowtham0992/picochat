@@ -146,6 +146,18 @@ const LAUNCH_CONTROL_IDS = [
   "launch-sft-lora-alpha",
   "launch-sft-lora-dropout",
   "launch-sft-lora-targets",
+  "launch-dpo-input",
+  "launch-dpo-steps",
+  "launch-dpo-batch-size",
+  "launch-dpo-learning-rate",
+  "launch-dpo-beta",
+  "launch-dpo-grad-accum-steps",
+  "launch-dpo-lr-warmup-steps",
+  "launch-dpo-lr-decay",
+  "launch-dpo-grad-clip",
+  "launch-dpo-early-stop-patience",
+  "launch-dpo-eval-batches",
+  "launch-dpo-length-normalize",
   "launch-eval-max-new-tokens",
   "launch-target-param-data-ratio",
   "launch-seed",
@@ -3539,6 +3551,18 @@ function applyLaunchPreset(quiet = false) {
   $("launch-sft-lora-targets").value = Array.isArray(values.sft_lora_targets)
     ? values.sft_lora_targets.join(",")
     : (values.sft_lora_targets || "attn_qkv,attn_proj");
+  $("launch-dpo-input").value = values.dpo_input || "";
+  $("launch-dpo-steps").value = values.dpo_steps || 0;
+  $("launch-dpo-batch-size").value = values.dpo_batch_size || 4;
+  $("launch-dpo-learning-rate").value = values.dpo_learning_rate || 0.000005;
+  $("launch-dpo-beta").value = values.dpo_beta || 0.1;
+  $("launch-dpo-grad-accum-steps").value = values.dpo_grad_accum_steps || 1;
+  $("launch-dpo-lr-warmup-steps").value = values.dpo_lr_warmup_steps || 0;
+  $("launch-dpo-lr-decay").value = values.dpo_lr_decay || "none";
+  $("launch-dpo-grad-clip").value = values.dpo_grad_clip || 0;
+  $("launch-dpo-early-stop-patience").value = values.dpo_early_stop_patience || 4;
+  $("launch-dpo-eval-batches").value = values.dpo_eval_batches || 10;
+  $("launch-dpo-length-normalize").checked = Boolean(values.dpo_length_normalize);
   $("launch-eval-max-new-tokens").value = values.eval_max_new_tokens;
   $("launch-target-param-data-ratio").value = values.target_param_data_ratio || 20;
   $("launch-long-run-gate-profile").value = values.long_run_gate_profile || SCALE_GATE_DEFAULTS[preset] || "research";
@@ -3645,6 +3669,18 @@ function launchConfig() {
     sft_lora_alpha: launchNumber("launch-sft-lora-alpha"),
     sft_lora_dropout: launchNumber("launch-sft-lora-dropout"),
     sft_lora_targets: $("launch-sft-lora-targets").value.trim() || "attn_qkv,attn_proj",
+    dpo_input: $("launch-dpo-input").value.trim(),
+    dpo_steps: boundedNumberInput("launch-dpo-steps", 0, 0, 4000),
+    dpo_batch_size: boundedNumberInput("launch-dpo-batch-size", 4, 1, 64),
+    dpo_learning_rate: launchNumber("launch-dpo-learning-rate"),
+    dpo_beta: launchNumber("launch-dpo-beta"),
+    dpo_grad_accum_steps: boundedNumberInput("launch-dpo-grad-accum-steps", 1, 1, 128),
+    dpo_lr_warmup_steps: boundedNumberInput("launch-dpo-lr-warmup-steps", 0, 0, 10000),
+    dpo_lr_decay: $("launch-dpo-lr-decay").value,
+    dpo_grad_clip: launchNumber("launch-dpo-grad-clip"),
+    dpo_early_stop_patience: boundedNumberInput("launch-dpo-early-stop-patience", 4, 0, 100),
+    dpo_eval_batches: boundedNumberInput("launch-dpo-eval-batches", 10, 0, 200),
+    dpo_length_normalize: $("launch-dpo-length-normalize").checked,
     eval_max_new_tokens: launchNumber("launch-eval-max-new-tokens"),
     target_param_data_ratio: launchNumber("launch-target-param-data-ratio"),
     long_run_gate_profile: $("launch-long-run-gate-profile").value,
@@ -3718,6 +3754,17 @@ function launchReadiness(config = launchConfig()) {
   )) {
     blockers.push("LoRA settings require SFT PEFT set to LORA.");
   }
+  if (config.dpo_input) {
+    if (config.dpo_steps < 1) blockers.push("DPO preference input requires DPO steps above zero.");
+    if (config.dpo_batch_size < 1 || config.dpo_grad_accum_steps < 1) blockers.push("DPO batch and accumulation must be at least 1.");
+    if (config.dpo_learning_rate <= 0) blockers.push("DPO learning rate must be above zero.");
+    if (config.dpo_beta <= 0) blockers.push("DPO beta must be above zero.");
+    if (!["none", "linear", "cosine"].includes(config.dpo_lr_decay)) blockers.push("DPO decay is invalid.");
+    if (config.dpo_grad_clip < 0) blockers.push("DPO clip must be zero or positive.");
+    if (config.dpo_lr_warmup_steps > config.dpo_steps) cautions.push("DPO warmup is longer than DPO training.");
+  } else if (config.dpo_steps > 0) {
+    cautions.push("DPO steps are ignored until a DPO preference file is selected.");
+  }
   if (config.base_muon_learning_rate <= 0 || config.sft_muon_learning_rate <= 0) blockers.push("Muon learning rates must be above zero.");
   if (config.base_ema_decay < 0 || config.base_ema_decay >= 1 || config.sft_ema_decay < 0 || config.sft_ema_decay >= 1) {
     blockers.push("EMA decay must be at least 0 and below 1.");
@@ -3782,6 +3829,9 @@ function launchReadiness(config = launchConfig()) {
   notes.push(`optimizer ${config.base_optimizer}/${config.sft_optimizer}`);
   if (config.sft_peft === "lora") {
     notes.push(`LoRA r${config.sft_lora_rank} alpha ${config.sft_lora_alpha} targets ${loraTargets.join("/")}`);
+  }
+  if (config.dpo_input) {
+    notes.push(`DPO ${config.dpo_steps} steps beta ${config.dpo_beta}`);
   }
   if (config.base_ema_decay > 0 || config.sft_ema_decay > 0) notes.push(`EMA ${config.base_ema_decay}/${config.sft_ema_decay}`);
   notes.push(`effective batch ${config.base_batch_size * config.base_grad_accum_steps} / ${config.sft_batch_size * config.sft_grad_accum_steps}`);
@@ -3968,6 +4018,33 @@ function launchPreviewCommand(config = launchConfig()) {
     parts.push("--base-shard-token-size", config.base_shard_token_size);
     parts.push("--base-shard-cache-size", config.base_shard_cache_size);
   }
+  if (config.dpo_input) {
+    parts.push(
+      "--dpo-input",
+      config.dpo_input,
+      "--dpo-steps",
+      config.dpo_steps,
+      "--dpo-batch-size",
+      config.dpo_batch_size,
+      "--dpo-learning-rate",
+      config.dpo_learning_rate,
+      "--dpo-beta",
+      config.dpo_beta,
+      "--dpo-grad-accum-steps",
+      config.dpo_grad_accum_steps,
+      "--dpo-lr-warmup-steps",
+      config.dpo_lr_warmup_steps,
+      "--dpo-lr-decay",
+      config.dpo_lr_decay,
+      "--dpo-grad-clip",
+      config.dpo_grad_clip,
+      "--dpo-early-stop-patience",
+      config.dpo_early_stop_patience,
+      "--dpo-eval-batches",
+      config.dpo_eval_batches,
+    );
+    if (config.dpo_length_normalize) parts.push("--dpo-length-normalize");
+  }
   return shellCommand(parts);
 }
 
@@ -4015,6 +4092,7 @@ function gpuLaunchConfirmationMessage(config) {
     `Device: ${String(config.device || "auto").toUpperCase()}${config.ddp ? ` / DDP x${globalMultiplier}` : ""}`,
     `Base: ${fmtInt(config.base_steps)} steps, about ${fmtInt(baseTokens)} planned tokens`,
     `SFT: ${fmtInt(config.sft_steps)} steps, ${fmtInt(sftSequences)} sequences per optimizer step`,
+    `DPO: ${config.dpo_input ? `${fmtInt(config.dpo_steps)} steps from ${config.dpo_input}` : "off"}`,
     `Gate: ${config.long_run_gate_profile.replace("_", " ")}`,
     "",
     "Run PREFLIGHT first if this is not an intentional tiny local proof.",
@@ -4150,6 +4228,18 @@ function runStartPayload(config, extra = {}) {
     sft_lora_alpha: config.sft_lora_alpha,
     sft_lora_dropout: config.sft_lora_dropout,
     sft_lora_targets: config.sft_lora_targets,
+    dpo_input: config.dpo_input,
+    dpo_steps: config.dpo_steps,
+    dpo_batch_size: config.dpo_batch_size,
+    dpo_learning_rate: config.dpo_learning_rate,
+    dpo_beta: config.dpo_beta,
+    dpo_grad_accum_steps: config.dpo_grad_accum_steps,
+    dpo_lr_warmup_steps: config.dpo_lr_warmup_steps,
+    dpo_lr_decay: config.dpo_lr_decay,
+    dpo_grad_clip: config.dpo_grad_clip,
+    dpo_early_stop_patience: config.dpo_early_stop_patience,
+    dpo_eval_batches: config.dpo_eval_batches,
+    dpo_length_normalize: config.dpo_length_normalize,
     target_param_data_ratio: config.target_param_data_ratio,
     long_run_gate_profile: config.long_run_gate_profile,
     eval_max_new_tokens: config.eval_max_new_tokens,

@@ -899,6 +899,58 @@
                       <input id="launch-sft-lora-targets" type="text" value="attn_qkv,attn_proj">
                     </div>
                     <div>
+                      <label for="launch-dpo-input">DPO PREFS</label>
+                      <input id="launch-dpo-input" type="text" spellcheck="false" placeholder="runs/name/preferences.jsonl">
+                    </div>
+                    <div>
+                      <label for="launch-dpo-steps">DPO STEPS</label>
+                      <input id="launch-dpo-steps" type="number" min="0" max="4000" value="0">
+                    </div>
+                    <div>
+                      <label for="launch-dpo-batch-size">DPO BATCH</label>
+                      <input id="launch-dpo-batch-size" type="number" min="1" max="64" value="4">
+                    </div>
+                    <div>
+                      <label for="launch-dpo-learning-rate">DPO LR</label>
+                      <input id="launch-dpo-learning-rate" type="number" min="0" max="1" step="0.000001" value="0.000005">
+                    </div>
+                    <div>
+                      <label for="launch-dpo-beta">DPO BETA</label>
+                      <input id="launch-dpo-beta" type="number" min="0.000001" max="10" step="0.01" value="0.1">
+                    </div>
+                    <div>
+                      <label for="launch-dpo-grad-accum-steps">DPO ACCUM</label>
+                      <input id="launch-dpo-grad-accum-steps" type="number" min="1" max="128" value="1">
+                    </div>
+                    <div>
+                      <label for="launch-dpo-lr-warmup-steps">DPO WARMUP</label>
+                      <input id="launch-dpo-lr-warmup-steps" type="number" min="0" max="10000" value="0">
+                    </div>
+                    <div>
+                      <label for="launch-dpo-lr-decay">DPO DECAY</label>
+                      <select id="launch-dpo-lr-decay">
+                        <option value="none">NONE</option>
+                        <option value="linear">LINEAR</option>
+                        <option value="cosine">COSINE</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label for="launch-dpo-grad-clip">DPO CLIP</label>
+                      <input id="launch-dpo-grad-clip" type="number" min="0" max="100" step="0.1" value="0">
+                    </div>
+                    <div>
+                      <label for="launch-dpo-early-stop-patience">DPO PATIENCE</label>
+                      <input id="launch-dpo-early-stop-patience" type="number" min="0" max="100" value="4">
+                    </div>
+                    <div>
+                      <label for="launch-dpo-eval-batches">DPO EVAL</label>
+                      <input id="launch-dpo-eval-batches" type="number" min="0" max="200" value="10">
+                    </div>
+                    <div>
+                      <label for="launch-dpo-length-normalize">DPO LENGTH NORM</label>
+                      <input id="launch-dpo-length-normalize" type="checkbox">
+                    </div>
+                    <div>
                       <label for="launch-eval-max-new-tokens">EVAL TOKENS</label>
                       <input id="launch-eval-max-new-tokens" type="number" min="1" max="320" value="80">
                     </div>
