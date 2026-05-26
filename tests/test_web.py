@@ -21,6 +21,7 @@ from picochat.web import (
     load_run_detail,
     load_run_report,
     preview_corpus_plan,
+    preference_starter_plan,
     _parse_run_progress,
     run_presets_plan,
     run_status_plan,
@@ -53,6 +54,15 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert 'id="launch-sft-resume-from"' in html
     assert 'id="launch-sft-peft"' in html
     assert 'id="launch-sft-lora-targets"' in html
+    assert 'id="hf-sft-model"' in html
+    assert 'id="hf-sft-command-preview"' in html
+    assert "Fine-tune existing HF model" in html
+    assert "picochat train hf-sft" in html
+    assert 'id="launch-dpo-input"' in html
+    assert 'id="launch-dpo-length-normalize"' in html
+    assert 'id="launch-tensorboard-log-dir"' in html
+    assert 'id="flight-preference-out-path"' in html
+    assert 'id="flight-preference-button"' in html
     assert 'option value="packed"' in html
     assert 'option value="external_flash"' in html
     assert 'option value="fa3"' in html
@@ -61,6 +71,11 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert 'id="scale-attn-backend"' in html
     assert "COMMANDS GENERATED" in js
     assert "SCALE_ATTN_DEFAULTS" in js
+    assert "HF_SFT_CONTROL_IDS" in js
+    assert "function renderHFSFTCommandPreview" in js
+    assert '"hf-sft"' in js
+    assert '"--peft"' in js
+    assert '"--done-file"' in js
     assert 'option value="h200-1b-ddp8"' in html
     assert 'option value="h100-100m-ddp8"' in html
     assert '"h200-1b-ddp8"' in js
@@ -68,6 +83,10 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert '"release_skills"' in js
     assert '"--sft-peft"' in js
     assert '"--sft-lora-targets"' in js
+    assert '"--dpo-input"' in js
+    assert '"--dpo-length-normalize"' in js
+    assert '"--tensorboard-log-dir"' in js
+    assert "/api/preference/starter" in js
     assert "const DDP_SCALE_PRESETS" in js
     assert '"torchrun"' in js
     assert "--nproc_per_node=${ddpWorldSize}" in js
@@ -819,6 +838,33 @@ def test_sft_starter_plan_accepts_dataset_pack(tmp_path):
     assert report["force"] is True
 
 
+def test_preference_starter_plan_generates_dpo_pairs(tmp_path):
+    chat_path = tmp_path / "chat.jsonl"
+    out_path = tmp_path / "preferences.jsonl"
+    chat_path.write_text(
+        json.dumps({"user": "Who are you?", "assistant": "I am Picochat.", "category": "identity"}) + "\n"
+        + json.dumps({"user": "Say hello", "assistant": "Hello.", "category": "style"}) + "\n",
+        encoding="utf-8",
+    )
+
+    report = preference_starter_plan({
+        "input_path": str(chat_path),
+        "out_path": str(out_path),
+        "force": True,
+    })
+
+    assert report["output_path"] == str(out_path)
+    assert report["num_examples"] == 2
+    assert report["force"] is True
+    assert "synthetic negatives" in report["warning"]
+    assert "--input" in report["command"]
+    assert "--out" in report["command"]
+    assert out_path.exists()
+    assert out_path.with_suffix(".jsonl.report.md").exists()
+    rows = [json.loads(line) for line in out_path.read_text(encoding="utf-8").splitlines()]
+    assert all("chosen" in row and "rejected" in row for row in rows)
+
+
 def test_benchmark_tuning_pack_plan_generates_and_promotes_curriculum(tmp_path):
     source_path = tmp_path / "lesson.txt"
     pack_path = tmp_path / "dataset_pack.json"
@@ -1020,10 +1066,16 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     source_path = tmp_path / "lesson.txt"
     chat_path = tmp_path / "chat.jsonl"
     eval_path = tmp_path / "eval.jsonl"
+    dpo_path = tmp_path / "preferences.jsonl"
     pack_path = tmp_path / "dataset_pack.json"
     source_path.write_text("lesson", encoding="utf-8")
     chat_path.write_text(json.dumps({"user": "hi", "assistant": "hello"}), encoding="utf-8")
     eval_path.write_text(json.dumps({"user": "hi", "must_include": ["hello"]}), encoding="utf-8")
+    dpo_path.write_text(json.dumps({
+        "prompt": "say hi",
+        "chosen": "hi",
+        "rejected": "bye",
+    }) + "\n", encoding="utf-8")
     pack_path.write_text(json.dumps({
         "corpus": "lesson.txt",
         "chat": "chat.jsonl",
@@ -1071,6 +1123,19 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
         "sft_lora_alpha": 8.0,
         "sft_lora_dropout": 0.05,
         "sft_lora_targets": "attn_qkv",
+        "tensorboard_log_dir": str(tmp_path / "tb"),
+        "dpo_input": str(dpo_path),
+        "dpo_steps": 5,
+        "dpo_batch_size": 2,
+        "dpo_learning_rate": 0.000005,
+        "dpo_beta": 0.2,
+        "dpo_grad_accum_steps": 3,
+        "dpo_lr_warmup_steps": 1,
+        "dpo_lr_decay": "cosine",
+        "dpo_grad_clip": 1.0,
+        "dpo_early_stop_patience": 2,
+        "dpo_eval_batches": 4,
+        "dpo_length_normalize": True,
         "long_run_gate_profile": "first_release",
         "preset": "smoke",
         "tokenizer_type": "bpe",
@@ -1102,6 +1167,9 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert "--sft-peft" in captured["command"]
     assert "--sft-lora-rank" in captured["command"]
     assert "--sft-lora-targets" in captured["command"]
+    assert "--dpo-input" in captured["command"]
+    assert "--dpo-length-normalize" in captured["command"]
+    assert "--tensorboard-log-dir" in captured["command"]
     assert "--target-param-data-ratio" in captured["command"]
     assert "--long-run-gate-profile" in captured["command"]
     assert "bpe" in captured["command"]
@@ -1121,6 +1189,19 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert status["job"]["launch_config"]["sft_lora_alpha"] == 8.0
     assert status["job"]["launch_config"]["sft_lora_dropout"] == 0.05
     assert status["job"]["launch_config"]["sft_lora_targets"] == ["attn_qkv"]
+    assert status["job"]["launch_config"]["tensorboard_log_dir"] == str(tmp_path / "tb")
+    assert status["job"]["launch_config"]["dpo_input"] == str(dpo_path)
+    assert status["job"]["launch_config"]["dpo_steps"] == 5
+    assert status["job"]["launch_config"]["dpo_batch_size"] == 2
+    assert status["job"]["launch_config"]["dpo_learning_rate"] == 0.000005
+    assert status["job"]["launch_config"]["dpo_beta"] == 0.2
+    assert status["job"]["launch_config"]["dpo_grad_accum_steps"] == 3
+    assert status["job"]["launch_config"]["dpo_lr_warmup_steps"] == 1
+    assert status["job"]["launch_config"]["dpo_lr_decay"] == "cosine"
+    assert status["job"]["launch_config"]["dpo_grad_clip"] == 1.0
+    assert status["job"]["launch_config"]["dpo_early_stop_patience"] == 2
+    assert status["job"]["launch_config"]["dpo_eval_batches"] == 4
+    assert status["job"]["launch_config"]["dpo_length_normalize"] is True
     assert status["job"]["launch_config"]["long_run_gate_profile"] == "first_release"
     assert status["job"]["launch_config"]["base_early_stop_patience"] == 4
     assert status["job"]["launch_config"]["sft_early_stop_patience"] == 4

@@ -150,6 +150,9 @@ def test_chat_eval_report_markdown_contains_key_sections():
             "num_unanswerable": 0,
             "non_choice_examples": 1,
             "non_choice_pass_rate": 0.0,
+            "benign_non_refusal_examples": 1,
+            "benign_non_refusal_rate": 0.0,
+            "over_refusal_rate": 1.0,
             "unsupported_claims": 1,
             "unsupported_claim_rate": 1.0,
             "prompt_echoes": 1,
@@ -237,6 +240,30 @@ def test_chat_eval_report_markdown_contains_key_sections():
                     "prompt_echo_rate": 1.0,
                     "missing_support": 1,
                     "missing_support_rate": 1.0,
+                },
+            },
+            "skill_breakdown": {
+                "math": {
+                    "num_examples": 1,
+                    "num_passed": 0,
+                    "num_failed": 1,
+                    "pass_rate": 0.0,
+                },
+            },
+            "skill_stage_breakdown": {
+                "math:math_l1_addition_single_digit": {
+                    "num_examples": 1,
+                    "num_passed": 0,
+                    "num_failed": 1,
+                    "pass_rate": 0.0,
+                },
+            },
+            "robustness_breakdown": {
+                "paraphrase": {
+                    "num_examples": 1,
+                    "num_passed": 0,
+                    "num_failed": 1,
+                    "pass_rate": 0.0,
                 },
             },
         },
@@ -341,6 +368,9 @@ def test_chat_eval_report_markdown_contains_key_sections():
     assert "## Split Breakdown" in markdown
     assert "## Eval Ladder" in markdown
     assert "## Curriculum Stages" in markdown
+    assert "## Skill Breakdown" in markdown
+    assert "## Skill Stages" in markdown
+    assert "## Robustness Variants" in markdown
     assert "## Failure Analysis" in markdown
     assert "`missing_required`" in markdown
     assert "`content_mismatch`" in markdown
@@ -349,6 +379,8 @@ def test_chat_eval_report_markdown_contains_key_sections():
     assert "`transfer`" in markdown
     assert "`math_l1_addition_single_digit`" in markdown
     assert "Non-choice pass rate: 0.0000%" in markdown
+    assert "Benign non-refusal rate: 0.0000%" in markdown
+    assert "Over-refusal rate: 100.0000%" in markdown
     assert "Avg corpus support rate" in markdown
     assert "Prompt echo rate" in markdown
     assert "Prompt echo: `chat_role_label`" in markdown

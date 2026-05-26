@@ -24,6 +24,7 @@ from picochat.precision import (
     maybe_compile_model,
     resolve_precision,
 )
+from picochat.scales import RUN_SCALES
 from picochat.tokenizer import CharTokenizer
 from picochat.train import TrainConfig, train_base
 
@@ -36,6 +37,9 @@ class PreH100SanityConfig:
     matmul_precision: str = "default"
     attn_backend: str = "auto"
     include_compile: bool = False
+    capacity_scale: str | None = None
+    capacity_batch_size: int | None = None
+    capacity_min_free_fraction: float = 0.10
 
 
 def run_preh100_sanity(config: PreH100SanityConfig) -> dict[str, Any]:
@@ -44,7 +48,7 @@ def run_preh100_sanity(config: PreH100SanityConfig) -> dict[str, Any]:
     work_dir = out_dir / "work"
     work_dir.mkdir(parents=True, exist_ok=True)
     checks: list[dict[str, Any]] = []
-    for name, check in [
+    check_plan = [
         ("attention_backend", _check_attention_backend),
         ("modern_init_loss", _check_modern_init_loss),
         ("precision_backward", _check_precision_backward),
@@ -55,7 +59,10 @@ def run_preh100_sanity(config: PreH100SanityConfig) -> dict[str, Any]:
         ("ddp_batcher_rank_split", _check_ddp_batcher_rank_split),
         ("hf_export", _check_hf_export),
         ("torch_compile", _check_torch_compile),
-    ]:
+    ]
+    if config.capacity_scale:
+        check_plan.append(("scale_capacity", _check_scale_capacity))
+    for name, check in check_plan:
         checks.append(_run_check(name, check, config, work_dir))
 
     failed = [check for check in checks if check["status"] == "fail"]
@@ -544,6 +551,91 @@ def _check_torch_compile(config: PreH100SanityConfig, work_dir: Path) -> dict[st
         "detail": f"compiled forward pass succeeded, precision={runtime.dtype_name}",
         "compile": metadata,
         "precision_runtime": runtime.to_dict(),
+    }
+
+
+def _check_scale_capacity(config: PreH100SanityConfig, work_dir: Path) -> dict[str, Any]:
+    if not config.capacity_scale:
+        return {"status": "skip", "detail": "pass --capacity-scale to run a GPU memory check"}
+    if config.capacity_scale not in RUN_SCALES:
+        raise ValueError(f"unknown capacity scale: {config.capacity_scale}")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    device = resolve_device(config.device)
+    if device.type != "cuda":
+        return {
+            "status": "skip",
+            "detail": "capacity check requires --device cuda",
+            "scale": config.capacity_scale,
+        }
+    scale = RUN_SCALES[config.capacity_scale]
+    runtime = resolve_precision(config.precision if config.precision != "auto" else scale.precision, device)
+    configure_float32_matmul_precision(
+        config.matmul_precision if config.matmul_precision != "default" else scale.matmul_precision
+    )
+    attn_backend = config.attn_backend if config.attn_backend != "auto" else scale.attn_backend
+    model_config = GPTConfig(
+        vocab_size=scale.tokenizer_vocab_size or 512,
+        context_size=scale.context_size,
+        n_embd=scale.n_embd,
+        n_head=scale.n_head,
+        n_kv_head=scale.n_kv_head,
+        n_layer=scale.n_layer,
+        norm_type=scale.norm_type,
+        position_encoding=scale.position_encoding,
+        activation=scale.activation,
+        tie_embeddings=scale.tie_embeddings,
+        qk_norm=scale.qk_norm,
+        attn_backend=attn_backend,
+        parallel_residual=scale.parallel_residual,
+        linear_bias=scale.linear_bias,
+        scaled_residual_init=scale.scaled_residual_init,
+        gradient_checkpointing=scale.gradient_checkpointing,
+    )
+    batch_size = config.capacity_batch_size or scale.base_batch_size
+    if batch_size < 1:
+        raise ValueError("capacity_batch_size must be at least 1")
+    if not 0.0 <= config.capacity_min_free_fraction < 1.0:
+        raise ValueError("capacity_min_free_fraction must be in [0, 1)")
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats(device)
+    model = None
+    x = None
+    y = None
+    loss = None
+    try:
+        model = TinyGPT(model_config).to(device)
+        model.train()
+        x = torch.randint(0, model_config.vocab_size, (batch_size, model_config.context_size), device=device)
+        y = torch.randint(0, model_config.vocab_size, (batch_size, model_config.context_size), device=device)
+        with autocast_context(runtime):
+            _, loss = model(x, y)
+        if loss is None or not torch.isfinite(loss):
+            raise AssertionError("capacity forward/backward loss is not finite")
+        loss.backward()
+        peak_bytes = int(torch.cuda.max_memory_allocated(device))
+        total_bytes = int(torch.cuda.get_device_properties(device).total_memory)
+    finally:
+        del model, x, y, loss
+        torch.cuda.empty_cache()
+    free_fraction = max(0.0, (total_bytes - peak_bytes) / total_bytes)
+    peak_gb = peak_bytes / 1024 ** 3
+    total_gb = total_bytes / 1024 ** 3
+    if free_fraction < config.capacity_min_free_fraction:
+        raise AssertionError(
+            f"{config.capacity_scale} peak memory {peak_gb:.1f}GB leaves "
+            f"{free_fraction:.1%} free, below {config.capacity_min_free_fraction:.0%}"
+        )
+    return {
+        "detail": (
+            f"scale={config.capacity_scale}, batch={batch_size}, ctx={model_config.context_size}, "
+            f"peak={peak_gb:.1f}GB/{total_gb:.1f}GB, free={free_fraction:.1%}"
+        ),
+        "scale": config.capacity_scale,
+        "batch_size": batch_size,
+        "context_size": model_config.context_size,
+        "peak_memory_gb": peak_gb,
+        "total_memory_gb": total_gb,
+        "free_fraction": free_fraction,
     }
 
 

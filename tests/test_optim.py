@@ -107,6 +107,26 @@ def test_maybe_clip_grad_norm_returns_norm():
     assert norm > 0.0
 
 
+def test_maybe_clip_grad_norm_prefers_fsdp_clip_method():
+    class FakeFSDP(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(1))
+            self.called = False
+
+        def clip_grad_norm_(self, grad_clip):
+            self.called = True
+            assert grad_clip == 0.5
+            return torch.tensor(1.25)
+
+    model = FakeFSDP()
+
+    norm = maybe_clip_grad_norm(model, 0.5)
+
+    assert model.called is True
+    assert norm == pytest.approx(1.25)
+
+
 def test_muon_optimizer_updates_block_matrices_and_tracks_adamw_fallback():
     model = TinyGPT(GPTConfig(vocab_size=16, context_size=8, n_embd=16, n_head=4, n_layer=1))
     optimizer = create_optimizer(

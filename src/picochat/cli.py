@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from picochat.data import (
@@ -53,12 +54,27 @@ from picochat.run_preflight import assess_run_preflight, preflight_markdown
 from picochat.compare import compare_runs, comparison_table, write_comparison_report
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack
 from picochat.device import DEVICE_CHOICES
-from picochat.hf_export import HFExportConfig, export_hf_checkpoint
+from picochat.distributed import DISTRIBUTED_STRATEGIES
+from picochat.hf_export import HFExportConfig, export_hf_checkpoint, push_hf_export_to_hub
 from picochat.hf_import import HFImportConfig, import_hf_dataset
+from picochat.hf_sft import HFSFTConfig, train_hf_sft
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
+from picochat.lm_harness import (
+    LMEvalHarnessConfig,
+    parse_lm_eval_tasks,
+    run_lm_eval_harness,
+)
 from picochat.lr_finder import LRRangeConfig, run_lr_range
 from picochat.model import SDPA_BACKENDS
+from picochat.registry import (
+    build_model_registry,
+    discover_run_dirs,
+    registry_table,
+    write_registry_json,
+    write_registry_report,
+    write_release_card,
+)
 from picochat.artifacts import (
     RunBundleConfig,
     bundle_inspection_markdown,
@@ -72,6 +88,7 @@ from picochat.optim import (
     WEIGHT_DECAY_DECAYS,
 )
 from picochat.precision import COMPILE_MODES, MATMUL_PRECISION_MODES, PRECISION_MODES
+from picochat.preference_starter import PreferenceStarterConfig, generate_preference_starter
 from picochat.sanity import PreH100SanityConfig, run_preh100_sanity
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.scale_planner import parse_count, plan_scale, render_scale_plan_markdown
@@ -99,6 +116,41 @@ CLIMBMIX_DATASET = "karpathy/climbmix-400b-shuffle"
 CLIMBMIX_MAX_SHARD = 6542
 CLIMBMIX_LARGE_IMPORT_ROWS = 100_000
 CLIMBMIX_LARGE_IMPORT_DOCUMENT_SHARD_ROWS = 1000
+TRAINING_PATHS = (
+    {
+        "id": "scratch",
+        "title": "Train from scratch",
+        "status": "native",
+        "best_for": "Creating a Picochat-native base model with visible corpus, tokenizer, SFT, eval, and release gates.",
+        "entrypoint": "picochat run tiny --dataset-pack <pack.json> --out-dir runs/<name>",
+        "notes": (
+            "Runs Picochat's own tokenizer, GPT stack, checkpoints, honesty checks, and release gate.",
+            "Use this for 100M/1B proof runs and domain-base experiments.",
+        ),
+    },
+    {
+        "id": "existing",
+        "title": "Fine-tune an existing HF model",
+        "status": "supported",
+        "best_for": "Hackathons, SmolLM/Qwen/Llama adapters, and cases where pretraining from zero is not the goal.",
+        "entrypoint": "picochat train hf-sft --model <hf-id> --input <chat.jsonl> --out-dir runs/<name>",
+        "notes": (
+            "Loads an AutoModelForCausalLM and AutoTokenizer from Hugging Face optional deps.",
+            "Uses Picochat chat JSONL and assistant-only loss masking, but writes HF model folders instead of Picochat checkpoints.",
+        ),
+    },
+    {
+        "id": "evaluate",
+        "title": "Evaluate, gate, and serve",
+        "status": "native",
+        "best_for": "Checking model evidence, publishing release cards, and running local OpenAI-compatible smoke APIs.",
+        "entrypoint": "picochat eval chat --checkpoint <checkpoint> --tokenizer <tokenizer.json> --input <eval.jsonl> --out-dir runs/<eval>",
+        "notes": (
+            "Native eval/gating expects Picochat checkpoints today; HF models should use HF/lm-eval for external eval until a direct HF eval bridge is added.",
+            "Use picochat serve for Picochat-native checkpoints after a gate passes.",
+        ),
+    },
+)
 
 
 def _add_eval_runtime_args(parser: argparse.ArgumentParser) -> None:
@@ -116,9 +168,31 @@ def _add_eval_runtime_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def training_paths_markdown() -> str:
+    lines = [
+        "# Picochat Training Paths",
+        "",
+        "Picochat separates scratch pretraining, existing-model fine-tuning, and release evidence so users pick the right tool before spending GPU time.",
+        "",
+    ]
+    for path in TRAINING_PATHS:
+        lines.extend([
+            f"## {path['title']}",
+            "",
+            f"- ID: `{path['id']}`",
+            f"- Status: `{path['status']}`",
+            f"- Best for: {path['best_for']}",
+            f"- Entrypoint: `{path['entrypoint']}`",
+            "- Notes:",
+        ])
+        lines.extend(f"  - {note}" for note in path["notes"])
+        lines.append("")
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="pico",
+        prog="picochat",
         description="Run picochat training, evaluation, and chat commands.",
     )
     parser.add_argument(
@@ -136,6 +210,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output run directory for the demo artifacts.",
     )
     demo_parser.add_argument("--device", choices=DEVICE_CHOICES, default="cpu")
+
+    paths_parser = subparsers.add_parser("paths", help="Show Picochat training path choices.")
+    paths_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the path guide as JSON instead of Markdown.",
+    )
 
     data_parser = subparsers.add_parser("data", help="Dataset commands.")
     data_subparsers = data_parser.add_subparsers(dest="data_command")
@@ -292,6 +373,15 @@ def build_parser() -> argparse.ArgumentParser:
     data_sft_starter.add_argument("--max-items", type=int, default=32, help="Maximum chat SFT rows to write.")
     data_sft_starter.add_argument("--seed", type=int, default=42)
     data_sft_starter.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
+
+    data_preference_starter = data_subparsers.add_parser(
+        "preference-starter",
+        help="Generate starter DPO preference pairs from chat SFT rows.",
+    )
+    data_preference_starter.add_argument("--input", required=True, help="Input chat SFT JSONL with user/assistant fields.")
+    data_preference_starter.add_argument("--out", required=True, help="Output preference JSONL with user/chosen/rejected fields.")
+    data_preference_starter.add_argument("--max-rows", type=int, default=0, help="Optional row limit. 0 means all rows.")
+    data_preference_starter.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
 
     data_benchmark_pack = data_subparsers.add_parser(
         "benchmark-pack",
@@ -518,6 +608,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Download/load the split normally instead of streaming rows.",
     )
+    data_hf_import.add_argument(
+        "--pack-out",
+        default=None,
+        help="Optional output folder for a dataset_pack.json that points at the imported documents.",
+    )
+    data_hf_import.add_argument(
+        "--pack-name",
+        default=None,
+        help="Optional dataset pack name when --pack-out is used.",
+    )
+    data_hf_import.add_argument(
+        "--pack-description",
+        default=None,
+        help="Optional dataset pack description when --pack-out is used.",
+    )
+    data_hf_import.add_argument(
+        "--pack-force",
+        action="store_true",
+        help="Overwrite dataset pack starter files when --pack-out is used.",
+    )
 
     data_climbmix_import = data_subparsers.add_parser(
         "climbmix-import",
@@ -737,6 +847,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Wrap training in DistributedDataParallel. Launch with torchrun.",
     )
     train_base_parser.add_argument(
+        "--distributed-strategy",
+        choices=DISTRIBUTED_STRATEGIES,
+        default="ddp",
+        help=(
+            "Distributed wrapper for base training when --ddp is set. "
+            "fsdp is experimental and not wired into run tiny/SFT yet."
+        ),
+    )
+    train_base_parser.add_argument(
         "--logit-softcap",
         type=float,
         default=0.0,
@@ -845,7 +964,10 @@ def build_parser() -> argparse.ArgumentParser:
     train_lr_parser.add_argument("--ddp", action="store_true")
     train_lr_parser.add_argument("--log-every", type=int, default=10)
 
-    train_sft_parser = train_subparsers.add_parser("sft", help="Fine-tune on chat JSONL.")
+    train_sft_parser = train_subparsers.add_parser(
+        "sft",
+        help="Fine-tune a Picochat-native checkpoint on chat JSONL.",
+    )
     train_sft_parser.add_argument("--input", required=True, help="Path to chat JSONL.")
     train_sft_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
     train_sft_parser.add_argument("--checkpoint", required=True, help="Base checkpoint directory.")
@@ -951,6 +1073,53 @@ def build_parser() -> argparse.ArgumentParser:
         "--lora-targets",
         default=",".join(DEFAULT_LORA_TARGETS),
         help=f"Comma-separated LoRA targets: {', '.join(LORA_TARGETS)}.",
+    )
+
+    train_hf_sft_parser = train_subparsers.add_parser(
+        "hf-sft",
+        help="Fine-tune an existing Hugging Face causal LM on Picochat chat JSONL.",
+    )
+    train_hf_sft_parser.add_argument("--model", required=True, help="Hugging Face model id or local model folder.")
+    train_hf_sft_parser.add_argument("--input", required=True, help="Picochat chat JSONL with user and assistant fields.")
+    train_hf_sft_parser.add_argument("--out-dir", required=True, help="Output directory for final_model, best_model, and reports.")
+    train_hf_sft_parser.add_argument("--max-steps", type=int, default=100)
+    train_hf_sft_parser.add_argument("--batch-size", type=int, default=1)
+    train_hf_sft_parser.add_argument("--grad-accum-steps", type=int, default=1)
+    train_hf_sft_parser.add_argument("--learning-rate", type=float, default=2e-5)
+    train_hf_sft_parser.add_argument("--weight-decay", type=float, default=0.01)
+    train_hf_sft_parser.add_argument("--lr-warmup-steps", type=int, default=0)
+    train_hf_sft_parser.add_argument("--lr-decay", choices=LR_DECAYS, default="cosine")
+    train_hf_sft_parser.add_argument("--min-lr-ratio", type=float, default=0.1)
+    train_hf_sft_parser.add_argument("--max-length", type=int, default=1024)
+    train_hf_sft_parser.add_argument("--val-fraction", type=float, default=0.05)
+    train_hf_sft_parser.add_argument("--eval-batches", type=int, default=10)
+    train_hf_sft_parser.add_argument("--log-every", type=int, default=10)
+    train_hf_sft_parser.add_argument("--seed", type=int, default=42)
+    train_hf_sft_parser.add_argument("--device", choices=DEVICE_CHOICES, default="auto")
+    train_hf_sft_parser.add_argument("--precision", choices=PRECISION_MODES, default="auto")
+    train_hf_sft_parser.add_argument("--matmul-precision", choices=MATMUL_PRECISION_MODES, default="default")
+    train_hf_sft_parser.add_argument("--torch-compile", action="store_true")
+    train_hf_sft_parser.add_argument("--torch-compile-mode", choices=COMPILE_MODES, default="default")
+    train_hf_sft_parser.add_argument("--gradient-checkpointing", action="store_true")
+    train_hf_sft_parser.add_argument("--peft", choices=("none", "lora"), default="none")
+    train_hf_sft_parser.add_argument("--lora-rank", type=int, default=16)
+    train_hf_sft_parser.add_argument("--lora-alpha", type=float, default=32.0)
+    train_hf_sft_parser.add_argument("--lora-dropout", type=float, default=0.0)
+    train_hf_sft_parser.add_argument(
+        "--lora-target-modules",
+        default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
+        help="Comma-separated HF module names for PEFT LoRA.",
+    )
+    train_hf_sft_parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="Allow custom HF model/tokenizer code. Use only for repositories you trust.",
+    )
+    train_hf_sft_parser.add_argument("--revision", default=None, help="Optional HF revision, branch, or commit.")
+    train_hf_sft_parser.add_argument(
+        "--done-file",
+        default="done.txt",
+        help="Write this sentinel file under --out-dir when training finishes. Empty string disables it.",
     )
 
     train_dpo_parser = train_subparsers.add_parser(
@@ -1171,6 +1340,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not write Transformers trust_remote_code adapter files.",
     )
+    export_hf_parser.add_argument(
+        "--push-to-hub",
+        action="store_true",
+        help="Upload the exported folder to the Hugging Face Hub after writing it.",
+    )
+    export_hf_parser.add_argument("--repo-id", default=None, help="Hugging Face model repo id, for example user/model.")
+    export_hf_parser.add_argument("--private", action="store_true", help="Create or update the Hub repo as private.")
+    export_hf_parser.add_argument("--token-env", default="HF_TOKEN", help="Environment variable containing the Hugging Face token.")
+    export_hf_parser.add_argument(
+        "--commit-message",
+        default="Upload Picochat export",
+        help="Commit message for --push-to-hub uploads.",
+    )
 
     sanity_parser = subparsers.add_parser("sanity", help="Run local readiness sanity checks.")
     sanity_subparsers = sanity_parser.add_subparsers(dest="sanity_command")
@@ -1201,6 +1383,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-compile",
         action="store_true",
         help="Also run a torch.compile smoke test.",
+    )
+    sanity_preh100_parser.add_argument(
+        "--capacity-scale",
+        choices=RUN_SCALE_NAMES,
+        default=None,
+        help=(
+            "Optionally instantiate a named scale and run one forward/backward "
+            "memory check. Use on the target GPU box before paid runs."
+        ),
+    )
+    sanity_preh100_parser.add_argument(
+        "--capacity-batch-size",
+        type=int,
+        default=None,
+        help="Override the local batch size used by --capacity-scale.",
+    )
+    sanity_preh100_parser.add_argument(
+        "--capacity-min-free-fraction",
+        type=float,
+        default=0.10,
+        help="Minimum GPU memory fraction that must remain free after the capacity check.",
     )
 
     chat_parser = subparsers.add_parser("chat", help="Interactive terminal chat.")
@@ -1244,6 +1447,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-origin",
         default="*",
         help="CORS Access-Control-Allow-Origin value for local integrations.",
+    )
+    serve_parser.add_argument(
+        "--api-key",
+        default=None,
+        help="Optional bearer token required for /v1 API requests.",
+    )
+    serve_parser.add_argument(
+        "--api-key-env",
+        default=None,
+        help="Read the bearer token from this environment variable instead of --api-key.",
     )
 
     eval_parser = subparsers.add_parser("eval", help="Evaluation commands.")
@@ -1331,6 +1544,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Bootstrap samples for SFT-fit pass-rate confidence intervals. Use 0 to disable.",
     )
     eval_sft_fit_parser.add_argument("--ci-confidence", type=float, default=0.95)
+
+    eval_lm_harness_parser = eval_subparsers.add_parser(
+        "lm-harness",
+        help="Run or write an EleutherAI lm-eval-harness command for a HF export.",
+    )
+    eval_lm_harness_parser.add_argument("--model-path", required=True, help="HF-style Picochat export directory.")
+    eval_lm_harness_parser.add_argument("--tasks", required=True, help="Comma-separated lm-eval task names, e.g. arc_easy,hellaswag.")
+    eval_lm_harness_parser.add_argument("--out-dir", required=True, help="Output directory for lm-eval results and command metadata.")
+    eval_lm_harness_parser.add_argument("--device", default="cpu", help="lm-eval device string, e.g. cpu, cuda, cuda:0.")
+    eval_lm_harness_parser.add_argument("--batch-size", default="auto", help="lm-eval batch size, e.g. auto, 1, 8.")
+    eval_lm_harness_parser.add_argument("--limit", default=None, help="Optional lm-eval limit for smoke tests.")
+    eval_lm_harness_parser.add_argument("--num-fewshot", type=int, default=None)
+    eval_lm_harness_parser.add_argument("--model", default="hf", help="lm-eval model adapter name. Defaults to hf.")
+    eval_lm_harness_parser.add_argument(
+        "--model-arg",
+        action="append",
+        default=[],
+        help="Extra lm-eval model_arg entry, e.g. dtype=bfloat16. Can be repeated.",
+    )
+    eval_lm_harness_parser.add_argument(
+        "--no-trust-remote-code",
+        action="store_true",
+        help="Do not pass trust_remote_code=True to the hf adapter.",
+    )
+    eval_lm_harness_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write and print the lm-eval command without importing or running lm_eval.",
+    )
 
     scale_parser = subparsers.add_parser("scale", help="Plan larger GPU training recipes.")
     scale_subparsers = scale_parser.add_subparsers(dest="scale_command")
@@ -1648,6 +1890,25 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Comma-separated LoRA targets: {', '.join(LORA_TARGETS)}.",
     )
     run_tiny_parser.add_argument(
+        "--dpo-input",
+        default=None,
+        help="Optional preference JSONL for post-SFT DPO before fit/eval.",
+    )
+    run_tiny_parser.add_argument("--dpo-steps", type=int, default=None)
+    run_tiny_parser.add_argument("--dpo-batch-size", type=int, default=None)
+    run_tiny_parser.add_argument("--dpo-learning-rate", type=float, default=None)
+    run_tiny_parser.add_argument("--dpo-beta", type=float, default=None)
+    run_tiny_parser.add_argument("--dpo-grad-accum-steps", type=int, default=None)
+    run_tiny_parser.add_argument("--dpo-lr-warmup-steps", type=int, default=None)
+    run_tiny_parser.add_argument("--dpo-lr-decay", choices=LR_DECAYS, default=None)
+    run_tiny_parser.add_argument("--dpo-min-lr-ratio", type=float, default=None)
+    run_tiny_parser.add_argument("--dpo-grad-clip", type=float, default=None)
+    run_tiny_parser.add_argument("--dpo-early-stop-patience", type=int, default=None)
+    run_tiny_parser.add_argument("--dpo-early-stop-min-delta", type=float, default=None)
+    run_tiny_parser.add_argument("--dpo-eval-batches", type=int, default=None)
+    run_tiny_parser.add_argument("--dpo-max-minutes", type=float, default=None)
+    run_tiny_parser.add_argument("--dpo-length-normalize", action="store_true")
+    run_tiny_parser.add_argument(
         "--base-resume-from",
         default=None,
         help=(
@@ -1777,6 +2038,14 @@ def build_parser() -> argparse.ArgumentParser:
     leaderboard_parser = subparsers.add_parser("leaderboard", help="Build a formal benchmark leaderboard from eval reports.")
     leaderboard_parser.add_argument("runs", nargs="+", help="Run directories containing eval/eval_report.json.")
     leaderboard_parser.add_argument("--out", default=None, help="Optional Markdown leaderboard output path.")
+
+    registry_parser = subparsers.add_parser("registry", help="Build a model registry from completed Picochat run summaries.")
+    registry_parser.add_argument("runs", nargs="*", help="Run directories containing summary.json.")
+    registry_parser.add_argument("--runs-dir", default=None, help="Discover run directories under this parent when explicit runs are omitted.")
+    registry_parser.add_argument("--out", default=None, help="Optional Markdown registry output path.")
+    registry_parser.add_argument("--json-out", default=None, help="Optional machine-readable registry JSON output path.")
+    registry_parser.add_argument("--release-card", default=None, help="Write a single-run release card Markdown file. Requires exactly one run.")
+    registry_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON instead of a terminal table.")
 
     web_parser = subparsers.add_parser("web", help="Start the local run dashboard.")
     web_parser.add_argument("--runs-dir", default="runs", help="Directory containing run folders.")
@@ -2007,7 +2276,7 @@ def init_pack_data(args: argparse.Namespace) -> int:
         for path in report.overwritten:
             print(f"- {path}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {report.dataset_pack}")
+    print(f"picochat data preview --dataset-pack {report.dataset_pack}")
     return 0
 
 
@@ -2060,6 +2329,20 @@ def sft_starter_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def preference_starter_data(args: argparse.Namespace) -> int:
+    report = generate_preference_starter(PreferenceStarterConfig(
+        input_path=args.input,
+        output_path=args.out,
+        max_rows=args.max_rows,
+        force=args.force,
+    ))
+    print(f"preference starter: {report['output_path']}")
+    print(f"rows: {report['num_examples']}")
+    print(f"report: {report['report_path']}")
+    print("warning: starter preference pairs are synthetic negatives; use reviewed preferences for release claims")
+    return 0
+
+
 def benchmark_pack_data(args: argparse.Namespace) -> int:
     report = generate_benchmark_tuning_pack(
         dataset_pack=args.dataset_pack,
@@ -2094,7 +2377,7 @@ def benchmark_pack_data(args: argparse.Namespace) -> int:
         print(f"- {name}: {count}")
     print(f"report: {report.report_path}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {report.dataset_pack}")
+    print(f"picochat data preview --dataset-pack {report.dataset_pack}")
     return 0
 
 
@@ -2137,7 +2420,7 @@ def task_pack_data(args: argparse.Namespace) -> int:
         print(f"- {name}: {count}")
     print(f"report: {report.report_path}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {report.dataset_pack}")
+    print(f"picochat data preview --dataset-pack {report.dataset_pack}")
     return 0
 
 
@@ -2165,7 +2448,7 @@ def slice_pack_data(args: argparse.Namespace) -> int:
         print(f"- {name}: {count}")
     print(f"report: {report.report_path}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {report.dataset_pack}")
+    print(f"picochat data preview --dataset-pack {report.dataset_pack}")
     return 0
 
 
@@ -2190,7 +2473,7 @@ def stage_pack_data(args: argparse.Namespace) -> int:
     print(f"report: {report.report_path}")
     print("\nnext:")
     for stage in report.stages:
-        print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {stage.dataset_pack}")
+        print(f"picochat data preview --dataset-pack {stage.dataset_pack}")
     return 0
 
 
@@ -2221,7 +2504,7 @@ def skills_corpus_data(args: argparse.Namespace) -> int:
     if report.recipe_path:
         print(f"recipe: {report.recipe_path}")
         print("\nnext:")
-        print(f"PYTHONPATH=src python -m picochat.cli data preview --recipe {report.recipe_path}")
+        print(f"picochat data preview --recipe {report.recipe_path}")
     return 0
 
 
@@ -2253,8 +2536,24 @@ def hf_import_data(args: argparse.Namespace) -> int:
     print(f"document_shard_rows: {report.document_shard_rows}")
     print(f"document_files_written: {report.document_files_written}")
     print(f"report: {report.report_path}")
+    pack_report = None
+    if args.pack_out:
+        pack_report = init_dataset_pack(
+            out_dir=args.pack_out,
+            corpus_path=report.documents_dir or report.out_path,
+            name=args.pack_name or report.dataset,
+            description=args.pack_description or f"Hugging Face dataset import: {report.dataset}.",
+            force=args.pack_force,
+        )
+        print(f"dataset_pack: {pack_report.dataset_pack}")
+        print(f"corpus_recipe: {pack_report.corpus_recipe}")
+        print(f"chat sft jsonl: {pack_report.chat_input}")
+        print(f"eval jsonl: {pack_report.eval_input}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --input {report.documents_dir or report.out_path}")
+    if pack_report:
+        print(f"picochat data preview --dataset-pack {pack_report.dataset_pack}")
+    else:
+        print(f"picochat data preview --input {report.documents_dir or report.out_path}")
     return 0
 
 
@@ -2308,7 +2607,7 @@ def climbmix_import_data(args: argparse.Namespace) -> int:
     print(f"document_files_written: {report.document_files_written}")
     print(f"report: {report.report_path}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {pack_report.dataset_pack}")
+    print(f"picochat data preview --dataset-pack {pack_report.dataset_pack}")
     return 0
 
 
@@ -2483,6 +2782,7 @@ def run_train_base(args: argparse.Namespace) -> int:
         resume_from=args.resume_from,
         gradient_checkpointing=args.gradient_checkpointing,
         ddp=args.ddp,
+        distributed_strategy=args.distributed_strategy,
         loss_spike_rollback=args.loss_spike_rollback,
         loss_spike_threshold=args.loss_spike_threshold,
         loss_spike_lr_decay=args.loss_spike_lr_decay,
@@ -2608,6 +2908,47 @@ def run_train_sft(args: argparse.Namespace) -> int:
     if report.get("config", {}).get("artifacts_written", True):
         print(f"saved sft checkpoint: {report['checkpoint']}")
         print(f"sample: {report['sample']!r}")
+    return 0
+
+
+def run_train_hf_sft(args: argparse.Namespace) -> int:
+    report = train_hf_sft(HFSFTConfig(
+        model=args.model,
+        input_path=args.input,
+        out_dir=args.out_dir,
+        max_steps=args.max_steps,
+        batch_size=args.batch_size,
+        grad_accum_steps=args.grad_accum_steps,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        lr_warmup_steps=args.lr_warmup_steps,
+        lr_decay=args.lr_decay,
+        min_lr_ratio=args.min_lr_ratio,
+        max_length=args.max_length,
+        val_fraction=args.val_fraction,
+        eval_batches=args.eval_batches,
+        log_every=args.log_every,
+        seed=args.seed,
+        device=args.device,
+        precision=args.precision,
+        matmul_precision=args.matmul_precision,
+        torch_compile=args.torch_compile,
+        torch_compile_mode=args.torch_compile_mode,
+        gradient_checkpointing=args.gradient_checkpointing,
+        peft=args.peft,
+        lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        lora_target_modules=args.lora_target_modules,
+        trust_remote_code=args.trust_remote_code,
+        revision=args.revision,
+        done_file=args.done_file or None,
+    ))
+    print(f"saved HF final model: {Path(args.out_dir) / 'final_model'}")
+    if report.get("best_val_loss") is not None:
+        print(f"saved HF best model: {Path(args.out_dir) / 'best_model'}")
+        print(f"best val loss: {report['best_val_loss']:.4f}")
+    print(f"report: {Path(args.out_dir) / 'report.md'}")
     return 0
 
 
@@ -2791,6 +3132,17 @@ def run_export_hf(args: argparse.Namespace) -> int:
     print(f"exported: {report['out_dir']}")
     print(f"manifest: {report['manifest']}")
     print(f"model_card: {report['model_card']}")
+    if args.push_to_hub:
+        if not args.repo_id:
+            raise ValueError("--push-to-hub requires --repo-id")
+        hub_report = push_hf_export_to_hub(
+            report["out_dir"],
+            repo_id=args.repo_id,
+            private=args.private,
+            token_env=args.token_env,
+            commit_message=args.commit_message,
+        )
+        print(f"hub_repo: {hub_report['url']}")
     return 0
 
 
@@ -2830,6 +3182,9 @@ def run_sanity_preh100(args: argparse.Namespace) -> int:
         matmul_precision=args.matmul_precision,
         attn_backend=args.attn_backend,
         include_compile=args.include_compile,
+        capacity_scale=args.capacity_scale,
+        capacity_batch_size=args.capacity_batch_size,
+        capacity_min_free_fraction=args.capacity_min_free_fraction,
     ))
     print(f"sanity: {report['status']}")
     print(f"json_report: {report['report_path']}")
@@ -2858,6 +3213,11 @@ def run_chat(args: argparse.Namespace) -> int:
 
 def run_serve(args: argparse.Namespace) -> int:
     top_k = None if args.top_k <= 0 else args.top_k
+    api_key = args.api_key
+    if args.api_key_env:
+        api_key = os.environ.get(args.api_key_env)
+        if not api_key:
+            raise ValueError(f"environment variable {args.api_key_env} is not set")
     serve_model(ServeConfig(
         checkpoint_path=args.checkpoint,
         tokenizer_path=args.tokenizer,
@@ -2873,6 +3233,7 @@ def run_serve(args: argparse.Namespace) -> int:
         seed=args.seed,
         use_kv_cache=not args.no_kv_cache,
         allow_origin=args.allow_origin,
+        api_key=api_key,
     ))
     return 0
 
@@ -3168,6 +3529,21 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         sft_lora_alpha=_resolve_tiny_value(args, defaults, "sft_lora_alpha"),
         sft_lora_dropout=_resolve_tiny_value(args, defaults, "sft_lora_dropout"),
         sft_lora_targets=parse_lora_targets(_resolve_tiny_value(args, defaults, "sft_lora_targets")),
+        dpo_input=args.dpo_input,
+        dpo_steps=_resolve_tiny_value(args, defaults, "dpo_steps"),
+        dpo_batch_size=_resolve_tiny_value(args, defaults, "dpo_batch_size"),
+        dpo_learning_rate=_resolve_tiny_value(args, defaults, "dpo_learning_rate"),
+        dpo_beta=_resolve_tiny_value(args, defaults, "dpo_beta"),
+        dpo_grad_accum_steps=_resolve_tiny_value(args, defaults, "dpo_grad_accum_steps"),
+        dpo_lr_warmup_steps=_resolve_tiny_value(args, defaults, "dpo_lr_warmup_steps"),
+        dpo_lr_decay=_resolve_tiny_value(args, defaults, "dpo_lr_decay"),
+        dpo_min_lr_ratio=_resolve_tiny_value(args, defaults, "dpo_min_lr_ratio"),
+        dpo_grad_clip=_resolve_tiny_value(args, defaults, "dpo_grad_clip"),
+        dpo_early_stop_patience=_resolve_tiny_value(args, defaults, "dpo_early_stop_patience"),
+        dpo_early_stop_min_delta=_resolve_tiny_value(args, defaults, "dpo_early_stop_min_delta"),
+        dpo_eval_batches=_resolve_tiny_value(args, defaults, "dpo_eval_batches"),
+        dpo_max_minutes=_resolve_tiny_value(args, defaults, "dpo_max_minutes"),
+        dpo_length_normalize=args.dpo_length_normalize or defaults.dpo_length_normalize,
         allow_default_tuning_data=args.allow_default_tuning_data,
         base_resume_from=args.base_resume_from,
         sft_resume_from=args.sft_resume_from,
@@ -3201,7 +3577,7 @@ def run_demo(args: argparse.Namespace) -> int:
         f"demo run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "
         f"passed ({summary['eval']['pass_rate'] * 100:.2f}%)"
     )
-    print(f"open workbench: PYTHONPATH=src python -m picochat.cli web --runs-dir runs --port 8765")
+    print("open workbench: picochat web --runs-dir runs --port 8765")
     return 0
 
 
@@ -3224,12 +3600,66 @@ def run_leaderboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_eval_lm_harness(args: argparse.Namespace) -> int:
+    report = run_lm_eval_harness(LMEvalHarnessConfig(
+        model_path=args.model_path,
+        tasks=parse_lm_eval_tasks(args.tasks),
+        out_dir=args.out_dir,
+        device=args.device,
+        batch_size=args.batch_size,
+        limit=args.limit,
+        num_fewshot=args.num_fewshot,
+        model=args.model,
+        trust_remote_code=not args.no_trust_remote_code,
+        extra_model_args=tuple(args.model_arg or ()),
+        dry_run=bool(args.dry_run),
+    ))
+    print(report["command_text"])
+    print(f"lm-eval command metadata: {Path(args.out_dir) / 'lm_eval_command.json'}")
+    return 0
+
+
+def run_registry(args: argparse.Namespace) -> int:
+    runs = [Path(path) for path in args.runs]
+    if not runs and args.runs_dir:
+        runs = discover_run_dirs(args.runs_dir)
+    if not runs:
+        raise ValueError("provide run directories or --runs-dir")
+    registry = build_model_registry(runs)
+    if args.json:
+        print(json.dumps(registry, indent=2))
+    else:
+        print(registry_table(registry))
+        if registry.get("best_run"):
+            print(f"\nBest registered run: {registry['best_run']}")
+    if args.out:
+        write_registry_report(registry, args.out)
+        print(f"saved registry report: {args.out}")
+    if args.json_out:
+        write_registry_json(registry, args.json_out)
+        print(f"saved registry JSON: {args.json_out}")
+    if args.release_card:
+        if len(runs) != 1:
+            raise ValueError("--release-card requires exactly one run")
+        write_release_card(runs[0], args.release_card)
+        print(f"saved release card: {args.release_card}")
+    return 0
+
+
 def run_web(args: argparse.Namespace) -> int:
     serve_web(WebConfig(
         runs_dir=args.runs_dir,
         host=args.host,
         port=args.port,
     ))
+    return 0
+
+
+def run_paths(args: argparse.Namespace) -> int:
+    if args.json:
+        print(json.dumps(TRAINING_PATHS, indent=2))
+    else:
+        print(training_paths_markdown())
     return 0
 
 
@@ -3252,6 +3682,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "demo":
         return run_demo(args)
 
+    if args.command == "paths":
+        return run_paths(args)
+
     if args.command == "data" and args.data_command == "build":
         return build_data(args)
 
@@ -3263,6 +3696,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "sft-starter":
         return sft_starter_data(args)
+
+    if args.command == "data" and args.data_command == "preference-starter":
+        return preference_starter_data(args)
 
     if args.command == "data" and args.data_command == "benchmark-pack":
         return benchmark_pack_data(args)
@@ -3303,6 +3739,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "train" and args.train_command == "sft":
         return run_train_sft(args)
 
+    if args.command == "train" and args.train_command == "hf-sft":
+        return run_train_hf_sft(args)
+
     if args.command == "train" and args.train_command == "dpo":
         return run_train_dpo(args)
 
@@ -3333,6 +3772,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "eval" and args.eval_command == "sft-fit":
         return run_eval_sft_fit(args)
 
+    if args.command == "eval" and args.eval_command == "lm-harness":
+        return run_eval_lm_harness(args)
+
     if args.command == "scale" and args.scale_command == "plan":
         return run_scale_plan(args)
 
@@ -3350,6 +3792,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "leaderboard":
         return run_leaderboard(args)
+
+    if args.command == "registry":
+        return run_registry(args)
 
     if args.command == "web":
         return run_web(args)

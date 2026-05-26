@@ -6,7 +6,7 @@ import types
 import torch
 
 from picochat.checkpoint import save_checkpoint
-from picochat.hf_export import HFExportConfig, export_hf_checkpoint
+from picochat.hf_export import HFExportConfig, export_hf_checkpoint, push_hf_export_to_hub
 from picochat.model import GPTConfig, TinyGPT
 from picochat.tokenizer import CharTokenizer
 
@@ -221,6 +221,48 @@ def test_transformers_adapter_uses_hf_shifted_labels_and_padded_masks(tmp_path, 
     )
     torch.testing.assert_close(output.loss, expected_loss)
     assert output.past_key_values is None
+
+
+def test_push_hf_export_to_hub_writes_publish_report_and_uploads(tmp_path, monkeypatch):
+    export_dir = tmp_path / "hf-export"
+    export_dir.mkdir()
+    (export_dir / "README.md").write_text("# test model\n", encoding="utf-8")
+    calls = []
+
+    class HfApi:
+        def __init__(self, token=None):
+            calls.append(("init", token))
+
+        def create_repo(self, **kwargs):
+            calls.append(("create_repo", kwargs))
+            return "created"
+
+        def upload_folder(self, **kwargs):
+            calls.append(("upload_folder", kwargs))
+            return "uploaded"
+
+    hub = types.ModuleType("huggingface_hub")
+    hub.HfApi = HfApi
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setenv("HF_TOKEN", "secret-token")
+
+    report = push_hf_export_to_hub(
+        export_dir,
+        repo_id="user/picochat-test",
+        private=True,
+        commit_message="publish audited model",
+    )
+
+    publish_report = json.loads((export_dir / "hub_publish.json").read_text(encoding="utf-8"))
+    assert report["url"] == "https://huggingface.co/user/picochat-test"
+    assert publish_report["repo_id"] == "user/picochat-test"
+    assert publish_report["private"] is True
+    assert publish_report["commit_message"] == "publish audited model"
+    assert calls[0] == ("init", "secret-token")
+    assert calls[1][1]["repo_id"] == "user/picochat-test"
+    assert calls[1][1]["private"] is True
+    assert calls[2][1]["folder_path"] == str(export_dir)
+    assert calls[2][1]["commit_message"] == "publish audited model"
 
 
 def _install_minimal_transformers_stub(monkeypatch):

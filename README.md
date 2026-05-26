@@ -12,10 +12,16 @@
 
 <p align="center">
   <a href="https://gowtham0992.github.io/picochat/">Product Page</a> ·
+  <a href="https://gowtham0992.github.io/picochat/training_paths.html">Training Paths</a> ·
+  <a href="https://gowtham0992.github.io/picochat/model_evidence.html">Model Evidence</a> ·
   <a href="https://gowtham0992.github.io/picochat/pipeline_guide.html">Pipeline Guide</a> ·
+  <a href="https://gowtham0992.github.io/picochat/h100_100m_runbook.html">100M Runbook</a> ·
   <a href="https://gowtham0992.github.io/picochat/h200_1b_runbook.html">1B Runbook</a> ·
+  <a href="https://gowtham0992.github.io/picochat/benchmark_protocol.html">Benchmarks</a> ·
+  <a href="https://gowtham0992.github.io/picochat/model_registry.html">Registry</a> ·
   <a href="https://gowtham0992.github.io/picochat/release_gates.html">Release Gates</a> ·
-  <a href="https://gowtham0992.github.io/picochat/contamination_and_honesty.html">Honesty Checks</a>
+  <a href="https://gowtham0992.github.io/picochat/contamination_and_honesty.html">Honesty Checks</a> ·
+  <a href="https://gowtham0992.github.io/picochat/deployment.html">Deploy</a>
 </p>
 
 <p align="center">
@@ -43,13 +49,40 @@ It is trying to make the whole small-model factory inspectable:
 dataset -> tokenizer -> base pretraining -> chat SFT -> optional DPO -> eval -> release gate
 ```
 
+Picochat now exposes two different training starts:
+
+- **Train from scratch:** `picochat run tiny` builds a Picochat-native model
+  from dataset pack through tokenizer, base pretraining, SFT, eval, and release
+  gates.
+- **Fine-tune an existing model:** `picochat train hf-sft` starts from an
+  existing Hugging Face causal LM such as SmolLM and trains on Picochat chat
+  JSONL or multi-turn `messages` rows with assistant-only labels. This path is
+  useful for hackathons and Qwen/SmolLM-style LoRA experiments.
+
+See the [Training Paths](https://gowtham0992.github.io/picochat/training_paths.html)
+page before choosing a GPU workflow.
+
 ## Current Status
 
-Picochat is a research-grade training harness and local workbench. The 100M
-pilot path has been exercised on H100/H200 instances. The 1B-class
-`h200-1b-ddp8` path is prepared for an 8xH100/H200 run with explicit preflight,
-DDP dry-run, checkpoint, contamination, token-budget, and post-run release
-gates.
+Picochat is a research-grade training harness and local workbench. The current
+recommended public proof path is a one-GPU `h100-100m` run on a bounded
+SmolLM-Corpus pack (`fineweb-edu-dedup` plus `cosmopedia-v2`) with explicit
+sanity, preflight, dry-run, release-skills SFT/eval, and evidence-bundle
+steps. The 1B-class `h200-1b-ddp8` path remains prepared for a later
+8xH100/H200 run.
+
+Public model evidence is still pending. Picochat should not be judged by a
+claimed 1B result until a trained model, release card, model card, benchmark
+report, and contamination report are published together. The current evidence
+plan is tracked in the [Model Evidence](https://gowtham0992.github.io/picochat/model_evidence.html)
+page.
+
+| Artifact | Public status | Release rule |
+| --- | --- | --- |
+| Local tiny demo | Ready | Smoke test only; not a model-quality claim |
+| 100M H100/H200 public proof | Runbook ready | Publish only with eval, samples, gate report, and honesty report |
+| 1B `h200-1b-ddp8` run | Prepared, not claimed | Publish only after preflight, DDP dry run, full eval, external benchmark, and release gate |
+| Hugging Face model | Pending | Must include model card, release manifest, and honesty evidence |
 
 What is ready:
 
@@ -65,11 +98,16 @@ What is ready:
   external benchmarks, prompt echo, refusal behavior, or honesty checks fail.
 - A local web dashboard with release readiness, loss curves, preflight output,
   Scale Up commands, paid-GPU confirmation, and DDP dry-run commands.
-- Native PyTorch serving through `pico serve`, including local
+- Native PyTorch serving through `picochat serve`, including local
   OpenAI-compatible `/v1/completions`, `/v1/chat/completions`, and `/v1/models`
-  endpoints for smoke integrations.
-- Optional post-SFT DPO through `pico train dpo` for curated preference pairs
+  endpoints plus `stream=true` SSE response framing for smoke integrations.
+- Optional post-SFT DPO through `picochat train dpo` for curated preference pairs
   when teams have real chosen/rejected examples.
+- Dockerized local workbench and serving smoke paths for reproducible demos.
+- HF-style export with model card, release manifest, Transformers
+  `trust_remote_code` adapter, optional safetensors, and optional
+  `--push-to-hub` publishing.
+- Public benchmark protocol, CI, and contribution templates for external review.
 
 What is not claimed:
 
@@ -99,6 +137,13 @@ The factory is built around four principles:
 4. **Protect GPU spend.** Scale-up commands include sanity checks, preflight,
    a short DDP dry run, and explicit paid-launch confirmation.
 
+Picochat's paid-run path is still deliberately conservative: the 1B release
+recipe uses DDP, while experimental FSDP is exposed for base-training smoke
+tests before it graduates into the full factory.
+
+On GPU hosts, `picochat sanity preh100 --capacity-scale h200-1b-ddp8` can also run
+a one-batch memory check for the exact scale before training starts.
+
 ## Quick Start
 
 Install locally:
@@ -111,16 +156,20 @@ source .venv/bin/activate
 python -m pip install -e ".[dev,hf]"
 ```
 
+The installed command is `picochat`. A shorter `pico` alias is also provided,
+but `picochat` avoids colliding with the system `pico` editor when the virtual
+environment is not active.
+
 Run the tiny demo:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli demo
+picochat demo
 ```
 
 Open the workbench:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli web --runs-dir runs --port 8765
+picochat web --runs-dir runs --port 8765
 ```
 
 Then visit:
@@ -129,21 +178,23 @@ Then visit:
 http://127.0.0.1:8765
 ```
 
-The same commands are available through the installed `pico` entry point:
+Or start the workbench with Docker:
 
 ```bash
-pico demo
-pico web --runs-dir runs --port 8765
+docker compose up --build picochat-web
 ```
 
 Serve a trained checkpoint through a local OpenAI-compatible API:
 
 ```bash
-pico serve \
+export PICOCHAT_API_KEY="replace-me"
+
+picochat serve \
   --checkpoint runs/pico-demo/sft/checkpoint \
   --tokenizer runs/pico-demo/tokenizer.json \
   --host 127.0.0.1 \
-  --port 8000
+  --port 8000 \
+  --api-key-env PICOCHAT_API_KEY
 ```
 
 Then call:
@@ -151,6 +202,7 @@ Then call:
 ```bash
 curl http://127.0.0.1:8000/v1/chat/completions \
   -H 'content-type: application/json' \
+  -H "authorization: Bearer $PICOCHAT_API_KEY" \
   -d '{"model":"picochat","messages":[{"role":"user","content":"What is Picochat?"}],"max_tokens":80}'
 ```
 
@@ -161,7 +213,11 @@ adapter work.
 Run optional DPO after SFT when you have real preference pairs:
 
 ```bash
-pico train dpo \
+picochat data preference-starter \
+  --input runs/pico-demo/chat_benchmark.jsonl \
+  --out data/preferences.jsonl
+
+picochat train dpo \
   --input data/preferences.jsonl \
   --tokenizer runs/pico-demo/tokenizer.json \
   --checkpoint runs/pico-demo/sft/checkpoint \
@@ -170,9 +226,41 @@ pico train dpo \
   --beta 0.1
 ```
 
+Or wire DPO into the end-to-end factory so fit/eval/release gates score the
+post-DPO checkpoint:
+
+```bash
+picochat run tiny \
+  --out-dir runs/pico-demo \
+  --dataset-pack runs/pack/dataset_pack.json \
+  --dpo-input data/preferences.jsonl \
+  --dpo-steps 200
+```
+
 Preference rows are JSONL with `user` or `prompt`, `chosen`, and `rejected`
 fields. DPO improves preference alignment after SFT; it does not replace base
 pretraining, SFT coverage, or the release gates.
+The preference starter uses synthetic negatives for plumbing and smoke tests;
+release alignment needs human or judge-reviewed preference pairs.
+
+Build a model registry from completed runs:
+
+```bash
+picochat registry --runs-dir runs \
+  --out reports/model_registry.md \
+  --json-out reports/model_registry.json
+```
+
+Write a standard `lm-eval-harness` benchmark command for a HF export:
+
+```bash
+picochat eval lm-harness \
+  --model-path exports/picochat-run \
+  --tasks arc_easy,hellaswag \
+  --out-dir reports/picochat-run/lm_eval \
+  --device cuda:0 \
+  --dry-run
+```
 
 ## 8xH100/H200 Path
 
@@ -188,9 +276,22 @@ Read the runbook before spending GPU money:
 - [8xH200 1B runbook](https://gowtham0992.github.io/picochat/h200_1b_runbook.html)
 - [Release gates](https://gowtham0992.github.io/picochat/release_gates.html)
 - [Contamination and honesty checks](https://gowtham0992.github.io/picochat/contamination_and_honesty.html)
+- [Benchmark protocol](https://gowtham0992.github.io/picochat/benchmark_protocol.html)
 
 The current `h200-1b-ddp8` scale targets about 1.12B parameters and 22.4B
 planned training tokens, roughly 20 tokens per parameter.
+
+## One-GPU 100M Public Proof
+
+For the next paid run, use the 100M runbook before attempting 1B:
+
+- [100M public proof runbook](https://gowtham0992.github.io/picochat/h100_100m_runbook.html)
+- Dataset: bounded [SmolLM-Corpus](https://huggingface.co/datasets/HuggingFaceTB/smollm-corpus) local pack.
+- Scale: `h100-100m`, about 107M parameters and 2.16B planned tokens.
+- Gate: `skill_release`, with identity, refusal, choice, arithmetic, and spelling eval coverage.
+
+This path is intentionally smaller, cheaper, and easier to publish honestly
+than the 1B run. It is the first model-quality proof target.
 
 ## Release Readiness
 
@@ -235,11 +336,16 @@ Key stations:
 ## Documentation
 
 - [Product page](https://gowtham0992.github.io/picochat/)
+- [Model evidence](https://gowtham0992.github.io/picochat/model_evidence.html)
 - [Architecture](https://gowtham0992.github.io/picochat/architecture.html)
 - [Pipeline guide](https://gowtham0992.github.io/picochat/pipeline_guide.html)
+- [100M public proof runbook](https://gowtham0992.github.io/picochat/h100_100m_runbook.html)
+- [Benchmark protocol](https://gowtham0992.github.io/picochat/benchmark_protocol.html)
+- [Model registry](https://gowtham0992.github.io/picochat/model_registry.html)
 - [Release gates](https://gowtham0992.github.io/picochat/release_gates.html)
 - [8xH200 1B runbook](https://gowtham0992.github.io/picochat/h200_1b_runbook.html)
 - [Contamination and honesty](https://gowtham0992.github.io/picochat/contamination_and_honesty.html)
+- [Deployment](https://gowtham0992.github.io/picochat/deployment.html)
 - [Task mixture recipe](https://gowtham0992.github.io/picochat/task_mixture_recipe.html)
 - [Screenshot capture guide](https://gowtham0992.github.io/picochat/screenshots.html)
 
@@ -251,20 +357,23 @@ to the `docs/` folder on the `develop` or `main` branch.
 Run tests:
 
 ```bash
-PYTHONPATH=src pytest -q
+pytest -q
 ```
 
 Run only web/dashboard checks:
 
 ```bash
-PYTHONPATH=src pytest tests/test_web.py -q
+pytest tests/test_web.py -q
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for PR standards and release-evidence
+expectations.
 
 Optional TensorBoard logging:
 
 ```bash
 python -m pip install -e ".[monitor]"
-PYTHONPATH=src python -m picochat.cli run tiny \
+picochat run tiny \
   --out-dir runs/monitored-smoke \
   --tensorboard-log-dir runs/monitored-smoke/tensorboard
 tensorboard --logdir runs/monitored-smoke/tensorboard

@@ -457,7 +457,12 @@ def set_muon_momentum(optimizer: torch.optim.Optimizer, momentum: float | None) 
 def maybe_clip_grad_norm(model: torch.nn.Module, grad_clip: float) -> float | None:
     if grad_clip <= 0:
         return None
-    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+    fsdp_clip = getattr(model, "clip_grad_norm_", None)
+    norm = (
+        fsdp_clip(grad_clip)
+        if callable(fsdp_clip)
+        else torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+    )
     return float(norm.item())
 
 

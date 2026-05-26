@@ -135,6 +135,7 @@ const LAUNCH_CONTROL_IDS = [
   "launch-torch-compile",
   "launch-torch-compile-mode",
   "launch-gradient-checkpointing",
+  "launch-tensorboard-log-dir",
   "launch-auto-lr-scaling",
   "launch-loss-spike-rollback",
   "launch-base-early-stop-patience",
@@ -146,10 +147,31 @@ const LAUNCH_CONTROL_IDS = [
   "launch-sft-lora-alpha",
   "launch-sft-lora-dropout",
   "launch-sft-lora-targets",
+  "launch-dpo-input",
+  "launch-dpo-steps",
+  "launch-dpo-batch-size",
+  "launch-dpo-learning-rate",
+  "launch-dpo-beta",
+  "launch-dpo-grad-accum-steps",
+  "launch-dpo-lr-warmup-steps",
+  "launch-dpo-lr-decay",
+  "launch-dpo-grad-clip",
+  "launch-dpo-early-stop-patience",
+  "launch-dpo-eval-batches",
+  "launch-dpo-length-normalize",
   "launch-eval-max-new-tokens",
   "launch-target-param-data-ratio",
   "launch-seed",
   "launch-min-score",
+];
+const HF_SFT_CONTROL_IDS = [
+  "hf-sft-model",
+  "hf-sft-input",
+  "hf-sft-out-dir",
+  "hf-sft-steps",
+  "hf-sft-max-length",
+  "hf-sft-device",
+  "hf-sft-precision",
 ];
 
 const $ = (id) => document.getElementById(id);
@@ -359,16 +381,16 @@ async function postJson(url, body) {
 
 function apiTransportMessage(error) {
   const hint = location.protocol === "file:"
-    ? " Open Picochat through the web server, not file://. Run: PYTHONPATH=src python -m picochat.cli web"
+    ? " Open Picochat through the web server, not file://. Run: picochat web"
     : "";
   return `API request failed: ${error.message}.${hint}`;
 }
 
 function apiNonJsonMessage(url, response, text) {
   const preview = String(text || "").replace(/\s+/g, " ").trim().slice(0, 160);
-  const restartHint = " Stop the terminal running Picochat web, then restart it: PYTHONPATH=src python -m picochat.cli web --port 8765";
+  const restartHint = " Stop the terminal running Picochat web, then restart it: picochat web --port 8765";
   const hint = location.protocol === "file:"
-    ? " You are on file://, so /api routes are not available. Start Picochat with: PYTHONPATH=src python -m picochat.cli web"
+    ? " You are on file://, so /api routes are not available. Start Picochat with: picochat web"
     : response.status === 404 && String(url).startsWith("/api/")
       ? ` The browser has newer UI code, but the running Python server does not know this API route yet.${restartHint}`
       : ` The Picochat server returned a page instead of JSON.${restartHint}`;
@@ -390,6 +412,7 @@ async function boot() {
   await loadRuns();
   await loadRunJobs();
   renderScalePlan();
+  renderHFSFTCommandPreview();
   renderGuide();
 }
 
@@ -495,6 +518,9 @@ function bindControls() {
   $("flight-eval-button").addEventListener("click", () => {
     createEvalStarter().catch((error) => renderEvalStarterError(error));
   });
+  $("flight-preference-button").addEventListener("click", () => {
+    createPreferenceStarter().catch((error) => renderPreferenceStarterError(error));
+  });
   $("flight-benchmark-button").addEventListener("click", () => {
     createBenchmarkTuningPack().catch((error) => renderBenchmarkPackError(error));
   });
@@ -506,6 +532,7 @@ function bindControls() {
     "flight-input-path",
     "flight-chat-path",
     "flight-eval-path",
+    "flight-preference-out-path",
     "flight-sft-max-items",
     "flight-eval-max-items",
   ].forEach((id) => {
@@ -557,8 +584,18 @@ function bindControls() {
   $("add-eval-row-button").addEventListener("click", addEvalEditorRow);
   $("launch-preset").addEventListener("change", applyLaunchPreset);
   LAUNCH_CONTROL_IDS.forEach((id) => {
-    $(id)?.addEventListener("input", renderLaunchReadiness);
-    $(id)?.addEventListener("change", renderLaunchReadiness);
+    $(id)?.addEventListener("input", () => {
+      renderLaunchReadiness();
+      if (id === "launch-pack-path") renderHFSFTCommandPreview();
+    });
+    $(id)?.addEventListener("change", () => {
+      renderLaunchReadiness();
+      if (id === "launch-pack-path") renderHFSFTCommandPreview();
+    });
+  });
+  HF_SFT_CONTROL_IDS.forEach((id) => {
+    $(id)?.addEventListener("input", renderHFSFTCommandPreview);
+    $(id)?.addEventListener("change", renderHFSFTCommandPreview);
   });
   $("launch-run-button").addEventListener("click", () => {
     launchRun().catch((error) => renderRunJobError(error));
@@ -2023,7 +2060,7 @@ function pipelineStages() {
       ],
       note: "Turns text into token IDs before the model ever sees it.",
       command: shellCommand([
-        "PYTHONPATH=src", "python", "-m", "picochat.cli", "tok", "train",
+        "picochat", "tok", "train",
         "--input", corpusPath,
         "--out", tokenizerPath,
         "--type", tokenizerType,
@@ -2047,7 +2084,7 @@ function pipelineStages() {
       ],
       note: "Learns next-token prediction from the corpus. This is the actual tiny language model training stage.",
       command: shellCommand([
-        "PYTHONPATH=src", "python", "-m", "picochat.cli", "train", "base",
+        "picochat", "train", "base",
         "--corpus", corpusPath,
         "--tokenizer", tokenizerPath,
         "--out-dir", `${outDir}/base`,
@@ -2095,7 +2132,7 @@ function pipelineStages() {
       ],
       note: "Tunes the base model on User/Assistant examples. A large loss gap is a memorization warning.",
       command: shellCommand([
-        "PYTHONPATH=src", "python", "-m", "picochat.cli", "train", "sft",
+        "picochat", "train", "sft",
         "--input", config.chat_input || "examples/tiny_chat.jsonl",
         "--tokenizer", tokenizerPath,
         "--checkpoint", baseCheckpoint,
@@ -2132,7 +2169,7 @@ function pipelineStages() {
       ],
       note: "Checks model replies against answerable and unanswerable prompts.",
       command: shellCommand([
-        "PYTHONPATH=src", "python", "-m", "picochat.cli", "eval", "chat",
+        "picochat", "eval", "chat",
         "--input", config.eval_input || "examples/tiny_eval.jsonl",
         "--checkpoint", sftCheckpoint,
         "--tokenizer", tokenizerPath,
@@ -2161,7 +2198,7 @@ function pipelineStages() {
       ],
       note: "Runs live generation from the selected checkpoint through /api/generate.",
       command: shellCommand([
-        "PYTHONPATH=src", "python", "-m", "picochat.cli", "chat",
+        "picochat", "chat",
         "--checkpoint", sftCheckpoint,
         "--tokenizer", tokenizerPath,
         "--seed", config.seed ?? 42,
@@ -2187,7 +2224,7 @@ function pipelineStages() {
       ],
       note: "Collects the run into human-readable artifacts so the experiment can be inspected later.",
       command: shellCommand([
-        "PYTHONPATH=src", "python", "-m", "picochat.cli", "web",
+        "picochat", "web",
         "--runs-dir", "runs",
         "--port", 8765,
       ]),
@@ -2660,13 +2697,13 @@ function datasetCommand(config, artifacts) {
   const output = artifacts.corpus || `${config.out_dir || "runs/manual"}/corpus.txt`;
   if (config.corpus_recipe) {
     return shellCommand([
-      "PYTHONPATH=src", "python", "-m", "picochat.cli", "data", "build",
+      "picochat", "data", "build",
       "--recipe", config.corpus_recipe,
       "--out", output,
     ]);
   }
   return shellCommand([
-    "PYTHONPATH=src", "python", "-m", "picochat.cli", "data", "build",
+    "picochat", "data", "build",
     "--input", config.corpus_input || "examples/tiny_corpus.txt",
     "--out", output,
   ]);
@@ -2896,6 +2933,9 @@ function syncFlightStarterDefaults() {
   }
   if (sourcePath && !$("flight-eval-out-path").value.trim()) {
     $("flight-eval-out-path").value = suggestedEvalStarterPath(evalPath || sourcePath);
+  }
+  if ((chatPath || $("flight-sft-out-path").value.trim()) && !$("flight-preference-out-path").value.trim()) {
+    $("flight-preference-out-path").value = suggestedPreferenceStarterPath(chatPath || $("flight-sft-out-path").value.trim());
   }
   if (packPath) {
     if (!$("preview-pack-path").value.trim()) $("preview-pack-path").value = packPath;
@@ -3474,7 +3514,7 @@ function editorToTuningInspection(report) {
     eval_data: report.eval_data,
     next_actions: report.next_actions || [],
     preview_command: report.dataset_pack
-      ? shellCommand(["PYTHONPATH=src", "python", "-m", "picochat.cli", "data", "preview", "--dataset-pack", report.dataset_pack])
+      ? shellCommand(["picochat", "data", "preview", "--dataset-pack", report.dataset_pack])
       : null,
   };
 }
@@ -3526,6 +3566,7 @@ function applyLaunchPreset(quiet = false) {
   $("launch-torch-compile").checked = Boolean(values.torch_compile);
   $("launch-torch-compile-mode").value = values.torch_compile_mode || "default";
   $("launch-gradient-checkpointing").checked = Boolean(values.gradient_checkpointing);
+  $("launch-tensorboard-log-dir").value = values.tensorboard_log_dir || "";
   $("launch-auto-lr-scaling").checked = Boolean(values.auto_lr_scaling);
   $("launch-loss-spike-rollback").checked = Boolean(values.loss_spike_rollback);
   $("launch-base-early-stop-patience").value = values.base_early_stop_patience;
@@ -3539,6 +3580,18 @@ function applyLaunchPreset(quiet = false) {
   $("launch-sft-lora-targets").value = Array.isArray(values.sft_lora_targets)
     ? values.sft_lora_targets.join(",")
     : (values.sft_lora_targets || "attn_qkv,attn_proj");
+  $("launch-dpo-input").value = values.dpo_input || "";
+  $("launch-dpo-steps").value = values.dpo_steps || 0;
+  $("launch-dpo-batch-size").value = values.dpo_batch_size || 4;
+  $("launch-dpo-learning-rate").value = values.dpo_learning_rate || 0.000005;
+  $("launch-dpo-beta").value = values.dpo_beta || 0.1;
+  $("launch-dpo-grad-accum-steps").value = values.dpo_grad_accum_steps || 1;
+  $("launch-dpo-lr-warmup-steps").value = values.dpo_lr_warmup_steps || 0;
+  $("launch-dpo-lr-decay").value = values.dpo_lr_decay || "none";
+  $("launch-dpo-grad-clip").value = values.dpo_grad_clip || 0;
+  $("launch-dpo-early-stop-patience").value = values.dpo_early_stop_patience || 4;
+  $("launch-dpo-eval-batches").value = values.dpo_eval_batches || 10;
+  $("launch-dpo-length-normalize").checked = Boolean(values.dpo_length_normalize);
   $("launch-eval-max-new-tokens").value = values.eval_max_new_tokens;
   $("launch-target-param-data-ratio").value = values.target_param_data_ratio || 20;
   $("launch-long-run-gate-profile").value = values.long_run_gate_profile || SCALE_GATE_DEFAULTS[preset] || "research";
@@ -3568,6 +3621,71 @@ function applyPreviewBudgetToLauncher() {
 function launchNumber(id) {
   const value = Number($(id).value);
   return Number.isFinite(value) ? value : 0;
+}
+
+function hfSftConfig() {
+  return {
+    model: $("hf-sft-model")?.value.trim() || "",
+    input: $("hf-sft-input")?.value.trim() || $("launch-pack-path")?.value.trim().replace(/dataset_pack\.json$/, "chat_benchmark.jsonl") || "",
+    out_dir: $("hf-sft-out-dir")?.value.trim() || "runs/hf-sft-v1",
+    steps: boundedNumberInput("hf-sft-steps", 200, 1, 20000),
+    max_length: boundedNumberInput("hf-sft-max-length", 1024, 8, 8192),
+    device: $("hf-sft-device")?.value || "auto",
+    precision: $("hf-sft-precision")?.value || "auto",
+  };
+}
+
+function hfSftCommand(config = hfSftConfig()) {
+  const parts = [
+    "picochat",
+    "train",
+    "hf-sft",
+    "--model",
+    config.model || "<hf-model>",
+    "--input",
+    config.input || "<chat.jsonl>",
+    "--out-dir",
+    config.out_dir || "runs/hf-sft-v1",
+    "--max-steps",
+    config.steps,
+    "--max-length",
+    config.max_length,
+    "--device",
+    config.device,
+    "--precision",
+    config.precision,
+    "--gradient-checkpointing",
+    "--peft",
+    "lora",
+    "--lora-rank",
+    16,
+    "--done-file",
+    "done.txt",
+  ];
+  return shellCommand(parts);
+}
+
+function renderHFSFTCommandPreview() {
+  const target = $("hf-sft-command-preview");
+  if (!target) return;
+  const config = hfSftConfig();
+  const blockers = [];
+  if (!config.model) blockers.push("choose a Hugging Face model id");
+  if (!config.input) blockers.push("choose a chat JSONL");
+  const command = hfSftCommand(config);
+  target.innerHTML = `
+    <div class="command-head">
+      <label>HF SFT COMMAND PREVIEW</label>
+      ${blockers.length ? "" : copyCommandButton(command)}
+    </div>
+    <div class="command-meta">
+      <span>${blockers.length ? `NEEDS ${escapeHtml(blockers.join(" + ").toUpperCase())}` : "READY TO COPY"}</span>
+      <span>EXISTING MODEL PATH</span>
+      <span>ASSISTANT-ONLY LOSS</span>
+    </div>
+    <code>${escapeHtml(command)}</code>
+    <p>This path writes Hugging Face model folders. Use the native launcher below when you want Picochat base pretraining and release-gated checkpoints.</p>
+  `;
 }
 
 function boundedNumberInput(id, fallback, min, max) {
@@ -3634,6 +3752,7 @@ function launchConfig() {
     torch_compile: $("launch-torch-compile").checked,
     torch_compile_mode: $("launch-torch-compile-mode").value,
     gradient_checkpointing: $("launch-gradient-checkpointing").checked,
+    tensorboard_log_dir: $("launch-tensorboard-log-dir").value.trim(),
     auto_lr_scaling: $("launch-auto-lr-scaling").checked,
     loss_spike_rollback: $("launch-loss-spike-rollback").checked,
     base_early_stop_patience: launchNumber("launch-base-early-stop-patience"),
@@ -3645,6 +3764,18 @@ function launchConfig() {
     sft_lora_alpha: launchNumber("launch-sft-lora-alpha"),
     sft_lora_dropout: launchNumber("launch-sft-lora-dropout"),
     sft_lora_targets: $("launch-sft-lora-targets").value.trim() || "attn_qkv,attn_proj",
+    dpo_input: $("launch-dpo-input").value.trim(),
+    dpo_steps: boundedNumberInput("launch-dpo-steps", 0, 0, 4000),
+    dpo_batch_size: boundedNumberInput("launch-dpo-batch-size", 4, 1, 64),
+    dpo_learning_rate: launchNumber("launch-dpo-learning-rate"),
+    dpo_beta: launchNumber("launch-dpo-beta"),
+    dpo_grad_accum_steps: boundedNumberInput("launch-dpo-grad-accum-steps", 1, 1, 128),
+    dpo_lr_warmup_steps: boundedNumberInput("launch-dpo-lr-warmup-steps", 0, 0, 10000),
+    dpo_lr_decay: $("launch-dpo-lr-decay").value,
+    dpo_grad_clip: launchNumber("launch-dpo-grad-clip"),
+    dpo_early_stop_patience: boundedNumberInput("launch-dpo-early-stop-patience", 4, 0, 100),
+    dpo_eval_batches: boundedNumberInput("launch-dpo-eval-batches", 10, 0, 200),
+    dpo_length_normalize: $("launch-dpo-length-normalize").checked,
     eval_max_new_tokens: launchNumber("launch-eval-max-new-tokens"),
     target_param_data_ratio: launchNumber("launch-target-param-data-ratio"),
     long_run_gate_profile: $("launch-long-run-gate-profile").value,
@@ -3718,6 +3849,17 @@ function launchReadiness(config = launchConfig()) {
   )) {
     blockers.push("LoRA settings require SFT PEFT set to LORA.");
   }
+  if (config.dpo_input) {
+    if (config.dpo_steps < 1) blockers.push("DPO preference input requires DPO steps above zero.");
+    if (config.dpo_batch_size < 1 || config.dpo_grad_accum_steps < 1) blockers.push("DPO batch and accumulation must be at least 1.");
+    if (config.dpo_learning_rate <= 0) blockers.push("DPO learning rate must be above zero.");
+    if (config.dpo_beta <= 0) blockers.push("DPO beta must be above zero.");
+    if (!["none", "linear", "cosine"].includes(config.dpo_lr_decay)) blockers.push("DPO decay is invalid.");
+    if (config.dpo_grad_clip < 0) blockers.push("DPO clip must be zero or positive.");
+    if (config.dpo_lr_warmup_steps > config.dpo_steps) cautions.push("DPO warmup is longer than DPO training.");
+  } else if (config.dpo_steps > 0) {
+    cautions.push("DPO steps are ignored until a DPO preference file is selected.");
+  }
   if (config.base_muon_learning_rate <= 0 || config.sft_muon_learning_rate <= 0) blockers.push("Muon learning rates must be above zero.");
   if (config.base_ema_decay < 0 || config.base_ema_decay >= 1 || config.sft_ema_decay < 0 || config.sft_ema_decay >= 1) {
     blockers.push("EMA decay must be at least 0 and below 1.");
@@ -3745,6 +3887,9 @@ function launchReadiness(config = launchConfig()) {
   }
   if (config.gradient_checkpointing && config.context_size <= 512) {
     cautions.push("Gradient checkpointing saves memory but can slow small local runs.");
+  }
+  if (config.tensorboard_log_dir) {
+    notes.push(`TensorBoard ${config.tensorboard_log_dir}`);
   }
   if (config.base_dataset_mode === "sharded") {
     cautions.push("Sharded base data preserves BOS/EOS document boundaries when a corpus manifest exists, but validates by token shard rather than complete source document.");
@@ -3782,6 +3927,9 @@ function launchReadiness(config = launchConfig()) {
   notes.push(`optimizer ${config.base_optimizer}/${config.sft_optimizer}`);
   if (config.sft_peft === "lora") {
     notes.push(`LoRA r${config.sft_lora_rank} alpha ${config.sft_lora_alpha} targets ${loraTargets.join("/")}`);
+  }
+  if (config.dpo_input) {
+    notes.push(`DPO ${config.dpo_steps} steps beta ${config.dpo_beta}`);
   }
   if (config.base_ema_decay > 0 || config.sft_ema_decay > 0) notes.push(`EMA ${config.base_ema_decay}/${config.sft_ema_decay}`);
   notes.push(`effective batch ${config.base_batch_size * config.base_grad_accum_steps} / ${config.sft_batch_size * config.sft_grad_accum_steps}`);
@@ -3826,7 +3974,6 @@ function launchPreviewCommand(config = launchConfig()) {
     ...(usesDdp ? ["PICOCHAT_DDP_TIMEOUT_MINUTES=120"] : []),
     ...((usesDdp || config.device === "cuda") ? ["PYTORCH_ALLOC_CONF=expandable_segments:True"] : []),
     "PYTHONUNBUFFERED=1",
-    "PYTHONPATH=src",
   ];
   const parts = usesDdp ? [
     ...envParts,
@@ -3837,9 +3984,7 @@ function launchPreviewCommand(config = launchConfig()) {
     "picochat.cli",
   ] : [
     ...envParts,
-    "python",
-    "-m",
-    "picochat.cli",
+    "picochat",
   ];
   parts.push(
     "run",
@@ -3958,6 +4103,7 @@ function launchPreviewCommand(config = launchConfig()) {
   if (config.scaled_residual_init) parts.push("--scaled-residual-init");
   if (config.torch_compile) parts.push("--torch-compile", "--torch-compile-mode", config.torch_compile_mode);
   if (config.gradient_checkpointing) parts.push("--gradient-checkpointing");
+  if (config.tensorboard_log_dir) parts.push("--tensorboard-log-dir", config.tensorboard_log_dir);
   if (config.auto_lr_scaling) parts.push("--auto-lr-scaling");
   if (config.loss_spike_rollback) parts.push("--loss-spike-rollback");
   if (usesDdp) parts.push("--ddp", "--ddp-world-size", ddpWorldSize);
@@ -3967,6 +4113,33 @@ function launchPreviewCommand(config = launchConfig()) {
   if (config.base_dataset_mode === "sharded") {
     parts.push("--base-shard-token-size", config.base_shard_token_size);
     parts.push("--base-shard-cache-size", config.base_shard_cache_size);
+  }
+  if (config.dpo_input) {
+    parts.push(
+      "--dpo-input",
+      config.dpo_input,
+      "--dpo-steps",
+      config.dpo_steps,
+      "--dpo-batch-size",
+      config.dpo_batch_size,
+      "--dpo-learning-rate",
+      config.dpo_learning_rate,
+      "--dpo-beta",
+      config.dpo_beta,
+      "--dpo-grad-accum-steps",
+      config.dpo_grad_accum_steps,
+      "--dpo-lr-warmup-steps",
+      config.dpo_lr_warmup_steps,
+      "--dpo-lr-decay",
+      config.dpo_lr_decay,
+      "--dpo-grad-clip",
+      config.dpo_grad_clip,
+      "--dpo-early-stop-patience",
+      config.dpo_early_stop_patience,
+      "--dpo-eval-batches",
+      config.dpo_eval_batches,
+    );
+    if (config.dpo_length_normalize) parts.push("--dpo-length-normalize");
   }
   return shellCommand(parts);
 }
@@ -4015,6 +4188,7 @@ function gpuLaunchConfirmationMessage(config) {
     `Device: ${String(config.device || "auto").toUpperCase()}${config.ddp ? ` / DDP x${globalMultiplier}` : ""}`,
     `Base: ${fmtInt(config.base_steps)} steps, about ${fmtInt(baseTokens)} planned tokens`,
     `SFT: ${fmtInt(config.sft_steps)} steps, ${fmtInt(sftSequences)} sequences per optimizer step`,
+    `DPO: ${config.dpo_input ? `${fmtInt(config.dpo_steps)} steps from ${config.dpo_input}` : "off"}`,
     `Gate: ${config.long_run_gate_profile.replace("_", " ")}`,
     "",
     "Run PREFLIGHT first if this is not an intentional tiny local proof.",
@@ -4139,6 +4313,7 @@ function runStartPayload(config, extra = {}) {
     torch_compile: config.torch_compile,
     torch_compile_mode: config.torch_compile_mode,
     gradient_checkpointing: config.gradient_checkpointing,
+    tensorboard_log_dir: config.tensorboard_log_dir,
     auto_lr_scaling: config.auto_lr_scaling,
     loss_spike_rollback: config.loss_spike_rollback,
     base_early_stop_patience: config.base_early_stop_patience,
@@ -4150,6 +4325,18 @@ function runStartPayload(config, extra = {}) {
     sft_lora_alpha: config.sft_lora_alpha,
     sft_lora_dropout: config.sft_lora_dropout,
     sft_lora_targets: config.sft_lora_targets,
+    dpo_input: config.dpo_input,
+    dpo_steps: config.dpo_steps,
+    dpo_batch_size: config.dpo_batch_size,
+    dpo_learning_rate: config.dpo_learning_rate,
+    dpo_beta: config.dpo_beta,
+    dpo_grad_accum_steps: config.dpo_grad_accum_steps,
+    dpo_lr_warmup_steps: config.dpo_lr_warmup_steps,
+    dpo_lr_decay: config.dpo_lr_decay,
+    dpo_grad_clip: config.dpo_grad_clip,
+    dpo_early_stop_patience: config.dpo_early_stop_patience,
+    dpo_eval_batches: config.dpo_eval_batches,
+    dpo_length_normalize: config.dpo_length_normalize,
     target_param_data_ratio: config.target_param_data_ratio,
     long_run_gate_profile: config.long_run_gate_profile,
     eval_max_new_tokens: config.eval_max_new_tokens,
@@ -4251,10 +4438,7 @@ function renderScalePlan() {
   `;
 
   const mpsParts = [
-    "PYTHONPATH=src",
-    "python",
-    "-m",
-    "picochat.cli",
+    "picochat",
     "run",
     "tiny",
     "--out-dir",
@@ -4290,10 +4474,7 @@ function renderScalePlan() {
     "mkdir -p logs",
     `${shellCommand([
       "PYTHONUNBUFFERED=1",
-      "PYTHONPATH=src",
-      "python",
-      "-m",
-      "picochat.cli",
+      "picochat",
       "sanity",
       "preh100",
       "--out-dir",
@@ -4313,10 +4494,7 @@ function renderScalePlan() {
     "mkdir -p logs",
     `${shellCommand([
       "PYTHONUNBUFFERED=1",
-      "PYTHONPATH=src",
-      "python",
-      "-m",
-      "picochat.cli",
+      "picochat",
       "data",
       "climbmix-import",
       "--out-dir",
@@ -4336,10 +4514,7 @@ function renderScalePlan() {
   const releaseAnswerStyle = config.long_run_gate_profile === "skill_release" ? "scratchpad" : "direct";
   const remoteBenchmark = `${shellCommand([
     "PYTHONUNBUFFERED=1",
-    "PYTHONPATH=src",
-    "python",
-    "-m",
-    "picochat.cli",
+    "picochat",
     "data",
     "benchmark-pack",
     "--dataset-pack",
@@ -4400,10 +4575,7 @@ function renderScalePlan() {
     ...(usesDdp ? ["PICOCHAT_DDP_TIMEOUT_MINUTES=120"] : []),
     "PYTORCH_ALLOC_CONF=expandable_segments:True",
     "PYTHONUNBUFFERED=1",
-    "PYTHONPATH=src",
-    "python",
-    "-m",
-    "picochat.cli",
+    "picochat",
     ...remoteRunArgs,
   ];
   if (usesDdp) remotePreflightParts.push("--ddp", "--ddp-world-size", ddpWorldSize);
@@ -4414,7 +4586,6 @@ function renderScalePlan() {
       "TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
       "PYTORCH_ALLOC_CONF=expandable_segments:True",
       "PYTHONUNBUFFERED=1",
-      "PYTHONPATH=src",
       "torchrun",
       "--standalone",
       `--nproc_per_node=${ddpWorldSize}`,
@@ -4428,10 +4599,7 @@ function renderScalePlan() {
     : [
       "PYTORCH_ALLOC_CONF=expandable_segments:True",
       "PYTHONUNBUFFERED=1",
-      "PYTHONPATH=src",
-      "python",
-      "-m",
-      "picochat.cli",
+      "picochat",
       ...remoteRunArgs,
     ];
   const remotePreflight = `${shellCommand([...remotePreflightParts, "--preflight-only"])} 2>&1 | tee logs/preflight-${config.run_name}.log`;
@@ -4442,7 +4610,6 @@ function renderScalePlan() {
       "TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
       "PYTORCH_ALLOC_CONF=expandable_segments:True",
       "PYTHONUNBUFFERED=1",
-      "PYTHONPATH=src",
       "torchrun",
       "--standalone",
       `--nproc_per_node=${ddpWorldSize}`,
@@ -4456,10 +4623,7 @@ function renderScalePlan() {
     : [
       "PYTORCH_ALLOC_CONF=expandable_segments:True",
       "PYTHONUNBUFFERED=1",
-      "PYTHONPATH=src",
-      "python",
-      "-m",
-      "picochat.cli",
+      "picochat",
       ...remoteDryRunArgs,
     ];
   const remoteDryRun = [
@@ -4472,10 +4636,7 @@ function renderScalePlan() {
     `${shellCommand(remoteRunParts)} 2>&1 | tee logs/train-${config.run_name}.log`,
   ].join("\n");
   const bundleParts = [
-    "PYTHONPATH=src",
-    "python",
-    "-m",
-    "picochat.cli",
+    "picochat",
     "run",
     "bundle",
     "--run-dir",
@@ -4487,10 +4648,7 @@ function renderScalePlan() {
     "--strict",
   ];
   const inspectBundleParts = [
-    "PYTHONPATH=src",
-    "python",
-    "-m",
-    "picochat.cli",
+    "picochat",
     "run",
     "inspect-bundle",
     "--bundle",
@@ -5324,6 +5482,9 @@ async function createSftStarter() {
     const chatPath = report.pack_chat_input || report.output_path || outPath;
     const evalPath = report.pack_eval_input || $("flight-eval-path").value.trim();
     $("flight-chat-path").value = chatPath;
+    if (!$("flight-preference-out-path").value.trim()) {
+      $("flight-preference-out-path").value = suggestedPreferenceStarterPath(chatPath);
+    }
     $("preview-chat-path").value = chatPath;
     if (report.promoted_to_pack && packPath) {
       $("tuning-pack-path").value = packPath;
@@ -5374,6 +5535,69 @@ function renderSftStarter(report) {
     <div class="command-tape source-command">
       <div class="command-head">
         <label>SFT STARTER COMMAND</label>
+        ${copyCommandButton(report.command)}
+      </div>
+      <code>${escapeHtml(report.command || "")}</code>
+      ${(report.next_actions || []).map((action) => `<p>${escapeHtml(action)}</p>`).join("")}
+    </div>
+  `;
+}
+
+async function createPreferenceStarter() {
+  syncFlightStarterDefaults();
+  const inputPath = $("flight-chat-path").value.trim() || $("flight-sft-out-path").value.trim();
+  const outPath = $("flight-preference-out-path").value.trim();
+  if (!inputPath) {
+    throw new Error("create or select a chat SFT JSONL file first");
+  }
+  if (!outPath) {
+    throw new Error("enter a DPO preference output path");
+  }
+  $("flight-preference-button").disabled = true;
+  $("flight-preference-result").innerHTML = 'CREATING DPO PREF STARTER<span class="cursor"></span>';
+  try {
+    const report = await postJson("/api/preference/starter", {
+      input_path: inputPath,
+      out_path: outPath,
+      max_rows: 0,
+      force: Boolean($("flight-starter-force")?.checked),
+    });
+    state.preferenceStarter = report;
+    $("flight-preference-out-path").value = report.output_path || outPath;
+    $("launch-dpo-input").value = report.output_path || outPath;
+    if (Number($("launch-dpo-steps").value || 0) <= 0) $("launch-dpo-steps").value = "60";
+    renderPreferenceStarter(report);
+    renderLaunchReadiness();
+    renderStartHere();
+  } finally {
+    $("flight-preference-button").disabled = false;
+  }
+}
+
+function renderPreferenceStarter(report) {
+  if (!report) {
+    $("flight-preference-result").innerHTML = "";
+    return;
+  }
+  $("flight-preference-result").innerHTML = `
+    <label>DPO PREF STARTER RESULT</label>
+    <div class="flight-eval-grid">
+      <div><strong>${fmtInt(report.num_examples)}</strong><span>preference rows</span></div>
+      <div><strong>${escapeHtml(shortPath(report.output_path))}</strong><span>jsonl</span></div>
+      <div><strong>${escapeHtml(shortPath(report.report_path))}</strong><span>report</span></div>
+      <div><strong>${report.force ? "OVERWRITE" : "SAFE"}</strong><span>write mode</span></div>
+    </div>
+    <div class="starter-handoff caution">
+      <strong>SYNTHETIC DPO SMOKE DATA</strong>
+      <span>This file is connected to the launcher's DPO PREFS field so you can test DPO mechanics.</span>
+      <em>Do not claim release alignment from synthetic rejected answers; replace them with reviewed preferences.</em>
+    </div>
+    <div class="mini-stat-row">
+      ${Object.entries(report.rejected_type_counts || {}).map(([name, count]) => `<span>${escapeHtml(name)} ${fmtInt(count)}</span>`).join("")}
+    </div>
+    <div class="command-tape source-command">
+      <div class="command-head">
+        <label>DPO PREF STARTER COMMAND</label>
         ${copyCommandButton(report.command)}
       </div>
       <code>${escapeHtml(report.command || "")}</code>
@@ -5669,6 +5893,7 @@ function renderDatasetFlightPlanError(error) {
   $("flight-plan").innerHTML = "";
   $("flight-command").innerHTML = "";
   $("flight-sft-result").innerHTML = "";
+  $("flight-preference-result").innerHTML = "";
   $("flight-eval-result").innerHTML = `<div class="notice">FAULT: ${escapeHtml(error.message)}</div>`;
 }
 
@@ -5682,6 +5907,11 @@ function renderEvalStarterError(error) {
   $("flight-eval-result").innerHTML = `<div class="notice">EVAL STARTER FAULT: ${escapeHtml(error.message)}</div>`;
 }
 
+function renderPreferenceStarterError(error) {
+  $("flight-preference-button").disabled = false;
+  $("flight-preference-result").innerHTML = `<div class="notice">DPO PREF STARTER FAULT: ${escapeHtml(error.message)}</div>`;
+}
+
 function renderBenchmarkPackError(error) {
   $("flight-benchmark-button").disabled = false;
   $("flight-sft-result").innerHTML = `<div class="notice">CURATED PACK FAULT: ${escapeHtml(error.message)}</div>`;
@@ -5693,6 +5923,19 @@ function suggestedSftStarterPath(path) {
 
 function suggestedEvalStarterPath(path) {
   return suggestedStarterPath(path, "eval");
+}
+
+function suggestedPreferenceStarterPath(path) {
+  const text = String(path || "").trim();
+  if (!text) return "my_pack/preferences.jsonl";
+  const slash = text.lastIndexOf("/");
+  const dir = slash >= 0 ? text.slice(0, slash + 1) : "";
+  const file = slash >= 0 ? text.slice(slash + 1) : text;
+  const stem = file.replace(/\.jsonl$/i, "").replace(/\.json$/i, "");
+  if (!stem || /^(chat|chat_starter|chat_benchmark|sft|sft_starter)$/i.test(stem)) {
+    return `${dir}preferences.jsonl`;
+  }
+  return `${dir}${stem}_preferences.jsonl`;
 }
 
 function suggestedStarterPath(path, kind) {
@@ -5828,7 +6071,7 @@ function tuningInspectionFromPreview(report) {
     eval_data: report.eval_data,
     next_actions: compactTuningActions(report.chat_data, report.eval_data, Boolean(report.dataset_pack)),
     preview_command: report.dataset_pack
-      ? shellCommand(["PYTHONPATH=src", "python", "-m", "picochat.cli", "data", "preview", "--dataset-pack", report.dataset_pack])
+      ? shellCommand(["picochat", "data", "preview", "--dataset-pack", report.dataset_pack])
       : null,
   };
 }

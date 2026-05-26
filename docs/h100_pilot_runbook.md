@@ -54,7 +54,7 @@ KV cache equivalence, resume fingerprint rejection, sharded loading, HF export,
 and `torch.compile`.
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli sanity preh100 \
+PYTHONUNBUFFERED=1 picochat sanity preh100 \
   --out-dir runs/h100-sanity-v1 \
   --device cuda \
   --precision bf16 \
@@ -84,7 +84,7 @@ SFT behavior without turning the first instance into a blind spend.
 ```bash
 mkdir -p logs
 
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data climbmix-import \
+PYTHONUNBUFFERED=1 picochat data climbmix-import \
   --out-dir runs/h100-climbmix-16shard-80k-pack-v1 \
   --shards 16 \
   --max-rows 80000 \
@@ -92,7 +92,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data climbmix-import \
   --document-shard-rows 1000 \
   --force 2>&1 | tee logs/import-h100.log
 
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
+PYTHONUNBUFFERED=1 picochat data benchmark-pack \
   --dataset-pack runs/h100-climbmix-16shard-80k-pack-v1/dataset_pack.json \
   --sft-rows 1600 \
   --eval-rows 320 \
@@ -111,7 +111,7 @@ The `capability` task mixture remains useful for diagnostics and midtraining
 experiments, but do not mix those results into a release claim.
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data task-pack \
+PYTHONUNBUFFERED=1 picochat data task-pack \
   --dataset-pack runs/h100-climbmix-16shard-80k-pack-v1/dataset_pack.json \
   --out-dir runs/h100-climbmix-16shard-80k-capability-pack-v1 \
   --sft-rows 2400 \
@@ -145,7 +145,7 @@ default and preserves BOS/EOS document boundaries when a corpus manifest exists,
 but validates by token shard rather than by complete document.
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+PYTHONUNBUFFERED=1 picochat run tiny \
   --out-dir runs/h100-climbmix-16shard-80k-modern-pilot-v1 \
   --dataset-pack runs/h100-climbmix-16shard-80k-pack-v1/dataset_pack.json \
   --device cuda \
@@ -229,7 +229,7 @@ Only remove `--preflight-only` after the preflight is clean or only warning on
 known LR-scaling notes.
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+PYTHONUNBUFFERED=1 picochat run tiny \
   --out-dir runs/h100-climbmix-16shard-80k-modern-pilot-v1 \
   --dataset-pack runs/h100-climbmix-16shard-80k-pack-v1/dataset_pack.json \
   --device cuda \
@@ -300,7 +300,7 @@ count. It is useful when changing GPU count, context size, or target model size
 instead of hand-editing the run command.
 
 ```bash
-PYTHONPATH=src python -m picochat.cli scale plan \
+picochat scale plan \
   --target-params 100m \
   --depth 16 \
   --dataset-tokens 667m \
@@ -313,7 +313,7 @@ recommended steps and LR candidates before deciding whether to use the
 conservative `h100-100m-ddp8` preset or a fresh optimizer experiment.
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data climbmix-import \
+PYTHONUNBUFFERED=1 picochat data climbmix-import \
   --out-dir runs/h100-climbmix-170shard-800k-pack-v1 \
   --shards 170 \
   --max-rows 800000 \
@@ -321,7 +321,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data climbmix-import \
   --document-shard-rows 1000 \
   --force 2>&1 | tee logs/import-h100-100m.log
 
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
+PYTHONUNBUFFERED=1 picochat data benchmark-pack \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --sft-rows 1600 \
   --eval-rows 320 \
@@ -330,7 +330,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
   --source offline \
   --force 2>&1 | tee logs/benchmark-pack-h100-100m.log
 
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+PYTHONUNBUFFERED=1 picochat run tiny \
   --out-dir runs/h100-climbmix-100m-release-v1 \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --scale h100-100m \
@@ -346,7 +346,7 @@ present, but validation is still a held-out token-shard split rather than a
 complete-document split:
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+PYTHONUNBUFFERED=1 picochat run tiny \
   --out-dir runs/h100-climbmix-100m-release-v1 \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --scale h100-100m \
@@ -368,7 +368,7 @@ needs about one eighth the steps in both phases. Run preflight once with a
 simulated DDP world size:
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+PYTHONUNBUFFERED=1 picochat run tiny \
   --out-dir runs/h100-climbmix-100m-ddp8-release-v1 \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --scale h100-100m-ddp8 \
@@ -421,7 +421,7 @@ from flash_attn_interface import flash_attn_func
 print("direct FA3 OK:", flash_attn_func)
 PY
 
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli sanity preh100 \
+PYTHONUNBUFFERED=1 picochat sanity preh100 \
   --out-dir runs/h200-ddp8-sanity-fa3-v1 \
   --device cuda \
   --precision bf16 \
@@ -435,7 +435,7 @@ Build a larger pack and promote a release-skills curriculum. This is the
 non-negotiable path when arithmetic and spelling are claims:
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data climbmix-import \
+PYTHONUNBUFFERED=1 picochat data climbmix-import \
   --out-dir runs/h200-climbmix-2048shard-10m-pack-v1 \
   --shards 2048 \
   --max-rows 10000000 \
@@ -443,7 +443,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data climbmix-import \
   --document-shard-rows 1000 \
   --force 2>&1 | tee logs/import-h200-1b.log
 
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
+PYTHONUNBUFFERED=1 picochat data benchmark-pack \
   --dataset-pack runs/h200-climbmix-2048shard-10m-pack-v1/dataset_pack.json \
   --sft-rows 1600 \
   --eval-rows 320 \
@@ -456,7 +456,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
 Preflight with the same DDP world size you will launch:
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+PYTHONUNBUFFERED=1 picochat run tiny \
   --out-dir runs/h200-climbmix-1b-ddp8-release-v1 \
   --dataset-pack runs/h200-climbmix-2048shard-10m-pack-v1/dataset_pack.json \
   --scale h200-1b-ddp8 \
@@ -496,7 +496,7 @@ while still requiring arithmetic, spelling, choice, identity, and refusal
 evidence before release.
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli train sft-sweep \
+PYTHONUNBUFFERED=1 picochat train sft-sweep \
   --dataset-pack runs/h100-climbmix-16shard-80k-pack-v1/dataset_pack.json \
   --tokenizer runs/h100-climbmix-16shard-80k-modern-pilot-v1/tokenizer.json \
   --checkpoint runs/h100-climbmix-16shard-80k-modern-pilot-v1/base/best_checkpoint \
@@ -565,7 +565,7 @@ and logs are included; `corpus.txt`, `corpus_manifest.json`, and token shards
 are excluded unless you pass `--include-corpus` or `--include-token-shards`.
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run bundle \
+picochat run bundle \
   --run-dir runs/h100-climbmix-16shard-80k-modern-pilot-v1 \
   --out h100-climbmix-modern-pilot-artifacts.tgz \
   --logs-dir logs \
@@ -577,7 +577,7 @@ or resuming. This reads checkpoint metadata only; it does not load model
 weights.
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run inspect-bundle \
+picochat run inspect-bundle \
   --bundle h100-climbmix-modern-pilot-artifacts.tgz
 ```
 
@@ -592,7 +592,7 @@ identical; Picochat validates the training fingerprint and refuses mismatched
 corpus/tokenizer/model settings.
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+PYTHONUNBUFFERED=1 picochat run tiny \
   --out-dir runs/h100-climbmix-100m-release-v1 \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --scale h100-100m \
@@ -608,7 +608,7 @@ base step, so the base phase validates and exits without spending another full
 base run before SFT resumes.
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+PYTHONUNBUFFERED=1 picochat run tiny \
   --out-dir runs/h100-climbmix-100m-release-v1 \
   --dataset-pack runs/h100-climbmix-170shard-800k-pack-v1/dataset_pack.json \
   --scale h100-100m \
@@ -622,7 +622,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
 For model release tests, export the best SFT checkpoint after the run:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli export hf \
+picochat export hf \
   --checkpoint runs/h100-climbmix-16shard-80k-modern-pilot-v1/sft/best_checkpoint \
   --tokenizer runs/h100-climbmix-16shard-80k-modern-pilot-v1/tokenizer.json \
   --out-dir runs/h100-climbmix-16shard-80k-modern-pilot-v1/hf-release \

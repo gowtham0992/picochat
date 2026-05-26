@@ -35,6 +35,7 @@ class ChatEvalItem:
     split: str = "default"
     level: str = "heldout"
     curriculum_stage: str = ""
+    robustness_variant: str = ""
     reference_answer: str | None = None
     required_entities: tuple[str, ...] = ()
     min_words: int | None = None
@@ -235,6 +236,9 @@ def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
         curriculum_stage = record.get("curriculum_stage", "")
         if not isinstance(curriculum_stage, str):
             raise ValueError(f"line {line_number} curriculum_stage field must be a string when present")
+        robustness_variant = record.get("robustness_variant", "")
+        if not isinstance(robustness_variant, str):
+            raise ValueError(f"line {line_number} robustness_variant field must be a string when present")
         required_entities = record.get("required_entities", record.get("entities", ()))
         require_corpus_support = record.get("require_corpus_support", False)
         if not isinstance(require_corpus_support, bool):
@@ -267,6 +271,7 @@ def load_chat_eval_items(path: str | Path) -> list[ChatEvalItem]:
             split=split or "default",
             level=level.strip(),
             curriculum_stage=curriculum_stage.strip(),
+            robustness_variant=robustness_variant.strip(),
             reference_answer=reference_answer,
             required_entities=_as_string_tuple(required_entities, line_number, "required_entities"),
             min_words=_optional_int(record.get("min_words"), line_number, "min_words"),
@@ -521,6 +526,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
     for index, item in enumerate(items):
         choice_scores = None
         choice_details = None
+        choice_margin = None
         generation_max_new_tokens = None
         if item.correct_choice:
             reply, choice_scores, choice_details = _predict_choice_reply(
@@ -530,6 +536,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
                 item,
                 precision_runtime=precision_runtime,
             )
+            choice_margin = _choice_margin_diagnostics(choice_scores, item.correct_choice)
         else:
             reply, generation_max_new_tokens = _generate_eval_reply(
                 model,
@@ -547,6 +554,8 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             support_corpus_tokens=support_corpus_tokens,
             corpus_support_threshold=config.corpus_support_threshold,
         )
+        skill_group = _skill_group_for_category(item.category)
+        skill_stage = _skill_stage_key(skill_group, item.curriculum_stage)
         rows.append({
             "index": index + 1,
             "user": item.user,
@@ -555,6 +564,10 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "split": item.split,
             "level": item.level,
             "curriculum_stage": item.curriculum_stage,
+            "robustness_variant": item.robustness_variant,
+            "skill_group": skill_group,
+            "skill_stage": skill_stage,
+            "robustness_key": _robustness_key(item),
             "reply": reply,
             "must_include": list(item.must_include),
             "must_include_any": [list(group) for group in item.must_include_any],
@@ -572,6 +585,15 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "normalized_answer_required": item.normalized_answer_required,
             "choice_logprobs": choice_scores,
             "choice_score_details": choice_details,
+            "choice_logprob_margin": (
+                choice_margin["predicted_margin"] if choice_margin else None
+            ),
+            "choice_correct_logprob_margin": (
+                choice_margin["correct_margin"] if choice_margin else None
+            ),
+            "choice_margin_pass": (
+                choice_margin["margin_pass"] if choice_margin else None
+            ),
             "choice_eval_method": (
                 "normalized_logprob_best_of_whitespace_and_eos_variants"
                 if item.correct_choice else None
@@ -645,14 +667,64 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
         seed=config.seed + 404,
     )
     stage_breakdown.pop("", None)
+    skill_breakdown = _breakdown(
+        rows,
+        "skill_group",
+        "other",
+        bootstrap_samples=config.ci_bootstrap_samples,
+        confidence=config.ci_confidence,
+        seed=config.seed + 505,
+    )
+    skill_stage_breakdown = _breakdown(
+        rows,
+        "skill_stage",
+        "",
+        bootstrap_samples=config.ci_bootstrap_samples,
+        confidence=config.ci_confidence,
+        seed=config.seed + 606,
+    )
+    skill_stage_breakdown.pop("", None)
+    robustness_breakdown = _breakdown(
+        rows,
+        "robustness_key",
+        "",
+        bootstrap_samples=config.ci_bootstrap_samples,
+        confidence=config.ci_confidence,
+        seed=config.seed + 707,
+    )
+    robustness_breakdown.pop("", None)
     choice_rows = [row for row in rows if row.get("correct_choice")]
     non_choice_rows = [row for row in rows if not row.get("correct_choice")]
+    unsafe_refusal_rows = [row for row in rows if _is_unsafe_refusal_row(row)]
+    benign_non_refusal_rows = [row for row in rows if _is_benign_non_refusal_row(row)]
     choice_correct = sum(
         1 for row in choice_rows
         if row.get("choice_predicted") == row.get("correct_choice")
     )
     choice_passed = sum(1 for row in choice_rows if row.get("passed"))
     non_choice_passed = sum(1 for row in non_choice_rows if row.get("passed"))
+    unsafe_refusal_matches = sum(1 for row in unsafe_refusal_rows if row.get("refusal_match"))
+    unsafe_refusal_passed = sum(
+        1 for row in unsafe_refusal_rows
+        if row.get("passed") and row.get("refusal_match")
+    )
+    benign_non_refusal = sum(1 for row in benign_non_refusal_rows if not row.get("refusal_match"))
+    choice_accuracy = _safe_rate(choice_correct, len(choice_rows)) if choice_rows else None
+    choice_random_baseline = _choice_random_baseline(choice_rows)
+    choice_adjusted_accuracy = _safe_adjusted_rate(choice_accuracy, choice_random_baseline)
+    choice_correct_margin_rows = [
+        row for row in choice_rows
+        if row.get("choice_correct_logprob_margin") is not None
+    ]
+    choice_margin_passed = sum(
+        1 for row in choice_correct_margin_rows
+        if bool(row.get("choice_margin_pass"))
+    )
+    choice_low_margin = sum(
+        1 for row in choice_correct_margin_rows
+        if bool(row.get("choice_margin_pass"))
+        and float(row.get("choice_correct_logprob_margin") or 0.0) <= 0.05
+    )
     analysis = analyze_eval_failures(rows, category_breakdown, split_breakdown, level_breakdown)
     report = {
         "config": {
@@ -728,6 +800,48 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
                 confidence=config.ci_confidence,
                 seed=config.seed + 14,
             ),
+            "unsafe_refusal_examples": len(unsafe_refusal_rows),
+            "unsafe_refusal_matches": unsafe_refusal_matches,
+            "unsafe_refusal_rate": (
+                _safe_rate(unsafe_refusal_matches, len(unsafe_refusal_rows))
+                if unsafe_refusal_rows else None
+            ),
+            "unsafe_refusal_rate_ci": _bootstrap_rate_ci(
+                [bool(row.get("refusal_match")) for row in unsafe_refusal_rows],
+                samples=config.ci_bootstrap_samples,
+                confidence=config.ci_confidence,
+                seed=config.seed + 17,
+            ),
+            "unsafe_refusal_passed": unsafe_refusal_passed,
+            "unsafe_refusal_pass_rate": (
+                _safe_rate(unsafe_refusal_passed, len(unsafe_refusal_rows))
+                if unsafe_refusal_rows else None
+            ),
+            "unsafe_refusal_pass_rate_ci": _bootstrap_rate_ci(
+                [
+                    bool(row.get("passed") and row.get("refusal_match"))
+                    for row in unsafe_refusal_rows
+                ],
+                samples=config.ci_bootstrap_samples,
+                confidence=config.ci_confidence,
+                seed=config.seed + 18,
+            ),
+            "benign_non_refusal_examples": len(benign_non_refusal_rows),
+            "benign_non_refusal": benign_non_refusal,
+            "benign_non_refusal_rate": (
+                _safe_rate(benign_non_refusal, len(benign_non_refusal_rows))
+                if benign_non_refusal_rows else None
+            ),
+            "benign_non_refusal_rate_ci": _bootstrap_rate_ci(
+                [not bool(row.get("refusal_match")) for row in benign_non_refusal_rows],
+                samples=config.ci_bootstrap_samples,
+                confidence=config.ci_confidence,
+                seed=config.seed + 19,
+            ),
+            "over_refusal_rate": (
+                1.0 - _safe_rate(benign_non_refusal, len(benign_non_refusal_rows))
+                if benign_non_refusal_rows else None
+            ),
             "unsupported_claims": unsupported_claims,
             "unsupported_claim_rate": unsupported_claims / len(rows),
             "prompt_echoes": prompt_echoes,
@@ -762,7 +876,7 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "average_repetition_ngram_rate": _metric_average(rows, "repetition_ngram_rate"),
             "choice_examples": len(choice_rows),
             "choice_correct": choice_correct,
-            "choice_accuracy": _safe_rate(choice_correct, len(choice_rows)) if choice_rows else None,
+            "choice_accuracy": choice_accuracy,
             "choice_accuracy_ci": _bootstrap_rate_ci(
                 [
                     row.get("choice_predicted") == row.get("correct_choice")
@@ -780,6 +894,30 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
                 confidence=config.ci_confidence,
                 seed=config.seed + 16,
             ),
+            "choice_random_baseline": choice_random_baseline,
+            "choice_accuracy_adjusted": choice_adjusted_accuracy,
+            "choice_margin_examples": len(choice_correct_margin_rows),
+            "choice_margin_passed": choice_margin_passed,
+            "choice_margin_accuracy": (
+                _safe_rate(choice_margin_passed, len(choice_correct_margin_rows))
+                if choice_correct_margin_rows else None
+            ),
+            "choice_margin_accuracy_ci": _bootstrap_rate_ci(
+                [bool(row.get("choice_margin_pass")) for row in choice_correct_margin_rows],
+                samples=config.ci_bootstrap_samples,
+                confidence=config.ci_confidence,
+                seed=config.seed + 20,
+            ),
+            "choice_mean_logprob_margin": _metric_average(choice_rows, "choice_logprob_margin"),
+            "choice_mean_correct_logprob_margin": _metric_average(
+                choice_rows,
+                "choice_correct_logprob_margin",
+            ),
+            "choice_low_margin_correct": choice_low_margin,
+            "choice_low_margin_rate": (
+                _safe_rate(choice_low_margin, len(choice_correct_margin_rows))
+                if choice_correct_margin_rows else None
+            ),
             "choice_scoring": (
                 "normalized_logprob_best_of_whitespace_and_eos_variants"
                 if choice_rows else None
@@ -788,6 +926,9 @@ def run_chat_eval(config: ChatEvalConfig) -> dict:
             "split_breakdown": split_breakdown,
             "level_breakdown": level_breakdown,
             "stage_breakdown": stage_breakdown,
+            "skill_breakdown": skill_breakdown,
+            "skill_stage_breakdown": skill_stage_breakdown,
+            "robustness_breakdown": robustness_breakdown,
         },
         "analysis": analysis,
         "examples": rows,
@@ -1571,8 +1712,138 @@ def _read_optional_support_token_set(path: str | None, read_chars: int = 1_000_0
     return frozenset(tokens) if tokens else None
 
 
+def _choice_margin_diagnostics(
+    scores: dict[str, float] | None,
+    correct_choice: str | None,
+) -> dict:
+    """Return likelihood-margin diagnostics for categorical eval rows."""
+    if not scores or correct_choice is None or correct_choice not in scores:
+        return {
+            "best_label": None,
+            "second_label": None,
+            "predicted_margin": None,
+            "correct_margin": None,
+            "margin_pass": False,
+        }
+    finite_scores = [
+        (label, float(score))
+        for label, score in scores.items()
+        if score != float("-inf")
+    ]
+    if not finite_scores:
+        return {
+            "best_label": None,
+            "second_label": None,
+            "predicted_margin": None,
+            "correct_margin": None,
+            "margin_pass": False,
+        }
+    finite_scores.sort(key=lambda item: item[1], reverse=True)
+    best_label, best_score = finite_scores[0]
+    second_label = finite_scores[1][0] if len(finite_scores) > 1 else None
+    second_score = finite_scores[1][1] if len(finite_scores) > 1 else float("-inf")
+    predicted_margin = best_score - second_score if len(finite_scores) > 1 else None
+    correct_score = float(scores[correct_choice])
+    other_scores = [score for label, score in finite_scores if label != correct_choice]
+    if other_scores:
+        correct_margin = correct_score - max(other_scores)
+        margin_pass = correct_margin > 0.0
+    else:
+        correct_margin = None
+        margin_pass = best_label == correct_choice
+    return {
+        "best_label": best_label,
+        "second_label": second_label,
+        "predicted_margin": predicted_margin,
+        "correct_margin": correct_margin,
+        "margin_pass": margin_pass,
+    }
+
+
 def _safe_rate(numerator: int, denominator: int) -> float:
     return float(numerator) / float(denominator) if denominator else 1.0
+
+
+def _safe_adjusted_rate(score: float | None, baseline: float | None) -> float | None:
+    if score is None or baseline is None:
+        return None
+    denominator = 1.0 - baseline
+    if denominator <= 0.0:
+        return None
+    return (score - baseline) / denominator
+
+
+def _choice_random_baseline(rows: list[dict]) -> float | None:
+    baselines = []
+    for row in rows:
+        labels = row.get("choice_labels") or ()
+        if len(labels) > 0:
+            baselines.append(1.0 / len(labels))
+    if not baselines:
+        return None
+    return sum(baselines) / len(baselines)
+
+
+def _skill_group_for_category(category: str) -> str:
+    category = str(category or "").strip()
+    if category == "identity":
+        return "identity"
+    if "refusal" in category:
+        return "refusal"
+    if category.startswith(("bench_choice", "mmlu_", "arc_")):
+        return "choice"
+    if category.startswith(("bench_math_", "gsm8k")):
+        return "math"
+    if category.startswith("bench_spelling_"):
+        return "spelling"
+    if category.startswith("domain_"):
+        return "domain"
+    return "other"
+
+
+def _skill_stage_key(skill_group: str, curriculum_stage: str) -> str:
+    skill_group = str(skill_group or "").strip()
+    curriculum_stage = str(curriculum_stage or "").strip()
+    if not skill_group or not curriculum_stage:
+        return ""
+    return f"{skill_group}:{curriculum_stage}"
+
+
+_ROBUSTNESS_MARKERS = (
+    "paraphrase",
+    "typo",
+    "case",
+    "casing",
+    "punctuation",
+    "adversarial",
+    "wording",
+    "format_shift",
+    "near_word",
+)
+
+
+def _robustness_key(item: ChatEvalItem) -> str:
+    if item.robustness_variant:
+        return item.robustness_variant
+    parts = (
+        item.split,
+        item.level,
+        item.curriculum_stage,
+        item.category,
+    )
+    joined = " ".join(str(part or "").lower() for part in parts)
+    for marker in _ROBUSTNESS_MARKERS:
+        if marker in joined:
+            return marker
+    return ""
+
+
+def _is_unsafe_refusal_row(row: dict) -> bool:
+    return "refusal" in str(row.get("category", "")) or not bool(row.get("answerable", True))
+
+
+def _is_benign_non_refusal_row(row: dict) -> bool:
+    return bool(row.get("answerable", True)) and "refusal" not in str(row.get("category", ""))
 
 
 def _normalize_for_echo(text: str) -> str:

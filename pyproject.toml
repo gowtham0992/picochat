@@ -24,17 +24,22 @@ docs = [
 ]
 hf = [
     "datasets>=2.20",
+    "peft>=0.11",
     "safetensors>=0.4",
     "transformers>=4.40",
 ]
 monitor = [
     "tensorboard>=2.14",
 ]
+bench = [
+    "lm-eval>=0.4",
+]
 dev = [
     "pytest>=8.0",
 ]
 
 [project.scripts]
+picochat = "picochat.cli:main"
 pico = "picochat.cli:main"
 
 [tool.setuptools.packages.find]

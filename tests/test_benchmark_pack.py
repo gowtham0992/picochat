@@ -278,6 +278,8 @@ def test_weak_skills_profile_overweights_math_and_spelling(tmp_path):
     assert skill_eval_rows
     assert all(row["normalized_answer_required"] is True for row in skill_eval_rows)
     assert all(row.get("normalized_answer") for row in skill_eval_rows)
+    assert all(row.get("robustness_variant") for row in skill_eval_rows)
+    assert {row.get("robustness_variant") for row in skill_eval_rows} >= {"canonical", "paraphrase"}
     assert chat_stages["math_l1_addition_single_digit"] >= chat_stages["math_l3_addition_carry"]
     assert chat_stages["spelling_l1_first_letter"] >= chat_stages["spelling_l3_reverse"]
     assert eval_stages["spelling_l1_last_letter"] > 0

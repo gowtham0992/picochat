@@ -12,6 +12,98 @@ def test_cli_version(capsys):
     assert "picochat" in capsys.readouterr().out
 
 
+def test_cli_paths_command_explains_training_routes(capsys):
+    exit_code = main(["paths"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Train from scratch" in output
+    assert "Fine-tune an existing HF model" in output
+    assert "picochat train hf-sft" in output
+
+
+def test_cli_hf_sft_routes_to_existing_model_trainer(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_train(config):
+        captured["config"] = config
+        return {
+            "best_val_loss": 1.25,
+        }
+
+    monkeypatch.setattr("picochat.cli.train_hf_sft", fake_train)
+    chat_path = tmp_path / "chat.jsonl"
+    chat_path.write_text(json.dumps({"user": "hi", "assistant": "hello"}) + "\n", encoding="utf-8")
+
+    exit_code = main([
+        "train",
+        "hf-sft",
+        "--model",
+        "HuggingFaceTB/SmolLM2-135M-Instruct",
+        "--input",
+        str(chat_path),
+        "--out-dir",
+        str(tmp_path / "hf-sft"),
+        "--max-steps",
+        "7",
+        "--max-length",
+        "256",
+        "--device",
+        "cpu",
+        "--precision",
+        "float32",
+        "--gradient-checkpointing",
+        "--peft",
+        "lora",
+        "--lora-rank",
+        "12",
+        "--done-file",
+        "done.txt",
+    ])
+
+    assert exit_code == 0
+    assert captured["config"].model == "HuggingFaceTB/SmolLM2-135M-Instruct"
+    assert captured["config"].input_path == str(chat_path)
+    assert captured["config"].max_steps == 7
+    assert captured["config"].max_length == 256
+    assert captured["config"].gradient_checkpointing is True
+    assert captured["config"].peft == "lora"
+    assert captured["config"].lora_rank == 12
+    assert captured["config"].done_file == "done.txt"
+
+
+def test_cli_train_base_accepts_experimental_fsdp_strategy(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_train(config):
+        captured["config"] = config
+        return {
+            "checkpoint": str(tmp_path / "run" / "checkpoint"),
+            "sample": "ok",
+            "config": {"artifacts_written": True},
+        }
+
+    monkeypatch.setattr("picochat.cli.train_base", fake_train)
+
+    exit_code = main([
+        "train",
+        "base",
+        "--corpus",
+        str(tmp_path / "corpus.txt"),
+        "--tokenizer",
+        str(tmp_path / "tokenizer.json"),
+        "--out-dir",
+        str(tmp_path / "run"),
+        "--ddp",
+        "--distributed-strategy",
+        "fsdp",
+    ])
+
+    assert exit_code == 0
+    assert captured["config"].ddp is True
+    assert captured["config"].distributed_strategy == "fsdp"
+
+
 def test_cli_sanity_preh100(tmp_path, capsys, monkeypatch):
     def fake_run(config):
         assert config.out_dir == str(tmp_path / "sanity")
@@ -19,6 +111,9 @@ def test_cli_sanity_preh100(tmp_path, capsys, monkeypatch):
         assert config.matmul_precision == "high"
         assert config.attn_backend == "math"
         assert config.include_compile is True
+        assert config.capacity_scale == "smoke"
+        assert config.capacity_batch_size == 2
+        assert config.capacity_min_free_fraction == 0.2
         return {
             "status": "passed",
             "report_path": str(tmp_path / "sanity" / "preh100_sanity.json"),
@@ -42,6 +137,12 @@ def test_cli_sanity_preh100(tmp_path, capsys, monkeypatch):
         "--attn-backend",
         "math",
         "--include-compile",
+        "--capacity-scale",
+        "smoke",
+        "--capacity-batch-size",
+        "2",
+        "--capacity-min-free-fraction",
+        "0.2",
     ])
 
     assert exit_code == 0
@@ -113,6 +214,8 @@ def test_cli_serve_builds_openai_compatible_server_config(monkeypatch):
         "cpu",
         "--top-k",
         "0",
+        "--api-key",
+        "local-secret",
         "--no-kv-cache",
     ])
 
@@ -125,6 +228,7 @@ def test_cli_serve_builds_openai_compatible_server_config(monkeypatch):
     assert config.model_name == "pico-demo"
     assert config.top_k is None
     assert config.use_kv_cache is False
+    assert config.api_key == "local-secret"
 
 
 def test_cli_run_tiny_multiseed(tmp_path, capsys, monkeypatch):
@@ -276,6 +380,48 @@ def test_cli_run_tiny_can_override_h100_scale_linear_bias(tmp_path, monkeypatch)
 
     assert exit_code == 0
     assert captured["config"].linear_bias is True
+
+
+def test_cli_run_tiny_accepts_optional_dpo_stage(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run(config):
+        captured["config"] = config
+        return {
+            "eval": {
+                "num_passed": 1,
+                "num_examples": 1,
+                "pass_rate": 1.0,
+            },
+        }
+
+    monkeypatch.setattr("picochat.cli.run_tiny", fake_run)
+
+    exit_code = main([
+        "run",
+        "tiny",
+        "--out-dir",
+        str(tmp_path / "with-dpo"),
+        "--dpo-input",
+        str(tmp_path / "preferences.jsonl"),
+        "--dpo-steps",
+        "12",
+        "--dpo-batch-size",
+        "2",
+        "--dpo-learning-rate",
+        "0.000003",
+        "--dpo-beta",
+        "0.2",
+        "--dpo-length-normalize",
+    ])
+
+    assert exit_code == 0
+    assert captured["config"].dpo_input == str(tmp_path / "preferences.jsonl")
+    assert captured["config"].dpo_steps == 12
+    assert captured["config"].dpo_batch_size == 2
+    assert captured["config"].dpo_learning_rate == 0.000003
+    assert captured["config"].dpo_beta == 0.2
+    assert captured["config"].dpo_length_normalize is True
 
 
 def test_cli_run_tiny_h200_1b_scale_defaults_to_skill_release(tmp_path, monkeypatch):
@@ -529,6 +675,101 @@ def test_cli_run_inspect_bundle_requires_training_state_file_for_resume(tmp_path
     assert report["checkpoints"][0]["metadata_has_training_state"] is True
     assert report["checkpoints"][0]["has_training_state"] is False
     assert report["resume_capable_checkpoints"] == []
+
+
+def test_cli_registry_builds_markdown_json_and_release_card(tmp_path, capsys):
+    run_dir = tmp_path / "runs" / "registered"
+    (run_dir / "base" / "best_checkpoint").mkdir(parents=True)
+    (run_dir / "base" / "best_checkpoint" / "model.pt").write_text("weights", encoding="utf-8")
+    (run_dir / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (run_dir / "summary.json").write_text(json.dumps({
+        "preflight": {
+            "status": "ready",
+            "budget": {
+                "estimated_parameters": 100,
+                "base_planned_tokens": 2000,
+            },
+        },
+        "eval": {"num_examples": 10, "num_passed": 6, "pass_rate": 0.6},
+        "sft_fit": {"num_examples": 10, "num_passed": 8, "pass_rate": 0.8},
+        "honesty": {"status": "ready"},
+        "long_run_gate": {
+            "status": "approved",
+            "profile": "skill_release",
+            "sft_fit_rate": 0.8,
+        },
+    }), encoding="utf-8")
+    registry_md = tmp_path / "registry.md"
+    registry_json = tmp_path / "registry.json"
+    release_card = tmp_path / "release-card.md"
+
+    exit_code = main([
+        "registry",
+        "--runs-dir",
+        str(tmp_path / "runs"),
+        "--out",
+        str(registry_md),
+        "--json-out",
+        str(registry_json),
+        "--release-card",
+        str(release_card),
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Best registered run: registered" in output
+    assert "# Picochat Model Registry" in registry_md.read_text(encoding="utf-8")
+    assert json.loads(registry_json.read_text(encoding="utf-8"))["best_run"] == "registered"
+    assert "# Picochat Release Card: registered" in release_card.read_text(encoding="utf-8")
+
+
+def test_cli_eval_lm_harness_dry_run_writes_command(tmp_path, capsys):
+    exit_code = main([
+        "eval",
+        "lm-harness",
+        "--model-path",
+        "exports/pico",
+        "--tasks",
+        "arc_easy,hellaswag",
+        "--out-dir",
+        str(tmp_path / "lm-eval"),
+        "--device",
+        "cuda:0",
+        "--batch-size",
+        "2",
+        "--model-arg",
+        "dtype=bfloat16",
+        "--dry-run",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "lm_eval" in output
+    assert "arc_easy,hellaswag" in output
+    metadata = json.loads((tmp_path / "lm-eval" / "lm_eval_command.json").read_text(encoding="utf-8"))
+    assert metadata["tasks"] == ["arc_easy", "hellaswag"]
+
+
+def test_cli_data_preference_starter(tmp_path, capsys):
+    chat = tmp_path / "chat.jsonl"
+    out = tmp_path / "preferences.jsonl"
+    chat.write_text(json.dumps({"user": "What are you?", "assistant": "Picochat.", "category": "identity"}) + "\n", encoding="utf-8")
+
+    exit_code = main([
+        "data",
+        "preference-starter",
+        "--input",
+        str(chat),
+        "--out",
+        str(out),
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "preference starter:" in output
+    row = json.loads(out.read_text(encoding="utf-8").strip())
+    assert row["chosen"] == "Picochat."
+    assert row["category"] == "identity_preference"
 
 
 def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
@@ -1218,6 +1459,72 @@ def test_cli_data_hf_import_uses_importer(tmp_path, capsys, monkeypatch):
     assert "rows_written: 2" in output
     assert f"documents_dir: {tmp_path / 'docs'}" in output
     assert "document_files_written: 2" in output
+
+
+def test_cli_data_hf_import_can_create_dataset_pack(tmp_path, capsys, monkeypatch):
+    from picochat.hf_import import HFImportReport
+
+    def fake_import(config):
+        return HFImportReport(
+            dataset=config.dataset,
+            config_name=config.config_name,
+            split=config.split,
+            text_column=config.text_column,
+            streaming=config.streaming,
+            max_rows=config.max_rows,
+            min_chars=config.min_chars,
+            out_path=config.out_path,
+            report_path=config.report_path or str(tmp_path / "hf_import_report.json"),
+            documents_dir=config.documents_dir or str(tmp_path / "documents"),
+            document_shard_rows=config.document_shard_rows,
+            document_files_written=1,
+            rows_seen=1,
+            rows_written=1,
+            rows_skipped=0,
+            characters_written=42,
+            rows=(),
+        )
+
+    captured_pack = {}
+
+    def fake_pack(**kwargs):
+        captured_pack.update(kwargs)
+        return SimpleNamespace(
+            dataset_pack=str(tmp_path / "pack" / "dataset_pack.json"),
+            corpus_recipe=str(tmp_path / "pack" / "corpus_recipe.json"),
+            chat_input=str(tmp_path / "pack" / "chat.jsonl"),
+            eval_input=str(tmp_path / "pack" / "eval.jsonl"),
+        )
+
+    monkeypatch.setattr("picochat.cli.import_hf_dataset", fake_import)
+    monkeypatch.setattr("picochat.cli.init_dataset_pack", fake_pack)
+
+    exit_code = main([
+        "data",
+        "hf-import",
+        "--dataset",
+        "HuggingFaceTB/smollm-corpus",
+        "--config",
+        "fineweb-edu-dedup",
+        "--out",
+        str(tmp_path / "corpus.txt"),
+        "--documents-dir",
+        str(tmp_path / "docs"),
+        "--pack-out",
+        str(tmp_path / "pack"),
+        "--pack-name",
+        "smollm-100m-public-v1",
+        "--pack-force",
+    ])
+
+    assert exit_code == 0
+    assert captured_pack["out_dir"] == str(tmp_path / "pack")
+    assert captured_pack["corpus_path"] == str(tmp_path / "docs")
+    assert captured_pack["name"] == "smollm-100m-public-v1"
+    assert captured_pack["force"] is True
+    output = capsys.readouterr().out
+    assert f"dataset_pack: {tmp_path / 'pack' / 'dataset_pack.json'}" in output
+    assert f"picochat data preview --dataset-pack {tmp_path / 'pack' / 'dataset_pack.json'}" in output
 
 
 def test_cli_climbmix_import_auto_shards_large_imports(tmp_path, capsys, monkeypatch):

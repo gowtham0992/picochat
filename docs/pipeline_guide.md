@@ -9,14 +9,28 @@ Picochat is an honest small-language-model factory. The goal is not to pretend
 a tiny or pilot model is a large assistant. The goal is to make each step of
 language-model training visible enough to inspect, rerun, and explain.
 
-The pipeline is:
+The native scratch pipeline is:
 
 ```text
-dataset -> tokenizer -> base pretraining -> chat SFT -> eval -> chat -> report
+dataset -> tokenizer -> base pretraining -> chat SFT -> optional DPO -> eval -> chat -> report
 ```
 
 Each stage writes artifacts to a run folder so the next stage has visible
 inputs instead of hidden state.
+
+If you are starting from an existing Hugging Face model instead of creating a
+Picochat-native base model, use the separate path:
+
+```bash
+picochat train hf-sft --model <hf-model-id> --input <chat.jsonl> --out-dir runs/<hf-sft-name>
+```
+
+That path writes Hugging Face model folders and intentionally skips Picochat's
+native tokenizer/base-pretraining stages.
+
+For multi-turn tool-calling data, put the full context in a `messages` array and
+end the row with the target assistant response. Picochat masks the previous
+system/user/assistant/tool turns and trains only the final assistant message.
 
 ## 1. Dataset
 
@@ -52,7 +66,7 @@ memorize that data.
 Useful command:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tiny_dataset_pack.json
+picochat data preview --dataset-pack examples/tiny_dataset_pack.json
 ```
 
 Hugging Face import is an intake helper before this stage. It streams or loads
@@ -60,14 +74,14 @@ rows from a dataset split, writes a local text file, and then hands control
 back to the normal Picochat corpus preview:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli data hf-import --dataset HuggingFaceFW/fineweb-edu --split train --text-column text --max-rows 1000 --out runs/fineweb-edu-sample/corpus.txt
-PYTHONPATH=src python -m picochat.cli data preview --input runs/fineweb-edu-sample/corpus.txt
+picochat data hf-import --dataset HuggingFaceFW/fineweb-edu --split train --text-column text --max-rows 1000 --out runs/fineweb-edu-sample/corpus.txt
+picochat data preview --input runs/fineweb-edu-sample/corpus.txt
 ```
 
 Once the corpus exists, generate an eval starter from the same text:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli data eval-starter --input runs/fineweb-edu-sample/corpus.txt --out runs/fineweb-edu-sample/eval_starter.jsonl --max-items 40
+picochat data eval-starter --input runs/fineweb-edu-sample/corpus.txt --out runs/fineweb-edu-sample/eval_starter.jsonl --max-items 40
 ```
 
 Important idea: generated eval rows are scaffolding. They are useful because
@@ -101,13 +115,13 @@ What to inspect:
 Useful command:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer.json
+picochat tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer.json
 ```
 
 To compare BPE against the educational baseline:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer-bpe.json --type bpe --vocab-size 512 --min-freq 2
+picochat tok train --input runs/manual/corpus.txt --out runs/manual/tokenizer-bpe.json --type bpe --vocab-size 512 --min-freq 2
 ```
 
 ## 3. Base Pretraining
@@ -155,13 +169,13 @@ windows from the same document.
 Useful command:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --corpus-manifest runs/manual/corpus_manifest.json --split-mode document --out-dir runs/manual/base --context-size 128 --max-steps 300
+picochat train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --corpus-manifest runs/manual/corpus_manifest.json --split-mode document --out-dir runs/manual/base --context-size 128 --max-steps 300
 ```
 
 For longer runs, add guardrails:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --corpus-manifest runs/manual/corpus_manifest.json --split-mode document --out-dir runs/manual/base --context-size 128 --max-steps 10000 --max-minutes 45 --early-stop-patience 3 --canary-count 3
+picochat train base --corpus runs/manual/corpus.txt --tokenizer runs/manual/tokenizer.json --corpus-manifest runs/manual/corpus_manifest.json --split-mode document --out-dir runs/manual/base --context-size 128 --max-steps 10000 --max-minutes 45 --early-stop-patience 3 --canary-count 3
 ```
 
 ## 4. Chat SFT
@@ -200,13 +214,13 @@ of hiding the gap.
 Useful command:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli train sft --input examples/tiny_chat.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/base/best_checkpoint --out-dir runs/manual/sft --max-steps 600 --early-stop-patience 6
+picochat train sft --input examples/tiny_chat.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/base/best_checkpoint --out-dir runs/manual/sft --max-steps 600 --early-stop-patience 6
 ```
 
 LoRA command for lightweight domain adapters:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli train sft --input examples/tiny_chat.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/base/best_checkpoint --out-dir runs/manual/sft-lora --peft lora --lora-rank 8 --lora-alpha 16 --lora-targets attn_qkv,attn_proj --max-steps 600 --early-stop-patience 6
+picochat train sft --input examples/tiny_chat.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/base/best_checkpoint --out-dir runs/manual/sft-lora --peft lora --lora-rank 8 --lora-alpha 16 --lora-targets attn_qkv,attn_proj --max-steps 600 --early-stop-patience 6
 ```
 
 LoRA is for adapting an existing base checkpoint to a domain or behavior style.
@@ -237,11 +251,33 @@ Output artifacts:
 - `dpo/dpo_report.json`
 - `dpo/report.md`
 
+For smoke tests, Picochat can generate starter preference pairs from SFT rows:
+
+```bash
+picochat data preference-starter --input runs/manual/chat.jsonl --out data/preferences.jsonl
+```
+
+Those starter rows use synthetic rejected answers. They are useful for checking
+DPO mechanics, not for claiming alignment quality.
+
 Useful command:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli train dpo --input data/preferences.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/sft/checkpoint --out-dir runs/manual/dpo --max-steps 200 --learning-rate 0.000005 --beta 0.1 --early-stop-patience 4
+picochat train dpo --input data/preferences.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/sft/checkpoint --out-dir runs/manual/dpo --max-steps 200 --learning-rate 0.000005 --beta 0.1 --early-stop-patience 4
 ```
+
+End-to-end command:
+
+```bash
+picochat run tiny \
+  --out-dir runs/manual \
+  --dataset-pack runs/pack/dataset_pack.json \
+  --dpo-input data/preferences.jsonl \
+  --dpo-steps 200
+```
+
+When DPO is enabled in `run tiny`, SFT-fit, held-out eval, external evals, and
+release gates all score the post-DPO checkpoint.
 
 ## 6. Eval
 
@@ -289,8 +325,8 @@ answers when it should refuse or echoes the prompt instead of answering.
 Useful command:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli eval chat --input examples/tiny_eval.jsonl --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/eval
-PYTHONPATH=src python -m picochat.cli eval chat --input examples/tiny_eval.jsonl --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/eval --support-corpus runs/manual/corpus.txt
+picochat eval chat --input examples/tiny_eval.jsonl --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/eval
+picochat eval chat --input examples/tiny_eval.jsonl --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json --out-dir runs/manual/eval --support-corpus runs/manual/corpus.txt
 ```
 
 ## 7. Chat And Generation
@@ -319,7 +355,7 @@ and evals.
 Useful command:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli chat --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json
+picochat chat --checkpoint runs/manual/sft/checkpoint --tokenizer runs/manual/tokenizer.json
 ```
 
 ## 8. Report

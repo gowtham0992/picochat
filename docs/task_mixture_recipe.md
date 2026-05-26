@@ -19,7 +19,7 @@ not magic emergence from a tiny base run.
 Release-only pack:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli data task-pack \
+picochat data task-pack \
   --dataset-pack runs/h100-climbmix-16shard-80k-pack-v1/dataset_pack.json \
   --profile release \
   --sft-rows 1600 \
@@ -30,7 +30,7 @@ PYTHONPATH=src python -m picochat.cli data task-pack \
 Capability research pack:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli data task-pack \
+picochat data task-pack \
   --dataset-pack runs/h100-climbmix-16shard-80k-pack-v1/dataset_pack.json \
   --out-dir runs/h100-climbmix-16shard-80k-capability-pack-v1 \
   --profile capability \
@@ -45,7 +45,7 @@ PYTHONPATH=src python -m picochat.cli data task-pack \
 Balanced research pack:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli data task-pack \
+picochat data task-pack \
   --dataset-pack runs/h100-climbmix-16shard-80k-pack-v1/dataset_pack.json \
   --out-dir runs/h100-climbmix-16shard-80k-balanced-pack-v1 \
   --profile balanced \
@@ -62,7 +62,7 @@ PYTHONPATH=src python -m picochat.cli data task-pack \
 Use the base checkpoint as the controlled starting point:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli train sft \
+picochat train sft \
   --input runs/h100-climbmix-16shard-80k-capability-pack-v1/chat_task_mixture_capability.jsonl \
   --eval-input runs/h100-climbmix-16shard-80k-capability-pack-v1/eval_task_mixture_capability.jsonl \
   --tokenizer runs/h100-climbmix-release-pilot-v1/tokenizer.json \
@@ -83,7 +83,7 @@ PYTHONPATH=src python -m picochat.cli train sft \
   --grad-clip 1.0
 ```
 
-Then evaluate with `picochat.cli eval sft-fit` and `picochat.cli eval chat`.
+Then evaluate with `picochat eval sft-fit` and `picochat eval chat`.
 If capability transfer improves without prompt echo or unsupported claims,
 repeat the release SFT from the same base or from the capability checkpoint and
 compare both paths.

@@ -75,6 +75,14 @@ WEAK_SKILL_SPELLING_STAGE_WEIGHTS = (
     ("spelling_l3_reverse", 0.16),
 )
 
+_EVAL_ROBUSTNESS_VARIANTS = (
+    "canonical",
+    "paraphrase",
+    "format_shift",
+    "wording_shift",
+    "punctuation_shift",
+)
+
 
 class BenchmarkSourceError(RuntimeError):
     """Raised when a requested external benchmark source cannot be loaded."""
@@ -859,6 +867,10 @@ def _build_staged_spelling_rows(
     return rows
 
 
+def _eval_robustness_variant(index: int) -> str:
+    return _EVAL_ROBUSTNESS_VARIANTS[index % len(_EVAL_ROBUSTNESS_VARIANTS)]
+
+
 def _unique_rows(
     candidates: list[dict[str, Any]],
     existing: list[dict[str, Any]],
@@ -1462,6 +1474,7 @@ def _math_stage_row(
         row.update({
             "split": "benchmark",
             "level": "math",
+            "robustness_variant": _eval_robustness_variant(template_index),
             **_skill_eval_fields(answer_text, skill_answer_style, direct_max_words=24),
         })
     return row
@@ -1740,6 +1753,7 @@ def _spelling_row(
         row.update({
             "split": "benchmark",
             "level": "spelling",
+            "robustness_variant": _eval_robustness_variant(index),
             **_skill_eval_fields(answer, skill_answer_style, direct_max_words=20),
         })
     return row

@@ -256,8 +256,14 @@
       <div class="brand"><img class="brand-mark" src="assets/picochat-os-symbol.svg" alt=""> Picochat</div>
       <div class="nav-links">
         <a href="https://github.com/gowtham0992/picochat">GitHub</a>
+        <a href="training_paths.html">Training Paths</a>
+        <a href="model_evidence.html">Evidence</a>
         <a href="architecture.html">Architecture</a>
+        <a href="benchmark_protocol.html">Benchmarks</a>
+        <a href="model_registry.html">Registry</a>
         <a href="release_gates.html">Release Gates</a>
+        <a href="deployment.html">Deploy</a>
+        <a href="h100_100m_runbook.html">100M Runbook</a>
         <a href="h200_1b_runbook.html">8xH200 Runbook</a>
       </div>
     </nav>
@@ -275,8 +281,12 @@
           around a different product goal: make the factory hard to fool.
         </p>
         <div class="actions">
-          <a class="button" href="h200_1b_runbook.html">Read the 1B runbook</a>
+          <a class="button" href="model_evidence.html">Model evidence</a>
+          <a class="button" href="training_paths.html">Choose a training path</a>
+          <a class="button" href="h100_100m_runbook.html">Read the 100M runbook</a>
+          <a class="button secondary" href="h200_1b_runbook.html">1B runbook</a>
           <a class="button secondary" href="release_gates.html">Inspect the gates</a>
+          <a class="button secondary" href="benchmark_protocol.html">Benchmark protocol</a>
         </div>
       </div>
       <div class="terminal" aria-label="Picochat release gate preview">
@@ -289,6 +299,27 @@
         <div class="stage"><strong>SFT Fit</strong><span>training and held-out fit thresholds</span><span class="status warn">watch</span></div>
         <div class="stage"><strong>Eval</strong><span>identity/refusal/choice/math/spelling</span><span class="status block">gate</span></div>
         <div class="stage"><strong>External</strong><span>ARC/MMLU-style benchmark required</span><span class="status warn">missing</span></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Pick the path before the GPU.</h2>
+      <div class="grid">
+        <div class="card">
+          <label>Path A</label>
+          <h3>Train from scratch.</h3>
+          <p><code>picochat run tiny</code> owns the full native factory: tokenizer, base pretraining, SFT, optional DPO, eval, and release gate.</p>
+        </div>
+        <div class="card">
+          <label>Path B</label>
+          <h3>Fine-tune an existing model.</h3>
+          <p><code>picochat train hf-sft</code> starts from a Hugging Face causal LM such as SmolLM and writes HF model folders.</p>
+        </div>
+        <div class="card">
+          <label>Path C</label>
+          <h3>Evaluate and publish evidence.</h3>
+          <p><code>picochat eval</code>, <code>picochat registry</code>, and <code>picochat serve</code> keep release claims inspectable.</p>
+        </div>
       </div>
     </section>
 
@@ -307,6 +338,11 @@
 
     <section class="section grid">
       <div class="card">
+        <label>Evidence</label>
+        <h3>No model claim without a bundle.</h3>
+        <p>The model evidence page tracks what is published, what is pending, and what artifacts a public checkpoint must include.</p>
+      </div>
+      <div class="card">
         <label>Before training</label>
         <h3>Preflight can block the run.</h3>
         <p>Checks token/parameter budget, replay risk, SFT/eval coverage, attention backend, DDP shape, and contamination before GPU spend.</p>
@@ -321,6 +357,26 @@
         <h3>Completion is not release.</h3>
         <p>The long-run gate can still block release on SFT fit, held-out fit, visible eval, external benchmarks, prompt echo, or honesty issues.</p>
       </div>
+      <div class="card">
+        <label>Public proof</label>
+        <h3>100M is the first publish target.</h3>
+        <p>The 100M runbook uses a bounded SmolLM-Corpus pack and requires preflight, dry run, eval, release gate, and honesty evidence.</p>
+      </div>
+      <div class="card">
+        <label>Deployment</label>
+        <h3>Serve locally before claiming production.</h3>
+        <p>Docker and OpenAI-compatible smoke serving paths make demos repeatable while keeping high-throughput serving limits explicit.</p>
+      </div>
+      <div class="card">
+        <label>Community</label>
+        <h3>Contributions have guardrails.</h3>
+        <p>CI, pull request templates, and result issue templates keep outside changes tied to tests, docs, and release evidence.</p>
+      </div>
+      <div class="card">
+        <label>Registry</label>
+        <h3>Runs become auditable assets.</h3>
+        <p><code>picochat registry</code> turns completed runs into a model table and release card with gate, eval, budget, honesty, and checkpoint evidence.</p>
+      </div>
     </section>
 
     <section class="section split">
@@ -328,15 +384,14 @@
         <h2>Scale up without guessing.</h2>
         <p>
           The Scale Up lane emits remote commands for setup, sanity, ClimbMix
-          import, release-skills SFT/eval pack generation, preflight, 100-step
-          DDP dry run, full training, bundle, and return inspection.
+          or SmolLM-Corpus import, release-skills SFT/eval pack generation,
+          preflight, dry run, full training, bundle, and return inspection.
         </p>
       </div>
-      <pre class="code">torchrun --standalone --nproc_per_node=8 \
-  -m picochat.cli run tiny \
-  --scale h200-1b-ddp8 \
-  --dataset-pack runs/climbmix-cuda/dataset_pack.json \
-  --ddp --ddp-world-size 8 \
+      <pre class="code">picochat run tiny \
+  --scale h100-100m \
+  --dataset-pack runs/smollm-100m-pack-v1/dataset_pack.json \
+  --device cuda \
   --preflight-only</pre>
     </section>
 

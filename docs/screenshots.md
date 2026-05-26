@@ -13,7 +13,7 @@ are product previews, not evidence of a completed 1B run.
 Start the web UI:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli web --runs-dir runs --port 8765
+picochat web --runs-dir runs --port 8765
 ```
 
 Open:
