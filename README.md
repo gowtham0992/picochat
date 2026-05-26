@@ -20,6 +20,7 @@
   <a href="https://gowtham0992.github.io/picochat/benchmark_protocol.html">Benchmarks</a> ·
   <a href="https://gowtham0992.github.io/picochat/model_registry.html">Registry</a> ·
   <a href="https://gowtham0992.github.io/picochat/release_gates.html">Release Gates</a> ·
+  <a href="https://gowtham0992.github.io/picochat/contamination_and_honesty.html">Honesty Checks</a> ·
   <a href="https://gowtham0992.github.io/picochat/deployment.html">Deploy</a>
 </p>
 
