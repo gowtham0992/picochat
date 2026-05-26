@@ -135,6 +135,7 @@ const LAUNCH_CONTROL_IDS = [
   "launch-torch-compile",
   "launch-torch-compile-mode",
   "launch-gradient-checkpointing",
+  "launch-tensorboard-log-dir",
   "launch-auto-lr-scaling",
   "launch-loss-spike-rollback",
   "launch-base-early-stop-patience",
@@ -3538,6 +3539,7 @@ function applyLaunchPreset(quiet = false) {
   $("launch-torch-compile").checked = Boolean(values.torch_compile);
   $("launch-torch-compile-mode").value = values.torch_compile_mode || "default";
   $("launch-gradient-checkpointing").checked = Boolean(values.gradient_checkpointing);
+  $("launch-tensorboard-log-dir").value = values.tensorboard_log_dir || "";
   $("launch-auto-lr-scaling").checked = Boolean(values.auto_lr_scaling);
   $("launch-loss-spike-rollback").checked = Boolean(values.loss_spike_rollback);
   $("launch-base-early-stop-patience").value = values.base_early_stop_patience;
@@ -3658,6 +3660,7 @@ function launchConfig() {
     torch_compile: $("launch-torch-compile").checked,
     torch_compile_mode: $("launch-torch-compile-mode").value,
     gradient_checkpointing: $("launch-gradient-checkpointing").checked,
+    tensorboard_log_dir: $("launch-tensorboard-log-dir").value.trim(),
     auto_lr_scaling: $("launch-auto-lr-scaling").checked,
     loss_spike_rollback: $("launch-loss-spike-rollback").checked,
     base_early_stop_patience: launchNumber("launch-base-early-stop-patience"),
@@ -3792,6 +3795,9 @@ function launchReadiness(config = launchConfig()) {
   }
   if (config.gradient_checkpointing && config.context_size <= 512) {
     cautions.push("Gradient checkpointing saves memory but can slow small local runs.");
+  }
+  if (config.tensorboard_log_dir) {
+    notes.push(`TensorBoard ${config.tensorboard_log_dir}`);
   }
   if (config.base_dataset_mode === "sharded") {
     cautions.push("Sharded base data preserves BOS/EOS document boundaries when a corpus manifest exists, but validates by token shard rather than complete source document.");
@@ -4008,6 +4014,7 @@ function launchPreviewCommand(config = launchConfig()) {
   if (config.scaled_residual_init) parts.push("--scaled-residual-init");
   if (config.torch_compile) parts.push("--torch-compile", "--torch-compile-mode", config.torch_compile_mode);
   if (config.gradient_checkpointing) parts.push("--gradient-checkpointing");
+  if (config.tensorboard_log_dir) parts.push("--tensorboard-log-dir", config.tensorboard_log_dir);
   if (config.auto_lr_scaling) parts.push("--auto-lr-scaling");
   if (config.loss_spike_rollback) parts.push("--loss-spike-rollback");
   if (usesDdp) parts.push("--ddp", "--ddp-world-size", ddpWorldSize);
@@ -4217,6 +4224,7 @@ function runStartPayload(config, extra = {}) {
     torch_compile: config.torch_compile,
     torch_compile_mode: config.torch_compile_mode,
     gradient_checkpointing: config.gradient_checkpointing,
+    tensorboard_log_dir: config.tensorboard_log_dir,
     auto_lr_scaling: config.auto_lr_scaling,
     loss_spike_rollback: config.loss_spike_rollback,
     base_early_stop_patience: config.base_early_stop_patience,

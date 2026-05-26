@@ -918,6 +918,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     if torch_compile_mode not in COMPILE_MODES:
         raise ValueError(f"torch_compile_mode must be one of {', '.join(COMPILE_MODES)}")
     gradient_checkpointing = bool(payload.get("gradient_checkpointing", preset.get("gradient_checkpointing", False)))
+    tensorboard_log_dir = _optional_string(payload.get("tensorboard_log_dir"))
     auto_lr_scaling = bool(payload.get("auto_lr_scaling", preset.get("auto_lr_scaling", False)))
     loss_spike_rollback = bool(payload.get("loss_spike_rollback", preset.get("loss_spike_rollback", False)))
     tokenizer_type = str(payload.get("tokenizer_type", preset.get("tokenizer_type", "char")))
@@ -1096,6 +1097,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         torch_compile=torch_compile,
         torch_compile_mode=torch_compile_mode,
         gradient_checkpointing=gradient_checkpointing,
+        tensorboard_log_dir=tensorboard_log_dir,
         ddp=ddp,
         ddp_world_size=ddp_world_size,
         eval_max_new_tokens=eval_max_new_tokens,
@@ -1306,6 +1308,8 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         command.extend(["--torch-compile-mode", torch_compile_mode])
     if gradient_checkpointing:
         command.append("--gradient-checkpointing")
+    if tensorboard_log_dir:
+        command.extend(["--tensorboard-log-dir", tensorboard_log_dir])
     if auto_lr_scaling:
         command.append("--auto-lr-scaling")
     if loss_spike_rollback:
@@ -1373,6 +1377,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         "torch_compile": torch_compile,
         "torch_compile_mode": torch_compile_mode,
         "gradient_checkpointing": gradient_checkpointing,
+        "tensorboard_log_dir": tensorboard_log_dir,
         "auto_lr_scaling": auto_lr_scaling,
         "loss_spike_rollback": loss_spike_rollback,
         "tokenizer_type": tokenizer_type,

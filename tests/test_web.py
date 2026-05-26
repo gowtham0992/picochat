@@ -55,6 +55,7 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert 'id="launch-sft-lora-targets"' in html
     assert 'id="launch-dpo-input"' in html
     assert 'id="launch-dpo-length-normalize"' in html
+    assert 'id="launch-tensorboard-log-dir"' in html
     assert 'option value="packed"' in html
     assert 'option value="external_flash"' in html
     assert 'option value="fa3"' in html
@@ -72,6 +73,7 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert '"--sft-lora-targets"' in js
     assert '"--dpo-input"' in js
     assert '"--dpo-length-normalize"' in js
+    assert '"--tensorboard-log-dir"' in js
     assert "const DDP_SCALE_PRESETS" in js
     assert '"torchrun"' in js
     assert "--nproc_per_node=${ddpWorldSize}" in js
@@ -1081,6 +1083,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
         "sft_lora_alpha": 8.0,
         "sft_lora_dropout": 0.05,
         "sft_lora_targets": "attn_qkv",
+        "tensorboard_log_dir": str(tmp_path / "tb"),
         "dpo_input": str(dpo_path),
         "dpo_steps": 5,
         "dpo_batch_size": 2,
@@ -1126,6 +1129,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert "--sft-lora-targets" in captured["command"]
     assert "--dpo-input" in captured["command"]
     assert "--dpo-length-normalize" in captured["command"]
+    assert "--tensorboard-log-dir" in captured["command"]
     assert "--target-param-data-ratio" in captured["command"]
     assert "--long-run-gate-profile" in captured["command"]
     assert "bpe" in captured["command"]
@@ -1145,6 +1149,7 @@ def test_start_run_plan_launches_background_cli(tmp_path, monkeypatch):
     assert status["job"]["launch_config"]["sft_lora_alpha"] == 8.0
     assert status["job"]["launch_config"]["sft_lora_dropout"] == 0.05
     assert status["job"]["launch_config"]["sft_lora_targets"] == ["attn_qkv"]
+    assert status["job"]["launch_config"]["tensorboard_log_dir"] == str(tmp_path / "tb")
     assert status["job"]["launch_config"]["dpo_input"] == str(dpo_path)
     assert status["job"]["launch_config"]["dpo_steps"] == 5
     assert status["job"]["launch_config"]["dpo_batch_size"] == 2
