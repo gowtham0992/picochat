@@ -85,6 +85,7 @@ from picochat.optim import (
     WEIGHT_DECAY_DECAYS,
 )
 from picochat.precision import COMPILE_MODES, MATMUL_PRECISION_MODES, PRECISION_MODES
+from picochat.preference_starter import PreferenceStarterConfig, generate_preference_starter
 from picochat.sanity import PreH100SanityConfig, run_preh100_sanity
 from picochat.scales import RUN_SCALE_NAMES, RUN_SCALES
 from picochat.scale_planner import parse_count, plan_scale, render_scale_plan_markdown
@@ -305,6 +306,15 @@ def build_parser() -> argparse.ArgumentParser:
     data_sft_starter.add_argument("--max-items", type=int, default=32, help="Maximum chat SFT rows to write.")
     data_sft_starter.add_argument("--seed", type=int, default=42)
     data_sft_starter.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
+
+    data_preference_starter = data_subparsers.add_parser(
+        "preference-starter",
+        help="Generate starter DPO preference pairs from chat SFT rows.",
+    )
+    data_preference_starter.add_argument("--input", required=True, help="Input chat SFT JSONL with user/assistant fields.")
+    data_preference_starter.add_argument("--out", required=True, help="Output preference JSONL with user/chosen/rejected fields.")
+    data_preference_starter.add_argument("--max-rows", type=int, default=0, help="Optional row limit. 0 means all rows.")
+    data_preference_starter.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
 
     data_benchmark_pack = data_subparsers.add_parser(
         "benchmark-pack",
@@ -2110,6 +2120,20 @@ def sft_starter_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def preference_starter_data(args: argparse.Namespace) -> int:
+    report = generate_preference_starter(PreferenceStarterConfig(
+        input_path=args.input,
+        output_path=args.out,
+        max_rows=args.max_rows,
+        force=args.force,
+    ))
+    print(f"preference starter: {report['output_path']}")
+    print(f"rows: {report['num_examples']}")
+    print(f"report: {report['report_path']}")
+    print("warning: starter preference pairs are synthetic negatives; use reviewed preferences for release claims")
+    return 0
+
+
 def benchmark_pack_data(args: argparse.Namespace) -> int:
     report = generate_benchmark_tuning_pack(
         dataset_pack=args.dataset_pack,
@@ -3359,6 +3383,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "sft-starter":
         return sft_starter_data(args)
+
+    if args.command == "data" and args.data_command == "preference-starter":
+        return preference_starter_data(args)
 
     if args.command == "data" and args.data_command == "benchmark-pack":
         return benchmark_pack_data(args)

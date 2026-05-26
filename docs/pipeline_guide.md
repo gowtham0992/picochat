@@ -237,6 +237,15 @@ Output artifacts:
 - `dpo/dpo_report.json`
 - `dpo/report.md`
 
+For smoke tests, Picochat can generate starter preference pairs from SFT rows:
+
+```bash
+PYTHONPATH=src python -m picochat.cli data preference-starter --input runs/manual/chat.jsonl --out data/preferences.jsonl
+```
+
+Those starter rows use synthetic rejected answers. They are useful for checking
+DPO mechanics, not for claiming alignment quality.
+
 Useful command:
 
 ```bash

@@ -604,6 +604,28 @@ def test_cli_eval_lm_harness_dry_run_writes_command(tmp_path, capsys):
     assert metadata["tasks"] == ["arc_easy", "hellaswag"]
 
 
+def test_cli_data_preference_starter(tmp_path, capsys):
+    chat = tmp_path / "chat.jsonl"
+    out = tmp_path / "preferences.jsonl"
+    chat.write_text(json.dumps({"user": "What are you?", "assistant": "Picochat.", "category": "identity"}) + "\n", encoding="utf-8")
+
+    exit_code = main([
+        "data",
+        "preference-starter",
+        "--input",
+        str(chat),
+        "--out",
+        str(out),
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "preference starter:" in output
+    row = json.loads(out.read_text(encoding="utf-8").strip())
+    assert row["chosen"] == "Picochat."
+    assert row["category"] == "identity_preference"
+
+
 def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
     corpus = tmp_path / "corpus.txt"
     chat = tmp_path / "chat.jsonl"

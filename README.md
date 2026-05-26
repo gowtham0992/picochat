@@ -171,6 +171,10 @@ adapter work.
 Run optional DPO after SFT when you have real preference pairs:
 
 ```bash
+pico data preference-starter \
+  --input runs/pico-demo/chat_benchmark.jsonl \
+  --out data/preferences.jsonl
+
 pico train dpo \
   --input data/preferences.jsonl \
   --tokenizer runs/pico-demo/tokenizer.json \
@@ -183,6 +187,8 @@ pico train dpo \
 Preference rows are JSONL with `user` or `prompt`, `chosen`, and `rejected`
 fields. DPO improves preference alignment after SFT; it does not replace base
 pretraining, SFT coverage, or the release gates.
+The preference starter uses synthetic negatives for plumbing and smoke tests;
+release alignment needs human or judge-reviewed preference pairs.
 
 Build a model registry from completed runs:
 
