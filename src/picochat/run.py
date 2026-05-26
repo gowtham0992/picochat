@@ -18,6 +18,7 @@ from picochat.data import (
 )
 from picochat.device import resolve_device
 from picochat.distributed import barrier_if_distributed, ddp_env_metadata, is_main_process
+from picochat.dpo import DPOConfig, train_dpo
 from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval
 from picochat.external_benchmark import ExternalBenchmarkConvertConfig, convert_external_benchmark
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
@@ -121,6 +122,21 @@ class TinyRunConfig:
     sft_lora_alpha: float = 16.0
     sft_lora_dropout: float = 0.0
     sft_lora_targets: tuple[str, ...] = DEFAULT_LORA_TARGETS
+    dpo_input: str | None = None
+    dpo_steps: int = 0
+    dpo_batch_size: int = 4
+    dpo_learning_rate: float = 5e-6
+    dpo_beta: float = 0.1
+    dpo_grad_accum_steps: int = 1
+    dpo_lr_warmup_steps: int = 0
+    dpo_lr_decay: str = "none"
+    dpo_min_lr_ratio: float = 1.0
+    dpo_grad_clip: float = 0.0
+    dpo_early_stop_patience: int = 4
+    dpo_early_stop_min_delta: float = 0.0
+    dpo_eval_batches: int = 10
+    dpo_max_minutes: float | None = None
+    dpo_length_normalize: bool = False
     allow_default_tuning_data: bool = False
     base_resume_from: str | None = None
     sft_resume_from: str | None = None
@@ -372,9 +388,13 @@ def run_tiny(config: TinyRunConfig) -> dict:
         raise ValueError(f"Unsupported SFT sampling mode: {config.sft_sampling}")
     if config.sft_packing not in SFT_PACKING_MODES:
         raise ValueError(f"Unsupported SFT packing mode: {config.sft_packing}")
+    run_dpo = bool(config.dpo_input)
+    if run_dpo and config.dpo_steps <= 0:
+        raise ValueError("--dpo-input requires --dpo-steps > 0")
     corpus_manifest_path = str(out_dir / "corpus_manifest.json")
     base_tensorboard_dir = str(Path(config.tensorboard_log_dir) / "base") if config.tensorboard_log_dir else None
     sft_tensorboard_dir = str(Path(config.tensorboard_log_dir) / "sft") if config.tensorboard_log_dir else None
+    dpo_tensorboard_dir = str(Path(config.tensorboard_log_dir) / "dpo") if config.tensorboard_log_dir else None
 
     if main_process:
         print("[4/7] train base model")
@@ -505,8 +525,47 @@ def run_tiny(config: TinyRunConfig) -> dict:
         "path",
         str(out_dir / "sft" / "checkpoint"),
     )
+    aligned_eval_checkpoint = sft_eval_checkpoint
     if main_process:
         _record_stage_timing(stage_timings, "sft_train", stage_started)
+
+    dpo_report = None
+    if run_dpo and main_process:
+        print("[6/8] train DPO preference alignment")
+        stage_started = time.perf_counter()
+        dpo_report = train_dpo(DPOConfig(
+            input_path=str(config.dpo_input),
+            tokenizer_path=str(tokenizer_path),
+            checkpoint_path=aligned_eval_checkpoint,
+            out_dir=str(out_dir / "dpo"),
+            batch_size=config.dpo_batch_size,
+            max_steps=config.dpo_steps,
+            learning_rate=config.dpo_learning_rate,
+            beta=config.dpo_beta,
+            seed=config.seed,
+            device=config.device,
+            log_every=_validation_log_every(config.dpo_steps),
+            eval_batches=config.dpo_eval_batches,
+            early_stop_patience=config.dpo_early_stop_patience,
+            early_stop_min_delta=config.dpo_early_stop_min_delta,
+            max_minutes=config.dpo_max_minutes,
+            lr_warmup_steps=config.dpo_lr_warmup_steps,
+            lr_decay=config.dpo_lr_decay,
+            min_lr_ratio=config.dpo_min_lr_ratio,
+            grad_clip=config.dpo_grad_clip,
+            grad_accum_steps=config.dpo_grad_accum_steps,
+            precision=config.precision,
+            matmul_precision=config.matmul_precision,
+            torch_compile=config.torch_compile,
+            torch_compile_mode=config.torch_compile_mode,
+            length_normalize=config.dpo_length_normalize,
+            tensorboard_log_dir=dpo_tensorboard_dir,
+        ))
+        aligned_eval_checkpoint = dpo_report.get("best_checkpoint", {}).get(
+            "path",
+            str(out_dir / "dpo" / "checkpoint"),
+        )
+        _record_stage_timing(stage_timings, "dpo_train", stage_started)
 
     barrier_if_distributed(ddp_metadata)
     if config.ddp and not main_process:
@@ -517,7 +576,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "out_dir": str(out_dir),
         }
 
-    print("[6/7] run SFT fit diagnostic")
+    print("[7/8] run SFT fit diagnostic" if run_dpo else "[6/7] run SFT fit diagnostic")
     stage_started = time.perf_counter()
     sft_fit_input = out_dir / "sft_fit" / "sft_fit_eval.jsonl"
     sft_dataset = sft_report.get("dataset", {})
@@ -532,7 +591,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
     )
     sft_fit_report = run_chat_eval(ChatEvalConfig(
         input_path=str(sft_fit_input),
-        checkpoint_path=sft_eval_checkpoint,
+        checkpoint_path=aligned_eval_checkpoint,
         tokenizer_path=str(tokenizer_path),
         out_dir=str(out_dir / "sft_fit"),
         max_new_tokens=config.eval_max_new_tokens,
@@ -556,7 +615,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         )
         sft_fit_heldout_report = run_chat_eval(ChatEvalConfig(
             input_path=str(sft_fit_heldout_input),
-            checkpoint_path=sft_eval_checkpoint,
+            checkpoint_path=aligned_eval_checkpoint,
             tokenizer_path=str(tokenizer_path),
             out_dir=str(out_dir / "sft_fit_heldout"),
             max_new_tokens=config.eval_max_new_tokens,
@@ -569,11 +628,11 @@ def run_tiny(config: TinyRunConfig) -> dict:
         ))
     _record_stage_timing(stage_timings, "sft_fit_eval", stage_started)
 
-    print("[7/7] run chat eval")
+    print("[8/8] run chat eval" if run_dpo else "[7/7] run chat eval")
     stage_started = time.perf_counter()
     eval_report = run_chat_eval(ChatEvalConfig(
         input_path=eval_input,
-        checkpoint_path=sft_eval_checkpoint,
+        checkpoint_path=aligned_eval_checkpoint,
         tokenizer_path=str(tokenizer_path),
         out_dir=str(out_dir / "eval"),
         max_new_tokens=config.eval_max_new_tokens,
@@ -593,7 +652,7 @@ def run_tiny(config: TinyRunConfig) -> dict:
         config,
         external_eval_specs,
         tokenizer_path=tokenizer_path,
-        checkpoint_path=sft_eval_checkpoint,
+        checkpoint_path=aligned_eval_checkpoint,
         out_dir=out_dir,
     )
     honesty_report = inspect_data_honesty(
@@ -651,6 +710,13 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "sft_best_checkpoint": sft_report.get("best_checkpoint", {}).get("path"),
             "sft_ema_checkpoint": sft_report.get("ema_checkpoint"),
             "sft_eval_checkpoint": sft_eval_checkpoint,
+            "aligned_eval_checkpoint": aligned_eval_checkpoint,
+            "dpo_report": str(out_dir / "dpo" / "report.md") if dpo_report is not None else None,
+            "dpo_best_checkpoint": (
+                dpo_report.get("best_checkpoint", {}).get("path")
+                if dpo_report is not None
+                else None
+            ),
             "sft_fit_report": str(out_dir / "sft_fit" / "report.md"),
             "sft_fit_heldout_report": (
                 str(out_dir / "sft_fit_heldout" / "report.md")
@@ -718,6 +784,21 @@ def run_tiny(config: TinyRunConfig) -> dict:
             "packed_sequences": sft_report.get("dataset", {}).get("packed_sequences"),
             "padded_tokens": sft_report.get("dataset", {}).get("padded_tokens"),
         },
+        "dpo": (
+            {
+                "checkpoint": dpo_report["checkpoint"],
+                "best_checkpoint": dpo_report.get("best_checkpoint", {}),
+                "final_train_loss": dpo_report["losses"][-1]["train_loss"] if dpo_report.get("losses") else None,
+                "final_val_loss": dpo_report["losses"][-1]["val_loss"] if dpo_report.get("losses") else None,
+                "final_val_accuracy": (
+                    dpo_report["losses"][-1]["val_accuracy"] if dpo_report.get("losses") else None
+                ),
+                "dataset": dpo_report.get("dataset", {}),
+                "stop_reason": dpo_report.get("stop_reason"),
+            }
+            if dpo_report is not None
+            else None
+        ),
         "sft_fit": sft_fit_report["summary"],
         "sft_fit_dataset": sft_fit_dataset,
         "sft_fit_analysis": sft_fit_report.get("analysis", {}),

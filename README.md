@@ -191,6 +191,17 @@ pico train dpo \
   --beta 0.1
 ```
 
+Or wire DPO into the end-to-end factory so fit/eval/release gates score the
+post-DPO checkpoint:
+
+```bash
+pico run tiny \
+  --out-dir runs/pico-demo \
+  --dataset-pack runs/pack/dataset_pack.json \
+  --dpo-input data/preferences.jsonl \
+  --dpo-steps 200
+```
+
 Preference rows are JSONL with `user` or `prompt`, `chosen`, and `rejected`
 fields. DPO improves preference alignment after SFT; it does not replace base
 pretraining, SFT coverage, or the release gates.

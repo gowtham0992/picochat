@@ -1731,6 +1731,25 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Comma-separated LoRA targets: {', '.join(LORA_TARGETS)}.",
     )
     run_tiny_parser.add_argument(
+        "--dpo-input",
+        default=None,
+        help="Optional preference JSONL for post-SFT DPO before fit/eval.",
+    )
+    run_tiny_parser.add_argument("--dpo-steps", type=int, default=None)
+    run_tiny_parser.add_argument("--dpo-batch-size", type=int, default=None)
+    run_tiny_parser.add_argument("--dpo-learning-rate", type=float, default=None)
+    run_tiny_parser.add_argument("--dpo-beta", type=float, default=None)
+    run_tiny_parser.add_argument("--dpo-grad-accum-steps", type=int, default=None)
+    run_tiny_parser.add_argument("--dpo-lr-warmup-steps", type=int, default=None)
+    run_tiny_parser.add_argument("--dpo-lr-decay", choices=LR_DECAYS, default=None)
+    run_tiny_parser.add_argument("--dpo-min-lr-ratio", type=float, default=None)
+    run_tiny_parser.add_argument("--dpo-grad-clip", type=float, default=None)
+    run_tiny_parser.add_argument("--dpo-early-stop-patience", type=int, default=None)
+    run_tiny_parser.add_argument("--dpo-early-stop-min-delta", type=float, default=None)
+    run_tiny_parser.add_argument("--dpo-eval-batches", type=int, default=None)
+    run_tiny_parser.add_argument("--dpo-max-minutes", type=float, default=None)
+    run_tiny_parser.add_argument("--dpo-length-normalize", action="store_true")
+    run_tiny_parser.add_argument(
         "--base-resume-from",
         default=None,
         help=(
@@ -3277,6 +3296,21 @@ def _tiny_config_from_args(args: argparse.Namespace) -> TinyRunConfig:
         sft_lora_alpha=_resolve_tiny_value(args, defaults, "sft_lora_alpha"),
         sft_lora_dropout=_resolve_tiny_value(args, defaults, "sft_lora_dropout"),
         sft_lora_targets=parse_lora_targets(_resolve_tiny_value(args, defaults, "sft_lora_targets")),
+        dpo_input=args.dpo_input,
+        dpo_steps=_resolve_tiny_value(args, defaults, "dpo_steps"),
+        dpo_batch_size=_resolve_tiny_value(args, defaults, "dpo_batch_size"),
+        dpo_learning_rate=_resolve_tiny_value(args, defaults, "dpo_learning_rate"),
+        dpo_beta=_resolve_tiny_value(args, defaults, "dpo_beta"),
+        dpo_grad_accum_steps=_resolve_tiny_value(args, defaults, "dpo_grad_accum_steps"),
+        dpo_lr_warmup_steps=_resolve_tiny_value(args, defaults, "dpo_lr_warmup_steps"),
+        dpo_lr_decay=_resolve_tiny_value(args, defaults, "dpo_lr_decay"),
+        dpo_min_lr_ratio=_resolve_tiny_value(args, defaults, "dpo_min_lr_ratio"),
+        dpo_grad_clip=_resolve_tiny_value(args, defaults, "dpo_grad_clip"),
+        dpo_early_stop_patience=_resolve_tiny_value(args, defaults, "dpo_early_stop_patience"),
+        dpo_early_stop_min_delta=_resolve_tiny_value(args, defaults, "dpo_early_stop_min_delta"),
+        dpo_eval_batches=_resolve_tiny_value(args, defaults, "dpo_eval_batches"),
+        dpo_max_minutes=_resolve_tiny_value(args, defaults, "dpo_max_minutes"),
+        dpo_length_normalize=args.dpo_length_normalize or defaults.dpo_length_normalize,
         allow_default_tuning_data=args.allow_default_tuning_data,
         base_resume_from=args.base_resume_from,
         sft_resume_from=args.sft_resume_from,

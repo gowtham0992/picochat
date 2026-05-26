@@ -319,6 +319,48 @@ def test_cli_run_tiny_can_override_h100_scale_linear_bias(tmp_path, monkeypatch)
     assert captured["config"].linear_bias is True
 
 
+def test_cli_run_tiny_accepts_optional_dpo_stage(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run(config):
+        captured["config"] = config
+        return {
+            "eval": {
+                "num_passed": 1,
+                "num_examples": 1,
+                "pass_rate": 1.0,
+            },
+        }
+
+    monkeypatch.setattr("picochat.cli.run_tiny", fake_run)
+
+    exit_code = main([
+        "run",
+        "tiny",
+        "--out-dir",
+        str(tmp_path / "with-dpo"),
+        "--dpo-input",
+        str(tmp_path / "preferences.jsonl"),
+        "--dpo-steps",
+        "12",
+        "--dpo-batch-size",
+        "2",
+        "--dpo-learning-rate",
+        "0.000003",
+        "--dpo-beta",
+        "0.2",
+        "--dpo-length-normalize",
+    ])
+
+    assert exit_code == 0
+    assert captured["config"].dpo_input == str(tmp_path / "preferences.jsonl")
+    assert captured["config"].dpo_steps == 12
+    assert captured["config"].dpo_batch_size == 2
+    assert captured["config"].dpo_learning_rate == 0.000003
+    assert captured["config"].dpo_beta == 0.2
+    assert captured["config"].dpo_length_normalize is True
+
+
 def test_cli_run_tiny_h200_1b_scale_defaults_to_skill_release(tmp_path, monkeypatch):
     captured = {}
 

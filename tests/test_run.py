@@ -492,6 +492,7 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     corpus_path = tmp_path / "corpus.txt"
     chat_path = tmp_path / "chat.jsonl"
     eval_path = tmp_path / "eval.jsonl"
+    preference_path = tmp_path / "preferences.jsonl"
     external_path = tmp_path / "arc_mini.jsonl"
     pack_path = tmp_path / "dataset_pack.json"
     out_dir = tmp_path / "run"
@@ -504,6 +505,10 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
         encoding="utf-8",
     )
     eval_path.write_text(json.dumps({"user": "hi"}), encoding="utf-8")
+    preference_path.write_text(
+        json.dumps({"user": "hi", "chosen": "hello", "rejected": "goodbye"}),
+        encoding="utf-8",
+    )
     external_path.write_text(json.dumps({
         "question": "Which option says hello?",
         "choices": {"label": ["A", "B"], "text": ["hello", "bye"]},
@@ -527,6 +532,9 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
         sft_steps=1,
         base_batch_size=2,
         sft_batch_size=1,
+        dpo_input=str(preference_path),
+        dpo_steps=1,
+        dpo_batch_size=1,
         eval_max_new_tokens=0,
         external_eval_inputs=(f"arc-mini={external_path}",),
         allow_leaky_eval=True,
@@ -542,6 +550,8 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert (out_dir / "base" / "best_checkpoint" / "model.pt").exists()
     assert (out_dir / "sft" / "checkpoint" / "model.pt").exists()
     assert (out_dir / "sft" / "best_checkpoint" / "model.pt").exists()
+    assert (out_dir / "dpo" / "checkpoint" / "model.pt").exists()
+    assert (out_dir / "dpo" / "best_checkpoint" / "model.pt").exists()
     assert (out_dir / "sft_fit" / "sft_fit_eval.jsonl").exists()
     assert (out_dir / "sft_fit" / "eval_report.json").exists()
     assert (out_dir / "eval" / "eval_report.json").exists()
@@ -569,6 +579,8 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
         for pair in summary["honesty"]["contamination_matrix"]["pairs"]
     )
     assert summary["artifacts"]["sft_eval_checkpoint"] == str(out_dir / "sft" / "best_checkpoint")
+    assert summary["artifacts"]["aligned_eval_checkpoint"] == str(out_dir / "dpo" / "best_checkpoint")
+    assert summary["artifacts"]["dpo_best_checkpoint"] == str(out_dir / "dpo" / "best_checkpoint")
     assert summary["artifacts"]["base_eval_checkpoint"] == str(out_dir / "base" / "best_checkpoint")
     assert summary["base"]["eval_checkpoint"] == str(out_dir / "base" / "best_checkpoint")
     assert summary["base"]["best_val_loss"] is not None
@@ -579,6 +591,7 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
     assert summary["sft"]["best_val_loss"] is not None
     assert "best_val_bpb" in summary["sft"]
     assert summary["sft_fit"]["num_examples"] == 1
+    assert summary["dpo"]["best_checkpoint"]["path"] == str(out_dir / "dpo" / "best_checkpoint")
     assert summary["external_evals"][0]["name"] == "arc-mini"
     assert summary["external_evals"][0]["summary"]["num_examples"] == 1
     assert summary["long_run_gate"]["external_eval_results"][0]["name"] == "arc-mini"
@@ -596,6 +609,7 @@ def test_run_tiny_writes_full_experiment_artifacts(tmp_path):
         "tokenizer",
         "base_train",
         "sft_train",
+        "dpo_train",
         "sft_fit_eval",
         "chat_eval_gate",
     ]

@@ -252,6 +252,19 @@ Useful command:
 PYTHONPATH=src python -m picochat.cli train dpo --input data/preferences.jsonl --tokenizer runs/manual/tokenizer.json --checkpoint runs/manual/sft/checkpoint --out-dir runs/manual/dpo --max-steps 200 --learning-rate 0.000005 --beta 0.1 --early-stop-patience 4
 ```
 
+End-to-end command:
+
+```bash
+PYTHONPATH=src python -m picochat.cli run tiny \
+  --out-dir runs/manual \
+  --dataset-pack runs/pack/dataset_pack.json \
+  --dpo-input data/preferences.jsonl \
+  --dpo-steps 200
+```
+
+When DPO is enabled in `run tiny`, SFT-fit, held-out eval, external evals, and
+release gates all score the post-DPO checkpoint.
+
 ## 6. Eval
 
 Purpose: score generated replies with transparent rules.
