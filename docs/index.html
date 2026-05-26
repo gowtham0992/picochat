@@ -257,7 +257,9 @@
       <div class="nav-links">
         <a href="https://github.com/gowtham0992/picochat">GitHub</a>
         <a href="architecture.html">Architecture</a>
+        <a href="benchmark_protocol.html">Benchmarks</a>
         <a href="release_gates.html">Release Gates</a>
+        <a href="deployment.html">Deploy</a>
         <a href="h200_1b_runbook.html">8xH200 Runbook</a>
       </div>
     </nav>
@@ -277,6 +279,7 @@
         <div class="actions">
           <a class="button" href="h200_1b_runbook.html">Read the 1B runbook</a>
           <a class="button secondary" href="release_gates.html">Inspect the gates</a>
+          <a class="button secondary" href="benchmark_protocol.html">Benchmark protocol</a>
         </div>
       </div>
       <div class="terminal" aria-label="Picochat release gate preview">
@@ -320,6 +323,21 @@
         <label>After training</label>
         <h3>Completion is not release.</h3>
         <p>The long-run gate can still block release on SFT fit, held-out fit, visible eval, external benchmarks, prompt echo, or honesty issues.</p>
+      </div>
+      <div class="card">
+        <label>Public proof</label>
+        <h3>Claims need reproducible reports.</h3>
+        <p>The benchmark protocol defines required baselines, honesty evidence, release-gate status, and model-card artifacts for public results.</p>
+      </div>
+      <div class="card">
+        <label>Deployment</label>
+        <h3>Serve locally before claiming production.</h3>
+        <p>Docker and OpenAI-compatible smoke serving paths make demos repeatable while keeping high-throughput serving limits explicit.</p>
+      </div>
+      <div class="card">
+        <label>Community</label>
+        <h3>Contributions have guardrails.</h3>
+        <p>CI, pull request templates, and result issue templates keep outside changes tied to tests, docs, and release evidence.</p>
       </div>
     </section>
 

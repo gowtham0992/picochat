@@ -1,0 +1,29 @@
+services:
+  picochat-web:
+    build: .
+    image: picochat:local
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./runs:/workspace/runs
+    command: ["pico", "web", "--runs-dir", "/workspace/runs", "--host", "0.0.0.0", "--port", "8765"]
+
+  picochat-serve:
+    build: .
+    image: picochat:local
+    profiles: ["serve"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./runs:/workspace/runs
+    command:
+      - "pico"
+      - "serve"
+      - "--checkpoint"
+      - "${PICOCHAT_CHECKPOINT:-/workspace/runs/pico-demo/sft/checkpoint}"
+      - "--tokenizer"
+      - "${PICOCHAT_TOKENIZER:-/workspace/runs/pico-demo/tokenizer.json}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"

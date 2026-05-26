@@ -14,8 +14,9 @@
   <a href="https://gowtham0992.github.io/picochat/">Product Page</a> ·
   <a href="https://gowtham0992.github.io/picochat/pipeline_guide.html">Pipeline Guide</a> ·
   <a href="https://gowtham0992.github.io/picochat/h200_1b_runbook.html">1B Runbook</a> ·
+  <a href="https://gowtham0992.github.io/picochat/benchmark_protocol.html">Benchmarks</a> ·
   <a href="https://gowtham0992.github.io/picochat/release_gates.html">Release Gates</a> ·
-  <a href="https://gowtham0992.github.io/picochat/contamination_and_honesty.html">Honesty Checks</a>
+  <a href="https://gowtham0992.github.io/picochat/deployment.html">Deploy</a>
 </p>
 
 <p align="center">
@@ -70,6 +71,8 @@ What is ready:
   endpoints for smoke integrations.
 - Optional post-SFT DPO through `pico train dpo` for curated preference pairs
   when teams have real chosen/rejected examples.
+- Dockerized local workbench and serving smoke paths for reproducible demos.
+- Public benchmark protocol, CI, and contribution templates for external review.
 
 What is not claimed:
 
@@ -136,6 +139,12 @@ pico demo
 pico web --runs-dir runs --port 8765
 ```
 
+Or start the workbench with Docker:
+
+```bash
+docker compose up --build picochat-web
+```
+
 Serve a trained checkpoint through a local OpenAI-compatible API:
 
 ```bash
@@ -188,6 +197,7 @@ Read the runbook before spending GPU money:
 - [8xH200 1B runbook](https://gowtham0992.github.io/picochat/h200_1b_runbook.html)
 - [Release gates](https://gowtham0992.github.io/picochat/release_gates.html)
 - [Contamination and honesty checks](https://gowtham0992.github.io/picochat/contamination_and_honesty.html)
+- [Benchmark protocol](https://gowtham0992.github.io/picochat/benchmark_protocol.html)
 
 The current `h200-1b-ddp8` scale targets about 1.12B parameters and 22.4B
 planned training tokens, roughly 20 tokens per parameter.
@@ -237,9 +247,11 @@ Key stations:
 - [Product page](https://gowtham0992.github.io/picochat/)
 - [Architecture](https://gowtham0992.github.io/picochat/architecture.html)
 - [Pipeline guide](https://gowtham0992.github.io/picochat/pipeline_guide.html)
+- [Benchmark protocol](https://gowtham0992.github.io/picochat/benchmark_protocol.html)
 - [Release gates](https://gowtham0992.github.io/picochat/release_gates.html)
 - [8xH200 1B runbook](https://gowtham0992.github.io/picochat/h200_1b_runbook.html)
 - [Contamination and honesty](https://gowtham0992.github.io/picochat/contamination_and_honesty.html)
+- [Deployment](https://gowtham0992.github.io/picochat/deployment.html)
 - [Task mixture recipe](https://gowtham0992.github.io/picochat/task_mixture_recipe.html)
 - [Screenshot capture guide](https://gowtham0992.github.io/picochat/screenshots.html)
 
@@ -259,6 +271,9 @@ Run only web/dashboard checks:
 ```bash
 PYTHONPATH=src pytest tests/test_web.py -q
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for PR standards and release-evidence
+expectations.
 
 Optional TensorBoard logging:
 

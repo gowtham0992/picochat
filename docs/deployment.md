@@ -1,0 +1,69 @@
+---
+layout: default
+title: Deployment
+---
+
+# Deployment
+
+Picochat includes a local OpenAI-compatible server and a Docker path for smoke
+testing trained checkpoints. This is not a high-throughput production serving
+stack yet; vLLM, TGI, TensorRT-LLM, and llama.cpp adapters remain future work.
+
+## Local Workbench Container
+
+Build and run the dashboard:
+
+```bash
+docker compose up --build picochat-web
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8765
+```
+
+The container mounts `./runs` into `/workspace/runs`, so local run artifacts
+stay outside the image.
+
+## Local OpenAI-Compatible API
+
+After a demo or training run writes a checkpoint:
+
+```bash
+PICOCHAT_CHECKPOINT=/workspace/runs/pico-demo/sft/checkpoint \
+PICOCHAT_TOKENIZER=/workspace/runs/pico-demo/tokenizer.json \
+docker compose --profile serve up --build picochat-serve
+```
+
+Then call:
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"picochat","messages":[{"role":"user","content":"What is Picochat?"}],"max_tokens":80}'
+```
+
+## Release Rule
+
+Do not deploy a checkpoint as a product claim until the run includes:
+
+- preflight report
+- data honesty report
+- SFT fit and held-out SFT fit
+- visible eval report
+- at least one external benchmark for release profiles
+- long-run release gate status
+
+The server can load an experimental model for smoke tests, but serving does not
+turn an experimental run into a release.
+
+## Current Limits
+
+- native `pico serve` is single-process PyTorch serving
+- no auth, HTTPS, queueing, or multi-tenant isolation
+- no paged attention or continuous batching
+- no native vLLM/TGI/GGUF artifact yet
+
+Those limits are explicit so users do not confuse the local server with a
+production inference fleet.
