@@ -59,6 +59,14 @@ from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
 from picochat.lr_finder import LRRangeConfig, run_lr_range
 from picochat.model import SDPA_BACKENDS
+from picochat.registry import (
+    build_model_registry,
+    discover_run_dirs,
+    registry_table,
+    write_registry_json,
+    write_registry_report,
+    write_release_card,
+)
 from picochat.artifacts import (
     RunBundleConfig,
     bundle_inspection_markdown,
@@ -1778,6 +1786,14 @@ def build_parser() -> argparse.ArgumentParser:
     leaderboard_parser.add_argument("runs", nargs="+", help="Run directories containing eval/eval_report.json.")
     leaderboard_parser.add_argument("--out", default=None, help="Optional Markdown leaderboard output path.")
 
+    registry_parser = subparsers.add_parser("registry", help="Build a model registry from completed Picochat run summaries.")
+    registry_parser.add_argument("runs", nargs="*", help="Run directories containing summary.json.")
+    registry_parser.add_argument("--runs-dir", default=None, help="Discover run directories under this parent when explicit runs are omitted.")
+    registry_parser.add_argument("--out", default=None, help="Optional Markdown registry output path.")
+    registry_parser.add_argument("--json-out", default=None, help="Optional machine-readable registry JSON output path.")
+    registry_parser.add_argument("--release-card", default=None, help="Write a single-run release card Markdown file. Requires exactly one run.")
+    registry_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON instead of a terminal table.")
+
     web_parser = subparsers.add_parser("web", help="Start the local run dashboard.")
     web_parser.add_argument("--runs-dir", default="runs", help="Directory containing run folders.")
     web_parser.add_argument("--host", default="127.0.0.1")
@@ -3224,6 +3240,33 @@ def run_leaderboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_registry(args: argparse.Namespace) -> int:
+    runs = [Path(path) for path in args.runs]
+    if not runs and args.runs_dir:
+        runs = discover_run_dirs(args.runs_dir)
+    if not runs:
+        raise ValueError("provide run directories or --runs-dir")
+    registry = build_model_registry(runs)
+    if args.json:
+        print(json.dumps(registry, indent=2))
+    else:
+        print(registry_table(registry))
+        if registry.get("best_run"):
+            print(f"\nBest registered run: {registry['best_run']}")
+    if args.out:
+        write_registry_report(registry, args.out)
+        print(f"saved registry report: {args.out}")
+    if args.json_out:
+        write_registry_json(registry, args.json_out)
+        print(f"saved registry JSON: {args.json_out}")
+    if args.release_card:
+        if len(runs) != 1:
+            raise ValueError("--release-card requires exactly one run")
+        write_release_card(runs[0], args.release_card)
+        print(f"saved release card: {args.release_card}")
+    return 0
+
+
 def run_web(args: argparse.Namespace) -> int:
     serve_web(WebConfig(
         runs_dir=args.runs_dir,
@@ -3350,6 +3393,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "leaderboard":
         return run_leaderboard(args)
+
+    if args.command == "registry":
+        return run_registry(args)
 
     if args.command == "web":
         return run_web(args)

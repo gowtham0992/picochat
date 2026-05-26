@@ -531,6 +531,52 @@ def test_cli_run_inspect_bundle_requires_training_state_file_for_resume(tmp_path
     assert report["resume_capable_checkpoints"] == []
 
 
+def test_cli_registry_builds_markdown_json_and_release_card(tmp_path, capsys):
+    run_dir = tmp_path / "runs" / "registered"
+    (run_dir / "base" / "best_checkpoint").mkdir(parents=True)
+    (run_dir / "base" / "best_checkpoint" / "model.pt").write_text("weights", encoding="utf-8")
+    (run_dir / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (run_dir / "summary.json").write_text(json.dumps({
+        "preflight": {
+            "status": "ready",
+            "budget": {
+                "estimated_parameters": 100,
+                "base_planned_tokens": 2000,
+            },
+        },
+        "eval": {"num_examples": 10, "num_passed": 6, "pass_rate": 0.6},
+        "sft_fit": {"num_examples": 10, "num_passed": 8, "pass_rate": 0.8},
+        "honesty": {"status": "ready"},
+        "long_run_gate": {
+            "status": "approved",
+            "profile": "skill_release",
+            "sft_fit_rate": 0.8,
+        },
+    }), encoding="utf-8")
+    registry_md = tmp_path / "registry.md"
+    registry_json = tmp_path / "registry.json"
+    release_card = tmp_path / "release-card.md"
+
+    exit_code = main([
+        "registry",
+        "--runs-dir",
+        str(tmp_path / "runs"),
+        "--out",
+        str(registry_md),
+        "--json-out",
+        str(registry_json),
+        "--release-card",
+        str(release_card),
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Best registered run: registered" in output
+    assert "# Picochat Model Registry" in registry_md.read_text(encoding="utf-8")
+    assert json.loads(registry_json.read_text(encoding="utf-8"))["best_run"] == "registered"
+    assert "# Picochat Release Card: registered" in release_card.read_text(encoding="utf-8")
+
+
 def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
     corpus = tmp_path / "corpus.txt"
     chat = tmp_path / "chat.jsonl"

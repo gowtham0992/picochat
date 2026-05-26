@@ -15,6 +15,7 @@
   <a href="https://gowtham0992.github.io/picochat/pipeline_guide.html">Pipeline Guide</a> ·
   <a href="https://gowtham0992.github.io/picochat/h200_1b_runbook.html">1B Runbook</a> ·
   <a href="https://gowtham0992.github.io/picochat/benchmark_protocol.html">Benchmarks</a> ·
+  <a href="https://gowtham0992.github.io/picochat/model_registry.html">Registry</a> ·
   <a href="https://gowtham0992.github.io/picochat/release_gates.html">Release Gates</a> ·
   <a href="https://gowtham0992.github.io/picochat/deployment.html">Deploy</a>
 </p>
@@ -183,6 +184,14 @@ Preference rows are JSONL with `user` or `prompt`, `chosen`, and `rejected`
 fields. DPO improves preference alignment after SFT; it does not replace base
 pretraining, SFT coverage, or the release gates.
 
+Build a model registry from completed runs:
+
+```bash
+pico registry --runs-dir runs \
+  --out reports/model_registry.md \
+  --json-out reports/model_registry.json
+```
+
 ## 8xH100/H200 Path
 
 The 1B-class path is intentionally gated. The short version is:
@@ -248,6 +257,7 @@ Key stations:
 - [Architecture](https://gowtham0992.github.io/picochat/architecture.html)
 - [Pipeline guide](https://gowtham0992.github.io/picochat/pipeline_guide.html)
 - [Benchmark protocol](https://gowtham0992.github.io/picochat/benchmark_protocol.html)
+- [Model registry](https://gowtham0992.github.io/picochat/model_registry.html)
 - [Release gates](https://gowtham0992.github.io/picochat/release_gates.html)
 - [8xH200 1B runbook](https://gowtham0992.github.io/picochat/h200_1b_runbook.html)
 - [Contamination and honesty](https://gowtham0992.github.io/picochat/contamination_and_honesty.html)
