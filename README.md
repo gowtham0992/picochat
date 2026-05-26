@@ -12,6 +12,7 @@
 
 <p align="center">
   <a href="https://gowtham0992.github.io/picochat/">Product Page</a> ·
+  <a href="https://gowtham0992.github.io/picochat/model_evidence.html">Model Evidence</a> ·
   <a href="https://gowtham0992.github.io/picochat/pipeline_guide.html">Pipeline Guide</a> ·
   <a href="https://gowtham0992.github.io/picochat/h200_1b_runbook.html">1B Runbook</a> ·
   <a href="https://gowtham0992.github.io/picochat/benchmark_protocol.html">Benchmarks</a> ·
@@ -52,6 +53,19 @@ pilot path has been exercised on H100/H200 instances. The 1B-class
 `h200-1b-ddp8` path is prepared for an 8xH100/H200 run with explicit preflight,
 DDP dry-run, checkpoint, contamination, token-budget, and post-run release
 gates.
+
+Public model evidence is still pending. Picochat should not be judged by a
+claimed 1B result until a trained model, release card, model card, benchmark
+report, and contamination report are published together. The current evidence
+plan is tracked in the [Model Evidence](https://gowtham0992.github.io/picochat/model_evidence.html)
+page.
+
+| Artifact | Public status | Release rule |
+| --- | --- | --- |
+| Local tiny demo | Ready | Smoke test only; not a model-quality claim |
+| 100M H100/H200 pilot | Exercised privately | Publish only with eval, samples, and gate report |
+| 1B `h200-1b-ddp8` run | Prepared, not claimed | Publish only after preflight, DDP dry run, full eval, external benchmark, and release gate |
+| Hugging Face model | Pending | Must include model card, release manifest, and honesty evidence |
 
 What is ready:
 
@@ -293,6 +307,7 @@ Key stations:
 ## Documentation
 
 - [Product page](https://gowtham0992.github.io/picochat/)
+- [Model evidence](https://gowtham0992.github.io/picochat/model_evidence.html)
 - [Architecture](https://gowtham0992.github.io/picochat/architecture.html)
 - [Pipeline guide](https://gowtham0992.github.io/picochat/pipeline_guide.html)
 - [Benchmark protocol](https://gowtham0992.github.io/picochat/benchmark_protocol.html)
