@@ -1235,6 +1235,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also run a torch.compile smoke test.",
     )
+    sanity_preh100_parser.add_argument(
+        "--capacity-scale",
+        choices=RUN_SCALE_NAMES,
+        default=None,
+        help=(
+            "Optionally instantiate a named scale and run one forward/backward "
+            "memory check. Use on the target GPU box before paid runs."
+        ),
+    )
+    sanity_preh100_parser.add_argument(
+        "--capacity-batch-size",
+        type=int,
+        default=None,
+        help="Override the local batch size used by --capacity-scale.",
+    )
+    sanity_preh100_parser.add_argument(
+        "--capacity-min-free-fraction",
+        type=float,
+        default=0.10,
+        help="Minimum GPU memory fraction that must remain free after the capacity check.",
+    )
 
     chat_parser = subparsers.add_parser("chat", help="Interactive terminal chat.")
     chat_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
@@ -2915,6 +2936,9 @@ def run_sanity_preh100(args: argparse.Namespace) -> int:
         matmul_precision=args.matmul_precision,
         attn_backend=args.attn_backend,
         include_compile=args.include_compile,
+        capacity_scale=args.capacity_scale,
+        capacity_batch_size=args.capacity_batch_size,
+        capacity_min_free_fraction=args.capacity_min_free_fraction,
     ))
     print(f"sanity: {report['status']}")
     print(f"json_report: {report['report_path']}")

@@ -51,6 +51,9 @@ def test_cli_sanity_preh100(tmp_path, capsys, monkeypatch):
         assert config.matmul_precision == "high"
         assert config.attn_backend == "math"
         assert config.include_compile is True
+        assert config.capacity_scale == "smoke"
+        assert config.capacity_batch_size == 2
+        assert config.capacity_min_free_fraction == 0.2
         return {
             "status": "passed",
             "report_path": str(tmp_path / "sanity" / "preh100_sanity.json"),
@@ -74,6 +77,12 @@ def test_cli_sanity_preh100(tmp_path, capsys, monkeypatch):
         "--attn-backend",
         "math",
         "--include-compile",
+        "--capacity-scale",
+        "smoke",
+        "--capacity-batch-size",
+        "2",
+        "--capacity-min-free-fraction",
+        "0.2",
     ])
 
     assert exit_code == 0

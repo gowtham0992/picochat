@@ -107,6 +107,9 @@ Picochat's paid-run path is still deliberately conservative: the 1B release
 recipe uses DDP, while experimental FSDP is exposed for base-training smoke
 tests before it graduates into the full factory.
 
+On GPU hosts, `pico sanity preh100 --capacity-scale h200-1b-ddp8` can also run
+a one-batch memory check for the exact scale before training starts.
+
 ## Quick Start
 
 Install locally:

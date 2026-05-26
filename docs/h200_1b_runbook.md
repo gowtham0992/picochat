@@ -69,8 +69,13 @@ PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli sanity preh100 \
   --matmul-precision high \
   --attn-backend fa3 \
   --include-compile \
+  --capacity-scale h200-1b-ddp8 \
   2>&1 | tee logs/sanity-h200-ddp8.log
 ```
+
+`--capacity-scale` instantiates the target 1B model and runs one
+forward/backward pass on the GPU so memory headroom is measured before the
+paid DDP launch.
 
 If FA3 fails because the optional kernel is not installed or compatible, rerun
 with:

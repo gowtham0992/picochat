@@ -33,3 +33,15 @@ def test_run_preh100_sanity_writes_reports(tmp_path):
     saved = json.loads(report_path.read_text(encoding="utf-8"))
     assert saved["status"] == "passed"
     assert "Picochat Pre-H100 Sanity" in markdown_path.read_text(encoding="utf-8")
+
+
+def test_run_preh100_sanity_can_include_capacity_skip_on_cpu(tmp_path):
+    report = run_preh100_sanity(PreH100SanityConfig(
+        out_dir=str(tmp_path / "sanity"),
+        precision="float32",
+        capacity_scale="smoke",
+    ))
+
+    capacity = next(check for check in report["checks"] if check["name"] == "scale_capacity")
+    assert capacity["status"] == "skip"
+    assert "requires --device cuda" in capacity["detail"]
