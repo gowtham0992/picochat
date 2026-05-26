@@ -4,7 +4,7 @@
 
 ## Validation
 
-- [ ] `PYTHONPATH=src pytest -q`
+- [ ] `pytest -q`
 - [ ] Docs updated for user-facing behavior
 - [ ] No generated runs, checkpoints, logs, or private notes included
 

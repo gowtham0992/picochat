@@ -138,7 +138,7 @@ the UI should show what failed and what to fix.
 Picochat includes a native PyTorch serving path for local integrations:
 
 ```bash
-pico serve --checkpoint runs/<run>/sft/checkpoint --tokenizer runs/<run>/tokenizer.json
+picochat serve --checkpoint runs/<run>/sft/checkpoint --tokenizer runs/<run>/tokenizer.json
 ```
 
 The server loads the checkpoint once and exposes:

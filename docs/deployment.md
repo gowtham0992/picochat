@@ -33,7 +33,7 @@ After a demo or training run writes a checkpoint:
 ```bash
 export PICOCHAT_API_KEY="replace-me"
 
-pico serve \
+picochat serve \
   --checkpoint runs/pico-demo/sft/checkpoint \
   --tokenizer runs/pico-demo/tokenizer.json \
   --host 127.0.0.1 \
@@ -83,7 +83,7 @@ turn an experimental run into a release.
 
 ## Current Limits
 
-- native `pico serve` is single-process PyTorch serving
+- native `picochat serve` is single-process PyTorch serving
 - optional bearer-token auth is available, but there is no HTTPS, queueing, or multi-tenant isolation
 - no paged attention or continuous batching
 - streaming is OpenAI-style SSE response framing, not token-by-token decoding

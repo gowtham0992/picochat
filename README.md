@@ -67,10 +67,10 @@ What is ready:
   external benchmarks, prompt echo, refusal behavior, or honesty checks fail.
 - A local web dashboard with release readiness, loss curves, preflight output,
   Scale Up commands, paid-GPU confirmation, and DDP dry-run commands.
-- Native PyTorch serving through `pico serve`, including local
+- Native PyTorch serving through `picochat serve`, including local
   OpenAI-compatible `/v1/completions`, `/v1/chat/completions`, and `/v1/models`
   endpoints plus `stream=true` SSE response framing for smoke integrations.
-- Optional post-SFT DPO through `pico train dpo` for curated preference pairs
+- Optional post-SFT DPO through `picochat train dpo` for curated preference pairs
   when teams have real chosen/rejected examples.
 - Dockerized local workbench and serving smoke paths for reproducible demos.
 - Public benchmark protocol, CI, and contribution templates for external review.
@@ -107,7 +107,7 @@ Picochat's paid-run path is still deliberately conservative: the 1B release
 recipe uses DDP, while experimental FSDP is exposed for base-training smoke
 tests before it graduates into the full factory.
 
-On GPU hosts, `pico sanity preh100 --capacity-scale h200-1b-ddp8` can also run
+On GPU hosts, `picochat sanity preh100 --capacity-scale h200-1b-ddp8` can also run
 a one-batch memory check for the exact scale before training starts.
 
 ## Quick Start
@@ -122,29 +122,26 @@ source .venv/bin/activate
 python -m pip install -e ".[dev,hf]"
 ```
 
+The installed command is `picochat`. A shorter `pico` alias is also provided,
+but `picochat` avoids colliding with the system `pico` editor when the virtual
+environment is not active.
+
 Run the tiny demo:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli demo
+picochat demo
 ```
 
 Open the workbench:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli web --runs-dir runs --port 8765
+picochat web --runs-dir runs --port 8765
 ```
 
 Then visit:
 
 ```text
 http://127.0.0.1:8765
-```
-
-The same commands are available through the installed `pico` entry point:
-
-```bash
-pico demo
-pico web --runs-dir runs --port 8765
 ```
 
 Or start the workbench with Docker:
@@ -158,7 +155,7 @@ Serve a trained checkpoint through a local OpenAI-compatible API:
 ```bash
 export PICOCHAT_API_KEY="replace-me"
 
-pico serve \
+picochat serve \
   --checkpoint runs/pico-demo/sft/checkpoint \
   --tokenizer runs/pico-demo/tokenizer.json \
   --host 127.0.0.1 \
@@ -182,11 +179,11 @@ adapter work.
 Run optional DPO after SFT when you have real preference pairs:
 
 ```bash
-pico data preference-starter \
+picochat data preference-starter \
   --input runs/pico-demo/chat_benchmark.jsonl \
   --out data/preferences.jsonl
 
-pico train dpo \
+picochat train dpo \
   --input data/preferences.jsonl \
   --tokenizer runs/pico-demo/tokenizer.json \
   --checkpoint runs/pico-demo/sft/checkpoint \
@@ -199,7 +196,7 @@ Or wire DPO into the end-to-end factory so fit/eval/release gates score the
 post-DPO checkpoint:
 
 ```bash
-pico run tiny \
+picochat run tiny \
   --out-dir runs/pico-demo \
   --dataset-pack runs/pack/dataset_pack.json \
   --dpo-input data/preferences.jsonl \
@@ -215,7 +212,7 @@ release alignment needs human or judge-reviewed preference pairs.
 Build a model registry from completed runs:
 
 ```bash
-pico registry --runs-dir runs \
+picochat registry --runs-dir runs \
   --out reports/model_registry.md \
   --json-out reports/model_registry.json
 ```
@@ -223,7 +220,7 @@ pico registry --runs-dir runs \
 Write a standard `lm-eval-harness` benchmark command for a HF export:
 
 ```bash
-pico eval lm-harness \
+picochat eval lm-harness \
   --model-path exports/picochat-run \
   --tasks arc_easy,hellaswag \
   --out-dir reports/picochat-run/lm_eval \
@@ -312,13 +309,13 @@ to the `docs/` folder on the `develop` or `main` branch.
 Run tests:
 
 ```bash
-PYTHONPATH=src pytest -q
+pytest -q
 ```
 
 Run only web/dashboard checks:
 
 ```bash
-PYTHONPATH=src pytest tests/test_web.py -q
+pytest tests/test_web.py -q
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for PR standards and release-evidence
@@ -328,7 +325,7 @@ Optional TensorBoard logging:
 
 ```bash
 python -m pip install -e ".[monitor]"
-PYTHONPATH=src python -m picochat.cli run tiny \
+picochat run tiny \
   --out-dir runs/monitored-smoke \
   --tensorboard-log-dir runs/monitored-smoke/tensorboard
 tensorboard --logdir runs/monitored-smoke/tensorboard

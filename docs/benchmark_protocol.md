@@ -80,9 +80,9 @@ Examples:
 ## Command Skeleton
 
 ```bash
-pico leaderboard runs/run-a runs/run-b --out reports/leaderboard.md
+picochat leaderboard runs/run-a runs/run-b --out reports/leaderboard.md
 
-pico eval external \
+picochat eval external \
   --input external/arc_easy_validation.jsonl \
   --format arc \
   --benchmark-name arc_easy \
@@ -101,7 +101,7 @@ claims should also be easy to score with common benchmark tooling. Export a
 checkpoint first:
 
 ```bash
-pico export hf \
+picochat export hf \
   --checkpoint runs/<run>/sft/checkpoint \
   --tokenizer runs/<run>/tokenizer.json \
   --out-dir exports/<run>
@@ -110,7 +110,7 @@ pico export hf \
 Then write a reproducible EleutherAI `lm-eval-harness` command:
 
 ```bash
-pico eval lm-harness \
+picochat eval lm-harness \
   --model-path exports/<run> \
   --tasks arc_easy,hellaswag \
   --out-dir reports/<run>/lm_eval \

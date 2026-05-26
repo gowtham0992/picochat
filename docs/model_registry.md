@@ -14,7 +14,7 @@ safe to inspect, export, or deploy.
 From explicit run directories:
 
 ```bash
-pico registry runs/run-a runs/run-b \
+picochat registry runs/run-a runs/run-b \
   --out reports/model_registry.md \
   --json-out reports/model_registry.json
 ```
@@ -22,7 +22,7 @@ pico registry runs/run-a runs/run-b \
 Or discover every run with `summary.json` under a run bank:
 
 ```bash
-pico registry --runs-dir runs \
+picochat registry --runs-dir runs \
   --out reports/model_registry.md \
   --json-out reports/model_registry.json
 ```
@@ -44,7 +44,7 @@ The registry includes:
 For a single run:
 
 ```bash
-pico registry runs/h200-1b-release \
+picochat registry runs/h200-1b-release \
   --release-card reports/h200-1b-release-card.md
 ```
 

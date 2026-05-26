@@ -38,6 +38,7 @@ dev = [
 ]
 
 [project.scripts]
+picochat = "picochat.cli:main"
 pico = "picochat.cli:main"
 
 [tool.setuptools.packages.find]

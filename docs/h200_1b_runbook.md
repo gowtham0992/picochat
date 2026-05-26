@@ -62,7 +62,7 @@ PY
 ```bash
 mkdir -p logs runs
 
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli sanity preh100 \
+PYTHONUNBUFFERED=1 picochat sanity preh100 \
   --out-dir runs/h200-ddp8-sanity-v1 \
   --device cuda \
   --precision bf16 \
@@ -91,7 +91,7 @@ Do not continue until sanity passes.
 Use the Scale Up page for generated commands, or run:
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data climbmix-import \
+PYTHONUNBUFFERED=1 picochat data climbmix-import \
   --out-dir runs/climbmix-cuda \
   --shards 2048 \
   --max-rows 10000000 \
@@ -106,7 +106,7 @@ The import must produce a corpus manifest with document-boundary metadata.
 ## 4. Generate Release Skills Pack
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli data benchmark-pack \
+PYTHONUNBUFFERED=1 picochat data benchmark-pack \
   --dataset-pack runs/climbmix-cuda/dataset_pack.json \
   --sft-rows 1600 \
   --eval-rows 320 \
@@ -123,7 +123,7 @@ an approved external data source. Do not reuse eval prompts as SFT rows.
 ## 5. Preflight
 
 ```bash
-PYTHONUNBUFFERED=1 PYTHONPATH=src python -m picochat.cli run tiny \
+PYTHONUNBUFFERED=1 picochat run tiny \
   --out-dir runs/h200-1b-release-preflight \
   --dataset-pack runs/climbmix-cuda/dataset_pack.json \
   --scale h200-1b-ddp8 \
@@ -157,7 +157,6 @@ PICOCHAT_DDP_TIMEOUT_MINUTES=120 \
 PYTORCH_ALLOC_CONF=expandable_segments:True \
 TORCH_NCCL_ASYNC_ERROR_HANDLING=1 \
 PYTHONUNBUFFERED=1 \
-PYTHONPATH=src \
 torchrun --standalone --nproc_per_node=8 \
   -m picochat.cli run tiny \
   --out-dir runs/h200-1b-ddp8-dryrun \
@@ -194,7 +193,6 @@ PICOCHAT_DDP_TIMEOUT_MINUTES=120 \
 PYTORCH_ALLOC_CONF=expandable_segments:True \
 TORCH_NCCL_ASYNC_ERROR_HANDLING=1 \
 PYTHONUNBUFFERED=1 \
-PYTHONPATH=src \
 torchrun --standalone --nproc_per_node=8 \
   -m picochat.cli run tiny \
   --out-dir runs/h200-1b-release \

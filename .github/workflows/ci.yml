@@ -26,6 +26,4 @@ jobs:
           python -m pip install -e ".[dev,hf,monitor]"
 
       - name: Run tests
-        env:
-          PYTHONPATH: src
         run: pytest -q

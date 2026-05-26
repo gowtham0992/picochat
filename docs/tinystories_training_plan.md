@@ -29,7 +29,7 @@ Good progress means:
 Use the v7 pack for current runs:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack_v7.json
+picochat data preview --dataset-pack examples/tinystories_dataset_pack_v7.json
 ```
 
 The pack points to:
@@ -51,7 +51,7 @@ refusal behavior.
 Use the 10k pack after importing a larger local TinyStories sample:
 
 ```bash
-.venv/bin/python -m picochat.cli data hf-import \
+picochat data hf-import \
   --dataset roneneldan/TinyStories \
   --split train \
   --text-column text \
@@ -61,7 +61,7 @@ Use the 10k pack after importing a larger local TinyStories sample:
   --max-rows 10000 \
   --min-chars 100
 
-PYTHONPATH=src python -m picochat.cli data preview --dataset-pack examples/tinystories_dataset_pack_v7_10k.json
+picochat data preview --dataset-pack examples/tinystories_dataset_pack_v7_10k.json
 ```
 
 The 10k pack gives base pretraining about ten times more story text before
@@ -75,19 +75,19 @@ Run these as separate run folders and compare `summary.md` files.
 ### Baseline
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-v7-pico-v1 --dataset-pack examples/tinystories_dataset_pack_v7.json --scale pico --split-mode document
+picochat run tiny --out-dir runs/tinystories-v7-pico-v1 --dataset-pack examples/tinystories_dataset_pack_v7.json --scale pico --split-mode document
 ```
 
 ### Larger Corpus Balanced Curriculum
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-v7-10k-pico-v1 --dataset-pack examples/tinystories_dataset_pack_v7_10k.json --scale pico --base-steps 3000 --sft-steps 1200 --split-mode document
+picochat run tiny --out-dir runs/tinystories-v7-10k-pico-v1 --dataset-pack examples/tinystories_dataset_pack_v7_10k.json --scale pico --base-steps 3000 --sft-steps 1200 --split-mode document
 ```
 
 ### Bigger Tiny Model
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-v7-128x4-v1 --dataset-pack examples/tinystories_dataset_pack_v7_10k.json --scale pico --tokenizer-vocab-size 1024 --n-embd 128 --n-layer 4 --n-head 4 --base-steps 12000 --sft-steps 1200 --split-mode document
+picochat run tiny --out-dir runs/tinystories-v7-128x4-v1 --dataset-pack examples/tinystories_dataset_pack_v7_10k.json --scale pico --tokenizer-vocab-size 1024 --n-embd 128 --n-layer 4 --n-head 4 --base-steps 12000 --sft-steps 1200 --split-mode document
 ```
 
 ## Tokenizer Comparisons
@@ -136,7 +136,7 @@ guarded. Use document split, best-validation checkpoints, BPB, train-only
 canaries, and early stopping:
 
 ```bash
-PYTHONPATH=src python -m picochat.cli run tiny --out-dir runs/tinystories-v7-guarded-v1 --dataset-pack examples/tinystories_dataset_pack_v7_10k.json --scale pico --base-steps 12000 --sft-steps 1200 --base-max-minutes 60 --sft-max-minutes 15 --base-early-stop-patience 3 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
+picochat run tiny --out-dir runs/tinystories-v7-guarded-v1 --dataset-pack examples/tinystories_dataset_pack_v7_10k.json --scale pico --base-steps 12000 --sft-steps 1200 --base-max-minutes 60 --sft-max-minutes 15 --base-early-stop-patience 3 --sft-early-stop-patience 4 --canary-count 3 --split-mode document
 ```
 
 Interpretation rules:

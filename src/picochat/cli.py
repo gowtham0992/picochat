@@ -134,7 +134,7 @@ def _add_eval_runtime_args(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="pico",
+        prog="picochat",
         description="Run picochat training, evaluation, and chat commands.",
     )
     parser.add_argument(
