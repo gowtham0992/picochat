@@ -45,7 +45,9 @@ picochat train hf-sft \
   --max-length 1024 \
   --device cuda \
   --precision bf16 \
-  --gradient-checkpointing
+  --gradient-checkpointing \
+  --peft lora \
+  --done-file done.txt
 ```
 
 This path uses Picochat chat JSONL and assistant-only loss masking, but it
@@ -55,10 +57,24 @@ writes Hugging Face model folders:
 - `best_model/`
 - `hf_sft_report.json`
 - `report.md`
+- `done.txt` when training completes, so a rented-GPU polling script can
+  download artifacts and stop the instance
 
 It does not train a Picochat-native base model and does not claim a release gate
 by itself. Use it for hackathons, adapter experiments, and quick task models
 where pretraining from zero is not the objective.
+
+For tool-calling or agent tasks, prefer multi-turn `messages` rows and train
+only the final assistant target. Picochat supports that shape directly:
+
+```json
+{"system":"You are a tool-calling assistant.","tools":[{"name":"search_schedule"}],"messages":[{"role":"user","content":"Find tomorrow's meeting and draft an email."},{"role":"assistant","content":"I will check the schedule first."},{"role":"tool","content":"search_schedule returned Standup at 9 AM."},{"role":"assistant","content":"Tool call: send_email\nArguments: {\"subject\":\"Standup\",\"time\":\"9 AM\"}"}]}
+```
+
+The previous turns, system prompt, and tool definitions are context. The loss is
+masked so the model is trained only on the final assistant message. For Qwen-like
+models, start with BF16 LoRA before experimenting with 4-bit quantization; some
+Qwen checkpoints can degrade noticeably under QLoRA.
 
 ## Path C: Evaluate, Gate, and Serve
 

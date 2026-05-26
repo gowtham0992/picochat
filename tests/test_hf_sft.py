@@ -1,6 +1,7 @@
 from types import SimpleNamespace
+import json
 
-from picochat.hf_sft import render_hf_chat_text, tokenize_hf_chat_example
+from picochat.hf_sft import HFConversationExample, load_hf_sft_examples, render_hf_chat_text, tokenize_hf_chat_example
 from picochat.sft import ChatExample
 
 
@@ -51,3 +52,62 @@ def test_hf_sft_uses_chat_template_when_available():
 
     assert prompt == "<user>Question<assistant>"
     assert full == "<user>Question<assistant>Answer"
+
+
+def test_hf_sft_loads_multiturn_messages_and_tool_context(tmp_path):
+    input_path = tmp_path / "tool.jsonl"
+    input_path.write_text(json.dumps({
+        "system": "Use tools carefully.",
+        "tools": [{"name": "search_schedule"}],
+        "messages": [
+            {"role": "user", "content": "Find my meeting."},
+            {"role": "assistant", "content": "I will search."},
+            {"role": "tool", "content": "Standup at 9 AM."},
+            {"role": "assistant", "content": "The meeting is at 9 AM."},
+        ],
+        "category": "tool_calling",
+    }) + "\n", encoding="utf-8")
+
+    examples = load_hf_sft_examples(input_path)
+
+    assert len(examples) == 1
+    assert examples[0].category == "tool_calling"
+    assert examples[0].messages[0]["role"] == "system"
+    assert "search_schedule" in examples[0].messages[0]["content"]
+    assert examples[0].messages[-1] == {"role": "assistant", "content": "The meeting is at 9 AM."}
+
+
+def test_hf_sft_multiturn_masks_only_final_target():
+    tokenizer = TemplateTokenizer()
+    examples = [
+        {
+            "role": "system",
+            "content": "Use tools.",
+        },
+        {
+            "role": "user",
+            "content": "Find my meeting.",
+        },
+        {
+            "role": "assistant",
+            "content": "I will search.",
+        },
+        {
+            "role": "tool",
+            "content": "Standup at 9 AM.",
+        },
+        {
+            "role": "assistant",
+            "content": "The meeting is at 9 AM.",
+        },
+    ]
+    example = HFConversationExample(messages=tuple(examples), category="tool")
+    row = tokenize_hf_chat_example(example, tokenizer, max_length=512)
+
+    assert row is not None
+    supervised = [label for label in row["labels"] if label != -100]
+    assert supervised
+    prompt, full = render_hf_chat_text(example, tokenizer)
+    assert "I will search." in prompt
+    assert "The meeting is at 9 AM." not in prompt
+    assert "The meeting is at 9 AM." in full

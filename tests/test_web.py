@@ -74,6 +74,8 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert "HF_SFT_CONTROL_IDS" in js
     assert "function renderHFSFTCommandPreview" in js
     assert '"hf-sft"' in js
+    assert '"--peft"' in js
+    assert '"--done-file"' in js
     assert 'option value="h200-1b-ddp8"' in html
     assert 'option value="h100-100m-ddp8"' in html
     assert '"h200-1b-ddp8"' in js

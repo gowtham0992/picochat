@@ -3655,6 +3655,12 @@ function hfSftCommand(config = hfSftConfig()) {
     "--precision",
     config.precision,
     "--gradient-checkpointing",
+    "--peft",
+    "lora",
+    "--lora-rank",
+    16,
+    "--done-file",
+    "done.txt",
   ];
   return shellCommand(parts);
 }

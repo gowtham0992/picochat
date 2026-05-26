@@ -23,7 +23,7 @@ from picochat.precision import (
     maybe_compile_model,
     resolve_precision,
 )
-from picochat.sft import ChatExample, load_chat_examples
+from picochat.sft import ChatExample
 
 
 @dataclass(frozen=True)
@@ -50,14 +50,27 @@ class HFSFTConfig:
     torch_compile: bool = False
     torch_compile_mode: str = "default"
     gradient_checkpointing: bool = False
+    peft: str = "none"
+    lora_rank: int = 16
+    lora_alpha: float = 32.0
+    lora_dropout: float = 0.0
+    lora_target_modules: str = "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj"
     trust_remote_code: bool = False
     revision: str | None = None
+    done_file: str | None = "done.txt"
+
+
+@dataclass(frozen=True)
+class HFConversationExample:
+    messages: tuple[dict[str, str], ...]
+    category: str = "chat"
+    group: str | None = None
 
 
 class HFChatDataset(Dataset):
     def __init__(
         self,
-        examples: list[ChatExample],
+        examples: list[HFConversationExample],
         tokenizer,
         *,
         max_length: int,
@@ -83,7 +96,7 @@ class HFChatDataset(Dataset):
 
 
 def tokenize_hf_chat_example(
-    example: ChatExample,
+    example: HFConversationExample | ChatExample,
     tokenizer,
     *,
     max_length: int,
@@ -106,27 +119,127 @@ def tokenize_hf_chat_example(
     }
 
 
-def render_hf_chat_text(example: ChatExample, tokenizer) -> tuple[str, str]:
+def render_hf_chat_text(example: HFConversationExample | ChatExample, tokenizer) -> tuple[str, str]:
     """Return prompt-only and prompt-plus-answer text for an HF tokenizer."""
+    conversation = _as_hf_conversation(example)
+    if len(conversation.messages) < 2 or conversation.messages[-1]["role"] != "assistant":
+        raise ValueError("HF SFT examples must end with the target assistant message")
+    prompt_messages = list(conversation.messages[:-1])
+    full_messages = list(conversation.messages)
     if getattr(tokenizer, "chat_template", None):
         prompt = tokenizer.apply_chat_template(
-            [{"role": "user", "content": example.user}],
+            prompt_messages,
             tokenize=False,
             add_generation_prompt=True,
         )
         full = tokenizer.apply_chat_template(
-            [
-                {"role": "user", "content": example.user},
-                {"role": "assistant", "content": example.assistant},
-            ],
+            full_messages,
             tokenize=False,
             add_generation_prompt=False,
         )
         return str(prompt), str(full)
-    prompt = render_chat_prompt([], example.user)
+    prompt = render_plain_hf_prompt(prompt_messages)
     eos = getattr(tokenizer, "eos_token", None) or ""
-    suffix = f" {example.assistant}{eos}"
-    return prompt, prompt + suffix
+    answer = full_messages[-1]["content"]
+    return prompt, f"{prompt} {answer}{eos}"
+
+
+def render_plain_hf_prompt(messages: list[dict[str, str]]) -> str:
+    lines: list[str] = []
+    for message in messages:
+        role = message["role"].strip().lower()
+        content = message["content"].strip()
+        if role == "system":
+            lines.append(f"System: {content}")
+        elif role == "user":
+            lines.append(f"User: {content}")
+        elif role == "assistant":
+            lines.append(f"Assistant: {content}")
+        elif role == "tool":
+            lines.append(f"Tool: {content}")
+        else:
+            lines.append(f"{role.title()}: {content}")
+    lines.append("Assistant:")
+    return "\n".join(lines)
+
+
+def load_hf_sft_examples(path: str | Path) -> list[HFConversationExample]:
+    """Load HF SFT rows from one-turn Picochat JSONL or multi-turn messages JSONL."""
+    examples: list[HFConversationExample] = []
+    for line_number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        record = json.loads(line)
+        category = record.get("category", "chat")
+        if not isinstance(category, str):
+            raise ValueError(f"line {line_number} category field must be a string when present")
+        group = _optional_record_string(record, "group", "group_id", "template")
+        messages = _messages_from_record(record, line_number)
+        examples.append(HFConversationExample(messages=tuple(messages), category=category, group=group))
+    if not examples:
+        raise ValueError("HF SFT dataset is empty")
+    return examples
+
+
+def _messages_from_record(record: dict[str, Any], line_number: int) -> list[dict[str, str]]:
+    raw_messages = record.get("messages")
+    if raw_messages is not None:
+        if not isinstance(raw_messages, list):
+            raise ValueError(f"line {line_number} messages must be a list when present")
+        messages = [_normalize_message(message, line_number) for message in raw_messages]
+    else:
+        user = record.get("user")
+        assistant = record.get("assistant")
+        if not isinstance(user, str) or not isinstance(assistant, str):
+            raise ValueError(f"line {line_number} must contain messages or string user and assistant fields")
+        messages = [{"role": "user", "content": user}, {"role": "assistant", "content": assistant}]
+
+    system = record.get("system")
+    tools = record.get("tools")
+    system_parts = []
+    if isinstance(system, str) and system.strip():
+        system_parts.append(system.strip())
+    if tools is not None:
+        system_parts.append("Tools:\n" + json.dumps(tools, ensure_ascii=False, sort_keys=True))
+    if system_parts and (not messages or messages[0]["role"] != "system"):
+        messages.insert(0, {"role": "system", "content": "\n\n".join(system_parts)})
+    if not messages or messages[-1]["role"] != "assistant":
+        raise ValueError(f"line {line_number} messages must end with the target assistant response")
+    return messages
+
+
+def _normalize_message(message: Any, line_number: int) -> dict[str, str]:
+    if not isinstance(message, dict):
+        raise ValueError(f"line {line_number} each message must be an object")
+    role = message.get("role")
+    content = message.get("content")
+    if not isinstance(role, str) or not isinstance(content, str):
+        raise ValueError(f"line {line_number} each message must contain string role and content")
+    normalized_role = role.strip().lower()
+    if normalized_role not in {"system", "user", "assistant", "tool"}:
+        raise ValueError(f"line {line_number} unsupported message role: {role}")
+    return {"role": normalized_role, "content": content}
+
+
+def _optional_record_string(record: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = record.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"{key} field must be a string when present")
+        return value
+    return None
+
+
+def _as_hf_conversation(example: HFConversationExample | ChatExample) -> HFConversationExample:
+    if isinstance(example, HFConversationExample):
+        return example
+    return HFConversationExample(messages=(
+        {"role": "user", "content": example.user},
+        {"role": "assistant", "content": example.assistant},
+    ), category=example.category, group=example.group)
 
 
 def hf_chat_collate(rows: list[dict[str, torch.Tensor]], *, pad_token_id: int) -> dict[str, torch.Tensor]:
@@ -182,6 +295,7 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
         if not hasattr(model, "gradient_checkpointing_enable"):
             raise RuntimeError("this HF model does not expose gradient_checkpointing_enable()")
         model.gradient_checkpointing_enable()
+    model, peft_metadata = apply_hf_peft(model, config)
     model.to(device)
     train_model, compile_metadata = maybe_compile_model(
         model,
@@ -189,7 +303,7 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
         mode=config.torch_compile_mode,
     )
 
-    examples = load_chat_examples(config.input_path)
+    examples = load_hf_sft_examples(config.input_path)
     train_examples, val_examples = _split_examples(examples, config.val_fraction, config.seed)
     train_dataset = HFChatDataset(train_examples, tokenizer, max_length=config.max_length)
     val_dataset = HFChatDataset(val_examples, tokenizer, max_length=config.max_length) if val_examples else None
@@ -206,7 +320,10 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
         collate_fn=lambda rows: hf_chat_collate(rows, pad_token_id=pad_token_id),
     ) if val_dataset is not None else None
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+    trainable_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    if not trainable_parameters:
+        raise ValueError("HF SFT model has no trainable parameters")
+    optimizer = torch.optim.AdamW(trainable_parameters, lr=config.learning_rate, weight_decay=config.weight_decay)
     scaler = make_grad_scaler(precision_runtime)
     losses: list[dict[str, float | int]] = []
     best_val_loss = float("inf")
@@ -279,10 +396,49 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
         "matmul_precision_runtime": matmul_precision_runtime,
         "compile": compile_metadata,
         "gradient_checkpointing": config.gradient_checkpointing,
+        "peft": peft_metadata,
     }
     (out_dir / "hf_sft_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (out_dir / "report.md").write_text(_hf_sft_markdown(report), encoding="utf-8")
+    if config.done_file:
+        done_path = out_dir / config.done_file
+        done_path.write_text(json.dumps({
+            "status": "done",
+            "out_dir": str(out_dir),
+            "final_model": str(out_dir / "final_model"),
+            "best_model": str(out_dir / "best_model") if report["best_val_loss"] is not None else None,
+        }, indent=2), encoding="utf-8")
     return report
+
+
+def apply_hf_peft(model, config: HFSFTConfig) -> tuple[Any, dict[str, Any]]:
+    if config.peft == "none":
+        return model, {"mode": "none"}
+    if config.peft != "lora":
+        raise ValueError("peft must be one of: none, lora")
+    try:
+        from peft import LoraConfig, TaskType, get_peft_model
+    except ImportError as exc:  # pragma: no cover - depends on optional package
+        raise RuntimeError('HF LoRA requires peft: pip install -e ".[hf]"') from exc
+    targets = [target.strip() for target in config.lora_target_modules.split(",") if target.strip()]
+    if not targets:
+        raise ValueError("lora_target_modules must contain at least one module name")
+    peft_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM,
+        r=config.lora_rank,
+        lora_alpha=config.lora_alpha,
+        lora_dropout=config.lora_dropout,
+        target_modules=targets,
+        bias="none",
+    )
+    model = get_peft_model(model, peft_config)
+    return model, {
+        "mode": "lora",
+        "rank": config.lora_rank,
+        "alpha": config.lora_alpha,
+        "dropout": config.lora_dropout,
+        "target_modules": targets,
+    }
 
 
 def evaluate_hf_sft_loss(
@@ -311,10 +467,10 @@ def evaluate_hf_sft_loss(
 
 
 def _split_examples(
-    examples: list[ChatExample],
+    examples: list[HFConversationExample],
     val_fraction: float,
     seed: int,
-) -> tuple[list[ChatExample], list[ChatExample]]:
+) -> tuple[list[HFConversationExample], list[HFConversationExample]]:
     if len(examples) < 2 or val_fraction <= 0:
         return examples, []
     indices = list(range(len(examples)))
@@ -355,6 +511,14 @@ def _validate_hf_sft_config(config: HFSFTConfig) -> None:
         raise ValueError("eval_batches must be non-negative")
     if config.log_every < 1:
         raise ValueError("log_every must be at least 1")
+    if config.peft not in {"none", "lora"}:
+        raise ValueError("peft must be one of: none, lora")
+    if config.lora_rank < 1:
+        raise ValueError("lora_rank must be at least 1")
+    if config.lora_alpha <= 0:
+        raise ValueError("lora_alpha must be positive")
+    if config.lora_dropout < 0 or config.lora_dropout >= 1:
+        raise ValueError("lora_dropout must be in [0, 1)")
 
 
 def _hf_sft_markdown(report: dict[str, Any]) -> str:

@@ -28,6 +28,10 @@ picochat train hf-sft --model <hf-model-id> --input <chat.jsonl> --out-dir runs/
 That path writes Hugging Face model folders and intentionally skips Picochat's
 native tokenizer/base-pretraining stages.
 
+For multi-turn tool-calling data, put the full context in a `messages` array and
+end the row with the target assistant response. Picochat masks the previous
+system/user/assistant/tool turns and trains only the final assistant message.
+
 ## 1. Dataset
 
 Purpose: turn local source files into one normalized training corpus.

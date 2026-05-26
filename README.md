@@ -55,7 +55,8 @@ Picochat now exposes two different training starts:
   gates.
 - **Fine-tune an existing model:** `picochat train hf-sft` starts from an
   existing Hugging Face causal LM such as SmolLM and trains on Picochat chat
-  JSONL with assistant-only labels.
+  JSONL or multi-turn `messages` rows with assistant-only labels. This path is
+  useful for hackathons and Qwen/SmolLM-style LoRA experiments.
 
 See the [Training Paths](https://gowtham0992.github.io/picochat/training_paths.html)
 page before choosing a GPU workflow.

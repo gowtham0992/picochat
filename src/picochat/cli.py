@@ -1101,12 +1101,26 @@ def build_parser() -> argparse.ArgumentParser:
     train_hf_sft_parser.add_argument("--torch-compile", action="store_true")
     train_hf_sft_parser.add_argument("--torch-compile-mode", choices=COMPILE_MODES, default="default")
     train_hf_sft_parser.add_argument("--gradient-checkpointing", action="store_true")
+    train_hf_sft_parser.add_argument("--peft", choices=("none", "lora"), default="none")
+    train_hf_sft_parser.add_argument("--lora-rank", type=int, default=16)
+    train_hf_sft_parser.add_argument("--lora-alpha", type=float, default=32.0)
+    train_hf_sft_parser.add_argument("--lora-dropout", type=float, default=0.0)
+    train_hf_sft_parser.add_argument(
+        "--lora-target-modules",
+        default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
+        help="Comma-separated HF module names for PEFT LoRA.",
+    )
     train_hf_sft_parser.add_argument(
         "--trust-remote-code",
         action="store_true",
         help="Allow custom HF model/tokenizer code. Use only for repositories you trust.",
     )
     train_hf_sft_parser.add_argument("--revision", default=None, help="Optional HF revision, branch, or commit.")
+    train_hf_sft_parser.add_argument(
+        "--done-file",
+        default="done.txt",
+        help="Write this sentinel file under --out-dir when training finishes. Empty string disables it.",
+    )
 
     train_dpo_parser = train_subparsers.add_parser(
         "dpo",
@@ -2921,8 +2935,14 @@ def run_train_hf_sft(args: argparse.Namespace) -> int:
         torch_compile=args.torch_compile,
         torch_compile_mode=args.torch_compile_mode,
         gradient_checkpointing=args.gradient_checkpointing,
+        peft=args.peft,
+        lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        lora_target_modules=args.lora_target_modules,
         trust_remote_code=args.trust_remote_code,
         revision=args.revision,
+        done_file=args.done_file or None,
     ))
     print(f"saved HF final model: {Path(args.out_dir) / 'final_model'}")
     if report.get("best_val_loss") is not None:

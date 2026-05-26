@@ -53,6 +53,12 @@ def test_cli_hf_sft_routes_to_existing_model_trainer(tmp_path, monkeypatch):
         "--precision",
         "float32",
         "--gradient-checkpointing",
+        "--peft",
+        "lora",
+        "--lora-rank",
+        "12",
+        "--done-file",
+        "done.txt",
     ])
 
     assert exit_code == 0
@@ -61,6 +67,9 @@ def test_cli_hf_sft_routes_to_existing_model_trainer(tmp_path, monkeypatch):
     assert captured["config"].max_steps == 7
     assert captured["config"].max_length == 256
     assert captured["config"].gradient_checkpointing is True
+    assert captured["config"].peft == "lora"
+    assert captured["config"].lora_rank == 12
+    assert captured["config"].done_file == "done.txt"
 
 
 def test_cli_train_base_accepts_experimental_fsdp_strategy(tmp_path, monkeypatch):
