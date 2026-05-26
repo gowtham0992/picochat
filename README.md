@@ -69,7 +69,7 @@ What is ready:
   Scale Up commands, paid-GPU confirmation, and DDP dry-run commands.
 - Native PyTorch serving through `pico serve`, including local
   OpenAI-compatible `/v1/completions`, `/v1/chat/completions`, and `/v1/models`
-  endpoints for smoke integrations.
+  endpoints plus `stream=true` SSE response framing for smoke integrations.
 - Optional post-SFT DPO through `pico train dpo` for curated preference pairs
   when teams have real chosen/rejected examples.
 - Dockerized local workbench and serving smoke paths for reproducible demos.

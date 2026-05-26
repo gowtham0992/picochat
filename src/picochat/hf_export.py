@@ -183,6 +183,7 @@ def export_hf_checkpoint(config: HFExportConfig) -> dict[str, Any]:
             "Dynamic int8 weights are for Picochat/PyTorch CPU serving experiments.",
             "Load dynamic int8 by constructing TinyGPT, applying torch dynamic quantization to Linear layers, then loading the quantized state dict.",
             "The Transformers adapter compacts padded rows and disables KV-cache for padded batches; use a native serving adapter for high-throughput padded batch decoding.",
+            "Native pico serve supports OpenAI-compatible JSON and SSE response framing for smoke integrations, not high-throughput token streaming.",
             "This export does not create GGUF, TensorRT-LLM, vLLM, or TGI-native artifacts.",
         ],
     }

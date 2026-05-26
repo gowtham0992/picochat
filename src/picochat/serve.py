@@ -77,11 +77,17 @@ def _handler_factory(config: ServeConfig, engine: LoadedGenerator):
                 payload = self._read_json()
                 if self.path == "/v1/completions":
                     with generation_lock:
-                        self._write_json(_completion_response(engine, config, payload))
+                        if _stream_requested(payload):
+                            self._write_sse(_completion_stream_events(engine, config, payload))
+                        else:
+                            self._write_json(_completion_response(engine, config, payload))
                     return
                 if self.path == "/v1/chat/completions":
                     with generation_lock:
-                        self._write_json(_chat_completion_response(engine, config, payload))
+                        if _stream_requested(payload):
+                            self._write_sse(_chat_completion_stream_events(engine, config, payload))
+                        else:
+                            self._write_json(_chat_completion_response(engine, config, payload))
                     return
                 self._write_json({"error": {"message": "not found"}}, status=404)
             except ValueError as exc:
@@ -113,6 +119,21 @@ def _handler_factory(config: ServeConfig, engine: LoadedGenerator):
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.end_headers()
             self.wfile.write(data)
+
+        def _write_sse(self, events: list[dict], *, status: int = 200) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Access-Control-Allow-Origin", config.allow_origin)
+            self.send_header("Access-Control-Allow-Headers", "content-type, authorization")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.end_headers()
+            for event in events:
+                self.wfile.write(b"data: ")
+                self.wfile.write(json.dumps(event).encode("utf-8"))
+                self.wfile.write(b"\n\n")
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
 
     return PicoServeHandler
 
@@ -181,6 +202,73 @@ def _chat_completion_response(engine, config: ServeConfig, payload: dict) -> dic
             "finish_reason": _finish_reason(result, stopped),
         }],
     )
+
+
+def _completion_stream_events(engine, config: ServeConfig, payload: dict) -> list[dict]:
+    response = _completion_response(engine, config, payload)
+    model_name = response["model"]
+    text = response["choices"][0]["text"]
+    finish_reason = response["choices"][0]["finish_reason"]
+    return [
+        _openai_response(
+            object_name="text_completion",
+            model_name=model_name,
+            prompt_tokens=0,
+            completion_tokens=0,
+            choices=[{
+                "text": text,
+                "index": 0,
+                "logprobs": None,
+                "finish_reason": None,
+            }],
+        ),
+        _openai_response(
+            object_name="text_completion",
+            model_name=model_name,
+            prompt_tokens=0,
+            completion_tokens=0,
+            choices=[{
+                "text": "",
+                "index": 0,
+                "logprobs": None,
+                "finish_reason": finish_reason,
+            }],
+        ),
+    ]
+
+
+def _chat_completion_stream_events(engine, config: ServeConfig, payload: dict) -> list[dict]:
+    response = _chat_completion_response(engine, config, payload)
+    model_name = response["model"]
+    content = response["choices"][0]["message"]["content"]
+    finish_reason = response["choices"][0]["finish_reason"]
+    return [
+        _openai_response(
+            object_name="chat.completion.chunk",
+            model_name=model_name,
+            prompt_tokens=0,
+            completion_tokens=0,
+            choices=[{
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "content": content,
+                },
+                "finish_reason": None,
+            }],
+        ),
+        _openai_response(
+            object_name="chat.completion.chunk",
+            model_name=model_name,
+            prompt_tokens=0,
+            completion_tokens=0,
+            choices=[{
+                "index": 0,
+                "delta": {},
+                "finish_reason": finish_reason,
+            }],
+        ),
+    ]
 
 
 def _generate(engine, config: ServeConfig, payload: dict, *, prompt: str) -> dict:
@@ -256,11 +344,16 @@ def _render_openai_messages(messages: list[dict]) -> str:
 
 
 def _reject_unsupported_options(payload: dict) -> None:
-    if payload.get("stream"):
-        raise ValueError("stream=true is not supported by native pico serve yet")
     n = payload.get("n", 1)
     if n != 1:
         raise ValueError("native pico serve supports n=1")
+
+
+def _stream_requested(payload: dict) -> bool:
+    value = payload.get("stream", False)
+    if isinstance(value, bool):
+        return value
+    raise ValueError("stream must be a boolean")
 
 
 def _request_model_name(payload: dict, default: str) -> str:

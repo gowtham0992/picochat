@@ -44,6 +44,14 @@ curl http://127.0.0.1:8000/v1/chat/completions \
   -d '{"model":"picochat","messages":[{"role":"user","content":"What is Picochat?"}],"max_tokens":80}'
 ```
 
+Streaming response framing is available for local integrations:
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"picochat","stream":true,"messages":[{"role":"user","content":"Stream one sentence."}],"max_tokens":80}'
+```
+
 ## Release Rule
 
 Do not deploy a checkpoint as a product claim until the run includes:
@@ -63,6 +71,7 @@ turn an experimental run into a release.
 - native `pico serve` is single-process PyTorch serving
 - no auth, HTTPS, queueing, or multi-tenant isolation
 - no paged attention or continuous batching
+- streaming is OpenAI-style SSE response framing, not token-by-token decoding
 - no native vLLM/TGI/GGUF artifact yet
 
 Those limits are explicit so users do not confuse the local server with a
