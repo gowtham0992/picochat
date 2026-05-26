@@ -277,7 +277,11 @@ def _try_write_safetensors(state_dict: dict[str, torch.Tensor], path: Path) -> t
     except ImportError:
         return False, "safetensors is not installed; install picochat[hf] or safetensors>=0.4"
     tensors = {
-        name: tensor.detach().cpu().contiguous()
+        # safetensors rejects shared-storage aliases such as tied input/output
+        # embeddings. Clone after making tensors contiguous so the export is a
+        # self-contained interchange artifact while pytorch_model.bin preserves
+        # the original Picochat state dict.
+        name: tensor.detach().cpu().contiguous().clone()
         for name, tensor in state_dict.items()
     }
     save_file(tensors, str(path), metadata={"format": "pt"})
