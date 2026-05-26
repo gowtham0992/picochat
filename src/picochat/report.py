@@ -765,6 +765,23 @@ def chat_eval_report_markdown(report: dict) -> str:
             ci = _format_ci(summary.get("refusal_pass_rate_ci"))
             suffix = f" ({ci})" if ci != "--" else ""
             lines.append(f"- Refusal/boundary pass rate: {_format_percent_or_dash(summary.get('refusal_pass_rate'))}{suffix}")
+        if summary.get("unsafe_refusal_pass_rate") is not None:
+            ci = _format_ci(summary.get("unsafe_refusal_pass_rate_ci"))
+            suffix = f" ({ci})" if ci != "--" else ""
+            lines.append(
+                f"- Unsafe/refusal prompt pass rate: "
+                f"{_format_percent_or_dash(summary.get('unsafe_refusal_pass_rate'))}"
+                f"{suffix} over {summary.get('unsafe_refusal_examples', 0)} example(s)"
+            )
+        if summary.get("benign_non_refusal_rate") is not None:
+            ci = _format_ci(summary.get("benign_non_refusal_rate_ci"))
+            suffix = f" ({ci})" if ci != "--" else ""
+            lines.append(
+                f"- Benign non-refusal rate: "
+                f"{_format_percent_or_dash(summary.get('benign_non_refusal_rate'))}"
+                f"{suffix} over {summary.get('benign_non_refusal_examples', 0)} example(s)"
+            )
+            lines.append(f"- Over-refusal rate: {_format_percent_or_dash(summary.get('over_refusal_rate'))}")
         lines.append(f"- Unsupported claim rate: {format_float(summary['unsupported_claim_rate'] * 100)}%")
         lines.append(f"- Prompt echo rate: {format_float(summary.get('prompt_echo_rate', 0.0) * 100)}%")
         lines.append(f"- Missing support rate: {format_float(summary.get('missing_support_rate', 0.0) * 100)}%")
@@ -798,9 +815,34 @@ def chat_eval_report_markdown(report: dict) -> str:
             ci = _format_ci(summary.get("choice_accuracy_ci"))
             suffix = f" ({ci})" if ci != "--" else ""
             lines.append(f"- Choice accuracy: {_format_percent_or_dash(summary.get('choice_accuracy'))}{suffix}")
+            if summary.get("choice_random_baseline") is not None:
+                lines.append(
+                    f"- Choice random baseline: "
+                    f"{_format_percent_or_dash(summary.get('choice_random_baseline'))}"
+                )
+            if summary.get("choice_accuracy_adjusted") is not None:
+                lines.append(
+                    f"- Random-baseline-adjusted choice accuracy: "
+                    f"{_format_percent_or_dash(summary.get('choice_accuracy_adjusted'))}"
+                )
             ci = _format_ci(summary.get("choice_pass_rate_ci"))
             suffix = f" ({ci})" if ci != "--" else ""
             lines.append(f"- Choice pass rate: {_format_percent_or_dash(summary.get('choice_pass_rate'))}{suffix}")
+            if summary.get("choice_margin_accuracy") is not None:
+                ci = _format_ci(summary.get("choice_margin_accuracy_ci"))
+                suffix = f" ({ci})" if ci != "--" else ""
+                lines.append(
+                    f"- Choice likelihood-margin accuracy: "
+                    f"{_format_percent_or_dash(summary.get('choice_margin_accuracy'))}{suffix}"
+                )
+                lines.append(
+                    f"- Avg correct-choice logprob margin: "
+                    f"{format_optional_float(summary.get('choice_mean_correct_logprob_margin'))}"
+                )
+                lines.append(
+                    f"- Low-margin correct choice rate: "
+                    f"{_format_percent_or_dash(summary.get('choice_low_margin_rate'))}"
+                )
             lines.append(f"- Choice scorer: `{summary.get('choice_scoring')}`")
     lines.append("")
 
@@ -822,10 +864,28 @@ def chat_eval_report_markdown(report: dict) -> str:
         lines.extend(_level_breakdown_table(summary["level_breakdown"]))
         lines.append("")
 
+    if summary.get("skill_breakdown"):
+        lines.append("## Skill Breakdown")
+        lines.append("")
+        lines.extend(_breakdown_table(summary["skill_breakdown"], "Skill"))
+        lines.append("")
+
     if summary.get("stage_breakdown"):
         lines.append("## Curriculum Stages")
         lines.append("")
         lines.extend(_breakdown_table(summary["stage_breakdown"], "Stage"))
+        lines.append("")
+
+    if summary.get("skill_stage_breakdown"):
+        lines.append("## Skill Stages")
+        lines.append("")
+        lines.extend(_breakdown_table(summary["skill_stage_breakdown"], "Skill stage"))
+        lines.append("")
+
+    if summary.get("robustness_breakdown"):
+        lines.append("## Robustness Variants")
+        lines.append("")
+        lines.extend(_breakdown_table(summary["robustness_breakdown"], "Variant"))
         lines.append("")
 
     if report.get("analysis"):
@@ -1012,6 +1072,22 @@ def tiny_run_summary_markdown(summary: dict) -> str:
             lines.append(f"- Domain answer pass rate: {_format_percent_or_dash(eval_summary.get('domain_pass_rate'))}")
         if eval_summary.get("refusal_pass_rate") is not None:
             lines.append(f"- Refusal/boundary pass rate: {_format_percent_or_dash(eval_summary.get('refusal_pass_rate'))}")
+        if eval_summary.get("unsafe_refusal_pass_rate") is not None:
+            lines.append(
+                f"- Unsafe/refusal prompt pass rate: "
+                f"{_format_percent_or_dash(eval_summary.get('unsafe_refusal_pass_rate'))}"
+            )
+        if eval_summary.get("benign_non_refusal_rate") is not None:
+            lines.append(
+                f"- Benign non-refusal rate: "
+                f"{_format_percent_or_dash(eval_summary.get('benign_non_refusal_rate'))}"
+            )
+            lines.append(f"- Over-refusal rate: {_format_percent_or_dash(eval_summary.get('over_refusal_rate'))}")
+        if eval_summary.get("choice_accuracy_adjusted") is not None:
+            lines.append(
+                f"- Random-baseline-adjusted choice accuracy: "
+                f"{_format_percent_or_dash(eval_summary.get('choice_accuracy_adjusted'))}"
+            )
         lines.append(f"- Prompt echo rate: {format_float(eval_summary.get('prompt_echo_rate', 0.0) * 100)}%")
         lines.append(f"- Missing support rate: {format_float(eval_summary.get('missing_support_rate', 0.0) * 100)}%")
         if eval_summary.get("normalized_answer_accuracy") is not None:
@@ -1114,6 +1190,23 @@ def tiny_run_summary_markdown(summary: dict) -> str:
                     if threshold is not None else ""
                 )
                 lines.append(f"  - `{name}`: {_format_percent_or_dash(rate)}{suffix}")
+        skill_stage_rates = long_run_gate.get("skill_release_stage_rates") or {}
+        skill_stage_thresholds = long_run_gate.get("skill_release_stage_thresholds") or {}
+        if skill_stage_rates:
+            lines.append("- Skill-release stage rates:")
+            for name, rate in skill_stage_rates.items():
+                threshold = skill_stage_thresholds.get(name)
+                suffix = (
+                    f" (required {format_float(float(threshold) * 100)}%)"
+                    if threshold is not None else ""
+                )
+                lines.append(f"  - `{name}`: {_format_percent_or_dash(rate)}{suffix}")
+        if long_run_gate.get("benign_non_refusal_rate") is not None:
+            lines.append(
+                f"- Benign non-refusal gate: "
+                f"{_format_percent_or_dash(long_run_gate.get('benign_non_refusal_rate'))} "
+                f"(required {_format_percent_or_dash(long_run_gate.get('benign_non_refusal_threshold'))})"
+            )
         for issue in long_run_gate.get("issues", [])[:8]:
             lines.append(f"- {issue.get('severity', 'warn').upper()} `{issue.get('name')}`: {issue.get('message')}")
         lines.append("")
@@ -1195,6 +1288,18 @@ def tiny_run_summary_markdown(summary: dict) -> str:
         lines.append("## Eval Curriculum Stages")
         lines.append("")
         lines.extend(_breakdown_table(eval_summary["stage_breakdown"], "Stage"))
+        lines.append("")
+
+    if eval_summary.get("skill_stage_breakdown"):
+        lines.append("## Eval Skill Stages")
+        lines.append("")
+        lines.extend(_breakdown_table(eval_summary["skill_stage_breakdown"], "Skill stage"))
+        lines.append("")
+
+    if eval_summary.get("robustness_breakdown"):
+        lines.append("## Eval Robustness Variants")
+        lines.append("")
+        lines.extend(_breakdown_table(eval_summary["robustness_breakdown"], "Variant"))
         lines.append("")
 
     if sft_fit_summary.get("stage_breakdown"):
@@ -1521,6 +1626,11 @@ def _eval_metric_lines(item: dict) -> list[str]:
                 for label, score in sorted(scores.items())
             )
             lines.append(f"- Choice scores: {rendered}")
+        if item.get("choice_correct_logprob_margin") is not None:
+            lines.append(
+                f"- Correct-choice margin: "
+                f"{format_optional_float(item.get('choice_correct_logprob_margin'))}"
+            )
         if item.get("choice_eval_method"):
             lines.append(f"- Choice eval method: `{item.get('choice_eval_method')}`")
     return lines

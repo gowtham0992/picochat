@@ -121,6 +121,31 @@ def test_long_run_gate_blocks_weak_refusal_and_sft_heldout():
     assert any(issue["name"] == "refusal" for issue in gate["issues"])
 
 
+def test_long_run_gate_blocks_over_refusal_on_benign_prompts():
+    gate = _long_run_gate(
+        preflight_report={"status": "warn", "budget": {"long_run": True}},
+        sft_fit_summary={"pass_rate": 0.82},
+        sft_fit_heldout_summary={"pass_rate": 0.70},
+        eval_summary={
+            "pass_rate": 0.70,
+            "non_choice_examples": 100,
+            "non_choice_pass_rate": 0.70,
+            "unsafe_refusal_pass_rate": 0.90,
+            "benign_non_refusal_examples": 100,
+            "benign_non_refusal_rate": 0.50,
+            "over_refusal_rate": 0.50,
+            "prompt_echo_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+        },
+        honesty={"status": "ready"},
+    )
+
+    assert gate["status"] == "blocked"
+    assert gate["refusal_rate"] == pytest.approx(0.90)
+    assert gate["benign_non_refusal_rate"] == pytest.approx(0.50)
+    assert any(issue["name"] == "over_refusal" for issue in gate["issues"])
+
+
 def test_long_run_gate_first_release_profile_focuses_release_categories():
     gate = _long_run_gate(
         preflight_report={"status": "warn", "budget": {"long_run": True}},
@@ -301,6 +326,101 @@ def test_long_run_gate_skill_release_approves_when_all_groups_clear():
     assert gate["skill_release_eval_rates"]["math"] == pytest.approx(0.45)
     assert gate["skill_release_eval_thresholds"]["spelling"] == 0.40
     assert gate["external_eval_results"][0]["score"] == pytest.approx(0.52)
+
+
+def test_long_run_gate_skill_release_blocks_weak_stage_when_present():
+    gate = _long_run_gate(
+        preflight_report={"status": "warn", "budget": {"long_run": True}},
+        sft_fit_summary={
+            "pass_rate": 0.90,
+            "category_breakdown": {
+                "identity": {"num_passed": 80, "num_examples": 100},
+                "refusal": {"num_passed": 80, "num_examples": 100},
+                "bench_choice_language": {"num_passed": 80, "num_examples": 100},
+                "bench_math_addition": {"num_passed": 80, "num_examples": 100},
+                "bench_spelling_count": {"num_passed": 80, "num_examples": 100},
+            },
+        },
+        sft_fit_heldout_summary={"pass_rate": 0.70},
+        eval_summary={
+            "pass_rate": 0.70,
+            "non_choice_examples": 300,
+            "non_choice_pass_rate": 0.60,
+            "unsafe_refusal_pass_rate": 0.90,
+            "benign_non_refusal_examples": 300,
+            "benign_non_refusal_rate": 0.90,
+            "prompt_echo_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+            "category_breakdown": {
+                "identity": {"num_passed": 70, "num_examples": 100},
+                "refusal": {"num_passed": 90, "num_examples": 100},
+                "bench_choice_language": {"num_passed": 70, "num_examples": 100},
+                "bench_math_addition": {"num_passed": 45, "num_examples": 100},
+                "bench_spelling_count": {"num_passed": 55, "num_examples": 100},
+            },
+            "skill_stage_breakdown": {
+                "math:math_l3_subtraction_borrow": {
+                    "num_examples": 10,
+                    "num_passed": 1,
+                    "pass_rate": 0.10,
+                },
+            },
+        },
+        external_eval_reports=[
+            {"name": "arc-easy-mini", "summary": {"num_examples": 100, "choice_accuracy": 0.52}},
+        ],
+        honesty={"status": "ready"},
+        profile="skill_release",
+    )
+
+    assert gate["status"] == "blocked"
+    assert gate["skill_release_stage_rates"]["math:math_l3_subtraction_borrow"] == pytest.approx(0.10)
+    assert any(issue["name"] == "skill_release_stage_math_math_l3_subtraction_borrow" for issue in gate["issues"])
+
+
+def test_long_run_gate_skill_release_blocks_choice_near_random():
+    gate = _long_run_gate(
+        preflight_report={"status": "warn", "budget": {"long_run": True}},
+        sft_fit_summary={
+            "pass_rate": 0.90,
+            "category_breakdown": {
+                "identity": {"num_passed": 80, "num_examples": 100},
+                "refusal": {"num_passed": 80, "num_examples": 100},
+                "bench_choice_language": {"num_passed": 80, "num_examples": 100},
+                "bench_math_addition": {"num_passed": 80, "num_examples": 100},
+                "bench_spelling_count": {"num_passed": 80, "num_examples": 100},
+            },
+        },
+        sft_fit_heldout_summary={"pass_rate": 0.70},
+        eval_summary={
+            "pass_rate": 0.70,
+            "non_choice_examples": 300,
+            "non_choice_pass_rate": 0.60,
+            "unsafe_refusal_pass_rate": 0.90,
+            "benign_non_refusal_examples": 300,
+            "benign_non_refusal_rate": 0.90,
+            "choice_examples": 100,
+            "choice_accuracy_adjusted": 0.05,
+            "prompt_echo_rate": 0.0,
+            "unsupported_claim_rate": 0.0,
+            "category_breakdown": {
+                "identity": {"num_passed": 70, "num_examples": 100},
+                "refusal": {"num_passed": 90, "num_examples": 100},
+                "bench_choice_language": {"num_passed": 70, "num_examples": 100},
+                "bench_math_addition": {"num_passed": 45, "num_examples": 100},
+                "bench_spelling_count": {"num_passed": 55, "num_examples": 100},
+            },
+        },
+        external_eval_reports=[
+            {"name": "arc-easy-mini", "summary": {"num_examples": 100, "choice_accuracy": 0.52}},
+        ],
+        honesty={"status": "ready"},
+        profile="skill_release",
+    )
+
+    assert gate["status"] == "blocked"
+    assert gate["choice_accuracy_adjusted"] == pytest.approx(0.05)
+    assert any(issue["name"] == "choice_adjusted_accuracy" for issue in gate["issues"])
 
 
 def test_long_run_gate_skill_release_blocks_missing_external_eval():

@@ -1,11 +1,16 @@
 import json
 
+import pytest
+
 import picochat.eval as eval_module
 from picochat.checkpoint import save_checkpoint
 from picochat.eval import (
     ChatEvalConfig,
     ChatEvalItem,
     _choice_continuation_candidates,
+    _choice_margin_diagnostics,
+    _skill_group_for_category,
+    _skill_stage_key,
     analyze_eval_failures,
     detect_prompt_echo,
     load_chat_eval_items,
@@ -30,6 +35,7 @@ def test_load_chat_eval_items_supports_expected_alias(tmp_path):
         "answerable": False,
         "category": "refusal",
         "split": "safety",
+        "robustness_variant": "paraphrase",
     }])
 
     items = load_chat_eval_items(input_path)
@@ -43,6 +49,7 @@ def test_load_chat_eval_items_supports_expected_alias(tmp_path):
             category="refusal",
             split="safety",
             level="adversarial",
+            robustness_variant="paraphrase",
             reference_answer="hello",
         )
     ]
@@ -61,6 +68,24 @@ def test_load_chat_eval_items_supports_choice_eval_fields(tmp_path):
 
     assert items[0].choice_labels == ("A", "B")
     assert items[0].correct_choice == "B"
+
+
+def test_choice_margin_diagnostics_exposes_correct_choice_confidence():
+    diagnostics = _choice_margin_diagnostics({"A": -1.0, "B": -0.25, "C": -0.40}, "B")
+
+    assert diagnostics["best_label"] == "B"
+    assert diagnostics["second_label"] == "C"
+    assert diagnostics["predicted_margin"] == pytest.approx(0.15)
+    assert diagnostics["correct_margin"] == pytest.approx(0.15)
+    assert diagnostics["margin_pass"] is True
+
+
+def test_skill_group_and_stage_keys_cover_release_skills():
+    assert _skill_group_for_category("bench_math_addition") == "math"
+    assert _skill_group_for_category("bench_spelling_reverse") == "spelling"
+    assert _skill_group_for_category("bench_choice_science") == "choice"
+    assert _skill_group_for_category("refusal") == "refusal"
+    assert _skill_stage_key("math", "math_l3_addition_carry") == "math:math_l3_addition_carry"
 
 
 def test_load_chat_eval_items_supports_normalized_answer_fields(tmp_path):
