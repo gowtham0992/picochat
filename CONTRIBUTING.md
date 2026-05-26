@@ -39,6 +39,7 @@ PYTHONPATH=src pytest -q
 Good first areas:
 
 - external benchmark converters
+- `lm-eval-harness` task/report integration
 - dashboard clarity
 - deployment adapters
 - run report/model card quality

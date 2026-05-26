@@ -192,6 +192,17 @@ pico registry --runs-dir runs \
   --json-out reports/model_registry.json
 ```
 
+Write a standard `lm-eval-harness` benchmark command for a HF export:
+
+```bash
+pico eval lm-harness \
+  --model-path exports/picochat-run \
+  --tasks arc_easy,hellaswag \
+  --out-dir reports/picochat-run/lm_eval \
+  --device cuda:0 \
+  --dry-run
+```
+
 ## 8xH100/H200 Path
 
 The 1B-class path is intentionally gated. The short version is:

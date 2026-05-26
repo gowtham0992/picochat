@@ -577,6 +577,33 @@ def test_cli_registry_builds_markdown_json_and_release_card(tmp_path, capsys):
     assert "# Picochat Release Card: registered" in release_card.read_text(encoding="utf-8")
 
 
+def test_cli_eval_lm_harness_dry_run_writes_command(tmp_path, capsys):
+    exit_code = main([
+        "eval",
+        "lm-harness",
+        "--model-path",
+        "exports/pico",
+        "--tasks",
+        "arc_easy,hellaswag",
+        "--out-dir",
+        str(tmp_path / "lm-eval"),
+        "--device",
+        "cuda:0",
+        "--batch-size",
+        "2",
+        "--model-arg",
+        "dtype=bfloat16",
+        "--dry-run",
+    ])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "lm_eval" in output
+    assert "arc_easy,hellaswag" in output
+    metadata = json.loads((tmp_path / "lm-eval" / "lm_eval_command.json").read_text(encoding="utf-8"))
+    assert metadata["tasks"] == ["arc_easy", "hellaswag"]
+
+
 def test_cli_train_sft_sweep_uses_dataset_pack(tmp_path, capsys, monkeypatch):
     corpus = tmp_path / "corpus.txt"
     chat = tmp_path / "chat.jsonl"

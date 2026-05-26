@@ -57,6 +57,11 @@ from picochat.hf_export import HFExportConfig, export_hf_checkpoint
 from picochat.hf_import import HFImportConfig, import_hf_dataset
 from picochat.honesty import inspect_data_honesty, write_data_honesty_report
 from picochat.leaderboard import build_benchmark_leaderboard, leaderboard_table, write_leaderboard_report
+from picochat.lm_harness import (
+    LMEvalHarnessConfig,
+    parse_lm_eval_tasks,
+    run_lm_eval_harness,
+)
 from picochat.lr_finder import LRRangeConfig, run_lr_range
 from picochat.model import SDPA_BACKENDS
 from picochat.registry import (
@@ -1339,6 +1344,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Bootstrap samples for SFT-fit pass-rate confidence intervals. Use 0 to disable.",
     )
     eval_sft_fit_parser.add_argument("--ci-confidence", type=float, default=0.95)
+
+    eval_lm_harness_parser = eval_subparsers.add_parser(
+        "lm-harness",
+        help="Run or write an EleutherAI lm-eval-harness command for a HF export.",
+    )
+    eval_lm_harness_parser.add_argument("--model-path", required=True, help="HF-style Picochat export directory.")
+    eval_lm_harness_parser.add_argument("--tasks", required=True, help="Comma-separated lm-eval task names, e.g. arc_easy,hellaswag.")
+    eval_lm_harness_parser.add_argument("--out-dir", required=True, help="Output directory for lm-eval results and command metadata.")
+    eval_lm_harness_parser.add_argument("--device", default="cpu", help="lm-eval device string, e.g. cpu, cuda, cuda:0.")
+    eval_lm_harness_parser.add_argument("--batch-size", default="auto", help="lm-eval batch size, e.g. auto, 1, 8.")
+    eval_lm_harness_parser.add_argument("--limit", default=None, help="Optional lm-eval limit for smoke tests.")
+    eval_lm_harness_parser.add_argument("--num-fewshot", type=int, default=None)
+    eval_lm_harness_parser.add_argument("--model", default="hf", help="lm-eval model adapter name. Defaults to hf.")
+    eval_lm_harness_parser.add_argument(
+        "--model-arg",
+        action="append",
+        default=[],
+        help="Extra lm-eval model_arg entry, e.g. dtype=bfloat16. Can be repeated.",
+    )
+    eval_lm_harness_parser.add_argument(
+        "--no-trust-remote-code",
+        action="store_true",
+        help="Do not pass trust_remote_code=True to the hf adapter.",
+    )
+    eval_lm_harness_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write and print the lm-eval command without importing or running lm_eval.",
+    )
 
     scale_parser = subparsers.add_parser("scale", help="Plan larger GPU training recipes.")
     scale_subparsers = scale_parser.add_subparsers(dest="scale_command")
@@ -3240,6 +3274,25 @@ def run_leaderboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_eval_lm_harness(args: argparse.Namespace) -> int:
+    report = run_lm_eval_harness(LMEvalHarnessConfig(
+        model_path=args.model_path,
+        tasks=parse_lm_eval_tasks(args.tasks),
+        out_dir=args.out_dir,
+        device=args.device,
+        batch_size=args.batch_size,
+        limit=args.limit,
+        num_fewshot=args.num_fewshot,
+        model=args.model,
+        trust_remote_code=not args.no_trust_remote_code,
+        extra_model_args=tuple(args.model_arg or ()),
+        dry_run=bool(args.dry_run),
+    ))
+    print(report["command_text"])
+    print(f"lm-eval command metadata: {Path(args.out_dir) / 'lm_eval_command.json'}")
+    return 0
+
+
 def run_registry(args: argparse.Namespace) -> int:
     runs = [Path(path) for path in args.runs]
     if not runs and args.runs_dir:
@@ -3375,6 +3428,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "eval" and args.eval_command == "sft-fit":
         return run_eval_sft_fit(args)
+
+    if args.command == "eval" and args.eval_command == "lm-harness":
+        return run_eval_lm_harness(args)
 
     if args.command == "scale" and args.scale_command == "plan":
         return run_scale_plan(args)

@@ -30,6 +30,9 @@ hf = [
 monitor = [
     "tensorboard>=2.14",
 ]
+bench = [
+    "lm-eval>=0.4",
+]
 dev = [
     "pytest>=8.0",
 ]

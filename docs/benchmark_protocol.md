@@ -94,5 +94,35 @@ pico eval external \
   --max-new-tokens 1
 ```
 
+## lm-eval-harness Bridge
+
+Picochat's native eval reports are intentionally transparent, but public model
+claims should also be easy to score with common benchmark tooling. Export a
+checkpoint first:
+
+```bash
+pico export hf \
+  --checkpoint runs/<run>/sft/checkpoint \
+  --tokenizer runs/<run>/tokenizer.json \
+  --out-dir exports/<run>
+```
+
+Then write a reproducible EleutherAI `lm-eval-harness` command:
+
+```bash
+pico eval lm-harness \
+  --model-path exports/<run> \
+  --tasks arc_easy,hellaswag \
+  --out-dir reports/<run>/lm_eval \
+  --device cuda:0 \
+  --batch-size auto \
+  --model-arg dtype=bfloat16 \
+  --dry-run
+```
+
+When `lm-eval` is installed, remove `--dry-run` to execute the command. The
+bridge writes `lm_eval_command.json` so benchmark reports can quote the exact
+adapter, task list, model path, and device settings.
+
 The goal is not to make every number high. The goal is to make every number
 auditable.
