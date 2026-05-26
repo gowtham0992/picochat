@@ -648,10 +648,7 @@ def suggest_training_command(
             eval_input,
         ]
     command = _shell_command([
-        "PYTHONPATH=src",
-        "python",
-        "-m",
-        "picochat.cli",
+        "picochat",
         "run",
         "tiny",
         "--out-dir",
@@ -1178,7 +1175,7 @@ def _stream_imported_pack_document_metadata(
     if line_tracking_capped:
         warnings.append(
             "duplicate line tracking was capped for the fast imported-pack path; "
-            "run `picochat.cli data preview` for a full offline corpus audit"
+            "run `picochat data preview` for a full offline corpus audit"
         )
     warnings.append(
         "near-duplicate document estimation is skipped during fast imported-pack run launch; "

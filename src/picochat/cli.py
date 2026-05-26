@@ -543,6 +543,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Download/load the split normally instead of streaming rows.",
     )
+    data_hf_import.add_argument(
+        "--pack-out",
+        default=None,
+        help="Optional output folder for a dataset_pack.json that points at the imported documents.",
+    )
+    data_hf_import.add_argument(
+        "--pack-name",
+        default=None,
+        help="Optional dataset pack name when --pack-out is used.",
+    )
+    data_hf_import.add_argument(
+        "--pack-description",
+        default=None,
+        help="Optional dataset pack description when --pack-out is used.",
+    )
+    data_hf_import.add_argument(
+        "--pack-force",
+        action="store_true",
+        help="Overwrite dataset pack starter files when --pack-out is used.",
+    )
 
     data_climbmix_import = data_subparsers.add_parser(
         "climbmix-import",
@@ -2141,7 +2161,7 @@ def init_pack_data(args: argparse.Namespace) -> int:
         for path in report.overwritten:
             print(f"- {path}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {report.dataset_pack}")
+    print(f"picochat data preview --dataset-pack {report.dataset_pack}")
     return 0
 
 
@@ -2242,7 +2262,7 @@ def benchmark_pack_data(args: argparse.Namespace) -> int:
         print(f"- {name}: {count}")
     print(f"report: {report.report_path}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {report.dataset_pack}")
+    print(f"picochat data preview --dataset-pack {report.dataset_pack}")
     return 0
 
 
@@ -2285,7 +2305,7 @@ def task_pack_data(args: argparse.Namespace) -> int:
         print(f"- {name}: {count}")
     print(f"report: {report.report_path}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {report.dataset_pack}")
+    print(f"picochat data preview --dataset-pack {report.dataset_pack}")
     return 0
 
 
@@ -2313,7 +2333,7 @@ def slice_pack_data(args: argparse.Namespace) -> int:
         print(f"- {name}: {count}")
     print(f"report: {report.report_path}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {report.dataset_pack}")
+    print(f"picochat data preview --dataset-pack {report.dataset_pack}")
     return 0
 
 
@@ -2338,7 +2358,7 @@ def stage_pack_data(args: argparse.Namespace) -> int:
     print(f"report: {report.report_path}")
     print("\nnext:")
     for stage in report.stages:
-        print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {stage.dataset_pack}")
+        print(f"picochat data preview --dataset-pack {stage.dataset_pack}")
     return 0
 
 
@@ -2369,7 +2389,7 @@ def skills_corpus_data(args: argparse.Namespace) -> int:
     if report.recipe_path:
         print(f"recipe: {report.recipe_path}")
         print("\nnext:")
-        print(f"PYTHONPATH=src python -m picochat.cli data preview --recipe {report.recipe_path}")
+        print(f"picochat data preview --recipe {report.recipe_path}")
     return 0
 
 
@@ -2401,8 +2421,24 @@ def hf_import_data(args: argparse.Namespace) -> int:
     print(f"document_shard_rows: {report.document_shard_rows}")
     print(f"document_files_written: {report.document_files_written}")
     print(f"report: {report.report_path}")
+    pack_report = None
+    if args.pack_out:
+        pack_report = init_dataset_pack(
+            out_dir=args.pack_out,
+            corpus_path=report.documents_dir or report.out_path,
+            name=args.pack_name or report.dataset,
+            description=args.pack_description or f"Hugging Face dataset import: {report.dataset}.",
+            force=args.pack_force,
+        )
+        print(f"dataset_pack: {pack_report.dataset_pack}")
+        print(f"corpus_recipe: {pack_report.corpus_recipe}")
+        print(f"chat sft jsonl: {pack_report.chat_input}")
+        print(f"eval jsonl: {pack_report.eval_input}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --input {report.documents_dir or report.out_path}")
+    if pack_report:
+        print(f"picochat data preview --dataset-pack {pack_report.dataset_pack}")
+    else:
+        print(f"picochat data preview --input {report.documents_dir or report.out_path}")
     return 0
 
 
@@ -2456,7 +2492,7 @@ def climbmix_import_data(args: argparse.Namespace) -> int:
     print(f"document_files_written: {report.document_files_written}")
     print(f"report: {report.report_path}")
     print("\nnext:")
-    print(f"PYTHONPATH=src python -m picochat.cli data preview --dataset-pack {pack_report.dataset_pack}")
+    print(f"picochat data preview --dataset-pack {pack_report.dataset_pack}")
     return 0
 
 
@@ -3385,7 +3421,7 @@ def run_demo(args: argparse.Namespace) -> int:
         f"demo run: {summary['eval']['num_passed']}/{summary['eval']['num_examples']} "
         f"passed ({summary['eval']['pass_rate'] * 100:.2f}%)"
     )
-    print(f"open workbench: PYTHONPATH=src python -m picochat.cli web --runs-dir runs --port 8765")
+    print("open workbench: picochat web --runs-dir runs --port 8765")
     return 0
 
 

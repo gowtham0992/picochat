@@ -372,16 +372,16 @@ async function postJson(url, body) {
 
 function apiTransportMessage(error) {
   const hint = location.protocol === "file:"
-    ? " Open Picochat through the web server, not file://. Run: PYTHONPATH=src python -m picochat.cli web"
+    ? " Open Picochat through the web server, not file://. Run: picochat web"
     : "";
   return `API request failed: ${error.message}.${hint}`;
 }
 
 function apiNonJsonMessage(url, response, text) {
   const preview = String(text || "").replace(/\s+/g, " ").trim().slice(0, 160);
-  const restartHint = " Stop the terminal running Picochat web, then restart it: PYTHONPATH=src python -m picochat.cli web --port 8765";
+  const restartHint = " Stop the terminal running Picochat web, then restart it: picochat web --port 8765";
   const hint = location.protocol === "file:"
-    ? " You are on file://, so /api routes are not available. Start Picochat with: PYTHONPATH=src python -m picochat.cli web"
+    ? " You are on file://, so /api routes are not available. Start Picochat with: picochat web"
     : response.status === 404 && String(url).startsWith("/api/")
       ? ` The browser has newer UI code, but the running Python server does not know this API route yet.${restartHint}`
       : ` The Picochat server returned a page instead of JSON.${restartHint}`;
@@ -2040,7 +2040,7 @@ function pipelineStages() {
       ],
       note: "Turns text into token IDs before the model ever sees it.",
       command: shellCommand([
-        "PYTHONPATH=src", "python", "-m", "picochat.cli", "tok", "train",
+        "picochat", "tok", "train",
         "--input", corpusPath,
         "--out", tokenizerPath,
         "--type", tokenizerType,
@@ -2064,7 +2064,7 @@ function pipelineStages() {
       ],
       note: "Learns next-token prediction from the corpus. This is the actual tiny language model training stage.",
       command: shellCommand([
-        "PYTHONPATH=src", "python", "-m", "picochat.cli", "train", "base",
+        "picochat", "train", "base",
         "--corpus", corpusPath,
         "--tokenizer", tokenizerPath,
         "--out-dir", `${outDir}/base`,
@@ -2112,7 +2112,7 @@ function pipelineStages() {
       ],
       note: "Tunes the base model on User/Assistant examples. A large loss gap is a memorization warning.",
       command: shellCommand([
-        "PYTHONPATH=src", "python", "-m", "picochat.cli", "train", "sft",
+        "picochat", "train", "sft",
         "--input", config.chat_input || "examples/tiny_chat.jsonl",
         "--tokenizer", tokenizerPath,
         "--checkpoint", baseCheckpoint,
@@ -2149,7 +2149,7 @@ function pipelineStages() {
       ],
       note: "Checks model replies against answerable and unanswerable prompts.",
       command: shellCommand([
-        "PYTHONPATH=src", "python", "-m", "picochat.cli", "eval", "chat",
+        "picochat", "eval", "chat",
         "--input", config.eval_input || "examples/tiny_eval.jsonl",
         "--checkpoint", sftCheckpoint,
         "--tokenizer", tokenizerPath,
@@ -2178,7 +2178,7 @@ function pipelineStages() {
       ],
       note: "Runs live generation from the selected checkpoint through /api/generate.",
       command: shellCommand([
-        "PYTHONPATH=src", "python", "-m", "picochat.cli", "chat",
+        "picochat", "chat",
         "--checkpoint", sftCheckpoint,
         "--tokenizer", tokenizerPath,
         "--seed", config.seed ?? 42,
@@ -2204,7 +2204,7 @@ function pipelineStages() {
       ],
       note: "Collects the run into human-readable artifacts so the experiment can be inspected later.",
       command: shellCommand([
-        "PYTHONPATH=src", "python", "-m", "picochat.cli", "web",
+        "picochat", "web",
         "--runs-dir", "runs",
         "--port", 8765,
       ]),
@@ -2677,13 +2677,13 @@ function datasetCommand(config, artifacts) {
   const output = artifacts.corpus || `${config.out_dir || "runs/manual"}/corpus.txt`;
   if (config.corpus_recipe) {
     return shellCommand([
-      "PYTHONPATH=src", "python", "-m", "picochat.cli", "data", "build",
+      "picochat", "data", "build",
       "--recipe", config.corpus_recipe,
       "--out", output,
     ]);
   }
   return shellCommand([
-    "PYTHONPATH=src", "python", "-m", "picochat.cli", "data", "build",
+    "picochat", "data", "build",
     "--input", config.corpus_input || "examples/tiny_corpus.txt",
     "--out", output,
   ]);
@@ -3494,7 +3494,7 @@ function editorToTuningInspection(report) {
     eval_data: report.eval_data,
     next_actions: report.next_actions || [],
     preview_command: report.dataset_pack
-      ? shellCommand(["PYTHONPATH=src", "python", "-m", "picochat.cli", "data", "preview", "--dataset-pack", report.dataset_pack])
+      ? shellCommand(["picochat", "data", "preview", "--dataset-pack", report.dataset_pack])
       : null,
   };
 }
@@ -3889,7 +3889,6 @@ function launchPreviewCommand(config = launchConfig()) {
     ...(usesDdp ? ["PICOCHAT_DDP_TIMEOUT_MINUTES=120"] : []),
     ...((usesDdp || config.device === "cuda") ? ["PYTORCH_ALLOC_CONF=expandable_segments:True"] : []),
     "PYTHONUNBUFFERED=1",
-    "PYTHONPATH=src",
   ];
   const parts = usesDdp ? [
     ...envParts,
@@ -3900,9 +3899,7 @@ function launchPreviewCommand(config = launchConfig()) {
     "picochat.cli",
   ] : [
     ...envParts,
-    "python",
-    "-m",
-    "picochat.cli",
+    "picochat",
   ];
   parts.push(
     "run",
@@ -4356,10 +4353,7 @@ function renderScalePlan() {
   `;
 
   const mpsParts = [
-    "PYTHONPATH=src",
-    "python",
-    "-m",
-    "picochat.cli",
+    "picochat",
     "run",
     "tiny",
     "--out-dir",
@@ -4395,10 +4389,7 @@ function renderScalePlan() {
     "mkdir -p logs",
     `${shellCommand([
       "PYTHONUNBUFFERED=1",
-      "PYTHONPATH=src",
-      "python",
-      "-m",
-      "picochat.cli",
+      "picochat",
       "sanity",
       "preh100",
       "--out-dir",
@@ -4418,10 +4409,7 @@ function renderScalePlan() {
     "mkdir -p logs",
     `${shellCommand([
       "PYTHONUNBUFFERED=1",
-      "PYTHONPATH=src",
-      "python",
-      "-m",
-      "picochat.cli",
+      "picochat",
       "data",
       "climbmix-import",
       "--out-dir",
@@ -4441,10 +4429,7 @@ function renderScalePlan() {
   const releaseAnswerStyle = config.long_run_gate_profile === "skill_release" ? "scratchpad" : "direct";
   const remoteBenchmark = `${shellCommand([
     "PYTHONUNBUFFERED=1",
-    "PYTHONPATH=src",
-    "python",
-    "-m",
-    "picochat.cli",
+    "picochat",
     "data",
     "benchmark-pack",
     "--dataset-pack",
@@ -4505,10 +4490,7 @@ function renderScalePlan() {
     ...(usesDdp ? ["PICOCHAT_DDP_TIMEOUT_MINUTES=120"] : []),
     "PYTORCH_ALLOC_CONF=expandable_segments:True",
     "PYTHONUNBUFFERED=1",
-    "PYTHONPATH=src",
-    "python",
-    "-m",
-    "picochat.cli",
+    "picochat",
     ...remoteRunArgs,
   ];
   if (usesDdp) remotePreflightParts.push("--ddp", "--ddp-world-size", ddpWorldSize);
@@ -4519,7 +4501,6 @@ function renderScalePlan() {
       "TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
       "PYTORCH_ALLOC_CONF=expandable_segments:True",
       "PYTHONUNBUFFERED=1",
-      "PYTHONPATH=src",
       "torchrun",
       "--standalone",
       `--nproc_per_node=${ddpWorldSize}`,
@@ -4533,10 +4514,7 @@ function renderScalePlan() {
     : [
       "PYTORCH_ALLOC_CONF=expandable_segments:True",
       "PYTHONUNBUFFERED=1",
-      "PYTHONPATH=src",
-      "python",
-      "-m",
-      "picochat.cli",
+      "picochat",
       ...remoteRunArgs,
     ];
   const remotePreflight = `${shellCommand([...remotePreflightParts, "--preflight-only"])} 2>&1 | tee logs/preflight-${config.run_name}.log`;
@@ -4547,7 +4525,6 @@ function renderScalePlan() {
       "TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
       "PYTORCH_ALLOC_CONF=expandable_segments:True",
       "PYTHONUNBUFFERED=1",
-      "PYTHONPATH=src",
       "torchrun",
       "--standalone",
       `--nproc_per_node=${ddpWorldSize}`,
@@ -4561,10 +4538,7 @@ function renderScalePlan() {
     : [
       "PYTORCH_ALLOC_CONF=expandable_segments:True",
       "PYTHONUNBUFFERED=1",
-      "PYTHONPATH=src",
-      "python",
-      "-m",
-      "picochat.cli",
+      "picochat",
       ...remoteDryRunArgs,
     ];
   const remoteDryRun = [
@@ -4577,10 +4551,7 @@ function renderScalePlan() {
     `${shellCommand(remoteRunParts)} 2>&1 | tee logs/train-${config.run_name}.log`,
   ].join("\n");
   const bundleParts = [
-    "PYTHONPATH=src",
-    "python",
-    "-m",
-    "picochat.cli",
+    "picochat",
     "run",
     "bundle",
     "--run-dir",
@@ -4592,10 +4563,7 @@ function renderScalePlan() {
     "--strict",
   ];
   const inspectBundleParts = [
-    "PYTHONPATH=src",
-    "python",
-    "-m",
-    "picochat.cli",
+    "picochat",
     "run",
     "inspect-bundle",
     "--bundle",
@@ -6018,7 +5986,7 @@ function tuningInspectionFromPreview(report) {
     eval_data: report.eval_data,
     next_actions: compactTuningActions(report.chat_data, report.eval_data, Boolean(report.dataset_pack)),
     preview_command: report.dataset_pack
-      ? shellCommand(["PYTHONPATH=src", "python", "-m", "picochat.cli", "data", "preview", "--dataset-pack", report.dataset_pack])
+      ? shellCommand(["picochat", "data", "preview", "--dataset-pack", report.dataset_pack])
       : null,
   };
 }

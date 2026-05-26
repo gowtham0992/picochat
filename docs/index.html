@@ -262,6 +262,7 @@
         <a href="model_registry.html">Registry</a>
         <a href="release_gates.html">Release Gates</a>
         <a href="deployment.html">Deploy</a>
+        <a href="h100_100m_runbook.html">100M Runbook</a>
         <a href="h200_1b_runbook.html">8xH200 Runbook</a>
       </div>
     </nav>
@@ -280,7 +281,8 @@
         </p>
         <div class="actions">
           <a class="button" href="model_evidence.html">Model evidence</a>
-          <a class="button" href="h200_1b_runbook.html">Read the 1B runbook</a>
+          <a class="button" href="h100_100m_runbook.html">Read the 100M runbook</a>
+          <a class="button secondary" href="h200_1b_runbook.html">1B runbook</a>
           <a class="button secondary" href="release_gates.html">Inspect the gates</a>
           <a class="button secondary" href="benchmark_protocol.html">Benchmark protocol</a>
         </div>
@@ -334,8 +336,8 @@
       </div>
       <div class="card">
         <label>Public proof</label>
-        <h3>Claims need reproducible reports.</h3>
-        <p>The benchmark protocol defines required baselines, honesty evidence, release-gate status, and model-card artifacts for public results.</p>
+        <h3>100M is the first publish target.</h3>
+        <p>The 100M runbook uses a bounded SmolLM-Corpus pack and requires preflight, dry run, eval, release gate, and honesty evidence.</p>
       </div>
       <div class="card">
         <label>Deployment</label>
@@ -359,15 +361,14 @@
         <h2>Scale up without guessing.</h2>
         <p>
           The Scale Up lane emits remote commands for setup, sanity, ClimbMix
-          import, release-skills SFT/eval pack generation, preflight, 100-step
-          DDP dry run, full training, bundle, and return inspection.
+          or SmolLM-Corpus import, release-skills SFT/eval pack generation,
+          preflight, dry run, full training, bundle, and return inspection.
         </p>
       </div>
-      <pre class="code">torchrun --standalone --nproc_per_node=8 \
-  -m picochat.cli run tiny \
-  --scale h200-1b-ddp8 \
-  --dataset-pack runs/climbmix-cuda/dataset_pack.json \
-  --ddp --ddp-world-size 8 \
+      <pre class="code">picochat run tiny \
+  --scale h100-100m \
+  --dataset-pack runs/smollm-100m-pack-v1/dataset_pack.json \
+  --device cuda \
   --preflight-only</pre>
     </section>
 

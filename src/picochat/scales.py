@@ -358,7 +358,11 @@ RUN_SCALES: dict[str, RunScale] = {
     "h100-100m": RunScale(
         name="h100-100m",
         label="H100 100M",
-        description="Single-H100/H200 100M-parameter skill-release run for multi-hundred-million-token ClimbMix pilots.",
+        description=(
+            "Single-H100/H200 100M-parameter public-proof run. Target a curated "
+            "SmolLM/FineWeb-Edu-scale pack near 2B tokens, then train every local "
+            "token shard under the skill_release gate."
+        ),
         tokenizer_type="hf_bpe",
         tokenizer_vocab_size=8192,
         tokenizer_min_freq=2,

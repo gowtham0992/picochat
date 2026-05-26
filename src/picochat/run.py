@@ -961,7 +961,7 @@ def _verify_optional_attention_backend(config: TinyRunConfig) -> None:
         raise ValueError(
             "attn_backend='fa3' requires FlashAttention-3 to be importable before launch; "
             "install the optional FA3 kernel and run "
-            "`python -m picochat.cli sanity preh100 --device cuda --precision bf16 --attn-backend fa3`"
+            "`picochat sanity preh100 --device cuda --precision bf16 --attn-backend fa3`"
         )
     if config.attn_backend == "external_flash" and not external_flash_attention_available():
         raise ValueError(

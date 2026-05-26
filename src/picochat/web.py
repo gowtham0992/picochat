@@ -394,10 +394,7 @@ def init_dataset_pack_plan(payload: dict) -> dict:
         "name": name,
         "description": description,
         "preview_command": _shell_command(
-            "PYTHONPATH=src",
-            "python",
-            "-m",
-            "picochat.cli",
+            "picochat",
             "data",
             "preview",
             "--dataset-pack",
@@ -469,10 +466,7 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
     )
     if data_files:
         command_parts = [
-            "PYTHONPATH=src",
-            "python",
-            "-m",
-            "picochat.cli",
+            "picochat",
             "data",
             "climbmix-import",
             "--out-dir",
@@ -490,10 +484,7 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
             command_parts.append("--no-streaming")
     else:
         command_parts = [
-            "PYTHONPATH=src",
-            "python",
-            "-m",
-            "picochat.cli",
+            "picochat",
             "data",
             "hf-import",
             "--dataset",
@@ -512,6 +503,9 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
             str(min_chars),
             "--document-shard-rows",
             str(document_shard_rows),
+            "--pack-out",
+            str(out_dir),
+            "--pack-force",
         ]
         if config_name:
             command_parts.extend(["--config", config_name])
@@ -586,10 +580,7 @@ def inspect_tuning_plan(payload: dict) -> dict:
         "next_actions": _tuning_next_actions(chat_data, eval_data, bool(dataset_pack)),
         "preview_command": (
             _shell_command(
-                "PYTHONPATH=src",
-                "python",
-                "-m",
-                "picochat.cli",
+                "picochat",
                 "data",
                 "preview",
                 "--dataset-pack",
@@ -632,10 +623,7 @@ def sft_starter_plan(payload: dict) -> dict:
     )
     promoted_pack = update_dataset_pack_tuning_paths(dataset_pack, chat_input=out_path) if dataset_pack and promote_to_pack else None
     command_parts = [
-        "PYTHONPATH=src",
-        "python",
-        "-m",
-        "picochat.cli",
+        "picochat",
         "data",
         "sft-starter",
     ]
@@ -695,10 +683,7 @@ def eval_starter_plan(payload: dict) -> dict:
     )
     promoted_pack = update_dataset_pack_tuning_paths(dataset_pack, eval_input=out_path) if dataset_pack and promote_to_pack else None
     command_parts = [
-        "PYTHONPATH=src",
-        "python",
-        "-m",
-        "picochat.cli",
+        "picochat",
         "data",
         "eval-starter",
     ]
@@ -769,10 +754,7 @@ def benchmark_tuning_pack_plan(payload: dict) -> dict:
         promote_to_pack=promote_to_pack,
     )
     command_parts = [
-        "PYTHONPATH=src",
-        "python",
-        "-m",
-        "picochat.cli",
+        "picochat",
         "data",
         "benchmark-pack",
         "--dataset-pack",
@@ -834,10 +816,7 @@ def preference_starter_plan(payload: dict) -> dict:
         force=force,
     ))
     command_parts = [
-        "PYTHONPATH=src",
-        "python",
-        "-m",
-        "picochat.cli",
+        "picochat",
         "data",
         "preference-starter",
         "--input",

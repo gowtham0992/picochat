@@ -260,7 +260,7 @@ def hf_import_markdown(report: HFImportReport) -> str:
     lines.append("Preview the imported documents before training so Picochat can see row-level document boundaries:")
     lines.append("")
     lines.append("```bash")
-    lines.append(f"PYTHONPATH=src python -m picochat.cli data preview --input {report.documents_dir or report.out_path}")
+    lines.append(f"picochat data preview --input {report.documents_dir or report.out_path}")
     lines.append("```")
     lines.append("")
     return "\n".join(lines)

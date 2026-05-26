@@ -14,6 +14,7 @@
   <a href="https://gowtham0992.github.io/picochat/">Product Page</a> ·
   <a href="https://gowtham0992.github.io/picochat/model_evidence.html">Model Evidence</a> ·
   <a href="https://gowtham0992.github.io/picochat/pipeline_guide.html">Pipeline Guide</a> ·
+  <a href="https://gowtham0992.github.io/picochat/h100_100m_runbook.html">100M Runbook</a> ·
   <a href="https://gowtham0992.github.io/picochat/h200_1b_runbook.html">1B Runbook</a> ·
   <a href="https://gowtham0992.github.io/picochat/benchmark_protocol.html">Benchmarks</a> ·
   <a href="https://gowtham0992.github.io/picochat/model_registry.html">Registry</a> ·
@@ -48,11 +49,12 @@ dataset -> tokenizer -> base pretraining -> chat SFT -> optional DPO -> eval -> 
 
 ## Current Status
 
-Picochat is a research-grade training harness and local workbench. The 100M
-pilot path has been exercised on H100/H200 instances. The 1B-class
-`h200-1b-ddp8` path is prepared for an 8xH100/H200 run with explicit preflight,
-DDP dry-run, checkpoint, contamination, token-budget, and post-run release
-gates.
+Picochat is a research-grade training harness and local workbench. The current
+recommended public proof path is a one-GPU `h100-100m` run on a bounded
+SmolLM-Corpus pack (`fineweb-edu-dedup` plus `cosmopedia-v2`) with explicit
+sanity, preflight, dry-run, release-skills SFT/eval, and evidence-bundle
+steps. The 1B-class `h200-1b-ddp8` path remains prepared for a later
+8xH100/H200 run.
 
 Public model evidence is still pending. Picochat should not be judged by a
 claimed 1B result until a trained model, release card, model card, benchmark
@@ -63,7 +65,7 @@ page.
 | Artifact | Public status | Release rule |
 | --- | --- | --- |
 | Local tiny demo | Ready | Smoke test only; not a model-quality claim |
-| 100M H100/H200 pilot | Exercised privately | Publish only with eval, samples, and gate report |
+| 100M H100/H200 public proof | Runbook ready | Publish only with eval, samples, gate report, and honesty report |
 | 1B `h200-1b-ddp8` run | Prepared, not claimed | Publish only after preflight, DDP dry run, full eval, external benchmark, and release gate |
 | Hugging Face model | Pending | Must include model card, release manifest, and honesty evidence |
 
@@ -264,6 +266,18 @@ Read the runbook before spending GPU money:
 The current `h200-1b-ddp8` scale targets about 1.12B parameters and 22.4B
 planned training tokens, roughly 20 tokens per parameter.
 
+## One-GPU 100M Public Proof
+
+For the next paid run, use the 100M runbook before attempting 1B:
+
+- [100M public proof runbook](https://gowtham0992.github.io/picochat/h100_100m_runbook.html)
+- Dataset: bounded [SmolLM-Corpus](https://huggingface.co/datasets/HuggingFaceTB/smollm-corpus) local pack.
+- Scale: `h100-100m`, about 107M parameters and 2.16B planned tokens.
+- Gate: `skill_release`, with identity, refusal, choice, arithmetic, and spelling eval coverage.
+
+This path is intentionally smaller, cheaper, and easier to publish honestly
+than the 1B run. It is the first model-quality proof target.
+
 ## Release Readiness
 
 Picochat does not treat a completed run as a release. A run can finish training
@@ -310,6 +324,7 @@ Key stations:
 - [Model evidence](https://gowtham0992.github.io/picochat/model_evidence.html)
 - [Architecture](https://gowtham0992.github.io/picochat/architecture.html)
 - [Pipeline guide](https://gowtham0992.github.io/picochat/pipeline_guide.html)
+- [100M public proof runbook](https://gowtham0992.github.io/picochat/h100_100m_runbook.html)
 - [Benchmark protocol](https://gowtham0992.github.io/picochat/benchmark_protocol.html)
 - [Model registry](https://gowtham0992.github.io/picochat/model_registry.html)
 - [Release gates](https://gowtham0992.github.io/picochat/release_gates.html)

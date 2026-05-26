@@ -1401,6 +1401,72 @@ def test_cli_data_hf_import_uses_importer(tmp_path, capsys, monkeypatch):
     assert "document_files_written: 2" in output
 
 
+def test_cli_data_hf_import_can_create_dataset_pack(tmp_path, capsys, monkeypatch):
+    from picochat.hf_import import HFImportReport
+
+    def fake_import(config):
+        return HFImportReport(
+            dataset=config.dataset,
+            config_name=config.config_name,
+            split=config.split,
+            text_column=config.text_column,
+            streaming=config.streaming,
+            max_rows=config.max_rows,
+            min_chars=config.min_chars,
+            out_path=config.out_path,
+            report_path=config.report_path or str(tmp_path / "hf_import_report.json"),
+            documents_dir=config.documents_dir or str(tmp_path / "documents"),
+            document_shard_rows=config.document_shard_rows,
+            document_files_written=1,
+            rows_seen=1,
+            rows_written=1,
+            rows_skipped=0,
+            characters_written=42,
+            rows=(),
+        )
+
+    captured_pack = {}
+
+    def fake_pack(**kwargs):
+        captured_pack.update(kwargs)
+        return SimpleNamespace(
+            dataset_pack=str(tmp_path / "pack" / "dataset_pack.json"),
+            corpus_recipe=str(tmp_path / "pack" / "corpus_recipe.json"),
+            chat_input=str(tmp_path / "pack" / "chat.jsonl"),
+            eval_input=str(tmp_path / "pack" / "eval.jsonl"),
+        )
+
+    monkeypatch.setattr("picochat.cli.import_hf_dataset", fake_import)
+    monkeypatch.setattr("picochat.cli.init_dataset_pack", fake_pack)
+
+    exit_code = main([
+        "data",
+        "hf-import",
+        "--dataset",
+        "HuggingFaceTB/smollm-corpus",
+        "--config",
+        "fineweb-edu-dedup",
+        "--out",
+        str(tmp_path / "corpus.txt"),
+        "--documents-dir",
+        str(tmp_path / "docs"),
+        "--pack-out",
+        str(tmp_path / "pack"),
+        "--pack-name",
+        "smollm-100m-public-v1",
+        "--pack-force",
+    ])
+
+    assert exit_code == 0
+    assert captured_pack["out_dir"] == str(tmp_path / "pack")
+    assert captured_pack["corpus_path"] == str(tmp_path / "docs")
+    assert captured_pack["name"] == "smollm-100m-public-v1"
+    assert captured_pack["force"] is True
+    output = capsys.readouterr().out
+    assert f"dataset_pack: {tmp_path / 'pack' / 'dataset_pack.json'}" in output
+    assert f"picochat data preview --dataset-pack {tmp_path / 'pack' / 'dataset_pack.json'}" in output
+
+
 def test_cli_climbmix_import_auto_shards_large_imports(tmp_path, capsys, monkeypatch):
     from picochat.hf_import import HFImportReport
 
