@@ -58,6 +58,7 @@ class HFSFTConfig:
     trust_remote_code: bool = False
     revision: str | None = None
     done_file: str | None = "done.txt"
+    progress_file: str | None = None
 
 
 @dataclass(frozen=True)
@@ -270,6 +271,12 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
     precision_runtime = resolve_precision(config.precision, device)
     out_dir = Path(config.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    _write_hf_sft_progress(config, out_dir, {
+        "status": "loading",
+        "step": 0,
+        "max_steps": config.max_steps,
+        "message": "Loading tokenizer and base model weights.",
+    })
 
     tokenizer = AutoTokenizer.from_pretrained(
         config.model,
@@ -375,6 +382,15 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
                 "elapsed_sec": time.time() - start,
             }
             losses.append(row)
+            _write_hf_sft_progress(config, out_dir, {
+                "status": "training",
+                "step": step,
+                "max_steps": config.max_steps,
+                "train_loss": total_loss,
+                "val_loss": val_loss,
+                "lr": lr,
+                "elapsed_sec": row["elapsed_sec"],
+            })
             val_text = "n/a" if val_loss is None else f"{val_loss:.4f}"
             print(f"hf-sft step {step:04d}/{config.max_steps:04d} | train {total_loss:.4f} | val {val_text} | lr {lr:.2e}")
 
@@ -400,8 +416,17 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
     }
     (out_dir / "hf_sft_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (out_dir / "report.md").write_text(_hf_sft_markdown(report), encoding="utf-8")
+    _write_hf_sft_progress(config, out_dir, {
+        "status": "done",
+        "step": config.max_steps,
+        "max_steps": config.max_steps,
+        "best_val_loss": report["best_val_loss"],
+        "final_train_loss": report["final_train_loss"],
+        "elapsed_sec": time.time() - start,
+    })
     if config.done_file:
-        done_path = out_dir / config.done_file
+        done_path = _resolve_hf_sft_done_path(out_dir, config.done_file)
+        done_path.parent.mkdir(parents=True, exist_ok=True)
         done_path.write_text(json.dumps({
             "status": "done",
             "out_dir": str(out_dir),
@@ -409,6 +434,23 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
             "best_model": str(out_dir / "best_model") if report["best_val_loss"] is not None else None,
         }, indent=2), encoding="utf-8")
     return report
+
+
+def _write_hf_sft_progress(config: HFSFTConfig, out_dir: Path, payload: dict[str, Any]) -> None:
+    if not config.progress_file:
+        return
+    path = _resolve_hf_sft_done_path(out_dir, config.progress_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _resolve_hf_sft_done_path(out_dir: Path, done_file: str | Path) -> Path:
+    done_path = Path(done_file)
+    if done_path.is_absolute() or done_path.parent != Path("."):
+        return done_path
+    return out_dir / done_path
 
 
 def apply_hf_peft(model, config: HFSFTConfig) -> tuple[Any, dict[str, Any]]:

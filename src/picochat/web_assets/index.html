@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Picochat Workbench</title>
-    <link rel="stylesheet" href="/assets/style.css?v=20260512-scale-up">
+    <link rel="stylesheet" href="/assets/style.css?v=20260614-command-center">
   </head>
   <body>
     <div class="desktop-grain" aria-hidden="true"></div>
@@ -28,8 +28,8 @@
           <div class="theme-control">
             <span class="control-label">THEME</span>
             <div class="theme-toggle" aria-label="Workbench theme">
-              <button id="classic-theme-button" class="active" type="button">CLASSIC</button>
-              <button id="paper-theme-button" type="button">PAPER</button>
+              <button id="paper-theme-button" class="active" type="button">LIGHT</button>
+              <button id="classic-theme-button" type="button">DARK</button>
             </div>
           </div>
           <button id="refresh-button" type="button">REFRESH</button>
@@ -235,8 +235,56 @@
         </aside>
 
         <section class="workbench">
+          <section id="command-center" class="command-center" aria-label="Run command center">
+            <div class="command-topbar">
+              <div>
+                <p id="command-breadcrumb" class="command-breadcrumb">Runs / Run</p>
+                <h2 id="command-run-title">Select a run</h2>
+              </div>
+              <div class="command-actions">
+                <span id="command-status-pill" class="command-status-pill warn">No run</span>
+                <button type="button" data-panel="eval">Evaluate</button>
+                <button type="button" data-panel="dataset">Rerun</button>
+              </div>
+            </div>
+
+            <div id="command-alert" class="command-alert warn">
+              Load a run to see the current blocker, warning, or next action.
+            </div>
+
+            <div id="command-stage-track" class="command-stage-track"></div>
+
+            <div id="command-metrics" class="command-metrics"></div>
+
+            <div class="command-main-grid">
+              <section class="command-card">
+                <div class="command-card-head">
+                  <h3>Quality checks</h3>
+                  <span id="command-quality-summary">--</span>
+                </div>
+                <div id="command-quality-list" class="command-quality-list"></div>
+              </section>
+
+              <section class="command-card">
+                <div class="command-card-head">
+                  <h3>Training loss</h3>
+                  <span id="command-loss-summary">--</span>
+                </div>
+                <div id="command-loss-chart" class="command-loss-chart"></div>
+              </section>
+            </div>
+
+            <section class="command-card command-repair-card">
+              <div class="command-card-head">
+                <h3>Repair queue</h3>
+                <span id="command-repair-summary">--</span>
+              </div>
+              <div id="command-repair-list" class="command-repair-list"></div>
+            </section>
+          </section>
+
           <section id="start-here" class="start-here learn-only" aria-label="Start here guide"></section>
-          <section class="assembly-line" aria-label="Picochat factory flow">
+          <section class="assembly-line legacy-evidence-stack" aria-label="Picochat factory flow">
             <div class="assembly-title">
               <span>FACTORY FLOW</span>
               <span id="pipeline-run">NO RUN</span>
@@ -244,20 +292,20 @@
             <div id="pipeline-strip" class="pipeline-strip"></div>
             <div id="pipeline-verdict" class="learning-verdict learn-only">LOAD A RUN TO SEE THE EXPERIMENT VERDICT.</div>
             <div id="run-release-panel" class="release-readiness">LOAD A RUN TO SEE RELEASE READINESS.</div>
-            <div id="run-storyline" class="run-storyline learn-only">LOAD A RUN TO SEE THE TRAINING STORY.</div>
+            <div id="run-storyline" class="run-storyline">LOAD A RUN TO SEE THE RUN LEDGER.</div>
             <div id="run-trust-panel" class="trust-panel learn-only">LOAD A RUN TO SEE TRUST CHECKS.</div>
             <div id="pipeline-detail" class="pipeline-detail inspect-only">LOAD A RUN TO INSPECT THE PIPELINE.</div>
             <div id="run-doctor" class="run-doctor inspect-only">RUN DOCTOR WAITING FOR A RUN.</div>
           </section>
 
           <nav class="tab-strip" aria-label="Pipeline panels">
-            <button class="tab-button active" type="button" data-panel="dataset">DATASET BAY</button>
-            <button class="tab-button" type="button" data-panel="tokenizer">TOKENIZER LAB</button>
-            <button class="tab-button" type="button" data-panel="training">TRAINING DASH</button>
-            <button class="tab-button" type="button" data-panel="generation">GENERATION DECK</button>
-            <button class="tab-button" type="button" data-panel="eval">EVAL SCOREBOARD</button>
-            <button class="tab-button" type="button" data-panel="report">REPORT VAULT</button>
-            <button class="tab-button" type="button" data-panel="compare">COMPARE RUNS</button>
+            <button class="tab-button active" type="button" data-panel="dataset">Data</button>
+            <button class="tab-button" type="button" data-panel="tokenizer">Tokenizer</button>
+            <button class="tab-button" type="button" data-panel="training">Train</button>
+            <button class="tab-button" type="button" data-panel="generation">Chat</button>
+            <button class="tab-button" type="button" data-panel="eval">Eval</button>
+            <button class="tab-button" type="button" data-panel="report">Handoff</button>
+            <button class="tab-button" type="button" data-panel="compare">Compare</button>
           </nav>
           <div id="panel-guide" class="guide-strip" aria-live="polite"></div>
           <div id="metric-glossary" class="metric-glossary learn-only"></div>
@@ -1195,6 +1243,8 @@ Assistant:</textarea>
               </div>
               <span id="report-status">REPORT --</span>
             </div>
+            <div id="run-passport" class="run-passport terminal-card">LOAD A RUN TO SEE THE RUN PASSPORT.</div>
+            <div id="handoff-packet" class="handoff-packet terminal-card">LOAD A RUN TO SEE THE HANDOFF PACKET.</div>
             <div class="two-col report-layout">
               <div class="terminal-card">
                 <label for="report-select">REPORT FILE</label>
@@ -1242,6 +1292,6 @@ Assistant:</textarea>
 
       <footer id="status-line" class="status-line">READY. | CTX -- | TOK -- | SEED 42</footer>
     </div>
-    <script src="/assets/app.js?v=20260511-tuning-paths"></script>
+    <script src="/assets/app.js?v=20260614-command-center"></script>
   </body>
 </html>

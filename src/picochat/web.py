@@ -238,6 +238,8 @@ def load_run_detail(runs_dir: str | Path, run_name: str) -> dict:
     corpus_manifest_path = _local_run_artifact_path(run_dir, summary, artifacts.get("corpus_manifest", run_dir / "corpus_manifest.json"))
     corpus_report_path = _local_run_artifact_path(run_dir, summary, artifacts.get("corpus_report", run_dir / "corpus_report.md"))
     tokenizer_path = _local_run_artifact_path(run_dir, summary, artifacts.get("tokenizer", run_dir / "tokenizer.json"))
+    reports = _load_report_status(run_dir, summary)
+    artifact_inventory = _load_artifact_inventory(run_dir, summary)
     detail = {
         "summary": summary,
         "corpus_preview": _read_text_preview(corpus_path),
@@ -251,9 +253,13 @@ def load_run_detail(runs_dir: str | Path, run_name: str) -> dict:
         "preflight": _preflight_from_run_dir(run_dir),
         "base_sample": _read_text_if_exists(run_dir / "base" / "sample.txt"),
         "sft_sample": _read_text_if_exists(run_dir / "sft" / "sample.txt"),
-        "reports": _load_report_status(run_dir, summary),
-        "artifact_inventory": _load_artifact_inventory(run_dir, summary),
+        "reports": reports,
+        "artifact_inventory": artifact_inventory,
     }
+    detail["run_timeline"] = _run_timeline_from_detail(summary, detail)
+    detail["handoff_packet"] = _handoff_packet_from_detail(summary, detail)
+    detail["release_repair_plan"] = _release_repair_plan_from_detail(summary, detail)
+    detail["run_passport"] = _run_passport_from_detail(summary, detail)
     return detail
 
 
@@ -2440,6 +2446,477 @@ def _load_report_status(run_dir: Path, summary: dict) -> dict:
     }
 
 
+def _run_timeline_from_detail(summary: dict, detail: dict) -> list[dict]:
+    """Build an answer-first run ledger for the web UI from existing artifacts."""
+    preflight = detail.get("preflight") or summary.get("preflight") or {}
+    gate = summary.get("long_run_gate") or {}
+    eval_summary = (detail.get("eval_reports") or [{}])[-1].get("report", {}).get("summary") if detail.get("eval_reports") else None
+    eval_summary = eval_summary or summary.get("eval") or {}
+    reports = detail.get("reports") or {}
+    inventory = detail.get("artifact_inventory") or {}
+    by_key = {
+        item.get("key"): item
+        for item in inventory.get("items", [])
+        if item.get("key")
+    }
+
+    def artifact(key: str) -> dict:
+        return by_key.get(key) or {"exists": False, "path": ""}
+
+    def artifact_status(key: str, label: str, ready: str, missing: str, *, warn: bool = False) -> dict:
+        item = artifact(key)
+        exists = bool(item.get("exists"))
+        return {
+            "id": key,
+            "label": label,
+            "status": "done" if exists else ("warn" if warn else "pending"),
+            "summary": ready if exists else missing,
+            "evidence": item.get("path") or "",
+        }
+
+    preflight_status = str(preflight.get("status") or "missing").lower()
+    if preflight_status in {"ready", "pass", "passed"}:
+        preflight_ui_status = "done"
+    elif preflight_status in {"blocked", "block", "fail", "failed"}:
+        preflight_ui_status = "blocked"
+    elif preflight_status in {"warn", "warning"}:
+        preflight_ui_status = "warn"
+    else:
+        preflight_ui_status = "pending"
+    preflight_blockers = preflight.get("blocking_checks") or []
+    preflight_warnings = preflight.get("warning_checks") or []
+
+    honesty = summary.get("honesty") or {}
+    honesty_status = str(honesty.get("status") or "").lower()
+    honesty_blocked = any([
+        int(honesty.get("exact_prompt_leaks") or 0) > 0,
+        int(honesty.get("corpus_prompt_hits") or 0) > 0,
+        int(honesty.get("duplicate_eval_prompts") or 0) > 0,
+    ])
+
+    base_trace = detail.get("base_report") or {}
+    base_losses = base_trace.get("losses") or []
+    sft_trace = detail.get("sft_report") or {}
+    sft_losses = sft_trace.get("losses") or []
+    eval_examples = eval_summary.get("num_examples")
+    gate_status = str(gate.get("status") or "not_run").lower()
+
+    return [
+        {
+            "id": "preflight",
+            "label": "Preflight",
+            "status": preflight_ui_status,
+            "summary": preflight.get("summary")
+            or ("Run is launch-ready." if preflight_ui_status == "done" else "Run preflight before spending GPU time."),
+            "evidence": artifact("preflight_report").get("path") or artifact("summary_json").get("path") or "",
+            "detail": f"{len(preflight_blockers)} blockers / {len(preflight_warnings)} warnings",
+        },
+        artifact_status(
+            "corpus_manifest",
+            "Data Pack",
+            "Corpus manifest and data lineage are present.",
+            "Corpus manifest is missing; data lineage is not inspectable.",
+        ),
+        {
+            "id": "honesty",
+            "label": "Honesty",
+            "status": "blocked" if honesty_blocked else ("done" if honesty_status in {"ready", "pass", "passed"} or reports.get("honesty", {}).get("exists") else "warn"),
+            "summary": honesty.get("summary") or "Honesty report not found.",
+            "evidence": reports.get("honesty", {}).get("path") or artifact("honesty_json").get("path") or "",
+            "detail": f"exact {honesty.get('exact_prompt_leaks', 0)} / corpus hits {honesty.get('corpus_prompt_hits', 0)}",
+        },
+        artifact_status(
+            "tokenizer",
+            "Tokenizer",
+            "Tokenizer artifact is present.",
+            "Tokenizer artifact is missing.",
+        ),
+        {
+            "id": "base",
+            "label": "Base Train",
+            "status": "done" if artifact("base_checkpoint").get("exists") else ("warn" if base_losses else "pending"),
+            "summary": f"{len(base_losses)} logged loss points; checkpoint {'ready' if artifact('base_checkpoint').get('exists') else 'missing'}.",
+            "evidence": reports.get("base", {}).get("path") or artifact("base_trace").get("path") or "",
+        },
+        {
+            "id": "sft",
+            "label": "Behavior SFT",
+            "status": "done" if artifact("sft_checkpoint").get("exists") else ("warn" if sft_losses else "pending"),
+            "summary": f"{len(sft_losses)} logged loss points; checkpoint {'ready' if artifact('sft_checkpoint').get('exists') else 'missing'}.",
+            "evidence": reports.get("sft", {}).get("path") or artifact("sft_trace").get("path") or "",
+        },
+        {
+            "id": "eval",
+            "label": "Visible Eval",
+            "status": "done" if eval_examples else "pending",
+            "summary": f"{eval_summary.get('num_passed', '--')}/{eval_examples or '--'} visible eval rows passed.",
+            "evidence": reports.get("eval", {}).get("path") or artifact("eval_json").get("path") or "",
+        },
+        {
+            "id": "release_gate",
+            "label": "Release Gate",
+            "status": "done" if gate_status == "approved" else ("blocked" if gate_status == "blocked" else "warn"),
+            "summary": gate.get("summary") or (gate.get("issues") or [{}])[0].get("message") or "Post-run release gate has not approved this run yet.",
+            "evidence": reports.get("summary", {}).get("path") or artifact("summary_json").get("path") or "",
+            "detail": gate.get("status") or "not run",
+        },
+    ]
+
+
+def _handoff_packet_from_detail(summary: dict, detail: dict) -> dict:
+    """Summarize the artifacts a downstream team or reviewer needs first."""
+    gate = summary.get("long_run_gate") or {}
+    gate_status = str(gate.get("status") or "not_run").lower()
+    reports = detail.get("reports") or {}
+    inventory = detail.get("artifact_inventory") or {}
+    by_key = {
+        item.get("key"): item
+        for item in inventory.get("items", [])
+        if item.get("key")
+    }
+
+    def record(key: str, label: str, purpose: str, *, required: bool = True) -> dict:
+        item = by_key.get(key) or {}
+        return {
+            "key": key,
+            "label": label,
+            "purpose": purpose,
+            "required": required,
+            "exists": bool(item.get("exists")),
+            "path": item.get("path") or "",
+            "kind": item.get("kind") or "missing",
+        }
+
+    def record_any(keys: list[str], label: str, purpose: str, *, required: bool = True) -> dict:
+        for key in keys:
+            item = by_key.get(key) or {}
+            if item.get("exists"):
+                return {
+                    "key": key,
+                    "label": label,
+                    "purpose": purpose,
+                    "required": required,
+                    "exists": True,
+                    "path": item.get("path") or "",
+                    "kind": item.get("kind") or "missing",
+                }
+        return record(keys[0], label, purpose, required=required)
+
+    def report_record(key: str, label: str, purpose: str) -> dict:
+        report = reports.get(key) or {}
+        return {
+            "key": f"{key}_report",
+            "label": label,
+            "purpose": purpose,
+            "required": True,
+            "exists": bool(report.get("exists")),
+            "path": report.get("path") or "",
+            "kind": "file" if report.get("exists") else "missing",
+        }
+
+    artifacts = [
+        report_record("summary", "Run summary", "Human-readable training, SFT, eval, and gate overview."),
+        report_record("honesty", "Honesty report", "Contamination and leakage evidence."),
+        report_record("base", "Base report", "Base-training loss, BPB, and checkpoint context."),
+        report_record("sft", "SFT report", "Behavior-tuning fit and held-out loss context."),
+        report_record("eval", "Eval report", "Visible eval results and failure examples."),
+        record_any(["base_best_checkpoint", "base_checkpoint"], "Base checkpoint", "Foundation model checkpoint for domain teams."),
+        record("sft_checkpoint", "SFT checkpoint", "Behavior-tuned checkpoint for demo/chat handoff."),
+        record("tokenizer", "Tokenizer", "Tokenizer required to load either checkpoint."),
+        record("preflight_report", "Preflight report", "Launch budget and blocker evidence.", required=False),
+    ]
+    missing_required = [item for item in artifacts if item["required"] and not item["exists"]]
+    gate_issues = gate.get("issues") or []
+    if gate_status == "approved" and not missing_required:
+        status = "ready"
+        summary_text = "Release handoff packet is complete."
+    elif gate_status == "blocked":
+        status = "blocked"
+        summary_text = gate_issues[0].get("message") if gate_issues else "Release gate blocked this run."
+    elif missing_required:
+        status = "blocked"
+        summary_text = f"{len(missing_required)} required handoff artifact{' is' if len(missing_required) == 1 else 's are'} missing."
+    else:
+        status = "watch"
+        summary_text = "Artifacts are present, but the release gate has not approved this run."
+
+    next_actions: list[str] = []
+    for item in missing_required:
+        next_actions.append(f"Create or recover {item['label']}.")
+    for issue in gate_issues[:4]:
+        message = issue.get("message") if isinstance(issue, dict) else str(issue)
+        if message:
+            next_actions.append(message)
+    if not next_actions:
+        if status == "ready":
+            next_actions.append("Share the summary, honesty report, eval report, tokenizer, and checkpoint paths with downstream users.")
+        elif status == "watch":
+            next_actions.append("Run or inspect the long-run release gate before making release claims.")
+
+    return {
+        "status": status,
+        "summary": summary_text,
+        "gate_status": gate.get("status") or "not_run",
+        "ready_count": sum(1 for item in artifacts if item["exists"]),
+        "required_count": sum(1 for item in artifacts if item["required"]),
+        "missing_required": [item["label"] for item in missing_required],
+        "next_actions": next_actions,
+        "artifacts": artifacts,
+    }
+
+
+def _release_repair_plan_from_detail(summary: dict, detail: dict) -> dict:
+    """Turn gate/preflight issues into a short repair queue for the UI."""
+    gate = summary.get("long_run_gate") or {}
+    preflight = detail.get("preflight") or summary.get("preflight") or {}
+    gate_issues = gate.get("issues") or []
+    preflight_blockers = preflight.get("blocking_checks") or []
+    preflight_warnings = preflight.get("warning_checks") or []
+    actions: list[dict] = []
+
+    for check in preflight_blockers[:4]:
+        name = check.get("name") if isinstance(check, dict) else str(check)
+        summary_text = check.get("summary") if isinstance(check, dict) else ""
+        actions.append({
+            "source": "preflight",
+            "severity": "block",
+            "title": f"Fix preflight: {name}",
+            "reason": summary_text or "Preflight blocked this launch.",
+            "action": _preflight_repair_action(str(name)),
+        })
+
+    for issue in gate_issues[:6]:
+        name = issue.get("name") if isinstance(issue, dict) else str(issue)
+        severity = issue.get("severity", "warn") if isinstance(issue, dict) else "warn"
+        message = issue.get("message") if isinstance(issue, dict) else str(issue)
+        actions.append({
+            "source": "release_gate",
+            "severity": severity,
+            "title": _gate_issue_title(str(name)),
+            "reason": message,
+            "action": _gate_issue_repair_action(str(name)),
+        })
+
+    if not actions and preflight_warnings:
+        for check in preflight_warnings[:3]:
+            name = check.get("name") if isinstance(check, dict) else str(check)
+            summary_text = check.get("summary") if isinstance(check, dict) else ""
+            actions.append({
+                "source": "preflight",
+                "severity": "warn",
+                "title": f"Inspect preflight: {name}",
+                "reason": summary_text or "Preflight warned on this launch.",
+                "action": _preflight_repair_action(str(name)),
+            })
+
+    if not actions:
+        gate_status = str(gate.get("status") or "not_run").lower()
+        if gate_status == "approved":
+            status = "ready"
+            headline = "No release repair actions are open."
+            actions.append({
+                "source": "release_gate",
+                "severity": "pass",
+                "title": "Keep this as a reference",
+                "reason": "The long-run gate approved this run.",
+                "action": "Export or hand off the checkpoint with the summary, honesty, and eval reports.",
+            })
+        else:
+            status = "watch"
+            headline = "Run the release gate before claiming readiness."
+            actions.append({
+                "source": "release_gate",
+                "severity": "warn",
+                "title": "No post-run gate found",
+                "reason": "The run has artifacts, but no approved release gate decision.",
+                "action": "Run eval, external benchmarks if required, then inspect the long-run gate result.",
+            })
+    else:
+        status = "blocked" if any(item["severity"] == "block" for item in actions) else "watch"
+        headline = "Repair these before using the run as a release recipe." if status == "blocked" else "Inspect these warnings before promotion."
+
+    return {
+        "status": status,
+        "headline": headline,
+        "actions": actions,
+    }
+
+
+def _run_passport_from_detail(summary: dict, detail: dict) -> dict:
+    """Build a copy-ready run receipt for reviews, handoffs, and release notes."""
+    config = summary.get("config") or {}
+    base = summary.get("base") or {}
+    sft = summary.get("sft") or {}
+    eval_summary = summary.get("eval") or {}
+    honesty = summary.get("honesty") or {}
+    gate = summary.get("long_run_gate") or {}
+    handoff = detail.get("handoff_packet") or {}
+    repair = detail.get("release_repair_plan") or {}
+    timeline = detail.get("run_timeline") or []
+    run_name = Path(str(config.get("out_dir") or "")).name or summary.get("run_name") or "selected run"
+    if run_name in {"", "."}:
+        run_name = "selected run"
+    gate_status = str(gate.get("status") or handoff.get("gate_status") or "not_run")
+    preflight_stage = next((item for item in timeline if item.get("id") == "preflight"), {})
+    checkpoint = next(
+        (item for item in handoff.get("artifacts", []) if item.get("label") == "Base checkpoint" and item.get("exists")),
+        {},
+    )
+    tokenizer = next(
+        (item for item in handoff.get("artifacts", []) if item.get("label") == "Tokenizer" and item.get("exists")),
+        {},
+    )
+    reports_ready = sum(1 for item in detail.get("reports", {}).values() if item.get("exists"))
+    eval_examples = eval_summary.get("num_examples")
+    eval_passed = eval_summary.get("num_passed")
+    eval_rate = eval_summary.get("pass_rate")
+    planned_tokens = config.get("planned_base_tokens") or config.get("base_tokens") or summary.get("planned_base_tokens")
+    target_ratio = config.get("target_param_data_ratio") or summary.get("target_param_data_ratio")
+    params = base.get("num_parameters") or summary.get("num_parameters")
+    headline = "Approved release candidate" if gate_status == "approved" and handoff.get("status") == "ready" else "Research run; inspect gates before release claims"
+    if handoff.get("status") == "blocked":
+        headline = "Blocked run; repair before promotion"
+    facts = [
+        ("Gate", gate_status),
+        ("Handoff", handoff.get("status") or "unknown"),
+        ("Preflight", preflight_stage.get("detail") or preflight_stage.get("status") or "not found"),
+        ("Parameters", _passport_number(params)),
+        ("Context", _passport_number(config.get("context_size"))),
+        ("Base steps", _passport_number(config.get("base_steps"))),
+        ("SFT steps", _passport_number(config.get("sft_steps"))),
+        ("Planned tokens", _passport_number(planned_tokens)),
+        ("Target ratio", _passport_number(target_ratio)),
+        ("Base val loss", _passport_number(base.get("final_val_loss"))),
+        ("SFT val loss", _passport_number(sft.get("final_val_loss"))),
+        ("Eval", _passport_eval_text(eval_passed, eval_examples, eval_rate)),
+        ("Honesty", honesty.get("summary") or honesty.get("status") or "not found"),
+        ("Reports", f"{reports_ready}/5 ready"),
+        ("Checkpoint", checkpoint.get("path") or "missing"),
+        ("Tokenizer", tokenizer.get("path") or "missing"),
+    ]
+    primary_repair = (repair.get("actions") or [{}])[0]
+    open_issue = primary_repair.get("reason") or handoff.get("summary") or headline
+    next_action = primary_repair.get("action") or (handoff.get("next_actions") or ["Inspect the release gate."])[0]
+    markdown_lines = [
+        f"# Picochat Run Passport: {run_name}",
+        "",
+        f"**Status:** {headline}",
+        f"**Gate:** {gate_status}",
+        f"**Handoff:** {handoff.get('status') or 'unknown'}",
+        "",
+        "## Run Facts",
+    ]
+    for label, value in facts:
+        markdown_lines.append(f"- **{label}:** {value}")
+    markdown_lines.extend([
+        "",
+        "## Next Action",
+        f"- Issue: {open_issue}",
+        f"- {next_action}",
+    ])
+    return {
+        "title": f"Picochat Run Passport: {run_name}",
+        "headline": headline,
+        "status": handoff.get("status") or "watch",
+        "gate_status": gate_status,
+        "facts": [{"label": label, "value": str(value)} for label, value in facts],
+        "open_issue": open_issue,
+        "next_action": next_action,
+        "markdown": "\n".join(markdown_lines),
+    }
+
+
+def _passport_number(value) -> str:
+    if value is None:
+        return "unknown"
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, int):
+        return f"{value:,}"
+    if isinstance(value, float):
+        if value >= 1_000:
+            return f"{value:,.0f}"
+        return f"{value:.4g}"
+    return str(value)
+
+
+def _passport_eval_text(passed, total, rate) -> str:
+    if passed is None and total is None and rate is None:
+        return "not found"
+    if rate is not None:
+        return f"{_passport_number(passed)}/{_passport_number(total)} ({float(rate) * 100:.1f}%)"
+    return f"{_passport_number(passed)}/{_passport_number(total)}"
+
+
+def _gate_issue_title(name: str) -> str:
+    if name.startswith("skill_release_sft_"):
+        return "Repair skill SFT coverage"
+    if name.startswith("skill_release_eval_"):
+        return "Repair held-out skill eval"
+    if name.startswith("skill_release_stage_"):
+        return "Repair weak subskill stage"
+    if name.startswith("external_eval"):
+        return "Add or repair external benchmark"
+    titles = {
+        "preflight": "Respect preflight blockers",
+        "data_honesty": "Repair data honesty",
+        "release_data_honesty": "Remove release contamination",
+        "sft_fit": "Improve SFT fit",
+        "sft_heldout_fit": "Improve held-out SFT transfer",
+        "eval_non_choice": "Improve free-form eval",
+        "first_release_eval": "Improve release behavior eval",
+        "choice_adjusted_accuracy": "Improve choice robustness",
+        "external_eval_missing": "Add external benchmark",
+        "refusal": "Repair unsafe refusal behavior",
+        "over_refusal": "Repair benign non-refusal",
+        "prompt_echo": "Stop prompt echoing",
+        "unsupported_claims": "Reduce unsupported claims",
+    }
+    return titles.get(name, name.replace("_", " ").title())
+
+
+def _gate_issue_repair_action(name: str) -> str:
+    if name.startswith("skill_release_sft_"):
+        skill = name.removeprefix("skill_release_sft_")
+        return f"Regenerate or rebalance the release_skills SFT pack with more reviewed {skill} rows, then rerun SFT."
+    if name.startswith("skill_release_eval_"):
+        skill = name.removeprefix("skill_release_eval_")
+        return f"Add held-out {skill} eval rows from templates/pools not used in SFT, then rerun eval."
+    if name.startswith("skill_release_stage_"):
+        return "Find the weak stage in the eval breakdown, add targeted SFT drills, and keep the stage held out in eval."
+    if name.startswith("external_eval"):
+        return "Attach a scoreable ARC/MMLU-style external benchmark report with enough rows for release evidence."
+    actions = {
+        "preflight": "Do not launch the paid run. Fix the named preflight blockers and rerun preflight first.",
+        "data_honesty": "Remove leaked or duplicated eval prompts from corpus/SFT data, then rebuild the dataset pack.",
+        "release_data_honesty": "Remove corpus-eval contamination and regenerate the honesty report before making release claims.",
+        "sft_fit": "Inspect failed SFT-fit examples, add targeted behavior rows, rebalance categories, and rerun SFT.",
+        "sft_heldout_fit": "Diversify the SFT curriculum so behavior transfers to held-out rows instead of memorizing train rows.",
+        "eval_non_choice": "Add and train against free-form answer rows; do not rely on multiple-choice pass rate.",
+        "first_release_eval": "Improve identity, refusal, and release-choice held-out rows before scaling the recipe.",
+        "choice_adjusted_accuracy": "Increase likelihood-margin and paraphrased choice examples so accuracy clears random baseline.",
+        "external_eval_missing": "Run at least one external benchmark and attach its JSON report before approval.",
+        "refusal": "Separate unsafe refusal prompts from benign prompts, then add targeted refusal SFT/eval rows.",
+        "over_refusal": "Add benign answerable prompts and penalize blanket refusals so safety does not pass by saying no to everything.",
+        "prompt_echo": "Reduce echo-prone SFT rows, lower prompt-copy examples, and inspect failed eval replies before scaling.",
+        "unsupported_claims": "Add support-grounded answers and eval checks for required phrases/entities.",
+    }
+    return actions.get(name, "Inspect the failing examples for this issue, add targeted data, rerun SFT/eval, then recheck the gate.")
+
+
+def _preflight_repair_action(name: str) -> str:
+    actions = {
+        "corpus_model_fit": "Import more unique corpus data or reduce model size/steps so corpus replay is under the gate.",
+        "base_exposure": "Increase corpus size or lower planned token budget to avoid excessive document replay.",
+        "release_token_budget": "Set base_steps to meet the target token budget, or use a non-release gate profile.",
+        "sft_category_balance": "Regenerate the SFT pack with required release categories represented.",
+        "eval_skill_release_coverage": "Regenerate eval with held-out math/spelling/choice/refusal coverage.",
+        "ddp_scale_launch": "Launch with the requested DDP world size or switch to a matching local scale.",
+        "attention_backend_runtime": "Use a CUDA/BF16-compatible attention backend, or choose flash/math for the actual runtime.",
+    }
+    return actions.get(name, "Fix the preflight check, rerun preflight, and only launch once blockers clear.")
+
+
 def _load_artifact_inventory(run_dir: Path, summary: dict) -> dict:
     artifacts = summary.get("artifacts", {})
     config = summary.get("config", {})
@@ -2456,6 +2933,7 @@ def _load_artifact_inventory(run_dir: Path, summary: dict) -> dict:
         "corpus": (artifacts.get("corpus", run_dir / "corpus.txt"), True),
         "corpus_manifest": (artifacts.get("corpus_manifest", run_dir / "corpus_manifest.json"), True),
         "corpus_report": (artifacts.get("corpus_report", run_dir / "corpus_report.md"), True),
+        "preflight_report": (artifacts.get("preflight_report", run_dir / "preflight.md"), True),
         "honesty_json": (artifacts.get("honesty_json", run_dir / "honesty" / "honesty_report.json"), True),
         "honesty_report": (artifacts.get("honesty_report", run_dir / "honesty" / "report.md"), True),
         "tokenizer": (artifacts.get("tokenizer", run_dir / "tokenizer.json"), True),

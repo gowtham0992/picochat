@@ -291,6 +291,38 @@ def test_load_run_detail_reads_eval_reports_and_samples(tmp_path):
     assert detail["reports"]["base"]["exists"] is True
     assert detail["reports"]["sft"]["exists"] is True
     assert detail["reports"]["eval"]["exists"] is True
+    timeline = {item["id"]: item for item in detail["run_timeline"]}
+    assert timeline["corpus_manifest"]["status"] == "done"
+    assert timeline["honesty"]["status"] == "done"
+    assert timeline["base"]["status"] == "done"
+    assert timeline["sft"]["status"] == "done"
+    assert timeline["eval"]["status"] == "done"
+    assert timeline["release_gate"]["status"] == "warn"
+    assert "checkpoint ready" in timeline["base"]["summary"]
+    packet = detail["handoff_packet"]
+    assert packet["status"] == "watch"
+    assert packet["gate_status"] == "not_run"
+    assert packet["ready_count"] >= 5
+    packet_artifacts = {item["key"]: item for item in packet["artifacts"]}
+    assert packet_artifacts["summary_report"]["exists"] is True
+    assert packet_artifacts["honesty_report"]["exists"] is True
+    assert packet_artifacts["tokenizer"]["exists"] is True
+    assert packet_artifacts["sft_checkpoint"]["exists"] is True
+    assert packet["missing_required"] == []
+    assert packet["next_actions"] == ["Run or inspect the long-run release gate before making release claims."]
+    repair = detail["release_repair_plan"]
+    assert repair["status"] == "watch"
+    assert repair["actions"][0]["title"] == "No post-run gate found"
+    assert "Run eval" in repair["actions"][0]["action"]
+    passport = detail["run_passport"]
+    assert passport["status"] == "watch"
+    assert passport["gate_status"] == "not_run"
+    assert "Picochat Run Passport" in passport["title"]
+    assert "Run eval" in passport["next_action"]
+    fact_map = {item["label"]: item["value"] for item in passport["facts"]}
+    assert fact_map["Eval"] == "1/2 (50.0%)"
+    assert fact_map["Reports"] == "5/5 ready"
+    assert "## Next Action" in passport["markdown"]
     corpus_status = detail["artifact_inventory"]["by_path"][str(tmp_path / "tiny-a" / "corpus.txt")]
     checkpoint_status = detail["artifact_inventory"]["by_path"][str(tmp_path / "tiny-a" / "base" / "checkpoint")]
     assert corpus_status["exists"] is True
@@ -298,6 +330,37 @@ def test_load_run_detail_reads_eval_reports_and_samples(tmp_path):
     assert corpus_status["size_bytes"] > 0
     assert checkpoint_status["exists"] is True
     assert checkpoint_status["kind"] == "directory"
+
+
+def test_load_run_detail_builds_release_repair_plan_from_gate_issues(tmp_path):
+    run_dir = write_run(tmp_path, "tiny-a")
+    summary_path = run_dir / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["long_run_gate"] = {
+        "status": "blocked",
+        "summary": "Do not use this as the approved long-run recipe yet.",
+        "issues": [{
+            "name": "sft_fit",
+            "severity": "block",
+            "message": "SFT fit is below 70%; fix behavior data before scaling this recipe.",
+        }],
+    }
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    detail = load_run_detail(tmp_path, "tiny-a")
+
+    repair = detail["release_repair_plan"]
+    assert repair["status"] == "blocked"
+    assert repair["actions"][0]["title"] == "Improve SFT fit"
+    assert "Inspect failed SFT-fit examples" in repair["actions"][0]["action"]
+    packet = detail["handoff_packet"]
+    assert packet["status"] == "blocked"
+    assert packet["next_actions"] == ["SFT fit is below 70%; fix behavior data before scaling this recipe."]
+    passport = detail["run_passport"]
+    assert passport["status"] == "blocked"
+    assert passport["gate_status"] == "blocked"
+    assert "Blocked run" in passport["headline"]
+    assert "SFT fit is below 70%" in passport["markdown"]
 
 
 def test_artifact_inventory_indexes_relative_and_absolute_paths(tmp_path, monkeypatch):

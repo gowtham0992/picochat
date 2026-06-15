@@ -10,6 +10,7 @@ const state = {
   guideRunName: null,
   activePanel: "dataset",
   activeStage: "dataset",
+  activeCommandStage: null,
   viewMode: readInitialViewMode(),
   theme: readInitialTheme(),
   activeReport: "summary",
@@ -457,6 +458,11 @@ function bindControls() {
     copyCommand(button.dataset.copyCommand || "", button);
   });
   document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-copy-passport]");
+    if (!button) return;
+    copyPassport(button);
+  });
+  document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-guide-panel]");
     if (!button) return;
     if (button.dataset.sourceMode) prepareDatasetSourceMode(button.dataset.sourceMode);
@@ -472,6 +478,16 @@ function bindControls() {
     const button = event.target.closest("[data-stage]");
     if (!button) return;
     setStage(button.dataset.stage, { focus: true });
+  });
+  $("command-stage-track").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-command-panel]");
+    if (!button) return;
+    const panel = button.dataset.commandPanel;
+    const stage = button.dataset.commandStage;
+    const commandStage = button.dataset.commandStageId;
+    if (stage) state.activeStage = stage;
+    if (commandStage) state.activeCommandStage = commandStage;
+    setPanel(panel, { focus: true });
   });
   $("run-storyline").addEventListener("click", (event) => {
     const button = event.target.closest("[data-stage]");
@@ -1882,6 +1898,7 @@ function renderMetricGlossary() {
 
 function renderPipeline() {
   const stages = pipelineStages();
+  renderCommandCenter(stages);
   $("pipeline-run").textContent = state.selectedRun ? `RUN ${state.selectedRun}` : "NO RUN";
   $("pipeline-strip").innerHTML = stages.map((stage) => renderPipelineStage(stage)).join("");
   const active = stages.find((stage) => stage.id === state.activeStage) || stages[0];
@@ -1891,6 +1908,314 @@ function renderPipeline() {
   $("run-trust-panel").innerHTML = runTrustPanel();
   $("pipeline-detail").innerHTML = active ? stageDetail(active) : "LOAD A RUN TO INSPECT THE PIPELINE.";
   $("run-doctor").innerHTML = runDoctor(stages);
+}
+
+function renderCommandCenter(stages) {
+  if (!$("command-center")) return;
+  const summary = state.detail?.summary || {};
+  const config = summary.config || {};
+  const base = summary.base || {};
+  const sft = summary.sft || {};
+  const gate = summary.long_run_gate || {};
+  const passport = state.detail?.run_passport || {};
+  const repairPlan = state.detail?.release_repair_plan || {};
+  const handoff = state.detail?.handoff_packet || {};
+  const commandStages = commandCenterStages(stages);
+  const blocker = commandStages.find((stage) => stage.status === "blocked");
+  const warning = commandStages.find((stage) => stage.status === "warn" || stage.status === "pending");
+  const current = blocker || warning || commandStages.at(-1);
+  const activeCommandStage = state.activeCommandStage || current?.id || commandStages[0]?.id;
+  const gateStatus = String(gate.status || handoff.gate_status || "watch").toLowerCase();
+  const statusClass = gateStatus === "approved" || handoff.status === "ready" ? "pass" : gateStatus === "blocked" || handoff.status === "blocked" ? "fail" : "warn";
+  $("command-breadcrumb").textContent = state.selectedRun ? `Runs / ${state.selectedRun}` : "Runs / No run selected";
+  $("command-run-title").textContent = state.selectedRun || "Select a run";
+  $("command-status-pill").className = `command-status-pill ${statusClass}`;
+  $("command-status-pill").textContent = commandStatusText(gateStatus, handoff.status);
+  $("command-alert").className = `command-alert ${commandAlertClass(current)}`;
+  $("command-alert").innerHTML = commandAlertText(current, passport, repairPlan);
+  $("command-stage-track").innerHTML = commandStages.map((stage, index) => renderCommandStage(stage, index, activeCommandStage)).join("");
+  $("command-metrics").innerHTML = commandMetrics(summary, config, base, sft).map((metric) => `
+    <div class="command-metric">
+      <span>${escapeHtml(metric.label)}</span>
+      <strong>${escapeHtml(metric.value)}</strong>
+      <small>${escapeHtml(metric.note)}</small>
+    </div>
+  `).join("");
+  const qualityChecks = commandQualityChecks(summary, repairPlan, state.detail);
+  $("command-quality-summary").textContent = qualitySummaryText(qualityChecks);
+  $("command-quality-list").innerHTML = qualityChecks.map((check) => `
+    <div class="command-quality-row ${escapeHtml(check.status)}">
+      <span></span>
+      <strong>${escapeHtml(check.label)}</strong>
+      <em>${escapeHtml(check.value)}</em>
+    </div>
+  `).join("");
+  $("command-loss-summary").textContent = lossSummaryText(state.detail);
+  $("command-loss-chart").innerHTML = commandLossChart(state.detail);
+  const repairs = commandRepairItems(repairPlan, handoff);
+  $("command-repair-summary").textContent = repairs.length ? `${repairs.length} item${repairs.length === 1 ? "" : "s"} need action` : "No open actions";
+  $("command-repair-list").innerHTML = repairs.map((item) => `
+    <div class="command-repair-row ${escapeHtml(item.status)}">
+      <div>
+        <span>${escapeHtml(item.source)}</span>
+        <strong>${escapeHtml(item.title)}</strong>
+        <p>${escapeHtml(item.reason)}</p>
+      </div>
+      <button type="button" data-guide-panel="${escapeHtml(item.panel)}">${escapeHtml(item.cta)}</button>
+    </div>
+  `).join("");
+}
+
+function commandCenterStages(stages) {
+  const timeline = state.detail?.run_timeline || [];
+  const byId = Object.fromEntries(timeline.map((item) => [item.id, item]));
+  const stageById = Object.fromEntries((stages || []).map((item) => [item.id, item]));
+  const handoff = state.detail?.handoff_packet || {};
+  const releaseRepair = state.detail?.release_repair_plan || {};
+  const definitions = [
+    ["corpus_manifest", "Data Pack", "dataset", "dataset"],
+    ["preflight", "Preflight", "dataset", "dataset"],
+    ["base", "Train", "base", "training"],
+    ["sft", "SFT", "sft", "training"],
+    ["eval", "Eval", "eval", "eval"],
+    ["honesty", "Honesty", "report", "report"],
+    ["release_gate", "Release Gate", "report", "report"],
+    ["handoff", "Handoff", "report", "report"],
+  ];
+  return definitions.map(([id, label, appStage, panel]) => {
+    if (id === "handoff") {
+      return {
+        id,
+        label,
+        appStage,
+        panel,
+        status: handoff.status === "ready" ? "done" : handoff.status === "blocked" ? "blocked" : "pending",
+        detail: handoff.summary || "Handoff packet waits for release artifacts.",
+      };
+    }
+    const item = byId[id];
+    const fallbackStage = stageById[appStage];
+    const fallbackHealth = fallbackStage ? stageHealth(fallbackStage) : { className: "pending" };
+    return {
+      id,
+      label,
+      appStage,
+      panel,
+      status: item?.status || commandStatusFromHealth(fallbackHealth.className, releaseRepair.status),
+      detail: item?.summary || fallbackStage?.summary || "No evidence yet.",
+    };
+  });
+}
+
+function commandStatusFromHealth(health, repairStatus) {
+  if (health === "ready") return "done";
+  if (health === "missing") return repairStatus === "blocked" ? "blocked" : "pending";
+  if (health === "partial") return "warn";
+  return "pending";
+}
+
+function renderCommandStage(stage, index, activeCommandStage) {
+  return `
+    <button class="command-stage ${commandStageClass(stage.status)} ${stage.id === activeCommandStage ? "active" : ""}" type="button" data-command-stage="${escapeHtml(stage.appStage)}" data-command-stage-id="${escapeHtml(stage.id)}" data-command-panel="${escapeHtml(stage.panel)}">
+      <span>${escapeHtml(String(index + 1).padStart(2, "0"))}</span>
+      <strong>${escapeHtml(stage.label)}</strong>
+      <small>${escapeHtml(commandStatusLabel(stage.status))}</small>
+    </button>
+  `;
+}
+
+function commandStageClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "done") return "done";
+  if (normalized === "blocked") return "blocked";
+  if (normalized === "warn") return "warn";
+  return "idle";
+}
+
+function commandStatusLabel(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "done") return "ready";
+  if (normalized === "blocked") return "blocked";
+  if (normalized === "warn") return "review";
+  return "waiting";
+}
+
+function commandAlertClass(stage) {
+  if (!state.detail) return "warn";
+  if (stage?.status === "blocked") return "fail";
+  if (stage?.status === "warn" || stage?.status === "pending") return "warn";
+  return "pass";
+}
+
+function commandAlertText(stage, passport, repairPlan) {
+  if (!state.detail) {
+    return `<strong>No run loaded.</strong> Select a run from the left rail to inspect training health and release blockers.`;
+  }
+  const firstRepair = repairPlan?.actions?.[0];
+  if (stage?.status === "blocked") {
+    return `<strong>Blocked at ${escapeHtml(stage.label)}.</strong> ${escapeHtml(firstRepair?.reason || passport.open_issue || stage.detail || "Repair required before handoff.")}`;
+  }
+  if (stage?.status === "warn" || stage?.status === "pending") {
+    return `<strong>Needs attention at ${escapeHtml(stage.label)}.</strong> ${escapeHtml(firstRepair?.reason || passport.open_issue || stage.detail || "Inspect this stage before continuing.")}`;
+  }
+  return `<strong>Run evidence is ready to inspect.</strong> ${escapeHtml(passport.headline || "Open the Handoff panel for the run passport and reports.")}`;
+}
+
+function commandStatusText(gateStatus, handoffStatus) {
+  if (gateStatus === "approved" || handoffStatus === "ready") return "Ready";
+  if (gateStatus === "blocked" || handoffStatus === "blocked") return "Blocked";
+  if (gateStatus === "not_run" || gateStatus === "not-run") return "Not gated";
+  return "Warning";
+}
+
+function commandMetrics(summary, config, base, sft) {
+  const evalSummary = state.detail?.eval_reports?.at(-1)?.report?.summary || summary.eval || {};
+  const latestBase = state.detail?.base_report?.losses?.at(-1);
+  const latestSft = state.detail?.sft_report?.losses?.at(-1);
+  return [
+    {
+      label: "Model",
+      value: fmtInt(base.num_parameters || summary.num_parameters),
+      note: `${config.n_layer || "--"} layers / ctx ${config.context_size || "--"}`,
+    },
+    {
+      label: "Base steps",
+      value: fmtInt(config.base_steps || state.detail?.base_report?.config?.max_steps),
+      note: latestBase ? `val ${fmtLoss(latestBase.val_loss)}` : "no base trace",
+    },
+    {
+      label: "SFT steps",
+      value: fmtInt(config.sft_steps || state.detail?.sft_report?.config?.max_steps),
+      note: latestSft ? `val ${fmtLoss(latestSft.val_loss)}` : "no SFT trace",
+    },
+    {
+      label: "Eval pass",
+      value: evalSummary.num_examples ? fmtPercent(evalSummary.pass_rate) : "--",
+      note: evalSummary.num_examples ? `${fmtInt(evalSummary.num_passed)} / ${fmtInt(evalSummary.num_examples)} rows` : "no eval report",
+    },
+  ];
+}
+
+function commandQualityChecks(summary, repairPlan, detail) {
+  const preflight = detail?.preflight || summary.preflight || {};
+  const honesty = summary.honesty || {};
+  const gate = summary.long_run_gate || {};
+  const evalSummary = detail?.eval_reports?.at(-1)?.report?.summary || summary.eval || {};
+  const repairActions = repairPlan?.actions || [];
+  return [
+    {
+      label: "Preflight",
+      status: (preflight.blocking_checks || []).length ? "fail" : (preflight.warning_checks || []).length ? "warn" : "pass",
+      value: `${(preflight.blocking_checks || []).length || 0} block / ${(preflight.warning_checks || []).length || 0} warn`,
+    },
+    {
+      label: "Data contamination",
+      status: Number(honesty.corpus_prompt_hits || 0) > 0 || Number(honesty.exact_prompt_leaks || 0) > 0 ? "fail" : Number(honesty.near_prompt_leaks || 0) > 0 ? "warn" : "pass",
+      value: honesty.summary || honesty.status || "not checked",
+    },
+    {
+      label: "Release gate",
+      status: gate.status === "approved" ? "pass" : gate.status === "blocked" ? "fail" : "warn",
+      value: gate.status || "not run",
+    },
+    {
+      label: "Visible eval",
+      status: evalSummary.pass_rate == null ? "warn" : Number(evalSummary.pass_rate) >= 0.5 ? "pass" : "warn",
+      value: evalSummary.num_examples ? `${fmtInt(evalSummary.num_passed)} / ${fmtInt(evalSummary.num_examples)}` : "missing",
+    },
+    {
+      label: "Repair queue",
+      status: repairActions.some((item) => item.severity === "block") ? "fail" : repairActions.length ? "warn" : "pass",
+      value: `${repairActions.length} action${repairActions.length === 1 ? "" : "s"}`,
+    },
+  ];
+}
+
+function qualitySummaryText(checks) {
+  const fail = checks.filter((item) => item.status === "fail").length;
+  const warn = checks.filter((item) => item.status === "warn").length;
+  if (fail) return `${fail} blocked`;
+  if (warn) return `${warn} warnings`;
+  return "all clear";
+}
+
+function lossSummaryText(detail) {
+  const base = detail?.base_report?.losses || [];
+  const sft = detail?.sft_report?.losses || [];
+  if (base.length && sft.length) return "base + SFT";
+  if (base.length) return "base only";
+  if (sft.length) return "SFT only";
+  return "no trace";
+}
+
+function commandLossChart(detail) {
+  const baseLosses = (detail?.base_report?.losses || []).map((row) => ({
+    step: Number(row.step),
+    value: Number(row.val_loss ?? row.train_loss),
+  })).filter((row) => Number.isFinite(row.step) && Number.isFinite(row.value));
+  const sftLosses = (detail?.sft_report?.losses || []).map((row) => ({
+    step: Number(row.step),
+    value: Number(row.val_loss ?? row.train_loss),
+  })).filter((row) => Number.isFinite(row.step) && Number.isFinite(row.value));
+  if (!baseLosses.length && !sftLosses.length) {
+    return `<div class="command-empty-chart">No training trace yet.</div>`;
+  }
+  const series = [
+    { label: "base", rows: baseLosses, color: "var(--product-blue)" },
+    { label: "sft", rows: sftLosses, color: "var(--product-green)" },
+  ].filter((item) => item.rows.length);
+  const allValues = series.flatMap((item) => item.rows.map((row) => row.value));
+  const max = Math.max(...allValues);
+  const min = Math.min(...allValues);
+  const width = 520;
+  const height = 210;
+  const pad = 34;
+  const range = Math.max(0.0001, max - min);
+  const lineFor = (rows) => {
+    const stepMin = Math.min(...rows.map((row) => row.step));
+    const stepMax = Math.max(...rows.map((row) => row.step));
+    const stepRange = Math.max(1, stepMax - stepMin);
+    return rows.map((row) => {
+      const x = pad + ((row.step - stepMin) / stepRange) * (width - pad * 2);
+      const y = height - pad - ((row.value - min) / range) * (height - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+  };
+  return `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Training validation loss">
+      <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="command-axis"></line>
+      <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="command-axis"></line>
+      <text x="${pad}" y="${pad - 8}" class="command-axis-label">${escapeHtml(fmtLoss(max))}</text>
+      <text x="${pad}" y="${height - 10}" class="command-axis-label">${escapeHtml(fmtLoss(min))}</text>
+      ${series.map((item, index) => `
+        <polyline points="${lineFor(item.rows)}" fill="none" stroke="${item.color}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></polyline>
+        <text x="${width - pad - 72}" y="${pad + (index * 20)}" class="command-legend" fill="${item.color}">${escapeHtml(item.label)}</text>
+      `).join("")}
+    </svg>
+  `;
+}
+
+function commandRepairItems(repairPlan, handoff) {
+  const actions = repairPlan?.actions || [];
+  if (actions.length) {
+    return actions.slice(0, 3).map((item) => ({
+      status: item.severity === "block" ? "fail" : item.severity === "pass" ? "pass" : "warn",
+      source: item.source === "preflight" ? "Preflight" : "Release gate",
+      title: item.title || "Repair item",
+      reason: item.reason || item.action || "Inspect this item.",
+      cta: item.source === "preflight" ? "Open data" : "Open gate",
+      panel: item.source === "preflight" ? "dataset" : "report",
+    }));
+  }
+  const nextActions = handoff?.next_actions || [];
+  return nextActions.slice(0, 2).map((action) => ({
+    status: handoff.status === "ready" ? "pass" : "warn",
+    source: "Handoff",
+    title: "Next action",
+    reason: action,
+    cta: "Open handoff",
+    panel: "report",
+  }));
 }
 
 function runReleaseReadinessPanel() {
@@ -1979,6 +2304,33 @@ function runReleaseReadinessPanel() {
         <span>${escapeHtml(weakestSkill.name)} ${fmtPercent(weakestSkill.rate)} / gate ${fmtPercent(weakestSkill.threshold)}</span>
       </div>
     ` : ""}
+    ${renderReleaseRepairPlan()}
+  `;
+}
+
+function renderReleaseRepairPlan() {
+  const plan = state.detail?.release_repair_plan;
+  if (!plan) return "";
+  return `
+    <div class="release-repair ${escapeHtml(plan.status || "watch")}">
+      <div class="repair-head">
+        <div>
+          <label>RELEASE REPAIR PLAN</label>
+          <strong>${escapeHtml(plan.headline || "Inspect this run before promotion.")}</strong>
+        </div>
+        <span>${escapeHtml(`${(plan.actions || []).length} action${(plan.actions || []).length === 1 ? "" : "s"}`)}</span>
+      </div>
+      <div class="repair-action-grid">
+        ${(plan.actions || []).slice(0, 6).map((item) => `
+          <div class="repair-action-card ${escapeHtml(item.severity || "warn")}">
+            <span>${escapeHtml(String(item.severity || "warn").toUpperCase())}</span>
+            <strong>${escapeHtml(item.title || "Repair item")}</strong>
+            <p>${escapeHtml(item.reason || "")}</p>
+            <em>${escapeHtml(item.action || "")}</em>
+          </div>
+        `).join("")}
+      </div>
+    </div>
   `;
 }
 
@@ -2518,6 +2870,35 @@ function runDecisionCards(summary, evalSummary, checks) {
 
 function runStoryTimeline(stages) {
   if (!state.detail) return "LOAD A RUN TO SEE THE TRAINING STORY.";
+  const timeline = state.detail.run_timeline || [];
+  if (timeline.length) {
+    const done = timeline.filter((item) => item.status === "done").length;
+    const blocked = timeline.find((item) => item.status === "blocked");
+    const attention = timeline.find((item) => ["blocked", "warn", "pending"].includes(item.status));
+    return `
+      <div class="story-head">
+        <div>
+          <label>RUN LEDGER</label>
+          <strong>${escapeHtml(state.selectedRun || "current run")}</strong>
+        </div>
+        <span>${escapeHtml(blocked ? `BLOCKED: ${blocked.label}` : attention ? `NEXT: ${attention.label}` : "ALL EVIDENCE READY")}</span>
+      </div>
+      <div class="story-grid ledger-grid">
+        ${timeline.map((item, index) => `
+          <button class="story-step ledger-step ${runTimelineClass(item.status)}" type="button" data-ledger-evidence="${escapeHtml(item.evidence || "")}">
+            <span>${String(index + 1).padStart(2, "0")} ${escapeHtml(runTimelineStatusLabel(item.status))}</span>
+            <strong>${escapeHtml(item.label)}</strong>
+            <em>${escapeHtml(item.detail || shortPath(item.evidence) || "No evidence path recorded")}</em>
+            <p>${escapeHtml(item.summary || "")}</p>
+          </button>
+        `).join("")}
+      </div>
+      <div class="ledger-summary">
+        <strong>${done}/${timeline.length} evidence checks ready</strong>
+        <span>${escapeHtml(attention ? attention.summary || "" : "Run bundle is ready to inspect, compare, and hand off.")}</span>
+      </div>
+    `;
+  }
   return `
     <div class="story-head">
       <div>
@@ -2540,6 +2921,22 @@ function runStoryTimeline(stages) {
       }).join("")}
     </div>
   `;
+}
+
+function runTimelineClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "done") return "ready";
+  if (normalized === "blocked") return "missing";
+  if (normalized === "warn") return "partial";
+  return "pending";
+}
+
+function runTimelineStatusLabel(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "done") return "READY";
+  if (normalized === "blocked") return "BLOCKED";
+  if (normalized === "warn") return "WATCH";
+  return "PENDING";
 }
 
 function currentRunOneLineVerdict() {
@@ -6528,6 +6925,8 @@ function renderGenerationDeck() {
 
 function renderReportList() {
   const reports = state.detail?.reports || {};
+  if ($("run-passport")) $("run-passport").innerHTML = renderRunPassport();
+  if ($("handoff-packet")) $("handoff-packet").innerHTML = renderHandoffPacket();
   const rows = [
     ["summary", "SUMMARY"],
     ["honesty", "DATA HONESTY"],
@@ -6548,6 +6947,96 @@ function renderReportList() {
   }).join("");
   const ready = Object.values(reports).filter((report) => report.exists).length;
   $("report-status").textContent = `${ready}/5 REPORTS`;
+}
+
+function renderRunPassport() {
+  const passport = state.detail?.run_passport;
+  if (!passport) return "LOAD A RUN TO SEE THE RUN PASSPORT.";
+  const facts = passport.facts || [];
+  return `
+    <div class="passport-head ${escapeHtml(passport.status || "watch")}">
+      <div>
+        <label>RUN PASSPORT</label>
+        <strong>${escapeHtml(passport.title || "Picochat Run Passport")}</strong>
+        <p>${escapeHtml(passport.headline || "Inspect this run before making release claims.")}</p>
+      </div>
+      <button class="copy-command" type="button" data-copy-passport>COPY MARKDOWN</button>
+    </div>
+    <div class="passport-facts">
+      ${facts.slice(0, 12).map((fact) => `
+        <div>
+          <span>${escapeHtml(fact.label)}</span>
+          <strong>${escapeHtml(shortPath(fact.value) || "--")}</strong>
+        </div>
+      `).join("")}
+    </div>
+    <div class="passport-next">
+      <span>OPEN ISSUE</span>
+      <strong>${escapeHtml(passport.open_issue || passport.headline || "No open issue found.")}</strong>
+      <span>NEXT ACTION</span>
+      <strong>${escapeHtml(passport.next_action || "Inspect the release gate.")}</strong>
+    </div>
+  `;
+}
+
+async function copyPassport(button) {
+  const markdown = state.detail?.run_passport?.markdown;
+  if (!markdown) {
+    flashStatus("COPY FAULT. | no run passport found");
+    return;
+  }
+  const previous = button.textContent;
+  button.textContent = "COPYING";
+  button.disabled = true;
+  try {
+    await writeClipboard(markdown);
+    button.textContent = "COPIED";
+    flashStatus("COPIED RUN PASSPORT. | Paste it into a handoff note, PR, or README.");
+  } catch (error) {
+    button.textContent = "FAILED";
+    flashStatus(`COPY FAULT. | ${error.message}`);
+  }
+  window.setTimeout(() => {
+    button.textContent = previous;
+    button.disabled = false;
+  }, 1200);
+}
+
+function renderHandoffPacket() {
+  const packet = state.detail?.handoff_packet;
+  if (!packet) return "LOAD A RUN TO SEE THE HANDOFF PACKET.";
+  const artifacts = packet.artifacts || [];
+  const ready = Number(packet.ready_count || 0);
+  const required = Number(packet.required_count || 0);
+  const readyRequired = artifacts.filter((item) => item.required && item.exists).length;
+  const missing = packet.missing_required || [];
+  return `
+    <div class="handoff-head ${escapeHtml(packet.status || "watch")}">
+      <div>
+        <label>HANDOFF PACKET</label>
+        <strong>${escapeHtml(String(packet.status || "watch").toUpperCase())}</strong>
+      </div>
+      <span>${escapeHtml(`${readyRequired}/${required} required ready | gate ${packet.gate_status || "not_run"}`)}</span>
+    </div>
+    <p class="notice">${escapeHtml(packet.summary || "No handoff summary available.")}</p>
+    ${missing.length ? `<p class="notice danger">Missing: ${escapeHtml(missing.join(", "))}</p>` : ""}
+    ${(packet.next_actions || []).length ? `
+      <div class="handoff-actions">
+        <label>NEXT ACTIONS</label>
+        ${(packet.next_actions || []).map((action) => `<p>${escapeHtml(action)}</p>`).join("")}
+      </div>
+    ` : ""}
+    <div class="handoff-grid">
+      ${artifacts.map((item) => `
+        <div class="handoff-item ${item.exists ? "ready" : item.required ? "missing" : "optional"}">
+          <span>${escapeHtml(item.exists ? "READY" : item.required ? "MISSING" : "OPTIONAL")}</span>
+          <strong>${escapeHtml(item.label)}</strong>
+          <p>${escapeHtml(item.purpose || "")}</p>
+          <code>${escapeHtml(shortPath(item.path) || "no path")}</code>
+        </div>
+      `).join("")}
+    </div>
+  `;
 }
 
 function renderCompareControls() {

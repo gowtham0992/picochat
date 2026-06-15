@@ -1,7 +1,14 @@
 from types import SimpleNamespace
 import json
+from pathlib import Path
 
-from picochat.hf_sft import HFConversationExample, load_hf_sft_examples, render_hf_chat_text, tokenize_hf_chat_example
+from picochat.hf_sft import (
+    HFConversationExample,
+    _resolve_hf_sft_done_path,
+    load_hf_sft_examples,
+    render_hf_chat_text,
+    tokenize_hf_chat_example,
+)
 from picochat.sft import ChatExample
 
 
@@ -111,3 +118,11 @@ def test_hf_sft_multiturn_masks_only_final_target():
     assert "I will search." in prompt
     assert "The meeting is at 9 AM." not in prompt
     assert "The meeting is at 9 AM." in full
+
+
+def test_hf_sft_done_path_does_not_duplicate_out_dir(tmp_path):
+    out_dir = tmp_path / "run"
+
+    assert _resolve_hf_sft_done_path(out_dir, "done.txt") == out_dir / "done.txt"
+    assert _resolve_hf_sft_done_path(out_dir, tmp_path / "run" / "done.txt") == tmp_path / "run" / "done.txt"
+    assert _resolve_hf_sft_done_path(out_dir, Path("nested/done.txt")) == Path("nested/done.txt")
