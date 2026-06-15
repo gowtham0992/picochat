@@ -101,6 +101,32 @@ def test_import_hf_dataset_passes_data_files_to_loader(tmp_path):
     assert report.data_files == ("shard_00000.parquet",)
 
 
+def test_import_hf_dataset_passes_token_to_loader(tmp_path):
+    calls = []
+
+    def fake_loader(*args, **kwargs):
+        calls.append((args, kwargs))
+        return [{"text": "row one is long enough"}]
+
+    import_hf_dataset(
+        HFImportConfig(
+            dataset="private/dataset",
+            out_path=str(tmp_path / "corpus.txt"),
+            token="hf_test_token",
+            min_chars=1,
+        ),
+        loader=fake_loader,
+    )
+
+    assert calls == [
+        (("private/dataset",), {
+            "split": "train",
+            "streaming": True,
+            "token": "hf_test_token",
+        })
+    ]
+
+
 def test_import_hf_dataset_can_write_sharded_document_files(tmp_path):
     def fake_loader(*_args, **_kwargs):
         return [

@@ -4,7 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Picochat Workbench</title>
-    <link rel="stylesheet" href="/assets/style.css?v=20260614-command-center">
+    <link rel="stylesheet" href="/assets/style.css?v=20260615-product-system-v3">
+    <link rel="stylesheet" href="/assets/product.css?v=20260615-product-console-v2">
   </head>
   <body>
     <div class="desktop-grain" aria-hidden="true"></div>
@@ -35,6 +36,29 @@
           <button id="refresh-button" type="button">REFRESH</button>
         </div>
       </header>
+
+      <section id="product-shell" class="product-shell" aria-label="Picochat product dashboard">
+        <aside class="product-sidebar" aria-label="Picochat navigation">
+          <button class="product-brand" type="button" data-product-section="dashboard">
+            <span class="product-brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 32 32" focusable="false">
+                <path class="mark-axis" d="M7 16h18M16 7v18"></path>
+                <path class="mark-spark" d="M10 10l12 12M22 10 10 22"></path>
+                <circle class="mark-node" cx="16" cy="16" r="3"></circle>
+              </svg>
+            </span>
+            <span class="product-brand-copy">
+              <strong>Picochat</strong>
+              <small>Local SLM Factory</small>
+            </span>
+          </button>
+          <nav id="product-nav" class="product-nav" aria-label="Picochat sections"></nav>
+        </aside>
+        <main class="product-main">
+          <header id="product-topbar" class="product-topbar"></header>
+          <section id="product-content" class="product-content" aria-live="polite"></section>
+        </main>
+      </section>
 
       <section id="home-view" class="app-view home-view active" aria-label="Picochat home">
         <div class="home-hero">
@@ -1292,6 +1316,6 @@ Assistant:</textarea>
 
       <footer id="status-line" class="status-line">READY. | CTX -- | TOK -- | SEED 42</footer>
     </div>
-    <script src="/assets/app.js?v=20260614-command-center"></script>
+    <script src="/assets/app.js?v=20260615-product-polish"></script>
   </body>
 </html>

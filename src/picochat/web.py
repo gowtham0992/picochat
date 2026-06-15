@@ -423,6 +423,7 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
     if dataset.lower() == "nvidia/nemotron-climbmix":
         dataset = CLIMBMIX_DATASET
     config_name = _optional_string(payload.get("config_name"))
+    token = _optional_string(payload.get("token"))
     split = _optional_string(payload.get("split")) or "train"
     text_column = _optional_string(payload.get("text_column")) or "text"
     max_rows = _bounded_int(payload.get("max_rows", 1000), 1, 1_000_000)
@@ -448,6 +449,7 @@ def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
     import_report = import_hf_dataset(HFImportConfig(
         dataset=dataset,
         config_name=config_name,
+        token=token,
         split=split,
         text_column=text_column,
         out_path=str(corpus_path),
@@ -1708,6 +1710,8 @@ def _make_handler(config: WebConfig):
                     self._send_asset("index.html", "text/html; charset=utf-8")
                 elif parsed.path == "/assets/style.css":
                     self._send_asset("style.css", "text/css; charset=utf-8")
+                elif parsed.path == "/assets/product.css":
+                    self._send_asset("product.css", "text/css; charset=utf-8")
                 elif parsed.path == "/assets/app.js":
                     self._send_asset("app.js", "application/javascript; charset=utf-8")
                 elif parsed.path == "/api/runs":
