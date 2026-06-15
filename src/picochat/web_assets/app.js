@@ -446,6 +446,26 @@ function bindControls() {
     if (control) handleProductSettingInput(control);
   });
   productShell?.addEventListener("click", (event) => {
+    const copyButton = event.target.closest("[data-copy-text]");
+    if (copyButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const previous = copyButton.innerHTML;
+      copyButton.disabled = true;
+      copyButton.innerHTML = productIcon("check");
+      writeClipboard(copyButton.dataset.copyText || "").then(() => {
+        flashStatus("COPIED. | Value copied to clipboard.");
+      }).catch((error) => {
+        copyButton.innerHTML = productIcon("warning");
+        flashStatus(`COPY FAULT. | ${error.message}`);
+      }).finally(() => {
+        window.setTimeout(() => {
+          copyButton.innerHTML = previous;
+          copyButton.disabled = false;
+        }, 1200);
+      });
+      return;
+    }
     const runButton = event.target.closest("[data-product-run]");
     if (runButton) {
       selectRun(runButton.dataset.productRun).catch((error) => {
@@ -1718,7 +1738,7 @@ function renderProductPreflight() {
           <span class="product-eyebrow">Step 2</span>
           <h2>Run cheap checks before spending compute</h2>
         </div>
-        ${productActionButton("product-run-preflight", "Run preflight", { icon: "shield", primary: true, busyLabel: "Running..." })}
+        ${productActionButton("product-run-preflight", "Run preflight", { icon: "check", primary: true, busyLabel: "Running..." })}
       </div>
       <p>Preflight blocks bad launches before training: token budget, corpus replay, SFT/eval coverage, attention runtime, DDP scale, honesty, and release-gate readiness.</p>
       <div class="product-action-row">
@@ -1837,7 +1857,7 @@ function renderProductEval() {
             ["Samples", evalSummary.num_examples || "--"],
             ["Temperature", state.detail?.summary?.config?.temperature ?? "0.0"],
             ["Max tokens", state.detail?.summary?.config?.eval_max_new_tokens || "--"],
-            ["Source", state.detail?.summary?.config?.eval_input || "visible eval"],
+            ["Source", state.detail?.summary?.config?.eval_input || "visible eval", { copy: true }],
           ])}
         </div>
       </section>
@@ -2076,12 +2096,23 @@ function productCheckRow(label, status, value) {
 }
 
 function productKvRows(rows) {
-  return rows.map(([label, value]) => `
-    <div>
-      <span>${escapeHtml(label)}</span>
-      <strong>${escapeHtml(value == null ? "--" : value)}</strong>
-    </div>
-  `).join("");
+  return rows.map((row) => {
+    const [label, value, options = {}] = row;
+    const text = String(value == null ? "--" : value);
+    const copyable = Boolean(options.copy && text && text !== "--");
+    const valueHtml = copyable
+      ? `<span class="product-kv-value-wrap">
+          <strong title="${escapeHtml(text)}">${escapeHtml(text)}</strong>
+          <button class="product-icon-button" type="button" data-copy-text="${escapeHtml(text)}" aria-label="Copy ${escapeHtml(label)}">${productIcon("copy")}</button>
+        </span>`
+      : `<strong>${escapeHtml(text)}</strong>`;
+    return `
+      <div class="${copyable ? "copyable" : ""}">
+        <span>${escapeHtml(label)}</span>
+        ${valueHtml}
+      </div>
+    `;
+  }).join("");
 }
 
 function productLogRows(rows) {
@@ -2537,6 +2568,7 @@ function productIcon(name) {
     dot: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle></svg>',
     spinner: '<svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"></path></svg>',
     square: '<svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"></path></svg>',
+    copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"></rect><rect x="5" y="5" width="10" height="10" rx="2"></rect></svg>',
   };
   return icons[name] || icons.dot;
 }

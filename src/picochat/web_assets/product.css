@@ -135,10 +135,14 @@ body.classic-theme {
   background: var(--pc-shell) !important;
   border: 1px solid var(--pc-border) !important;
   border-radius: 12px !important;
-  box-shadow: 0 22px 70px var(--pc-shadow) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--pc-border), transparent 22%),
+    0 28px 80px var(--pc-shadow) !important;
 }
 
 .product-sidebar {
+  display: flex !important;
+  flex-direction: column !important;
   min-width: 0 !important;
   padding: 0 !important;
   background: var(--pc-sidebar) !important;
@@ -151,7 +155,7 @@ body.classic-theme {
   align-items: center !important;
   gap: 10px !important;
   width: 100% !important;
-  height: 44px !important;
+  height: 52px !important;
   padding: 0 14px !important;
   border: 0 !important;
   border-bottom: 1px solid var(--pc-border-soft) !important;
@@ -208,7 +212,15 @@ body.classic-theme {
 }
 
 .product-brand-copy small {
-  display: none !important;
+  display: block !important;
+  overflow: hidden !important;
+  margin-top: 1px !important;
+  color: var(--pc-faint) !important;
+  font-size: 10px !important;
+  font-weight: 560 !important;
+  line-height: 1.1 !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
 }
 
 .product-nav {
@@ -225,10 +237,11 @@ body.classic-theme {
 }
 
 .product-nav-group > span {
-  padding: 12px 14px 6px !important;
-  color: var(--pc-muted) !important;
-  font-size: 11px !important;
-  font-weight: 780 !important;
+  padding: 16px 14px 5px !important;
+  color: var(--pc-faint) !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.08em !important;
   text-transform: uppercase !important;
 }
 
@@ -239,7 +252,7 @@ body.classic-theme {
   align-items: center !important;
   gap: 8px !important;
   width: 100% !important;
-  min-height: 32px !important;
+  min-height: 34px !important;
   padding: 0 14px !important;
   border: 0 !important;
   border-radius: 0 !important;
@@ -248,6 +261,7 @@ body.classic-theme {
   text-align: left !important;
   box-shadow: none !important;
   cursor: pointer !important;
+  transition: background 0.12s ease, color 0.12s ease !important;
 }
 
 .product-nav button:hover {
@@ -273,7 +287,7 @@ body:not(.classic-theme) .product-nav button:hover {
   top: 0 !important;
   bottom: 0 !important;
   width: 3px !important;
-  background: var(--pc-text) !important;
+  background: var(--pc-teal) !important;
 }
 
 .product-nav button svg,
@@ -301,10 +315,44 @@ body:not(.classic-theme) .product-nav button:hover {
   white-space: nowrap !important;
 }
 
+.product-nav-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 18px !important;
+  height: 18px !important;
+  padding: 0 5px !important;
+  border-radius: 999px !important;
+  font-size: 10px !important;
+  font-style: normal !important;
+  font-weight: 800 !important;
+  line-height: 1 !important;
+}
+
+.product-nav-badge.warn {
+  color: var(--pc-amber-text) !important;
+  background: var(--pc-amber-bg) !important;
+  border: 1px solid var(--pc-amber) !important;
+}
+
+.product-nav-badge.fail {
+  color: var(--pc-red-text) !important;
+  background: var(--pc-red-bg) !important;
+  border: 1px solid var(--pc-red) !important;
+}
+
+body.classic-theme .product-nav-badge.warn {
+  color: #ffe8bd !important;
+}
+
+body.classic-theme .product-nav-badge.fail {
+  color: #ffd6d1 !important;
+}
+
 .product-main {
   min-width: 0 !important;
   display: grid !important;
-  grid-template-rows: 56px minmax(0, 1fr) !important;
+  grid-template-rows: 52px minmax(0, 1fr) !important;
   min-height: 0 !important;
   background: var(--pc-shell) !important;
 }
@@ -315,8 +363,8 @@ body:not(.classic-theme) .product-nav button:hover {
   justify-content: space-between !important;
   gap: 14px !important;
   min-width: 0 !important;
-  height: 56px !important;
-  padding: 0 16px !important;
+  height: 52px !important;
+  padding: 0 18px !important;
   border-bottom: 1px solid var(--pc-border-soft) !important;
   background: rgba(255, 255, 255, 0.015) !important;
 }
@@ -332,7 +380,7 @@ body:not(.classic-theme) .product-nav button:hover {
   overflow: hidden !important;
   color: var(--pc-muted) !important;
   font-size: 13px !important;
-  font-weight: 640 !important;
+  font-weight: 560 !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
 }
@@ -340,6 +388,7 @@ body:not(.classic-theme) .product-nav button:hover {
 .product-crumb b {
   color: var(--pc-text) !important;
   font-weight: 760 !important;
+  font-size: 14px !important;
 }
 
 .product-topbar-actions {
@@ -356,7 +405,7 @@ body:not(.classic-theme) .product-nav button:hover {
 .product-alert button,
 .product-list-row,
 .product-inline-steps button {
-  min-height: 36px !important;
+  min-height: 34px !important;
   padding: 0 14px !important;
   border: 1px solid var(--pc-border-strong) !important;
   border-radius: 9px !important;
@@ -364,7 +413,7 @@ body:not(.classic-theme) .product-nav button:hover {
   color: var(--pc-text) !important;
   font: inherit !important;
   font-size: 13px !important;
-  font-weight: 740 !important;
+  font-weight: 700 !important;
   box-shadow: none !important;
   cursor: pointer !important;
 }
@@ -391,6 +440,10 @@ body:not(.classic-theme) .product-nav button:hover {
 
 .product-action-row button.primary,
 .product-inline-steps button.primary {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
   background: var(--pc-text) !important;
   color: var(--pc-shell) !important;
   border-color: var(--pc-text) !important;
@@ -398,16 +451,16 @@ body:not(.classic-theme) .product-nav button:hover {
 
 .product-theme-switch {
   display: flex !important;
-  gap: 4px !important;
-  padding: 3px !important;
+  gap: 3px !important;
+  padding: 2px !important;
   border: 1px solid var(--pc-border-soft) !important;
   border-radius: 10px !important;
   background: var(--pc-card-raised) !important;
 }
 
 .product-theme-switch button {
-  min-height: 28px !important;
-  padding: 0 10px !important;
+  min-height: 26px !important;
+  padding: 0 9px !important;
   border: 0 !important;
   border-radius: 7px !important;
   color: var(--pc-muted) !important;
@@ -423,11 +476,11 @@ body:not(.classic-theme) .product-nav button:hover {
   flex-direction: column !important;
   align-content: stretch !important;
   align-items: stretch !important;
-  gap: 10px !important;
+  gap: 12px !important;
   min-width: 0 !important;
   min-height: 0 !important;
   overflow: auto !important;
-  padding: 12px 16px 16px !important;
+  padding: 14px 18px 18px !important;
 }
 
 #product-content.product-content {
@@ -521,11 +574,11 @@ body.classic-theme .product-mini-pill.fail {
 .product-notice {
   position: relative !important;
   display: flex !important;
-  align-items: center !important;
+  align-items: flex-start !important;
   gap: 9px !important;
   width: 100% !important;
-  min-height: 36px !important;
-  padding: 8px 12px !important;
+  min-height: 40px !important;
+  padding: 10px 14px !important;
   overflow: hidden !important;
   border: 1px solid var(--pc-border) !important;
   border-radius: 10px !important;
@@ -535,6 +588,7 @@ body.classic-theme .product-mini-pill.fail {
 
 .product-alert svg {
   flex: 0 0 16px !important;
+  margin-top: 1px !important;
 }
 
 .product-alert.busy svg {
@@ -583,7 +637,7 @@ body.classic-theme .product-mini-pill.fail {
   min-width: 0 !important;
   font-size: 13px !important;
   font-weight: 650 !important;
-  line-height: 1.25 !important;
+  line-height: 1.45 !important;
 }
 
 .product-alert.warn,
@@ -641,8 +695,13 @@ body.classic-theme .product-notice.pass {
 }
 
 .product-metric-card {
-  min-height: 66px !important;
-  padding: 11px 13px !important;
+  min-height: 70px !important;
+  padding: 11px 14px !important;
+  transition: border-color 0.15s ease !important;
+}
+
+.product-metric-card:hover {
+  border-color: var(--pc-border-strong) !important;
 }
 
 .product-metric-card span,
@@ -656,8 +715,10 @@ body.classic-theme .product-notice.pass {
   display: block !important;
   margin-bottom: 4px !important;
   overflow: hidden !important;
-  font-size: 12px !important;
-  font-weight: 680 !important;
+  font-size: 9.5px !important;
+  font-weight: 740 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
 }
@@ -666,8 +727,9 @@ body.classic-theme .product-notice.pass {
   display: block !important;
   overflow: hidden !important;
   color: var(--pc-text) !important;
-  font-size: 25px !important;
-  font-weight: 780 !important;
+  font-size: 24px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0 !important;
   line-height: 1.02 !important;
   text-overflow: ellipsis !important;
 }
@@ -676,8 +738,8 @@ body.classic-theme .product-notice.pass {
   display: block !important;
   margin-top: 4px !important;
   overflow: hidden !important;
-  color: var(--pc-text-soft) !important;
-  font-size: 12px !important;
+  color: var(--pc-muted) !important;
+  font-size: 11px !important;
   font-weight: 560 !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
@@ -720,9 +782,9 @@ body.classic-theme .product-notice.pass {
   grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
   align-items: start !important;
   grid-auto-rows: min-content !important;
-  gap: 4px !important;
+  gap: 0 !important;
   width: 100% !important;
-  padding: 10px 12px 9px !important;
+  padding: 12px 16px 11px !important;
   background: var(--pc-card) !important;
   border: 1px solid var(--pc-border-soft) !important;
   border-radius: 12px !important;
@@ -753,10 +815,10 @@ body.classic-theme .product-notice.pass {
 .product-stage-track button::after {
   content: "" !important;
   position: absolute !important;
-  top: 17px !important;
-  left: calc(50% + 18px) !important;
-  width: calc(100% - 36px) !important;
-  height: 1px !important;
+  top: 16px !important;
+  left: calc(50% + 17px) !important;
+  width: calc(100% - 34px) !important;
+  height: 1.5px !important;
   background: var(--pc-border) !important;
 }
 
@@ -766,6 +828,7 @@ body.classic-theme .product-notice.pass {
 
 .product-stage-track button.done::after {
   background: color-mix(in srgb, var(--pc-green), transparent 35%) !important;
+  opacity: 0.7 !important;
 }
 
 .product-stage-track button.warn::after {
@@ -776,9 +839,9 @@ body.classic-theme .product-notice.pass {
   position: relative !important;
   display: grid !important;
   place-items: center !important;
-  width: 34px !important;
-  height: 34px !important;
-  border-radius: 10px !important;
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 8px !important;
   background: var(--pc-card-raised) !important;
   border: 1px solid var(--pc-border) !important;
   color: var(--pc-muted) !important;
@@ -803,6 +866,7 @@ body.classic-theme .product-notice.pass {
 
 .product-stage-status-dot.warn {
   background: var(--pc-amber) !important;
+  animation: product-pulse-amber 2s ease-in-out infinite !important;
 }
 
 .product-stage-status-dot.blocked {
@@ -831,6 +895,29 @@ body.classic-theme .product-notice.pass {
   color: var(--pc-red) !important;
 }
 
+.product-stage-track button.active span {
+  background: var(--pc-card-raised) !important;
+  border-color: var(--pc-text) !important;
+  color: var(--pc-text) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--pc-teal), transparent 72%) !important;
+}
+
+.product-stage-track button.active strong {
+  color: var(--pc-text) !important;
+  font-weight: 800 !important;
+}
+
+@keyframes product-pulse-amber {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(233, 170, 50, 0);
+  }
+
+  50% {
+    box-shadow: 0 0 0 4px rgba(233, 170, 50, 0.25);
+  }
+}
+
 .product-stage-track button strong {
   display: block !important;
   overflow: hidden !important;
@@ -839,7 +926,7 @@ body.classic-theme .product-notice.pass {
   margin: 0 !important;
   color: var(--pc-text-soft) !important;
   font-size: 10.5px !important;
-  font-weight: 760 !important;
+  font-weight: 700 !important;
   line-height: 1.1 !important;
   text-align: center !important;
   text-overflow: ellipsis !important;
@@ -863,12 +950,12 @@ body.classic-theme .product-notice.pass {
 
 .product-list-row {
   display: grid !important;
-  grid-template-columns: 36px minmax(0, 1fr) auto !important;
+  grid-template-columns: 34px minmax(0, 1fr) auto !important;
   align-items: center !important;
   gap: 12px !important;
   width: 100% !important;
-  min-height: 48px !important;
-  padding: 6px 0 !important;
+  min-height: 52px !important;
+  padding: 7px 0 !important;
   border: 0 !important;
   border-bottom: 1px solid var(--pc-border-soft) !important;
   border-radius: 0 !important;
@@ -884,9 +971,9 @@ body.classic-theme .product-notice.pass {
 .product-row-icon {
   display: grid !important;
   place-items: center !important;
-  width: 32px !important;
-  height: 32px !important;
-  border-radius: 10px !important;
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 8px !important;
   background: var(--pc-card-raised) !important;
   color: var(--pc-muted) !important;
 }
@@ -896,6 +983,7 @@ body.classic-theme .product-notice.pass {
 .product-alert svg,
 .product-notice svg,
 .product-action-row svg,
+.product-card button svg,
 .product-topbar-actions svg,
 .product-nav svg {
   width: 16px !important;
@@ -925,23 +1013,21 @@ body.classic-theme .product-notice.pass {
 
 .product-list-row strong {
   display: block !important;
-  overflow: hidden !important;
+  overflow: visible !important;
   color: var(--pc-text) !important;
-  font-size: 14px !important;
-  font-weight: 760 !important;
-  line-height: 1.15 !important;
-  text-overflow: ellipsis !important;
-  white-space: nowrap !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  line-height: 1.25 !important;
+  white-space: normal !important;
 }
 
 .product-list-row small {
   display: block !important;
   margin-top: 2px !important;
-  overflow: hidden !important;
-  font-size: 12px !important;
-  line-height: 1.2 !important;
-  text-overflow: ellipsis !important;
-  white-space: nowrap !important;
+  overflow: visible !important;
+  font-size: 11.5px !important;
+  line-height: 1.35 !important;
+  white-space: normal !important;
 }
 
 .product-check-row {
@@ -949,7 +1035,7 @@ body.classic-theme .product-notice.pass {
   grid-template-columns: 20px minmax(0, 1fr) auto !important;
   align-items: center !important;
   gap: 12px !important;
-  min-height: 36px !important;
+  min-height: 38px !important;
   border-bottom: 1px solid var(--pc-border-soft) !important;
 }
 
@@ -978,8 +1064,8 @@ body.classic-theme .product-notice.pass {
 .product-check-row strong {
   overflow: hidden !important;
   color: var(--pc-text) !important;
-  font-size: 14px !important;
-  font-weight: 740 !important;
+  font-size: 13px !important;
+  font-weight: 680 !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
 }
@@ -988,12 +1074,12 @@ body.classic-theme .product-notice.pass {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  min-height: 24px !important;
-  padding: 0 10px !important;
+  min-height: 21px !important;
+  padding: 0 9px !important;
   border-radius: 999px !important;
   background: var(--pc-card-soft) !important;
   color: var(--pc-text-soft) !important;
-  font-size: 12px !important;
+  font-size: 11px !important;
   font-style: normal !important;
   font-weight: 780 !important;
   white-space: nowrap !important;
@@ -1028,16 +1114,62 @@ body.classic-theme .product-check-row.fail em {
 
 .product-card-heading {
   display: flex !important;
-  align-items: start !important;
+  align-items: center !important;
   justify-content: space-between !important;
   gap: 12px !important;
-  margin-bottom: 12px !important;
+  margin: -12px -14px 12px !important;
+  padding: 11px 14px 10px !important;
+  border-bottom: 1px solid var(--pc-border-soft) !important;
 }
 
 .product-card-heading h2 {
-  margin: 2px 0 0 !important;
+  margin: 0 !important;
+  color: var(--pc-text-soft) !important;
+  font-size: 12px !important;
+  font-weight: 760 !important;
+  text-transform: uppercase !important;
+}
+
+.product-card-heading span {
+  color: var(--pc-faint) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+}
+
+.product-workflow-card > .product-card-heading h2 {
   color: var(--pc-text) !important;
-  font-size: 16px !important;
+  font-size: 14px !important;
+  text-transform: none !important;
+}
+
+.product-workflow-card > p:first-of-type {
+  color: var(--pc-muted) !important;
+  font-size: 12.5px !important;
+}
+
+.product-start-card,
+.product-onboarding-card {
+  background: color-mix(in srgb, var(--pc-teal), var(--pc-card) 94%) !important;
+  border-color: color-mix(in srgb, var(--pc-teal), var(--pc-border-soft) 62%) !important;
+}
+
+.compact-card {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 4px !important;
+}
+
+.compact-card > h2 {
+  margin: 0 !important;
+  color: var(--pc-text) !important;
+  font-size: 13px !important;
+  text-transform: none !important;
+}
+
+.compact-card > p {
+  margin: 0 !important;
+  color: var(--pc-muted) !important;
+  font-size: 12px !important;
 }
 
 .product-eyebrow {
@@ -1050,8 +1182,8 @@ body.classic-theme .product-check-row.fail em {
 
 .product-form-grid {
   display: grid !important;
-  grid-template-columns: repeat(4, minmax(120px, 1fr)) !important;
-  gap: 8px !important;
+  grid-template-columns: repeat(4, minmax(112px, 1fr)) !important;
+  gap: 10px !important;
   margin-top: 10px !important;
 }
 
@@ -1072,14 +1204,14 @@ body.classic-theme .product-check-row.fail em {
 .product-setting-row select {
   width: 100% !important;
   min-width: 0 !important;
-  height: 34px !important;
+  height: 32px !important;
   padding: 0 12px !important;
   border: 1px solid var(--pc-input-border) !important;
   border-radius: 8px !important;
   background: var(--pc-input) !important;
   color: var(--pc-text) !important;
   font: inherit !important;
-  font-size: 13px !important;
+  font-size: 12.5px !important;
   outline: none !important;
   box-shadow: none !important;
 }
@@ -1120,6 +1252,10 @@ body.classic-theme .product-check-row.fail em {
   display: inline-flex !important;
   align-items: center !important;
   gap: 8px !important;
+  min-height: 32px !important;
+  padding: 0 13px !important;
+  font-size: 12px !important;
+  font-weight: 680 !important;
 }
 
 .product-settings-grid {
@@ -1130,8 +1266,8 @@ body.classic-theme .product-check-row.fail em {
 .product-setting-row {
   grid-template-columns: minmax(120px, 0.72fr) minmax(140px, 1fr) !important;
   align-items: center !important;
-  min-height: 34px !important;
-  padding: 2px 0 !important;
+  min-height: 38px !important;
+  padding: 4px 0 !important;
   border-bottom: 1px solid var(--pc-border-soft) !important;
 }
 
@@ -1154,15 +1290,15 @@ body.classic-theme .product-check-row.fail em {
 .product-kv div,
 .product-log div {
   display: grid !important;
-  grid-template-columns: minmax(0, 1fr) auto !important;
+  grid-template-columns: minmax(90px, 0.42fr) minmax(0, 1fr) !important;
   gap: 12px !important;
   align-items: center !important;
-  min-height: 42px !important;
+  min-height: 38px !important;
   border-bottom: 1px solid var(--pc-border-soft) !important;
 }
 
 .product-log div {
-  grid-template-columns: 88px minmax(0, 1fr) !important;
+  grid-template-columns: 80px minmax(0, 1fr) !important;
 }
 
 .product-kv div:last-child,
@@ -1173,15 +1309,48 @@ body.classic-theme .product-check-row.fail em {
 .product-kv span,
 .product-log span {
   color: var(--pc-muted) !important;
+  font-size: 12px !important;
 }
 
 .product-kv strong,
 .product-log strong {
+  min-width: 0 !important;
   overflow: hidden !important;
   color: var(--pc-text) !important;
-  font-size: 14px !important;
-  font-weight: 760 !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  text-align: right !important;
   text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.product-kv-value-wrap {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+}
+
+.product-kv-value-wrap strong {
+  flex: 1 1 auto !important;
+}
+
+.product-icon-button {
+  display: inline-grid !important;
+  flex: 0 0 26px !important;
+  place-items: center !important;
+  width: 26px !important;
+  min-width: 26px !important;
+  height: 26px !important;
+  min-height: 26px !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
+}
+
+.product-icon-button svg {
+  width: 14px !important;
+  height: 14px !important;
 }
 
 .product-chart-frame {
@@ -1306,8 +1475,8 @@ body.classic-theme .product-check-row.fail em {
 .product-progress-bar {
   display: block !important;
   width: 100% !important;
-  height: 7px !important;
-  margin-top: 12px !important;
+  height: 5px !important;
+  margin-top: 8px !important;
   overflow: hidden !important;
   border-radius: 99px !important;
   background: var(--pc-border-soft) !important;
@@ -1318,6 +1487,39 @@ body.classic-theme .product-check-row.fail em {
   height: 100% !important;
   background: var(--pc-teal) !important;
   border-radius: inherit !important;
+}
+
+.product-list-row > button:last-child {
+  min-height: 28px !important;
+  padding: 0 11px !important;
+  border: 1px solid var(--pc-border-strong) !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  color: var(--pc-text) !important;
+  font-size: 11px !important;
+  font-weight: 680 !important;
+  white-space: nowrap !important;
+}
+
+body.classic-theme .product-shell {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--pc-border), transparent 12%),
+    0 32px 100px rgba(0, 0, 0, 0.55) !important;
+}
+
+body.classic-theme .product-card,
+body.classic-theme .product-metric-card,
+body.classic-theme .product-stage-track {
+  border-color: var(--pc-border) !important;
+}
+
+body.classic-theme .product-stage-track button.done::after {
+  background: color-mix(in srgb, var(--pc-green), transparent 28%) !important;
+  opacity: 1 !important;
+}
+
+body.classic-theme .product-card-heading {
+  border-bottom-color: var(--pc-border) !important;
 }
 
 @media (max-width: 980px) {
