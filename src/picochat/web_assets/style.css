@@ -1775,7 +1775,7 @@ textarea.guide-target-focus {
 
 .pipeline-stage::after {
   color: var(--muted);
-  content: "->";
+  content: "";
   position: absolute;
   bottom: 8px;
   right: 8px;

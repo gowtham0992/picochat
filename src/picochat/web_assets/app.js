@@ -10,6 +10,12 @@ const state = {
   productNotice: null,
   productBusyAction: null,
   productBusyText: "",
+  productMobileNavOpen: false,
+  productPollTimer: null,
+  productPollInFlight: false,
+  productLastRefreshAt: null,
+  productCompareA: null,
+  productCompareB: null,
   productSettings: readInitialProductSettings(),
   guideStep: 0,
   guideRunName: null,
@@ -65,6 +71,7 @@ const APP_VIEWS = ["home", "guide", "workbench", "scale"];
 const PRODUCT_SECTIONS = [
   { id: "dashboard", label: "Dashboard", group: "primary", icon: "dashboard" },
   { id: "runs", label: "Runs", group: "primary", icon: "runs" },
+  { id: "compare", label: "Compare", group: "primary", icon: "compare" },
   { id: "data", label: "Data packs", group: "primary", icon: "data" },
   { id: "preflight", label: "Preflight", group: "pipeline", icon: "shield" },
   { id: "train", label: "Train", group: "pipeline", icon: "chip" },
@@ -430,6 +437,7 @@ async function boot() {
   await loadRunPresets();
   await loadRuns();
   await loadRunJobs();
+  syncProductPolling();
   renderScalePlan();
   renderHFSFTCommandPreview();
   renderGuide();
@@ -442,6 +450,23 @@ function bindControls() {
     if (control) handleProductSettingInput(control);
   });
   productShell?.addEventListener("change", (event) => {
+    const runSelect = event.target.closest("[data-product-run-select]");
+    if (runSelect) {
+      selectRun(runSelect.value).catch((error) => {
+        flashStatus(`RUN LOAD FAULT. | ${error.message}`);
+      });
+      return;
+    }
+    const compareSelect = event.target.closest("[data-product-compare]");
+    if (compareSelect) {
+      if (compareSelect.dataset.productCompare === "a") {
+        state.productCompareA = compareSelect.value;
+      } else {
+        state.productCompareB = compareSelect.value;
+      }
+      renderProductShell();
+      return;
+    }
     const control = event.target.closest("[data-product-setting]");
     if (control) handleProductSettingInput(control);
   });
@@ -474,6 +499,7 @@ function bindControls() {
     }
     const navButton = event.target.closest("[data-product-section]");
     if (navButton) {
+      state.productMobileNavOpen = false;
       setProductSection(navButton.dataset.productSection);
       return;
     }
@@ -869,6 +895,42 @@ async function refreshDashboard() {
   }
 }
 
+function productRefreshSeconds() {
+  const raw = Number(state.productSettings?.appearance?.refreshSeconds);
+  if (!Number.isFinite(raw)) return 5;
+  return Math.max(3, Math.min(60, raw));
+}
+
+function syncProductPolling() {
+  if (state.productPollTimer) {
+    window.clearInterval(state.productPollTimer);
+    state.productPollTimer = null;
+  }
+  const enabled = state.activeView === "workbench" && state.productSettings?.appearance?.autoRefresh !== false;
+  if (!enabled) return;
+  state.productPollTimer = window.setInterval(() => {
+    refreshProductData({ quiet: true }).catch(() => {
+      // Keep polling best-effort; manual refresh still reports errors through the legacy status rail.
+    });
+  }, productRefreshSeconds() * 1000);
+}
+
+async function refreshProductData(options = {}) {
+  if (state.productPollInFlight || state.productBusyAction) return;
+  state.productPollInFlight = true;
+  try {
+    await loadRuns();
+    await loadRunJobs();
+    state.productLastRefreshAt = new Date();
+    if (!options.quiet) {
+      flashStatus("PRODUCT DATA REFRESHED. | Runs, selected detail, and job status updated.");
+    }
+  } finally {
+    state.productPollInFlight = false;
+    renderProductShell();
+  }
+}
+
 async function loadRun(name) {
   state.detail = await fetchJson(`/api/run?name=${encodeURIComponent(name)}`);
   if (state.workflowRunName !== name) {
@@ -882,6 +944,7 @@ async function selectRun(name) {
   if (!name) return;
   state.selectedRun = name;
   state.pendingArchiveRun = null;
+  state.productMobileNavOpen = false;
   renderRuns();
   await loadRun(state.selectedRun);
   await loadRunJobs();
@@ -990,6 +1053,10 @@ function defaultProductSettings() {
       lossSpikes: true,
       ddpSetup: true,
     },
+    appearance: {
+      autoRefresh: true,
+      refreshSeconds: "5",
+    },
     integrations: {
       huggingface: "Connected",
       huggingfaceToken: "",
@@ -1014,6 +1081,7 @@ function readInitialProductSettings() {
       gate: { ...defaults.gate, ...(saved.gate || {}) },
       hyperparams: { ...defaults.hyperparams, ...(saved.hyperparams || {}) },
       notifications: { ...defaults.notifications, ...(saved.notifications || {}) },
+      appearance: { ...defaults.appearance, ...(saved.appearance || {}) },
       integrations: { ...defaults.integrations, ...(saved.integrations || {}) },
     };
   } catch {
@@ -1054,6 +1122,7 @@ function setAppView(view, options = {}) {
     renderScalePlan();
     renderStatus();
   }
+  syncProductPolling();
 }
 
 function setProductSection(section, options = {}) {
@@ -1070,6 +1139,21 @@ function setProductSection(section, options = {}) {
     }
   }
   renderProductShell();
+  if (options.scroll !== false) {
+    scrollProductContentTop();
+  }
+}
+
+function scrollProductContentTop() {
+  window.requestAnimationFrame(() => {
+    const main = document.querySelector(".product-main");
+    const content = $("product-content");
+    if (main) main.scrollTop = 0;
+    if (content) content.scrollTop = 0;
+    if (document.body.classList.contains("workbench-active")) {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    }
+  });
 }
 
 function setViewMode(mode, options = {}) {
@@ -1135,6 +1219,7 @@ function renderAll() {
 
 function renderProductShell() {
   if (!$("product-shell")) return;
+  $("product-shell").classList.toggle("nav-open", state.productMobileNavOpen);
   renderProductNav();
   const section = PRODUCT_SECTIONS.some((item) => item.id === state.activeProductSection)
     ? state.activeProductSection
@@ -1174,20 +1259,44 @@ function productTopbar(section) {
   const breadcrumb = meta.crumb === meta.title
     ? `<b>${escapeHtml(meta.title)}</b>`
     : `${escapeHtml(meta.crumb)} / <b>${escapeHtml(meta.title)}</b>`;
+  const refreshed = state.productLastRefreshAt
+    ? `Live ${productRefreshSeconds()}s · ${state.productLastRefreshAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+    : state.productSettings?.appearance?.autoRefresh === false ? "Live off" : `Live ${productRefreshSeconds()}s`;
   return `
     <div class="product-topbar-left">
+      <button class="product-mobile-menu" type="button" data-product-action="toggle-mobile-nav" aria-label="Open navigation">${productIcon("menu")}</button>
       <div class="product-crumb">${breadcrumb}</div>
       ${meta.status ? `<span class="product-status-pill ${escapeHtml(meta.statusClass || "neutral")}">${escapeHtml(meta.status)}</span>` : ""}
+      ${productRunSelector()}
     </div>
     <div class="product-topbar-actions">
+      <span class="product-live-pill ${state.productSettings?.appearance?.autoRefresh === false ? "off" : "on"}">${escapeHtml(refreshed)}</span>
       ${actions.map((action) => `
         <button type="button" data-product-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>
       `).join("")}
-      <div class="product-theme-switch" role="group" aria-label="Theme">
-        <button class="${state.theme === "paper" ? "active" : ""}" type="button" data-product-action="theme-paper">Light</button>
-        <button class="${state.theme === "classic" ? "active" : ""}" type="button" data-product-action="theme-classic">Dark</button>
-      </div>
     </div>
+  `;
+}
+
+function productRunSelector() {
+  const current = state.selectedRun || "";
+  if (!state.runs.length) {
+    return `
+      <label class="product-run-select-wrap disabled">
+        <span>Run</span>
+        <select disabled><option>No runs yet</option></select>
+      </label>
+    `;
+  }
+  return `
+    <label class="product-run-select-wrap">
+      <span>Run</span>
+      <select data-product-run-select aria-label="Select run">
+        ${state.runs.slice().reverse().map((run) => `
+          <option value="${escapeHtml(run.name)}" ${run.name === current ? "selected" : ""}>${escapeHtml(run.name)}</option>
+        `).join("")}
+      </select>
+    </label>
   `;
 }
 
@@ -1201,6 +1310,7 @@ function productPageMeta(section) {
   const stageStatus = {
     dashboard: { crumb: "Dashboard", title: "Dashboard", actions: [{ id: "new-run", label: "New run" }] },
     runs: { crumb: "Runs", title: runName, status: gateStatus.label, statusClass: gateStatus.className, actions: [{ id: "evaluate", label: "Evaluate" }, { id: "rerun", label: "Rerun" }] },
+    compare: { crumb: "Runs", title: "Compare", actions: [{ id: "refresh-product", label: "Refresh" }] },
     data: { crumb: "Data packs", title: "Data packs", actions: [{ id: "import-pack", label: "Import" }, { id: "new-pack", label: "New pack" }] },
     preflight: { crumb: `Runs / ${runName}`, title: "Preflight", status: preflightPassed ? "Passed" : state.detail ? "Review" : "Waiting", statusClass: preflightPassed ? "pass" : "warn", actions: [{ id: "rerun-preflight", label: "Re-run checks" }] },
     train: { crumb: `Runs / ${runName}`, title: "Train", status: productTrainStatus(), statusClass: productTrainStatus() === "Running" ? "info" : "neutral", actions: [{ id: "pause", label: "Pause" }, { id: "logs", label: "View logs" }] },
@@ -1215,6 +1325,7 @@ function productPageMeta(section) {
 
 function productContent(section) {
   if (section === "runs") return renderProductRuns();
+  if (section === "compare") return renderProductCompare();
   if (section === "data") return renderProductDataPacks();
   if (section === "preflight") return renderProductPreflight();
   if (section === "train") return renderProductTrain();
@@ -1240,6 +1351,15 @@ async function handleProductAction(action) {
   if (action === "theme-classic" || action === "theme-paper") {
     setTheme(action === "theme-paper" ? "paper" : "classic");
     flashStatus(`THEME ${action === "theme-paper" ? "LIGHT" : "DARK"}. | Product shell updated.`);
+    return;
+  }
+  if (action === "toggle-mobile-nav") {
+    state.productMobileNavOpen = !state.productMobileNavOpen;
+    renderProductShell();
+    return;
+  }
+  if (action === "refresh-product") {
+    await refreshProductData();
     return;
   }
   if (action === "new-run") {
@@ -1366,7 +1486,8 @@ async function withProductBusy(action, text, callback) {
 function productActionButton(action, label, options = {}) {
   const busy = state.productBusyAction === action;
   const className = options.primary ? " class=\"primary\"" : "";
-  const icon = options.icon ? `${productIcon(options.icon)} ` : "";
+  const iconName = busy ? "spinner" : options.icon;
+  const icon = iconName ? `${productIcon(iconName)} ` : "";
   const busyLabel = options.busyLabel || "Working...";
   return `<button${className} type="button" data-product-action="${escapeHtml(action)}" ${busy ? "disabled aria-busy=\"true\"" : ""}>${icon}${escapeHtml(busy ? busyLabel : label)}</button>`;
 }
@@ -1476,6 +1597,7 @@ function handleProductSettingInput(control) {
   if (path.length !== 2 || !state.productSettings[path[0]]) return;
   const value = control.type === "checkbox" ? control.checked : control.value;
   state.productSettings[path[0]][path[1]] = value;
+  if (path[0] === "appearance") syncProductPolling();
   if (state.activeProductSection === "settings") {
     setProductNotice("info", "Settings changed. Save changes to keep them after refresh.");
   }
@@ -1522,16 +1644,32 @@ function renderProductDashboard() {
     <section class="product-card product-start-card product-onboarding-card">
       <div>
         <span class="product-eyebrow">Production path</span>
-        <h2>Import data, prove it is safe, then train.</h2>
-        <p>Every run moves through the same gates: Data Pack, Preflight, Train, SFT, Eval, Honesty, Release Gate, and Handoff. The UI shows what is ready, what is blocked, and the next safe action.</p>
+        <h2>${state.runs.length ? "Import data, prove it is safe, then train." : "Start your first honest run."}</h2>
+        <p>${state.runs.length
+          ? "Every run moves through the same gates. The UI shows what is ready, what is blocked, and the next safe action."
+          : "Use the bundled sample to close the loop locally, or import a Hugging Face dataset before spending GPU time."}</p>
       </div>
       <div class="product-start-actions">
         <button type="button" data-product-section="data">1. Data pack</button>
         <button type="button" data-product-section="preflight">2. Preflight</button>
-        ${productActionButton("product-launch-smoke", "3. Tiny smoke", { busyLabel: "Launching..." })}
-        <button type="button" data-product-section="release">4. Release gate</button>
+        <button type="button" data-product-section="train">3. Train</button>
+        <button type="button" data-product-section="eval">4. Eval</button>
+        <button type="button" data-product-section="release">5. Release gate</button>
+        ${productActionButton("product-launch-smoke", "Tiny smoke", { primary: !state.runs.length, busyLabel: "Launching..." })}
       </div>
     </section>
+    ${state.runs.length ? "" : `
+      <section class="product-card product-empty-state">
+        <span class="product-eyebrow">Zero state</span>
+        <h2>No public artifact yet. Close a small loop first.</h2>
+        <p>To make Picochat credible, produce one small model with its release card, model card, benchmark report, and contamination report. The UI can guide the run, but the artifact has to exist.</p>
+        <div class="product-start-actions">
+          <button type="button" data-product-section="data">Load sample data</button>
+          ${productActionButton("product-launch-smoke", "Run tiny smoke", { primary: true, busyLabel: "Launching..." })}
+          <button type="button" data-product-section="handoff">Artifact checklist</button>
+        </div>
+      </section>
+    `}
     <div class="product-grid two">
       <section class="product-card">
         <h2>Recent runs</h2>
@@ -1598,6 +1736,119 @@ function renderProductRuns() {
       </div>
     </section>
   `;
+}
+
+function renderProductCompare() {
+  const runs = state.runs.slice().reverse();
+  if (!runs.length) {
+    return `
+      ${productNoticeHtml()}
+      <section class="product-card product-empty-state">
+        <span class="product-eyebrow">Compare runs</span>
+        <h2>No runs to compare yet.</h2>
+        <p>Launch a tiny smoke run or import an existing run folder. Picochat will compare loss, eval, context, and gate status here.</p>
+        <div class="product-start-actions">
+          ${productActionButton("product-launch-smoke", "Launch tiny smoke", { primary: true, busyLabel: "Launching..." })}
+          <button type="button" data-product-section="data">Load data</button>
+        </div>
+      </section>
+    `;
+  }
+  const selectedName = state.productCompareA || state.selectedRun || runs[0]?.name;
+  const baselineName = state.productCompareB || runs.find((run) => run.name !== selectedName)?.name || selectedName;
+  const selected = productRunSummaryByName(selectedName) || runs[0];
+  const baseline = productRunSummaryByName(baselineName) || runs.find((run) => run.name !== selected?.name) || selected;
+  const selectedPass = Number(selected?.pass_rate);
+  const baselinePass = Number(baseline?.pass_rate);
+  const delta = Number.isFinite(selectedPass) && Number.isFinite(baselinePass)
+    ? `${selectedPass >= baselinePass ? "+" : ""}${((selectedPass - baselinePass) * 100).toFixed(2)} pts`
+    : "--";
+  return `
+    ${productNoticeHtml()}
+    ${productMetricCards([
+      ["Selected", selected?.name || "--", selected?.eval_score || "current run"],
+      ["Baseline", baseline?.name || "--", baseline?.eval_score || "comparison run"],
+      ["Pass-rate delta", delta, "selected minus baseline"],
+      ["Context", selected?.context_size ? `CTX ${escapeHtml(selected.context_size)}` : "--", "selected run"],
+    ])}
+    <section class="product-card product-compare-picker">
+      <div class="product-card-heading">
+        <div>
+          <span class="product-eyebrow">Compare runs</span>
+          <h2>Pick two runs and inspect the delta.</h2>
+        </div>
+        <span>uses local run summaries</span>
+      </div>
+      <div class="product-compare-selects">
+        ${productCompareSelect("A", "a", selected?.name, runs)}
+        ${productCompareSelect("B", "b", baseline?.name, runs)}
+      </div>
+    </section>
+    <div class="product-grid two">
+      ${productCompareCard("Selected run", selected, baseline)}
+      ${productCompareCard("Baseline run", baseline, selected)}
+    </div>
+    <section class="product-card">
+      <div class="product-card-heading">
+        <h2>Comparison checklist</h2>
+        <span>same eval and tokenizer make deltas more trustworthy</span>
+      </div>
+      <div class="product-list compact">
+        ${productCheckRow("Eval score", productCompareStatus(selected?.eval_score, baseline?.eval_score), `${selected?.eval_score || "--"} vs ${baseline?.eval_score || "--"}`)}
+        ${productCheckRow("Pass rate", Number.isFinite(selectedPass) && Number.isFinite(baselinePass) && selectedPass >= baselinePass ? "pass" : "warn", `${fmtPercent(selectedPass)} vs ${fmtPercent(baselinePass)}`)}
+        ${productCheckRow("Context", selected?.context_size === baseline?.context_size ? "pass" : "warn", `CTX ${selected?.context_size || "--"} vs CTX ${baseline?.context_size || "--"}`)}
+        ${productCheckRow("Artifacts", selected?.path && baseline?.path ? "pass" : "warn", "both summaries registered")}
+      </div>
+    </section>
+  `;
+}
+
+function productCompareSelect(label, role, value, runs) {
+  return `
+    <label>
+      <span>Run ${escapeHtml(label)}</span>
+      <select data-product-compare="${escapeHtml(role)}" aria-label="Compare run ${escapeHtml(label)}">
+        ${runs.map((run) => `<option value="${escapeHtml(run.name)}" ${run.name === value ? "selected" : ""}>${escapeHtml(run.name)}</option>`).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function productCompareCard(title, run, other) {
+  const passRate = Number(run?.pass_rate);
+  const otherPassRate = Number(other?.pass_rate);
+  const status = Number.isFinite(passRate) && passRate >= 0.5 ? "pass" : Number.isFinite(passRate) ? "warn" : "neutral";
+  const delta = Number.isFinite(passRate) && Number.isFinite(otherPassRate)
+    ? `${passRate >= otherPassRate ? "+" : ""}${((passRate - otherPassRate) * 100).toFixed(2)} pts`
+    : "--";
+  return `
+    <section class="product-card product-compare-card">
+      <div class="product-card-heading">
+        <h2>${escapeHtml(title)}</h2>
+        <span class="product-mini-pill ${escapeHtml(status)}">${escapeHtml(status === "pass" ? "stronger" : status === "warn" ? "review" : "unknown")}</span>
+      </div>
+      <div class="product-kv">
+        ${productKvRows([
+          ["Name", run?.name || "--", { copy: true }],
+          ["Visible eval", run?.eval_score || "--"],
+          ["Pass rate", fmtPercent(passRate)],
+          ["Delta", delta],
+          ["Context", run?.context_size ? `CTX ${run.context_size}` : "--"],
+        ])}
+      </div>
+    </section>
+  `;
+}
+
+function productRunSummaryByName(name) {
+  return state.runs.find((run) => run.name === name) || null;
+}
+
+function productCompareStatus(a, b) {
+  const left = Number(String(a || "").match(/[-+]?\d*\.?\d+/)?.[0]);
+  const right = Number(String(b || "").match(/[-+]?\d*\.?\d+/)?.[0]);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return "warn";
+  return left >= right ? "pass" : "warn";
 }
 
 function renderProductDataPacks() {
@@ -1992,6 +2243,20 @@ function renderProductSettings() {
     ${productNoticeHtml()}
     <div class="product-grid two">
       <section class="product-card">
+        <h2>Appearance</h2>
+        <div class="product-settings-grid">
+          <div class="product-setting-row product-theme-row">
+            <span>Theme</span>
+            <div class="product-theme-switch" role="group" aria-label="Theme">
+              <button class="${state.theme === "paper" ? "active" : ""}" type="button" data-product-action="theme-paper">Light</button>
+              <button class="${state.theme === "classic" ? "active" : ""}" type="button" data-product-action="theme-classic">Dark</button>
+            </div>
+          </div>
+          ${productSettingToggle("Auto refresh", "appearance.autoRefresh", settings.appearance.autoRefresh)}
+          ${productSettingInput("Refresh seconds", "appearance.refreshSeconds", settings.appearance.refreshSeconds)}
+        </div>
+      </section>
+      <section class="product-card">
         <h2>Gate thresholds</h2>
         <div class="product-settings-grid">
           ${productSettingInput("Max toxicity", "gate.toxicityMax", settings.gate.toxicityMax)}
@@ -2107,7 +2372,7 @@ function productKvRows(rows) {
         </span>`
       : `<strong>${escapeHtml(text)}</strong>`;
     return `
-      <div class="${copyable ? "copyable" : ""}">
+      <div class="product-kv-row ${copyable ? "copyable" : ""}">
         <span>${escapeHtml(label)}</span>
         ${valueHtml}
       </div>
@@ -2136,9 +2401,12 @@ function productStageTrack() {
         const status = productStageStatus(stage.status);
         const next = stages[index + 1];
         const connectorStatus = status === "done" ? "done" : status === "warn" ? "warn" : "";
+        const statusDot = status === "warn" || status === "blocked"
+          ? `<i class="product-stage-status-dot ${escapeHtml(status)}" aria-hidden="true"></i>`
+          : "";
         return `
         <button class="${escapeHtml(status)}" type="button" data-product-section="${escapeHtml(productSectionForStage(stage.id))}">
-          <span>${productIcon(productStageIcon(stage.id))}<i class="product-stage-status-dot ${escapeHtml(status)}" aria-hidden="true"></i></span>
+          <span>${productIcon(productStageIcon(stage.id))}${statusDot}</span>
           <strong>${escapeHtml(stage.label)}</strong>
         </button>
         ${next ? `<i class="product-stage-connector ${escapeHtml(connectorStatus)}" aria-hidden="true"></i>` : ""}
@@ -2335,6 +2603,22 @@ function productLossChart(detail) {
   })).filter((row) => Number.isFinite(row.step) && Number.isFinite(row.train) && Number.isFinite(row.val));
   const rows = sftLosses.length ? sftLosses : baseLosses;
   if (!rows.length) return `<div class="product-empty chart-empty"><strong>No training trace yet.</strong><small>Run a tiny smoke train to populate this chart.</small></div>`;
+  if (rows.length === 1) {
+    const row = rows[0];
+    return `
+      <div class="product-chart-single">
+        <div>
+          <span class="product-eyebrow">One point captured</span>
+          <strong>step ${escapeHtml(fmtInt(row.step))}</strong>
+          <small>Run more steps to draw a trend. Picochat already recorded train and validation loss for this smoke run.</small>
+        </div>
+        <div class="product-chart-single-metrics" aria-label="Latest loss values">
+          <span><b>${escapeHtml(fmtLoss(row.train))}</b><small>train</small></span>
+          <span><b>${escapeHtml(fmtLoss(row.val))}</b><small>val</small></span>
+        </div>
+      </div>
+    `;
+  }
   const values = rows.flatMap((row) => [row.train, row.val]);
   const rawMin = Math.min(...values);
   const rawMax = Math.max(...values);
@@ -2548,9 +2832,10 @@ function productIcon(name) {
   const icons = {
     dashboard: '<svg viewBox="0 0 24 24"><path d="M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z"></path></svg>',
     runs: '<svg viewBox="0 0 24 24"><path d="M8 5l9 7-9 7z"></path></svg>',
+    compare: '<svg viewBox="0 0 24 24"><path d="M7 7h10M7 17h10"></path><path d="M8 4l-3 3 3 3M16 14l3 3-3 3"></path></svg>',
     data: '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"></path><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"></path></svg>',
     shield: '<svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-2.8 8-7 10-4.2-2-7-5.5-7-10V6z"></path></svg>',
-    "shield-check": '<svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-2.8 8-7 10-4.2-2-7-5.5-7-10V6z"></path><path d="M8.5 12.2l2.1 2.1 4.9-5"></path></svg>',
+    "shield-check": '<svg viewBox="0 0 24 24"><path d="M12 4.5l6 2.6v4.5c0 3.8-2.4 6.7-6 8.4-3.6-1.7-6-4.6-6-8.4V7.1z"></path><path d="M8.7 12.1l2 2 4.6-4.7"></path></svg>',
     chip: '<svg viewBox="0 0 24 24"><path d="M8 8h8v8H8zM9 3v5M15 3v5M9 16v5M15 16v5M3 9h5M3 15h5M16 9h5M16 15h5"></path></svg>',
     bolt: '<svg viewBox="0 0 24 24"><path d="M13 2L5 13h6l-1 9 9-12h-6z"></path></svg>',
     chart: '<svg viewBox="0 0 24 24"><path d="M5 19V9M12 19V5M19 19v-8"></path><path d="M3 19h18"></path></svg>',
@@ -2569,6 +2854,7 @@ function productIcon(name) {
     spinner: '<svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"></path></svg>',
     square: '<svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"></path></svg>',
     copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"></rect><rect x="5" y="5" width="10" height="10" rx="2"></rect></svg>',
+    menu: '<svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>',
   };
   return icons[name] || icons.dot;
 }
