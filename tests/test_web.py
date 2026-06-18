@@ -138,6 +138,23 @@ def test_web_ui_exposes_release_readiness_and_preflight_dry_run_controls():
     assert ".loss-grid" in css
 
 
+def test_product_shell_polling_does_not_interrupt_editing():
+    js = Path("src/picochat/web_assets/app.js").read_text(encoding="utf-8")
+
+    assert "function productHasFocusedEditable()" in js
+    assert "shell.contains(active)" in js
+    assert "active.closest(\"input, textarea, select, [contenteditable='true']\")" in js
+    assert "options.quiet && productHasFocusedEditable()" in js
+
+
+def test_product_shell_mobile_backdrop_closes_nav():
+    js = Path("src/picochat/web_assets/app.js").read_text(encoding="utf-8")
+
+    assert "state.productMobileNavOpen && event.target === productShell" in js
+    assert "state.productMobileNavOpen = false;" in js
+    assert "$(\"product-shell\").classList.toggle(\"nav-open\", state.productMobileNavOpen)" in js
+
+
 def write_run(root, name):
     run_dir = root / name
     (run_dir / "eval").mkdir(parents=True)

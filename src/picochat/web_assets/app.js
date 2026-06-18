@@ -471,6 +471,11 @@ function bindControls() {
     if (control) handleProductSettingInput(control);
   });
   productShell?.addEventListener("click", (event) => {
+    if (state.productMobileNavOpen && event.target === productShell) {
+      state.productMobileNavOpen = false;
+      renderProductShell();
+      return;
+    }
     const copyButton = event.target.closest("[data-copy-text]");
     if (copyButton) {
       event.preventDefault();
@@ -901,6 +906,13 @@ function productRefreshSeconds() {
   return Math.max(3, Math.min(60, raw));
 }
 
+function productHasFocusedEditable() {
+  const shell = $("product-shell");
+  const active = document.activeElement;
+  if (!shell || !active || !shell.contains(active)) return false;
+  return Boolean(active.closest("input, textarea, select, [contenteditable='true']"));
+}
+
 function syncProductPolling() {
   if (state.productPollTimer) {
     window.clearInterval(state.productPollTimer);
@@ -916,6 +928,7 @@ function syncProductPolling() {
 }
 
 async function refreshProductData(options = {}) {
+  if (options.quiet && productHasFocusedEditable()) return;
   if (state.productPollInFlight || state.productBusyAction) return;
   state.productPollInFlight = true;
   try {
