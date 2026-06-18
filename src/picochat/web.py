@@ -1730,6 +1730,10 @@ def _make_handler(config: WebConfig):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
+            elif parsed.path == "/assets/picochat-symbol.svg":
+                self.send_response(200)
+                self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+                self.end_headers()
             else:
                 self.send_error(404, "Not found")
 
@@ -1744,6 +1748,8 @@ def _make_handler(config: WebConfig):
                     self._send_asset("product.css", "text/css; charset=utf-8")
                 elif parsed.path == "/assets/app.js":
                     self._send_asset("app.js", "application/javascript; charset=utf-8")
+                elif parsed.path == "/assets/picochat-symbol.svg":
+                    self._send_asset("picochat-symbol.svg", "image/svg+xml; charset=utf-8")
                 elif parsed.path == "/api/runs":
                     self._send_json({"runs": discover_runs(config.runs_dir)})
                 elif parsed.path == "/api/run":
