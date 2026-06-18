@@ -29,7 +29,7 @@ Recommended captures:
 3. Release Readiness panel
 4. Training Dash loss curves
 5. Eval Scoreboard
-6. Scale Up command generator
+6. External Train command generator
 7. Preflight job output card
 
 Save final screenshots under:

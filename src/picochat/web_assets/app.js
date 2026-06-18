@@ -17,6 +17,17 @@ const state = {
   productCompareA: null,
   productCompareB: null,
   productSettings: readInitialProductSettings(),
+  productLogViewer: {
+    open: false,
+    loading: false,
+    runName: null,
+    jobId: null,
+    state: "",
+    logPath: "",
+    logTail: "",
+    error: "",
+    updatedAt: null,
+  },
   guideStep: 0,
   guideRunName: null,
   activePanel: "dataset",
@@ -75,6 +86,7 @@ const PRODUCT_SECTIONS = [
   { id: "data", label: "Data packs", group: "primary", icon: "data" },
   { id: "preflight", label: "Preflight", group: "pipeline", icon: "shield" },
   { id: "train", label: "Train", group: "pipeline", icon: "chip" },
+  { id: "external", label: "External train", group: "pipeline", icon: "cloud" },
   { id: "eval", label: "Eval", group: "pipeline", icon: "chart" },
   { id: "honesty", label: "Honesty", group: "pipeline", icon: "heart" },
   { id: "release", label: "Release gate", group: "pipeline", icon: "gate" },
@@ -940,7 +952,14 @@ async function refreshProductData(options = {}) {
     }
   } finally {
     state.productPollInFlight = false;
-    renderProductShell();
+    if (!options.quiet || !productHasFocusedEditable()) {
+      renderProductShell();
+    }
+    if (state.productLogViewer?.open) {
+      refreshProductLogTail({ render: false }).catch(() => {
+        // Keep the live log best-effort during background polling.
+      });
+    }
   }
 }
 
@@ -1026,15 +1045,39 @@ function readInitialAppView() {
 
 function readInitialProductSection() {
   try {
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get("section") || params.get("product_section");
+    if (isKnownProductSectionId(requested)) return requested;
     const value = localStorage.getItem("picochat:product-section");
-    return PRODUCT_SECTIONS.some((section) => section.id === value) ? value : "dashboard";
+    return isKnownProductSectionId(value) ? value : "dashboard";
   } catch {
     return "dashboard";
   }
 }
 
+function isKnownProductSectionId(value) {
+  return [
+    "dashboard",
+    "runs",
+    "compare",
+    "data",
+    "preflight",
+    "train",
+    "external",
+    "eval",
+    "honesty",
+    "release",
+    "handoff",
+    "settings",
+  ].includes(value);
+}
+
 function readInitialTheme() {
   try {
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get("theme") || params.get("__theme");
+    if (requested === "dark" || requested === "classic") return "classic";
+    if (requested === "light" || requested === "paper") return "paper";
     const savedTheme = localStorage.getItem("picochat:theme");
     if (savedTheme === "classic" || savedTheme === "paper") return savedTheme;
     return "classic";
@@ -1081,6 +1124,27 @@ function defaultProductSettings() {
       localServing: "Available",
       releaseBundle: "Staging",
     },
+    external: {
+      provider: "modal",
+      repoUrl: "https://github.com/gowtham0992/picochat.git",
+      branch: "develop",
+      datasetPack: "",
+      runName: "picochat-modal-100m-v1",
+      scale: "h100-100m",
+      baseSteps: "",
+      sftSteps: "",
+      gpu: "A100",
+      maxHours: "8",
+      hfMaxRows: "800000",
+      hfShards: "170",
+      modalSecret: "picochat-hf-token",
+      modalVolume: "picochat-runs",
+      colabNotebook: "notebooks/picochat_external_train.ipynb",
+      lambdaInstance: "gpu_1x_a100",
+      lambdaRegion: "us-east-1",
+      lambdaSshUser: "ubuntu",
+      lambdaApiKey: "",
+    },
   };
 }
 
@@ -1096,6 +1160,7 @@ function readInitialProductSettings() {
       notifications: { ...defaults.notifications, ...(saved.notifications || {}) },
       appearance: { ...defaults.appearance, ...(saved.appearance || {}) },
       integrations: { ...defaults.integrations, ...(saved.integrations || {}) },
+      external: { ...defaults.external, ...(saved.external || {}) },
     };
   } catch {
     return defaults;
@@ -1239,6 +1304,79 @@ function renderProductShell() {
     : "dashboard";
   $("product-topbar").innerHTML = productTopbar(section);
   $("product-content").innerHTML = productContent(section);
+  const existingLog = $("product-log-modal-root");
+  if (existingLog) existingLog.remove();
+  const existingMobileBackdrop = $("product-mobile-backdrop");
+  if (existingMobileBackdrop) existingMobileBackdrop.remove();
+  $("product-shell").insertAdjacentHTML("beforeend", `
+    <button id="product-mobile-backdrop" class="product-mobile-backdrop" type="button" data-product-action="close-mobile-nav" aria-label="Close navigation"></button>
+    ${renderProductLogModal()}
+  `);
+}
+
+function renderProductLogModal() {
+  const viewer = state.productLogViewer || {};
+  if (!viewer.open) return "";
+  const stateLabel = viewer.loading && !viewer.logTail
+    ? "Loading"
+    : viewer.state
+      ? viewer.state
+      : "Unknown";
+  const stateClass = productStatusClass(viewer.state === "running" ? "running" : viewer.state);
+  const updated = viewer.updatedAt
+    ? new Date(viewer.updatedAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : "--";
+  const body = viewer.error
+    ? viewer.error
+    : viewer.logTail || (viewer.loading ? "Loading log tail..." : "No log output yet. If the job just started, refresh in a few seconds.");
+  return `
+    <div id="product-log-modal-root" class="product-log-modal" role="dialog" aria-modal="true" aria-labelledby="product-log-title">
+      <button class="product-log-backdrop" type="button" data-product-action="close-logs" aria-label="Close run logs"></button>
+      <section class="product-log-panel">
+        <header class="product-log-head">
+          <div>
+            <p class="product-eyebrow">Live run log</p>
+            <h3 id="product-log-title">${escapeHtml(viewer.runName || "Selected run")}</h3>
+            <small id="product-log-meta">${escapeHtml(viewer.logPath || "Waiting for web_run.log")}</small>
+          </div>
+          <div class="product-log-actions">
+            <span id="product-log-state" class="product-status-pill ${escapeHtml(stateClass)}">${escapeHtml(stateLabel)}</span>
+            <span id="product-log-updated" class="product-mini-pill">Updated ${escapeHtml(updated)}</span>
+            <button class="product-log-action" type="button" data-product-action="refresh-logs" aria-label="Refresh run log" title="Refresh log">${productIcon("refresh")}<span>Refresh</span></button>
+            <button class="product-log-action" type="button" data-product-action="copy-logs" aria-label="Copy run log" title="Copy log">${productIcon("copy")}<span>Copy</span></button>
+            <button class="product-log-action" type="button" data-product-action="close-logs" aria-label="Close run log" title="Close log">${productIcon("close")}<span>Close</span></button>
+          </div>
+        </header>
+        <pre id="product-live-log-output" class="${viewer.error ? "error" : ""}">${escapeHtml(body)}</pre>
+      </section>
+    </div>
+  `;
+}
+
+function updateProductLogModalDom() {
+  const viewer = state.productLogViewer || {};
+  const output = $("product-live-log-output");
+  if (!output) return;
+  const body = viewer.error
+    ? viewer.error
+    : viewer.logTail || (viewer.loading ? "Loading log tail..." : "No log output yet. If the job just started, refresh in a few seconds.");
+  output.textContent = body;
+  output.classList.toggle("error", Boolean(viewer.error));
+  output.scrollTop = output.scrollHeight;
+  const meta = $("product-log-meta");
+  if (meta) meta.textContent = viewer.logPath || "Waiting for web_run.log";
+  const statePill = $("product-log-state");
+  if (statePill) {
+    const stateLabel = viewer.loading && !viewer.logTail ? "Loading" : viewer.state || "Unknown";
+    statePill.textContent = stateLabel;
+    statePill.className = `product-status-pill ${productStatusClass(viewer.state === "running" ? "running" : viewer.state)}`;
+  }
+  const updated = $("product-log-updated");
+  if (updated) {
+    updated.textContent = viewer.updatedAt
+      ? `Updated ${new Date(viewer.updatedAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+      : "Updated --";
+  }
 }
 
 function renderProductNav() {
@@ -1327,6 +1465,7 @@ function productPageMeta(section) {
     data: { crumb: "Data packs", title: "Data packs", actions: [{ id: "import-pack", label: "Import" }, { id: "new-pack", label: "New pack" }] },
     preflight: { crumb: `Runs / ${runName}`, title: "Preflight", status: preflightPassed ? "Passed" : state.detail ? "Review" : "Waiting", statusClass: preflightPassed ? "pass" : "warn", actions: [{ id: "rerun-preflight", label: "Re-run checks" }] },
     train: { crumb: `Runs / ${runName}`, title: "Train", status: productTrainStatus(), statusClass: productTrainStatus() === "Running" ? "info" : "neutral", actions: [{ id: "pause", label: "Pause" }, { id: "logs", label: "View logs" }] },
+    external: { crumb: `Runs / ${runName}`, title: "External Train", status: productExternalProviderLabel(), statusClass: "info", actions: [{ id: "external-settings", label: "Settings" }, { id: "copy-external-launch", label: "Copy launch" }] },
     eval: { crumb: `Runs / ${runName}`, title: "Eval", status: productEvalPassed() ? "Passed" : "Review", statusClass: productEvalPassed() ? "pass" : "warn", actions: [{ id: "export", label: "Export" }, { id: "report", label: "View report" }] },
     honesty: { crumb: `Runs / ${runName}`, title: "Honesty", status: productHonestyPassed() ? "Passed" : "Review", statusClass: productHonestyPassed() ? "pass" : "warn", actions: [{ id: "export", label: "Export" }, { id: "report", label: "View report" }] },
     release: { crumb: `Runs / ${runName}`, title: "Release Gate", status: gateStatus.label, statusClass: gateStatus.className, actions: [{ id: "evaluate", label: "Evaluate" }, { id: "repair", label: "Repair" }] },
@@ -1342,12 +1481,125 @@ function productContent(section) {
   if (section === "data") return renderProductDataPacks();
   if (section === "preflight") return renderProductPreflight();
   if (section === "train") return renderProductTrain();
+  if (section === "external") return renderProductExternalTrain();
   if (section === "eval") return renderProductEval();
   if (section === "honesty") return renderProductHonesty();
   if (section === "release") return renderProductReleaseGate();
   if (section === "handoff") return renderProductHandoff();
   if (section === "settings") return renderProductSettings();
   return renderProductDashboard();
+}
+
+async function openProductLogViewer() {
+  const runName = state.selectedRun || state.runJob?.run_name || null;
+  const jobId = state.runJob?.id || null;
+  state.productLogViewer = {
+    open: true,
+    loading: true,
+    runName,
+    jobId,
+    state: state.runJob?.state || "",
+    logPath: state.runJob?.log_path || "",
+    logTail: state.runJob?.log_tail || "",
+    error: "",
+    updatedAt: state.runJob?.updated_at || null,
+  };
+  renderProductShell();
+  await refreshProductLogTail({ render: false, force: true });
+}
+
+async function refreshProductLogTail(options = {}) {
+  const viewer = state.productLogViewer || {};
+  if (!viewer.open) return;
+  if (!options.force && viewer.loading) return;
+  const params = new URLSearchParams();
+  if (viewer.jobId) params.set("job", viewer.jobId);
+  else if (viewer.runName) params.set("run", viewer.runName);
+  else {
+    state.productLogViewer = { ...viewer, loading: false, error: "No selected run to load logs for." };
+    if (options.render === false) updateProductLogModalDom();
+    else renderProductShell();
+    return;
+  }
+  params.set("limit", "50000");
+  state.productLogViewer = { ...viewer, loading: true, error: "" };
+  if (options.render !== false) renderProductShell();
+  else updateProductLogModalDom();
+  try {
+    const payload = await fetchProductLogPayload(params, viewer);
+    state.productLogViewer = {
+      ...state.productLogViewer,
+      loading: false,
+      runName: payload.run_name || viewer.runName,
+      jobId: payload.job_id || viewer.jobId,
+      state: payload.state || "",
+      logPath: payload.log_path || "",
+      logTail: payload.log_tail || "",
+      error: "",
+      updatedAt: payload.updated_at || null,
+    };
+  } catch (error) {
+    state.productLogViewer = {
+      ...state.productLogViewer,
+      loading: false,
+      error: error.message || "Could not load run logs.",
+      updatedAt: Date.now() / 1000,
+    };
+  }
+  if (options.render === false) updateProductLogModalDom();
+  else renderProductShell();
+}
+
+async function fetchProductLogPayload(params, viewer) {
+  try {
+    return await fetchJson(`/api/run/log?${params.toString()}`);
+  } catch (logError) {
+    const scope = viewer.jobId || viewer.runName;
+    if (!scope) throw logError;
+    try {
+      const status = await fetchJson(`/api/run/status?job=${encodeURIComponent(scope)}`);
+      const job = status.job || {};
+      if (!job.id && !job.run_name) throw logError;
+      return {
+        job_id: job.id,
+        run_name: job.run_name,
+        state: job.state,
+        log_path: job.log_path,
+        log_tail: job.log_tail || "",
+        progress: job.progress,
+        updated_at: job.updated_at,
+      };
+    } catch (statusError) {
+      throw new Error(`${logError.message} Fallback /api/run/status failed: ${statusError.message}`);
+    }
+  }
+}
+
+function closeProductLogViewer() {
+  state.productLogViewer = {
+    open: false,
+    loading: false,
+    runName: null,
+    jobId: null,
+    state: "",
+    logPath: "",
+    logTail: "",
+    error: "",
+    updatedAt: null,
+  };
+  renderProductShell();
+}
+
+async function copyProductLogs() {
+  const text = state.productLogViewer?.logTail || "";
+  if (!text) {
+    setProductNotice("warn", "No log output is available to copy yet.");
+    renderProductShell();
+    return;
+  }
+  await writeClipboard(text);
+  setProductNotice("pass", "Visible log tail copied.");
+  updateProductLogModalDom();
 }
 
 async function handleProductAction(action) {
@@ -1359,8 +1611,23 @@ async function handleProductAction(action) {
     handoff: "handoff",
     report: "handoff",
     export: "handoff",
-    logs: "train",
   };
+  if (action === "logs") {
+    await openProductLogViewer();
+    return;
+  }
+  if (action === "refresh-logs") {
+    await refreshProductLogTail({ force: true });
+    return;
+  }
+  if (action === "copy-logs") {
+    await copyProductLogs();
+    return;
+  }
+  if (action === "close-logs") {
+    closeProductLogViewer();
+    return;
+  }
   if (action === "theme-classic" || action === "theme-paper") {
     setTheme(action === "theme-paper" ? "paper" : "classic");
     flashStatus(`THEME ${action === "theme-paper" ? "LIGHT" : "DARK"}. | Product shell updated.`);
@@ -1368,6 +1635,11 @@ async function handleProductAction(action) {
   }
   if (action === "toggle-mobile-nav") {
     state.productMobileNavOpen = !state.productMobileNavOpen;
+    renderProductShell();
+    return;
+  }
+  if (action === "close-mobile-nav") {
+    state.productMobileNavOpen = false;
     renderProductShell();
     return;
   }
@@ -1442,6 +1714,29 @@ async function handleProductAction(action) {
       setProductNotice("info", "Tiny smoke run launched from the product UI. Watch Train for loss and artifact updates.");
       setProductSection("train", { clearNotice: false });
     });
+    return;
+  }
+  if (action.startsWith("external-provider-")) {
+    const provider = action.replace("external-provider-", "");
+    if (["modal", "colab", "lambda"].includes(provider)) {
+      state.productSettings.external.provider = provider;
+      saveProductSettings();
+      setProductNotice("info", `${productExternalProviderLabel(provider)} selected. Commands and launch checklist updated.`);
+      renderProductShell();
+      return;
+    }
+  }
+  if (action === "external-settings") {
+    setProductNotice("info", "External training defaults live in Settings. Secrets are stored locally in this browser, not committed.");
+    setProductSection("settings", { clearNotice: false });
+    return;
+  }
+  if (action === "copy-external-launch") {
+    const commands = productExternalCommands();
+    await writeClipboard(commands.launch);
+    setProductNotice("pass", `${productExternalProviderLabel()} launch command copied.`);
+    renderProductShell();
+    flashStatus("EXTERNAL TRAIN. | Launch command copied.");
     return;
   }
   if (action === "save-settings") {
@@ -1586,8 +1881,19 @@ function applyProductSettingsToLaunchControls(options = {}) {
   setProductControlValue("launch-sft-learning-rate", productPositiveNumber(hyperparams.sftLearningRate, 0.001, 0, 1));
   setProductControlValue("launch-base-batch-size", batchSize);
   setProductControlValue("launch-sft-batch-size", batchSize);
-  setProductControlValue("launch-sft-lora-rank", productPositiveNumber(hyperparams.loraRank, 8, 1, 256));
-  setProductControlValue("launch-sft-lora-alpha", productPositiveNumber(hyperparams.loraAlpha, 16, 0.000001, 1024));
+  const peftMode = smoke ? "none" : productControlValue("launch-sft-peft", "none");
+  setProductControlValue("launch-sft-peft", peftMode);
+  if (peftMode === "lora") {
+    setProductControlValue("launch-sft-lora-rank", productPositiveNumber(hyperparams.loraRank, 8, 1, 256));
+    setProductControlValue("launch-sft-lora-alpha", productPositiveNumber(hyperparams.loraAlpha, 16, 0.000001, 1024));
+    setProductControlValue("launch-sft-lora-dropout", productPositiveNumber(hyperparams.loraDropout, 0, 0, 1));
+    setProductControlValue("launch-sft-lora-targets", productControlValue("launch-sft-lora-targets", "attn_qkv,attn_proj") || "attn_qkv,attn_proj");
+  } else {
+    setProductControlValue("launch-sft-lora-rank", 8);
+    setProductControlValue("launch-sft-lora-alpha", 16);
+    setProductControlValue("launch-sft-lora-dropout", 0);
+    setProductControlValue("launch-sft-lora-targets", "attn_qkv,attn_proj");
+  }
   if ($("launch-base-lr-decay")) $("launch-base-lr-decay").value = hyperparams.scheduler || "cosine";
   if ($("launch-sft-lr-decay")) $("launch-sft-lr-decay").value = hyperparams.scheduler || "cosine";
 }
@@ -1646,12 +1952,14 @@ function productNavBadge(sectionId) {
 
 function renderProductDashboard() {
   const healthRows = productPipelineHealthRows();
+  const passingRuns = state.runs.filter((run) => Number(run.pass_rate || 0) >= 0.5).length;
+  const warningCount = productOpenWarnings();
   return `
     ${productNoticeHtml()}
     ${productMetricCards([
       ["Total runs", fmtInt(state.runs.length), state.runs.length ? "registered locally" : "run bank empty"],
-      ["Passing", fmtInt(state.runs.filter((run) => Number(run.pass_rate || 0) >= 0.5).length), "visible eval >= 50%"],
-      ["Warnings", fmtInt(productOpenWarnings()), "need attention"],
+      ["Passing", fmtInt(passingRuns), "visible eval >= 50%", passingRuns ? "green" : ""],
+      ["Warnings", fmtInt(warningCount), "need attention", warningCount ? "amber" : "green"],
       ["Avg loss", productAverageLoss(), "selected run"],
     ])}
     <section class="product-card product-start-card product-onboarding-card">
@@ -1776,12 +2084,15 @@ function renderProductCompare() {
   const delta = Number.isFinite(selectedPass) && Number.isFinite(baselinePass)
     ? `${selectedPass >= baselinePass ? "+" : ""}${((selectedPass - baselinePass) * 100).toFixed(2)} pts`
     : "--";
+  const deltaTone = !Number.isFinite(selectedPass) || !Number.isFinite(baselinePass)
+    ? ""
+    : selectedPass >= baselinePass ? "green" : "red";
   return `
     ${productNoticeHtml()}
     ${productMetricCards([
       ["Selected", selected?.name || "--", selected?.eval_score || "current run"],
       ["Baseline", baseline?.name || "--", baseline?.eval_score || "comparison run"],
-      ["Pass-rate delta", delta, "selected minus baseline"],
+      ["Pass-rate delta", delta, "selected minus baseline", deltaTone],
       ["Context", selected?.context_size ? `CTX ${escapeHtml(selected.context_size)}` : "--", "selected run"],
     ])}
     <section class="product-card product-compare-picker">
@@ -1876,7 +2187,7 @@ function renderProductDataPacks() {
       ["Data packs", fmtInt(packs.length), "registered"],
       ["Total tokens", productTokenCount(), "across selected packs"],
       ["Languages", productLanguages(), "detected / configured"],
-      ["Avg quality", productDataQuality(), "dedup + filter pass"],
+      ["Avg quality", productDataQuality(), "dedup + filter pass", "green"],
     ])}
     <section class="product-card product-workflow-card">
       <div class="product-card-heading">
@@ -1992,8 +2303,8 @@ function renderProductPreflight() {
     ${productNoticeHtml()}
     ${productMetricCards([
       ["Checks run", fmtInt((preflight.checks || []).length || envRows.length + dataRows.length), blocking.length ? `${blocking.length} failures` : "all completed"],
-      ["Passed", fmtInt(Math.max(0, (preflight.checks || []).length - blocking.length) || envRows.length + dataRows.length - blocking.length), `${blocking.length} failures`],
-      ["Warnings", fmtInt(warnings.length), "preflight warns"],
+      ["Passed", fmtInt(Math.max(0, (preflight.checks || []).length - blocking.length) || envRows.length + dataRows.length - blocking.length), `${blocking.length} failures`, blocking.length ? "red" : "green"],
+      ["Warnings", fmtInt(warnings.length), "preflight warns", warnings.length ? "amber" : "green"],
       ["Data hash", shortHash(preflight.corpus_sha256 || state.detail?.summary?.corpus?.sha256 || ""), preflight.corpus_sha256 ? "verified" : "not recorded"],
     ])}
     <section class="product-card product-workflow-card">
@@ -2088,16 +2399,243 @@ function renderProductTrain() {
   `;
 }
 
+function productExternalSettings() {
+  return { ...defaultProductSettings().external, ...(state.productSettings.external || {}) };
+}
+
+function productExternalProviderLabel(provider = productExternalSettings().provider) {
+  return {
+    modal: "Modal",
+    colab: "Colab",
+    lambda: "Lambda",
+  }[provider] || "External";
+}
+
+function productShellQuote(value) {
+  const text = String(value == null ? "" : value);
+  if (!text) return "''";
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(text)) return text;
+  return `'${text.replaceAll("'", "'\"'\"'")}'`;
+}
+
+function productExternalDatasetPack(settings = productExternalSettings()) {
+  return settings.datasetPack
+    || state.hfImport?.dataset_pack
+    || productControlValue("launch-pack-path", "")
+    || productDataPackName()
+    || "";
+}
+
+function productExternalImportCommand(settings = productExternalSettings()) {
+  const hf = productHfFormValues();
+  const integrationSettings = state.productSettings?.integrations || defaultProductSettings().integrations;
+  const dataset = hf.dataset || integrationSettings.huggingfaceDefaultDataset || "karpathy/climbmix-400b-shuffle";
+  const outDir = "/runs/imported-pack";
+  const args = [
+    "python -m picochat.cli data hf-import",
+    `  --dataset ${productShellQuote(dataset)}`,
+    hf.config ? `  --config ${productShellQuote(hf.config)}` : "",
+    `  --split ${productShellQuote(hf.split || "train")}`,
+    `  --text-column ${productShellQuote(hf.textColumn || "text")}`,
+    `  --max-rows ${productShellQuote(settings.hfMaxRows || hf.maxRows || "5000")}`,
+    `  --min-chars ${productShellQuote(hf.minChars || "20")}`,
+    `  --out ${productShellQuote(`${outDir}/corpus.txt`)}`,
+    `  --report ${productShellQuote(`${outDir}/import_report.json`)}`,
+    `  --pack-out ${productShellQuote(outDir)}`,
+    `  --pack-name ${productShellQuote("modal-import")}`,
+    "  --pack-force",
+  ].filter(Boolean);
+  return `${args.join(" \\\n")}\n\n# Remote dataset pack path after import:\n${outDir}/dataset_pack.json`;
+}
+
+function productExternalTrainArgs(settings = productExternalSettings()) {
+  const args = [
+    "python -m picochat.cli run tiny",
+    `  --out-dir ${productShellQuote(`/runs/${settings.runName || "picochat-external-run"}`)}`,
+    `  --scale ${productShellQuote(settings.scale || "h100-100m")}`,
+    `  --dataset-pack ${productShellQuote(productExternalDatasetPack(settings) || "/runs/imported-pack/dataset_pack.json")}`,
+    "  --device cuda",
+  ];
+  if (settings.baseSteps) args.push(`  --base-steps ${productShellQuote(settings.baseSteps)}`);
+  if (settings.sftSteps) args.push(`  --sft-steps ${productShellQuote(settings.sftSteps)}`);
+  return args.join(" \\\n");
+}
+
+function productExternalCommands(provider = productExternalSettings().provider) {
+  const settings = productExternalSettings();
+  const repoUrl = settings.repoUrl || "https://github.com/gowtham0992/picochat.git";
+  const branch = settings.branch || "develop";
+  const datasetPack = productExternalDatasetPack(settings);
+  const runName = settings.runName || "picochat-external-run";
+  const scale = settings.scale || "h100-100m";
+  const gpu = settings.gpu || "A100";
+  const maxHours = settings.maxHours || "8";
+  const volume = settings.modalVolume || "picochat-runs";
+  const secret = settings.modalSecret || "picochat-hf-token";
+  const importFallback = productExternalImportCommand(settings);
+  const trainArgs = productExternalTrainArgs(settings);
+  if (provider === "colab") {
+    const setup = [
+      "!git clone --branch " + productShellQuote(branch) + " " + productShellQuote(repoUrl) + " picochat",
+      "%cd picochat",
+      "!python -m pip install -U pip",
+      "!python -m pip install -e .",
+    ].join("\n");
+    const launch = [
+      "# Colab GPU path. Run the import cell first if your dataset_pack.json is not in the repo.",
+      setup,
+      "",
+      importFallback.split("\n").map((line) => line.startsWith("python ") ? `!${line}` : line).join("\n"),
+      "",
+      `!${trainArgs.replaceAll("\n", " \\\n")}`,
+    ].join("\n");
+    return {
+      setup,
+      launch,
+      note: "Colab is best for one-off experiments. Keep the dataset import in the notebook and download the final run folder before the session resets.",
+    };
+  }
+  if (provider === "lambda") {
+    const host = "<lambda-host>";
+    const setup = [
+      `ssh ${productShellQuote(settings.lambdaSshUser || "ubuntu")}@${host}`,
+      `git clone --branch ${productShellQuote(branch)} ${productShellQuote(repoUrl)} picochat`,
+      "cd picochat",
+      "python -m venv .venv && source .venv/bin/activate",
+      "python -m pip install -U pip",
+      "python -m pip install -e .",
+    ].join("\n");
+    const launch = [
+      "# Lambda Cloud SSH path. Provision the instance, SSH in, then run:",
+      setup,
+      "",
+      "# If the dataset pack is not already present on the machine, import it remotely:",
+      importFallback,
+      "",
+      trainArgs,
+    ].join("\n");
+    return {
+      setup,
+      launch,
+      note: "Lambda is treated as a normal SSH GPU box. Picochat keeps the same local CLI, gates, and artifact folders.",
+    };
+  }
+  const modalArgs = [
+    "modal run scripts/modal_picochat_train.py",
+    `  --repo-url ${productShellQuote(repoUrl)}`,
+    `  --branch ${productShellQuote(branch)}`,
+    `  --run-name ${productShellQuote(runName)}`,
+    `  --scale ${productShellQuote(scale)}`,
+    datasetPack ? `  --dataset-pack ${productShellQuote(datasetPack)}` : "",
+    `  --hf-dataset ${productShellQuote(productHfFormValues().dataset || "karpathy/climbmix-400b-shuffle")}`,
+    `  --hf-split ${productShellQuote(productHfFormValues().split || "train")}`,
+    `  --hf-text-column ${productShellQuote(productHfFormValues().textColumn || "text")}`,
+    `  --hf-max-rows ${productShellQuote(settings.hfMaxRows || "800000")}`,
+    `  --hf-shards ${productShellQuote(settings.hfShards || "170")}`,
+    `  --gpu ${productShellQuote(gpu)}`,
+    `  --timeout-hours ${productShellQuote(maxHours)}`,
+    `  --volume-name ${productShellQuote(volume)}`,
+    secret ? `  --secret-name ${productShellQuote(secret)}` : "",
+    settings.baseSteps ? `  --base-steps ${productShellQuote(settings.baseSteps)}` : "",
+    settings.sftSteps ? `  --sft-steps ${productShellQuote(settings.sftSteps)}` : "",
+  ].filter(Boolean).join(" \\\n");
+  return {
+    setup: [
+      "python -m pip install -U modal",
+      "modal setup",
+      `modal volume create ${productShellQuote(volume)}`,
+      `modal secret create ${productShellQuote(secret)} HF_TOKEN=hf_...  # optional for gated/private HF data`,
+    ].join("\n"),
+    launch: modalArgs,
+    note: "Modal is the recommended path for paid remote GPU runs: it keeps your local dashboard as the control plane while artifacts land in a Modal volume.",
+  };
+}
+
+function renderProductExternalTrain() {
+  const settings = productExternalSettings();
+  const provider = settings.provider || "modal";
+  const commands = productExternalCommands(provider);
+  const datasetPack = productExternalDatasetPack(settings) || "remote HF import";
+  const providerCards = [
+    ["modal", "Modal", "Managed remote GPU", "Best first path for A100/H100 training with local command control."],
+    ["colab", "Colab", "Notebook GPU", "Good for free or credit-backed experiments; artifacts must be saved quickly."],
+    ["lambda", "Lambda", "SSH GPU box", "Best when you want a normal server workflow and manual environment control."],
+  ];
+  return `
+    ${productNoticeHtml()}
+    ${productMetricCards([
+      ["Provider", productExternalProviderLabel(provider), "selected target"],
+      ["GPU", settings.gpu || "A100", provider === "colab" ? "requested runtime" : "launch default"],
+      ["Scale", settings.scale || "h100-100m", "Picochat recipe"],
+      ["Dataset", datasetPack, datasetPack === "remote HF import" ? "built on provider" : "pack path"],
+    ])}
+    <section class="product-card product-workflow-card product-external-hero">
+      <div class="product-card-heading">
+        <div>
+          <span class="product-eyebrow">Remote compute</span>
+          <h2>Train on Modal, Colab, or Lambda without changing the recipe.</h2>
+        </div>
+        <span class="product-mini-pill info">commands only</span>
+      </div>
+      <p>Picochat remains the control plane: Data Pack and Preflight define what is safe to launch, then External Train gives you the exact provider command. No GPU spend starts from this page until you run the copied command yourself.</p>
+      <div class="product-provider-tabs" role="group" aria-label="External training provider">
+        ${providerCards.map(([id, name, label]) => `
+          <button type="button" class="${provider === id ? "active" : ""}" data-product-action="external-provider-${escapeHtml(id)}">
+            ${productIcon(id === "modal" ? "cloud" : id === "colab" ? "notebook" : "terminal")}
+            <span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(label)}</small></span>
+          </button>
+        `).join("")}
+      </div>
+    </section>
+    <div class="product-grid two">
+      <section class="product-card product-command-card">
+        <div class="product-card-heading">
+          <h2>${escapeHtml(productExternalProviderLabel(provider))} setup</h2>
+          <button class="product-icon-button text" type="button" data-copy-text="${escapeHtml(commands.setup)}">${productIcon("copy")} Copy setup</button>
+        </div>
+        <pre class="product-code-block">${escapeHtml(commands.setup)}</pre>
+      </section>
+      <section class="product-card product-command-card">
+        <div class="product-card-heading">
+          <h2>Launch command</h2>
+          <button class="product-icon-button text" type="button" data-copy-text="${escapeHtml(commands.launch)}">${productIcon("copy")} Copy launch</button>
+        </div>
+        <pre class="product-code-block">${escapeHtml(commands.launch)}</pre>
+      </section>
+    </div>
+    <div class="product-grid two">
+      <section class="product-card">
+        <h2>Launch checklist</h2>
+        <div class="product-list compact">
+          ${productCheckRow("Dataset pack", productExternalDatasetPack(settings) ? "pass" : "warn", productExternalDatasetPack(settings) ? "path configured" : "will import from HF")}
+          ${productCheckRow("Preflight", productBudgetStatus() === "fail" ? "warn" : "pass", productBudgetLabel())}
+          ${productCheckRow("Provider auth", provider === "modal" && !settings.modalSecret ? "warn" : "pass", provider === "modal" ? `secret ${settings.modalSecret || "missing"}` : "manual")}
+          ${productCheckRow("Artifacts", "pass", provider === "modal" ? `volume ${settings.modalVolume}` : "download run folder")}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>Provider notes</h2>
+        <p>${escapeHtml(commands.note)}</p>
+        <div class="product-start-actions">
+          <button type="button" data-product-section="preflight">Review preflight</button>
+          <button type="button" data-product-section="settings">Edit provider settings</button>
+          ${productActionButton("copy-external-launch", "Copy launch", { primary: true, icon: "copy" })}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function renderProductEval() {
   const evalSummary = productEvalSummary();
   const rows = productEvalRows(evalSummary);
   return `
     ${productNoticeHtml()}
     ${productMetricCards([
-      ["Overall score", evalSummary.pass_rate == null ? "--" : fmtPercent(evalSummary.pass_rate), `${fmtInt(evalSummary.num_passed)} / ${fmtInt(evalSummary.num_examples)} rows`],
+      ["Overall score", evalSummary.pass_rate == null ? "--" : fmtPercent(evalSummary.pass_rate), `${fmtInt(evalSummary.num_passed)} / ${fmtInt(evalSummary.num_examples)} rows`, productEvalPassed() ? "green" : "amber"],
       ["Visible eval", fmtInt(evalSummary.num_examples), "samples"],
-      ["Failures", fmtInt(evalSummary.num_failed), "need review"],
-      ["Dangerous calls", fmtInt(evalSummary.dangerous_calls || 0), "unsupported calls"],
+      ["Failures", fmtInt(evalSummary.num_failed), "need review", Number(evalSummary.num_failed || 0) ? "amber" : "green"],
+      ["Dangerous calls", fmtInt(evalSummary.dangerous_calls || 0), "unsupported calls", Number(evalSummary.dangerous_calls || 0) ? "red" : "green"],
     ])}
     <section class="product-card">
       <h2>Benchmark results</h2>
@@ -2135,10 +2673,10 @@ function renderProductHonesty() {
   return `
     ${productNoticeHtml()}
     ${productMetricCards([
-      ["Honesty score", productHonestyScore(), "above threshold"],
-      ["Corpus hits", fmtInt(honesty.corpus_prompt_hits || 0), "prompt overlaps"],
-      ["Near leaks", fmtInt(honesty.near_prompt_leaks || 0), "near matches"],
-      ["Contamination", honesty.status || (productHonestyPassed() ? "clear" : "review"), "scan status"],
+      ["Honesty score", productHonestyScore(), "above threshold", productHonestyPassed() ? "green" : "amber"],
+      ["Corpus hits", fmtInt(honesty.corpus_prompt_hits || 0), "prompt overlaps", Number(honesty.corpus_prompt_hits || 0) ? "red" : "green"],
+      ["Near leaks", fmtInt(honesty.near_prompt_leaks || 0), "near matches", Number(honesty.near_prompt_leaks || 0) ? "amber" : "green"],
+      ["Contamination", honesty.status || (productHonestyPassed() ? "clear" : "review"), "scan status", productHonestyPassed() ? "green" : "amber"],
     ])}
     <div class="product-grid two">
       <section class="product-card">
@@ -2234,7 +2772,7 @@ function renderProductHandoff() {
     <div class="product-alert ${ready ? "pass" : "warn"}">${productIcon(ready ? "check" : "lock")}<span>${escapeHtml(packet.summary || (ready ? "Handoff artifacts are ready." : "Handoff is locked until Release Gate warnings are resolved. Complete the repair queue first."))}</span></div>
     <div class="product-grid two">
       ${artifactRows.slice(0, 4).map((item) => `
-        <section class="product-card compact-card">
+        <section class="product-card compact-card" ${!ready && !item.exists ? `data-locked="true"` : ""}>
           <span class="product-card-icon ${item.exists ? "pass" : item.required ? "warn" : "neutral"}">${productIcon(item.exists ? "check" : "box")}</span>
           <h2>${escapeHtml(item.label)}</h2>
           <p>${escapeHtml(item.purpose || item.path || "Artifact evidence")}</p>
@@ -2261,8 +2799,8 @@ function renderProductSettings() {
           <div class="product-setting-row product-theme-row">
             <span>Theme</span>
             <div class="product-theme-switch" role="group" aria-label="Theme">
-              <button class="${state.theme === "paper" ? "active" : ""}" type="button" data-product-action="theme-paper">Light</button>
-              <button class="${state.theme === "classic" ? "active" : ""}" type="button" data-product-action="theme-classic">Dark</button>
+              <button class="${state.theme === "paper" ? "active" : ""}" type="button" data-product-action="theme-paper" aria-label="Use light theme" title="Light theme">${productIcon("sun")}<span>Light</span></button>
+              <button class="${state.theme === "classic" ? "active" : ""}" type="button" data-product-action="theme-classic" aria-label="Use dark theme" title="Dark theme">${productIcon("moon")}<span>Dark</span></button>
             </div>
           </div>
           ${productSettingToggle("Auto refresh", "appearance.autoRefresh", settings.appearance.autoRefresh)}
@@ -2313,6 +2851,30 @@ function renderProductSettings() {
           ${productSettingSelect("Release bundle", "integrations.releaseBundle", settings.integrations.releaseBundle, ["Ready", "Staging", "Locked"])}
         </div>
       </section>
+      <section class="product-card">
+        <h2>External training</h2>
+        <div class="product-settings-grid">
+          ${productSettingSelect("Provider", "external.provider", settings.external.provider, ["modal", "colab", "lambda"])}
+          ${productSettingInput("Repo URL", "external.repoUrl", settings.external.repoUrl)}
+          ${productSettingInput("Branch", "external.branch", settings.external.branch)}
+          ${productSettingInput("Run name", "external.runName", settings.external.runName)}
+          ${productSettingInput("Dataset pack", "external.datasetPack", settings.external.datasetPack, { placeholder: "optional; remote HF import if blank" })}
+          ${productSettingInput("Scale", "external.scale", settings.external.scale)}
+          ${productSettingInput("Base steps", "external.baseSteps", settings.external.baseSteps, { placeholder: "optional override" })}
+          ${productSettingInput("SFT steps", "external.sftSteps", settings.external.sftSteps, { placeholder: "optional override" })}
+          ${productSettingInput("GPU", "external.gpu", settings.external.gpu)}
+          ${productSettingInput("Max hours", "external.maxHours", settings.external.maxHours)}
+          ${productSettingInput("HF max rows", "external.hfMaxRows", settings.external.hfMaxRows)}
+          ${productSettingInput("HF shards", "external.hfShards", settings.external.hfShards)}
+          ${productSettingInput("Modal secret", "external.modalSecret", settings.external.modalSecret)}
+          ${productSettingInput("Modal volume", "external.modalVolume", settings.external.modalVolume)}
+          ${productSettingInput("Colab notebook", "external.colabNotebook", settings.external.colabNotebook)}
+          ${productSettingInput("Lambda instance", "external.lambdaInstance", settings.external.lambdaInstance)}
+          ${productSettingInput("Lambda region", "external.lambdaRegion", settings.external.lambdaRegion)}
+          ${productSettingInput("Lambda SSH user", "external.lambdaSshUser", settings.external.lambdaSshUser)}
+          ${productSettingInput("Lambda API key", "external.lambdaApiKey", settings.external.lambdaApiKey, { type: "password", placeholder: "stored locally" })}
+        </div>
+      </section>
     </div>
   `;
 }
@@ -2351,10 +2913,10 @@ function productSettingToggle(label, path, checked) {
 function productMetricCards(cards) {
   return `
     <div class="product-metrics">
-      ${cards.map(([label, value, note]) => `
+      ${cards.map(([label, value, note, tone]) => `
         <div class="product-metric-card">
           <span>${escapeHtml(label)}</span>
-          <strong>${escapeHtml(value)}</strong>
+          <strong ${tone ? `data-tone="${escapeHtml(tone)}"` : ""}>${escapeHtml(value)}</strong>
           <small>${escapeHtml(note)}</small>
         </div>
       `).join("")}
@@ -2858,16 +3420,19 @@ function productIcon(name) {
     dashboard: '<svg viewBox="0 0 24 24"><path d="M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z"></path></svg>',
     runs: '<svg viewBox="0 0 24 24"><path d="M8 5l9 7-9 7z"></path></svg>',
     compare: '<svg viewBox="0 0 24 24"><path d="M7 7h10M7 17h10"></path><path d="M8 4l-3 3 3 3M16 14l3 3-3 3"></path></svg>',
-    data: '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"></path><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"></path></svg>',
+    data: '<svg viewBox="0 0 24 24"><path d="M6 7.5c0-1.7 2.7-3 6-3s6 1.3 6 3-2.7 3-6 3-6-1.3-6-3z"></path><path d="M6 7.5v8.8c0 1.7 2.7 3 6 3s6-1.3 6-3V7.5"></path><path d="M6 12c0 1.7 2.7 3 6 3s6-1.3 6-3"></path></svg>',
     shield: '<svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-2.8 8-7 10-4.2-2-7-5.5-7-10V6z"></path></svg>',
     "shield-check": '<svg viewBox="0 0 24 24"><path d="M12 4.5l6 2.6v4.5c0 3.8-2.4 6.7-6 8.4-3.6-1.7-6-4.6-6-8.4V7.1z"></path><path d="M8.7 12.1l2 2 4.6-4.7"></path></svg>',
-    chip: '<svg viewBox="0 0 24 24"><path d="M8 8h8v8H8zM9 3v5M15 3v5M9 16v5M15 16v5M3 9h5M3 15h5M16 9h5M16 15h5"></path></svg>',
+    chip: '<svg viewBox="0 0 24 24"><path d="M8 8h8v8H8z"></path><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>',
     bolt: '<svg viewBox="0 0 24 24"><path d="M13 2L5 13h6l-1 9 9-12h-6z"></path></svg>',
-    chart: '<svg viewBox="0 0 24 24"><path d="M5 19V9M12 19V5M19 19v-8"></path><path d="M3 19h18"></path></svg>',
+    cloud: '<svg viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .7-7.9A6 6 0 0 0 6.3 9 4.5 4.5 0 0 0 7 18z"></path><path d="M12 12v6M9.5 15.5L12 18l2.5-2.5"></path></svg>',
+    notebook: '<svg viewBox="0 0 24 24"><path d="M7 4h11v16H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path><path d="M9 4v16M12 8h4M12 12h4M12 16h3"></path></svg>',
+    terminal: '<svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"></path><path d="M7 9l3 3-3 3M12 15h5"></path></svg>',
+    chart: '<svg viewBox="0 0 24 24"><path d="M4 18h16"></path><path d="M7 15l4-4 3 2 4-6"></path></svg>',
     heart: '<svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"></path></svg>',
     gate: '<svg viewBox="0 0 24 24"><path d="M7 20V8a5 5 0 0 1 10 0v12"></path><path d="M5 20h14M9 12h6"></path></svg>',
     flag: '<svg viewBox="0 0 24 24"><path d="M6 21V4"></path><path d="M6 5h11l-2 4 2 4H6"></path></svg>',
-    box: '<svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"></path><path d="M12 12l8-4.5M12 12L4 7.5M12 12v9"></path></svg>',
+    box: '<svg viewBox="0 0 24 24"><path d="M6 7.5l6-3.5 6 3.5v7l-6 3.5-6-3.5z"></path><path d="M9 9.2l3 1.8 3-1.8"></path></svg>',
     settings: '<svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"></path><path d="M4 12h2M18 12h2M12 4v2M12 18v2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M17.7 6.3l-1.4 1.4M7.7 16.3l-1.4 1.4"></path></svg>',
     check: '<svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 6"></path></svg>',
     info: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8h.01"></path></svg>',
@@ -2878,7 +3443,11 @@ function productIcon(name) {
     dot: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle></svg>',
     spinner: '<svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"></path></svg>',
     square: '<svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"></path></svg>',
-    copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="10" rx="2"></rect><rect x="5" y="5" width="10" height="10" rx="2"></rect></svg>',
+    copy: '<svg viewBox="0 0 24 24"><path d="M9 9.5h8.5v8.5H9z"></path><path d="M6.5 14.5H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6.5a2 2 0 0 1 2 2v.5"></path></svg>',
+    refresh: '<svg viewBox="0 0 24 24"><path d="M19 8.5A7.8 7.8 0 0 0 5.7 6.8L4 8.5"></path><path d="M4 4.5v4h4"></path><path d="M5 15.5a7.8 7.8 0 0 0 13.3 1.7L20 15.5"></path><path d="M20 19.5v-4h-4"></path></svg>',
+    close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"></path></svg>',
+    sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"></path></svg>',
+    moon: '<svg viewBox="0 0 24 24"><path d="M20 14.2A7.8 7.8 0 0 1 9.8 4a8.5 8.5 0 1 0 10.2 10.2z"></path></svg>',
     menu: '<svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>',
   };
   return icons[name] || icons.dot;

@@ -1570,6 +1570,36 @@ def run_status_plan(job_id: str | None = None, runs_dir: str | Path = "runs") ->
     }
 
 
+def run_log_plan(
+    runs_dir: str | Path = "runs",
+    *,
+    run_name: str | None = None,
+    job_id: str | None = None,
+    limit: int = 50_000,
+) -> dict:
+    """Return a bounded live log tail for an active or persisted web-launched run."""
+    scope = _optional_string(job_id) or _optional_string(run_name)
+    if not scope:
+        raise ValueError("run or job is required")
+    limit = _bounded_int(limit, 1_000, 200_000)
+    status = run_status_plan(scope, runs_dir)
+    job = status.get("job")
+    if not job:
+        raise ValueError(f"unknown run job: {scope}")
+    log_path = Path(job.get("log_path") or "")
+    log_tail = _read_log_tail(log_path, limit=limit) if log_path else ""
+    return {
+        "job_id": job.get("id"),
+        "run_name": job.get("run_name"),
+        "state": job.get("state"),
+        "running": job.get("state") == "running",
+        "log_path": str(log_path) if log_path else "",
+        "log_tail": log_tail,
+        "progress": job.get("progress"),
+        "updated_at": max(time.time(), float(job.get("updated_at") or 0)),
+    }
+
+
 def cancel_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     """Terminate a running web-launched job."""
     if not isinstance(payload, dict):
@@ -1734,6 +1764,12 @@ def _make_handler(config: WebConfig):
                     query = parse_qs(parsed.query)
                     job_id = query.get("job", [None])[0]
                     self._send_json(run_status_plan(job_id, config.runs_dir))
+                elif parsed.path == "/api/run/log":
+                    query = parse_qs(parsed.query)
+                    run_name = query.get("run", [None])[0]
+                    job_id = query.get("job", [None])[0]
+                    limit = _bounded_int(query.get("limit", ["50000"])[0], 1_000, 200_000)
+                    self._send_json(run_log_plan(config.runs_dir, run_name=run_name, job_id=job_id, limit=limit))
                 elif parsed.path == "/api/run/presets":
                     self._send_json(run_presets_plan())
                 else:
@@ -1791,16 +1827,22 @@ def _make_handler(config: WebConfig):
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            try:
+                self.end_headers()
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                return
 
         def _send_json(self, payload: dict, status: int = 200) -> None:
             data = json.dumps(payload, indent=2).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            try:
+                self.end_headers()
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                return
 
         def _read_json_body(self) -> dict:
             length = int(self.headers.get("Content-Length", "0") or 0)

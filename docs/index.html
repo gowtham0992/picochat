@@ -3,163 +3,198 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Picochat - Honest SLM Factory</title>
-  <meta name="description" content="Picochat is an honest small-language-model training factory with preflight gates, contamination checks, DDP dry runs, and release readiness.">
+  <title>Picochat - Evidence-first SLM Factory</title>
+  <meta name="description" content="Picochat is an evidence-first small-language-model training factory with preflight gates, contamination checks, DDP dry runs, and release readiness.">
+  <link rel="icon" href="assets/picochat-os-symbol.svg" type="image/svg+xml">
   <style>
     :root {
-      --ink: #151515;
-      --muted: #5d5d5d;
-      --paper: #f4f0e8;
-      --panel: #fffaf1;
-      --line: #1f1f1f;
-      --green: #2f7d32;
-      --red: #b42318;
-      --amber: #a86500;
-      --blue: #234c91;
+      --bg: #f6f3ec;
+      --shell: #fffdf8;
+      --card: #ffffff;
+      --soft: #f1ece2;
+      --ink: #171917;
+      --text: #32332f;
+      --muted: #626158;
+      --line: #ded5c8;
+      --line-strong: #bdb0a0;
+      --teal: #0d866e;
+      --green: #4f9930;
+      --red: #c24239;
+      --amber: #ad750d;
+      --blue: #345fbc;
+      --shadow: rgba(46, 40, 32, 0.12);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      background: var(--paper);
+      background:
+        radial-gradient(circle at 12% 0%, rgba(13, 134, 110, 0.08), transparent 34rem),
+        radial-gradient(circle at 92% 12%, rgba(52, 95, 188, 0.08), transparent 30rem),
+        var(--bg);
       color: var(--ink);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       line-height: 1.5;
     }
-    a { color: var(--blue); text-decoration-thickness: 2px; }
+    a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    code {
+      padding: 2px 5px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--soft);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.92em;
+    }
     .shell {
       max-width: 1180px;
       margin: 0 auto;
-      padding: 28px;
+      padding: 18px 24px 34px;
     }
     .nav {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
-      padding: 14px 0 24px;
-      border-bottom: 2px solid var(--line);
+      gap: 22px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      margin: 0 -8px;
+      padding: 13px 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: color-mix(in srgb, var(--shell), transparent 8%);
+      box-shadow: 0 18px 52px rgba(46, 40, 32, 0.08);
+      backdrop-filter: blur(18px);
     }
     .brand {
       display: flex;
       align-items: center;
       gap: 10px;
-      font-weight: 900;
-      letter-spacing: 0;
-      text-transform: uppercase;
+      min-width: max-content;
+      color: var(--ink);
+      font-weight: 760;
+      text-decoration: none;
     }
-    .brand-mark { width: 24px; height: 24px; }
+    .brand-mark { width: 31px; height: 31px; }
     .nav-links {
       display: flex;
       flex-wrap: wrap;
-      gap: 12px;
+      justify-content: flex-end;
+      gap: 10px 14px;
       font-size: 13px;
-      text-transform: uppercase;
+      font-weight: 650;
     }
     .hero {
       display: grid;
-      grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
+      grid-template-columns: minmax(0, 1.08fr) minmax(330px, 0.92fr);
       gap: 28px;
       align-items: stretch;
-      padding: 54px 0 28px;
+      padding: 70px 0 34px;
     }
     .eyebrow {
       display: inline-flex;
       width: fit-content;
-      padding: 5px 8px;
-      border: 2px solid var(--line);
-      background: #fff;
+      padding: 6px 10px;
+      border: 1px solid color-mix(in srgb, var(--teal), var(--line) 45%);
+      border-radius: 999px;
+      background: rgba(13, 134, 110, 0.09);
+      color: var(--teal);
       font-size: 12px;
-      font-weight: 800;
-      text-transform: uppercase;
-      box-shadow: 3px 3px 0 var(--line);
+      font-weight: 780;
     }
     h1 {
       max-width: 760px;
-      margin: 18px 0 16px;
-      font-size: clamp(40px, 7vw, 76px);
-      line-height: 0.95;
+      margin: 18px 0 18px;
+      font-size: clamp(44px, 7vw, 78px);
+      line-height: 0.96;
       letter-spacing: 0;
     }
     .lead {
       max-width: 760px;
       font-size: 18px;
-      color: #292929;
+      color: var(--text);
     }
     .actions {
       display: flex;
       flex-wrap: wrap;
-      gap: 12px;
-      margin-top: 26px;
+      gap: 11px;
+      margin-top: 28px;
     }
     .button {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-height: 44px;
+      min-height: 42px;
       padding: 10px 14px;
-      border: 2px solid var(--line);
-      background: var(--ink);
-      color: #fff;
-      font-weight: 900;
+      border: 1px solid #151915;
+      border-radius: 12px;
+      background: #151915;
+      color: #fffaf0;
+      font-weight: 760;
       text-decoration: none;
-      text-transform: uppercase;
-      box-shadow: 4px 4px 0 #777;
+      box-shadow: 0 10px 24px rgba(23, 25, 23, 0.16);
     }
     .button.secondary {
-      background: var(--panel);
+      border-color: var(--line-strong);
+      background: var(--shell);
       color: var(--ink);
-      box-shadow: 4px 4px 0 var(--line);
+      box-shadow: none;
+    }
+    .terminal,
+    .card,
+    .preview,
+    .code {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: color-mix(in srgb, var(--shell), white 40%);
+      box-shadow: 0 18px 44px var(--shadow);
     }
     .terminal {
       min-width: 0;
       align-self: start;
       overflow: hidden;
-      border: 2px solid var(--line);
-      background: var(--panel);
-      box-shadow: 8px 8px 0 var(--line);
       padding: 18px;
     }
     .terminal-head {
       display: flex;
       justify-content: space-between;
-      gap: 8px;
+      gap: 10px;
+      margin-bottom: 8px;
       padding-bottom: 12px;
-      border-bottom: 2px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
       font-size: 12px;
-      font-weight: 900;
-      text-transform: uppercase;
+      font-weight: 780;
     }
     .stage {
       display: grid;
-      grid-template-columns: minmax(74px, 0.42fr) minmax(0, 1fr) minmax(54px, auto);
+      grid-template-columns: minmax(80px, 0.4fr) minmax(0, 1fr) minmax(64px, auto);
       gap: 12px;
       align-items: center;
-      padding: 11px 0;
-      border-bottom: 1px dashed #8d8d8d;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--line);
       font-size: 13px;
     }
-    .stage span:nth-child(2) { min-width: 0; }
+    .stage span:nth-child(2) { min-width: 0; color: var(--muted); }
     .stage:last-child { border-bottom: 0; }
     .status {
       display: inline-flex;
       justify-content: center;
-      min-width: 54px;
-      padding: 3px 6px;
-      border: 1px solid var(--line);
-      background: #fff;
+      min-width: 60px;
+      padding: 4px 8px;
+      border-radius: 999px;
       font-size: 11px;
-      font-weight: 900;
+      font-weight: 760;
       text-transform: uppercase;
     }
-    .pass { color: var(--green); }
-    .warn { color: var(--amber); }
-    .block { color: var(--red); }
+    .pass { color: var(--green); background: rgba(79, 153, 48, 0.12); }
+    .warn { color: var(--amber); background: rgba(173, 117, 13, 0.12); }
+    .block { color: var(--red); background: rgba(194, 66, 57, 0.12); }
     .section {
       padding: 42px 0 18px;
     }
     .section h2 {
       margin: 0 0 14px;
-      font-size: clamp(26px, 4vw, 42px);
+      font-size: clamp(27px, 4vw, 43px);
       line-height: 1.05;
       letter-spacing: 0;
     }
@@ -169,44 +204,40 @@
       gap: 16px;
     }
     .card {
-      min-height: 190px;
-      padding: 18px;
-      border: 2px solid var(--line);
-      background: var(--panel);
-      box-shadow: 5px 5px 0 var(--line);
+      min-height: 180px;
+      padding: 20px;
     }
     .card label {
       display: block;
       margin-bottom: 12px;
-      color: var(--muted);
+      color: var(--teal);
       font-size: 12px;
-      font-weight: 900;
+      font-weight: 780;
       text-transform: uppercase;
     }
     .card h3 {
       margin: 0 0 10px;
-      font-size: 20px;
+      font-size: 21px;
       line-height: 1.15;
     }
-    .card p { margin: 0; color: #2d2d2d; }
+    .card p { margin: 0; color: var(--text); }
     .flow {
       display: grid;
       grid-template-columns: repeat(7, minmax(0, 1fr));
-      gap: 8px;
+      gap: 10px;
     }
     .flow div {
-      min-height: 86px;
-      padding: 12px;
-      border: 2px solid var(--line);
-      background: #fff;
-      font-size: 12px;
-      font-weight: 900;
-      text-transform: uppercase;
+      min-height: 84px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--card);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 760;
     }
     .preview {
       width: 100%;
-      border: 2px solid var(--line);
-      box-shadow: 8px 8px 0 var(--line);
       background: #fff;
     }
     .split {
@@ -217,20 +248,22 @@
     }
     .code {
       overflow: auto;
-      padding: 16px;
-      border: 2px solid var(--line);
-      background: #151515;
+      padding: 18px;
+      background: #111817;
       color: #f8f1df;
       font-size: 13px;
     }
     .footer {
       margin-top: 44px;
       padding: 24px 0;
-      border-top: 2px solid var(--line);
+      border-top: 1px solid var(--line);
       color: var(--muted);
       font-size: 13px;
     }
     @media (max-width: 860px) {
+      .shell { padding: 14px; }
+      .nav { align-items: flex-start; flex-direction: column; }
+      .nav-links { justify-content: flex-start; }
       .hero,
       .split,
       .grid {
@@ -270,7 +303,7 @@
 
     <section class="hero">
       <div>
-        <span class="eyebrow">Honest SLM Factory</span>
+        <span class="eyebrow">Evidence-first SLM Factory</span>
         <h1>Train small language models without fooling yourself.</h1>
         <p class="lead">
           Picochat is a from-scratch training factory for 100M-1B class language
@@ -381,11 +414,12 @@
 
     <section class="section split">
       <div>
-        <h2>Scale up without guessing.</h2>
+        <h2>Train remotely without guessing.</h2>
         <p>
-          The Scale Up lane emits remote commands for setup, sanity, ClimbMix
-          or SmolLM-Corpus import, release-skills SFT/eval pack generation,
-          preflight, dry run, full training, bundle, and return inspection.
+          The External Train lane emits Modal, Colab, and Lambda commands for
+          setup, sanity, ClimbMix or SmolLM-Corpus import, release-skills
+          SFT/eval pack generation, preflight, dry run, full training, bundle,
+          and return inspection.
         </p>
       </div>
       <pre class="code">picochat run tiny \
@@ -401,7 +435,7 @@
     </section>
 
     <section class="section">
-      <img class="preview" src="screenshots/scale-up-commands.jpg" alt="Scale Up command generator screenshot">
+      <img class="preview" src="screenshots/scale-up-commands.jpg" alt="External training setup screenshot">
     </section>
 
     <footer class="footer">

@@ -23,6 +23,7 @@ from picochat.web import (
     preview_corpus_plan,
     preference_starter_plan,
     _parse_run_progress,
+    run_log_plan,
     run_presets_plan,
     run_status_plan,
     save_pack_editor_plan,
@@ -83,6 +84,13 @@ def test_web_scale_lane_exposes_ddp8_recipe():
     assert '"release_skills"' in js
     assert '"--sft-peft"' in js
     assert '"--sft-lora-targets"' in js
+    assert 'const peftMode = smoke ? "none"' in js
+    assert 'setProductControlValue("launch-sft-peft", peftMode)' in js
+    assert 'function renderProductLogModal' in js
+    assert 'data-product-action="refresh-logs"' in js
+    assert '/api/run/log?' in js
+    assert '/api/run/status?job=' in js
+    assert 'Fallback /api/run/status failed' in js
     assert '"--dpo-input"' in js
     assert '"--dpo-length-normalize"' in js
     assert '"--tensorboard-log-dir"' in js
@@ -177,14 +185,50 @@ def test_product_shell_scopes_brand_and_handoff_icons():
     js = Path("src/picochat/web_assets/app.js").read_text(encoding="utf-8")
     css = Path("src/picochat/web_assets/product.css").read_text(encoding="utf-8")
 
-    assert 'class="mark-flow"' in html
-    assert 'class="mark-check"' in html
+    assert 'href="/assets/picochat-symbol.svg"' in html
+    assert 'src="/assets/picochat-symbol.svg"' in html
     assert "mark-ring" not in html
     assert 'class="product-card-icon ${item.exists ? "pass" : item.required ? "warn" : "neutral"}"' in js
     assert ".product-card-icon svg," in css
     assert ".compact-card > svg" in css
     assert "width: 18px !important;" in css
     assert "height: 18px !important;" in css
+
+
+def test_product_shell_exposes_external_training_paths():
+    js = Path("src/picochat/web_assets/app.js").read_text(encoding="utf-8")
+    css = Path("src/picochat/web_assets/product.css").read_text(encoding="utf-8")
+    modal_script = Path("scripts/modal_picochat_train.py").read_text(encoding="utf-8")
+
+    assert '{ id: "external", label: "External train", group: "pipeline", icon: "cloud" }' in js
+    assert "function renderProductExternalTrain()" in js
+    assert "modal run scripts/modal_picochat_train.py" in js
+    assert "--hf-shards" in js
+    assert 'productSettingSelect("Provider", "external.provider"' in js
+    assert 'productSettingInput("Modal secret", "external.modalSecret"' in js
+    assert 'productSettingInput("Lambda API key", "external.lambdaApiKey"' in js
+    assert ".product-provider-tabs" in css
+    assert ".product-code-block" in css
+    assert 'APP_NAME = "picochat-external-train"' in modal_script
+    assert "modal.App(APP_NAME)" in modal_script
+    assert "@app.local_entrypoint()" in modal_script
+    assert "train_remote.with_options" in modal_script
+
+
+def test_product_shell_final_spec_polish_hooks_are_live():
+    js = Path("src/picochat/web_assets/app.js").read_text(encoding="utf-8")
+    css = Path("src/picochat/web_assets/product.css").read_text(encoding="utf-8")
+
+    assert "data-tone=" in js
+    assert 'data-locked="true"' in js
+    assert ".product-metric-card strong[data-tone=\"green\"]" in css
+    assert ".product-metric-card strong[data-tone=\"amber\"]" in css
+    assert ".product-metric-card strong[data-tone=\"red\"]" in css
+    assert ".product-card.compact-card[data-locked=\"true\"]" in css
+    assert ".product-start-actions" in css
+    assert ".product-log strong" in css
+    assert "text-align: left !important;" in css
+    assert "white-space: normal !important;" in css
 
 
 def write_run(root, name):
@@ -1609,6 +1653,21 @@ def test_run_status_discovers_completed_web_runs_from_disk(tmp_path):
     assert status["job"]["summary_exists"] is True
     assert status["job"]["dataset_pack"] == "pack/dataset_pack.json"
     assert status["job"]["command"] == "python -m picochat.cli run tiny"
+
+
+def test_run_log_plan_tails_persisted_web_run(tmp_path):
+    run_dir = tmp_path / "runs" / "disk-run"
+    run_dir.mkdir(parents=True)
+    log_text = "$ python -m picochat.cli run tiny\n" + "\n".join(f"line {index:02d}" for index in range(30))
+    (run_dir / "web_run.log").write_text(log_text, encoding="utf-8")
+
+    report = run_log_plan(tmp_path / "runs", run_name="disk-run", limit=80)
+
+    assert report["run_name"] == "disk-run"
+    assert report["job_id"] == "run-disk-run"
+    assert report["state"] == "stopped"
+    assert "line 29" in report["log_tail"]
+    assert "$ python" in report["log_tail"]
 
 
 def test_archive_run_plan_moves_run_out_of_active_bank(tmp_path):
