@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/picochat-os-wordmark.svg" width="620" alt="Picochat">
+  <img src="docs/assets/picochat-wordmark.png" width="620" alt="Picochat">
 </p>
 
 <h3 align="center">Build small language models without hiding the evidence.</h3>

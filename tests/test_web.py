@@ -185,8 +185,8 @@ def test_product_shell_scopes_brand_and_handoff_icons():
     js = Path("src/picochat/web_assets/app.js").read_text(encoding="utf-8")
     css = Path("src/picochat/web_assets/product.css").read_text(encoding="utf-8")
 
-    assert 'href="/assets/picochat-symbol.svg"' in html
-    assert 'src="/assets/picochat-symbol.svg"' in html
+    assert 'href="/assets/picochat-symbol.png"' in html
+    assert 'src="/assets/picochat-symbol.png"' in html
     assert "mark-ring" not in html
     assert 'class="product-card-icon ${item.exists ? "pass" : item.required ? "warn" : "neutral"}"' in js
     assert ".product-card-icon svg," in css
