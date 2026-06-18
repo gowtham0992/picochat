@@ -172,6 +172,21 @@ def test_product_shell_keeps_long_rows_and_copyable_paths_readable():
     assert ".product-alert.busy" in css
 
 
+def test_product_shell_scopes_brand_and_handoff_icons():
+    html = Path("src/picochat/web_assets/index.html").read_text(encoding="utf-8")
+    js = Path("src/picochat/web_assets/app.js").read_text(encoding="utf-8")
+    css = Path("src/picochat/web_assets/product.css").read_text(encoding="utf-8")
+
+    assert 'class="mark-flow"' in html
+    assert 'class="mark-check"' in html
+    assert "mark-ring" not in html
+    assert 'class="product-card-icon ${item.exists ? "pass" : item.required ? "warn" : "neutral"}"' in js
+    assert ".product-card-icon svg," in css
+    assert ".compact-card > svg" in css
+    assert "width: 18px !important;" in css
+    assert "height: 18px !important;" in css
+
+
 def write_run(root, name):
     run_dir = root / name
     (run_dir / "eval").mkdir(parents=True)

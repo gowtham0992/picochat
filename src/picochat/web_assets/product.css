@@ -190,9 +190,37 @@ body.classic-theme {
   stroke-linejoin: round !important;
 }
 
-.product-brand-mark .mark-node {
-  fill: var(--pc-teal) !important;
+.product-brand-mark .mark-flow,
+.product-brand-mark .mark-baseline,
+.product-brand-mark .mark-check {
+  fill: none !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+.product-brand-mark .mark-flow {
+  stroke: var(--pc-text) !important;
+  stroke-width: 3 !important;
+}
+
+.product-brand-mark .mark-baseline {
   stroke: var(--pc-teal) !important;
+  stroke-width: 3 !important;
+}
+
+.product-brand-mark .mark-check {
+  stroke: var(--pc-green) !important;
+  stroke-width: 2.7 !important;
+}
+
+.product-brand-mark .mark-node {
+  fill: var(--pc-amber) !important;
+  stroke: var(--pc-shell) !important;
+  stroke-width: 1.5 !important;
+}
+
+.product-brand-mark .mark-node-b {
+  fill: var(--pc-teal) !important;
 }
 
 .product-brand-copy {
@@ -1233,6 +1261,47 @@ body.classic-theme .product-check-row.fail em {
   gap: 4px !important;
 }
 
+.product-card-icon {
+  display: grid !important;
+  place-items: center !important;
+  width: 34px !important;
+  height: 34px !important;
+  flex: 0 0 34px !important;
+  margin-bottom: 8px !important;
+  border: 1px solid var(--pc-border-soft) !important;
+  border-radius: 11px !important;
+  background: var(--pc-card-soft) !important;
+  color: var(--pc-muted) !important;
+}
+
+.product-card-icon svg,
+.compact-card > svg {
+  width: 18px !important;
+  height: 18px !important;
+  flex: 0 0 18px !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+.product-card-icon.pass {
+  border-color: color-mix(in srgb, var(--pc-green), var(--pc-border-soft) 42%) !important;
+  background: var(--pc-green-bg) !important;
+  color: var(--pc-green) !important;
+}
+
+.product-card-icon.warn {
+  border-color: color-mix(in srgb, var(--pc-amber), var(--pc-border-soft) 38%) !important;
+  background: var(--pc-amber-bg) !important;
+  color: var(--pc-amber) !important;
+}
+
+.product-card-icon.neutral {
+  color: var(--pc-faint) !important;
+}
+
 .compact-card > h2 {
   margin: 0 !important;
   color: var(--pc-text) !important;
@@ -1793,37 +1862,43 @@ body.classic-theme .product-card-heading {
   width: 30px !important;
   height: 30px !important;
   flex: 0 0 30px !important;
-  border: 1px solid var(--pc-border-soft) !important;
+  border: 1px solid color-mix(in srgb, var(--pc-teal), var(--pc-border-soft) 46%) !important;
   border-radius: 10px !important;
   background:
-    radial-gradient(circle at 65% 28%, color-mix(in srgb, var(--pc-teal), white 35%), transparent 0.3rem),
-    linear-gradient(135deg, var(--pc-card-raised), color-mix(in srgb, var(--pc-teal-soft), var(--pc-card) 70%)) !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+    linear-gradient(135deg, color-mix(in srgb, var(--pc-teal), var(--pc-card-raised) 58%), var(--pc-card-raised)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 8px 18px color-mix(in srgb, var(--pc-teal), transparent 82%) !important;
 }
 
 .product-brand-mark svg {
-  width: 22px !important;
-  height: 22px !important;
+  width: 23px !important;
+  height: 23px !important;
 }
 
-.product-brand-mark .mark-ring {
-  stroke: var(--pc-teal) !important;
-  opacity: 0.92 !important;
-}
-
-.product-brand-mark .mark-axis {
+.product-brand-mark .mark-flow {
   stroke: var(--pc-text) !important;
+  stroke-width: 3.2 !important;
+}
+
+.product-brand-mark .mark-baseline {
+  stroke: var(--pc-teal) !important;
+  stroke-width: 3.2 !important;
+}
+
+.product-brand-mark .mark-check {
+  stroke: var(--pc-green) !important;
   stroke-width: 2.8 !important;
 }
 
-.product-brand-mark .mark-spark {
-  stroke: var(--pc-amber) !important;
-  opacity: 0.95 !important;
+.product-brand-mark .mark-node {
+  fill: var(--pc-amber) !important;
+  stroke: var(--pc-shell) !important;
+  stroke-width: 1.5 !important;
 }
 
-.product-brand-mark .mark-node {
+.product-brand-mark .mark-node-b {
   fill: var(--pc-teal) !important;
-  stroke: var(--pc-teal) !important;
 }
 
 .product-brand-copy strong {

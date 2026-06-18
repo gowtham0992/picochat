@@ -2235,7 +2235,7 @@ function renderProductHandoff() {
     <div class="product-grid two">
       ${artifactRows.slice(0, 4).map((item) => `
         <section class="product-card compact-card">
-          ${productIcon(item.exists ? "check" : "box")}
+          <span class="product-card-icon ${item.exists ? "pass" : item.required ? "warn" : "neutral"}">${productIcon(item.exists ? "check" : "box")}</span>
           <h2>${escapeHtml(item.label)}</h2>
           <p>${escapeHtml(item.purpose || item.path || "Artifact evidence")}</p>
         </section>
