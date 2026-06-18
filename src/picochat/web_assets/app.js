@@ -2531,7 +2531,7 @@ function productRecentRuns() {
     const passRate = Number(run.pass_rate || 0);
     const selected = run.name === state.selectedRun;
     const runNumber = run.id || run.run_id || run.step || (state.runs.length - index);
-    const stage = selected ? productPageMeta(state.activeProductSection).title : run.eval_score || "Local run";
+    const stage = run.eval_score || (selected ? productSelectedRunStageLabel() : "Local run");
     const displayName = run.name ? shortPath(run.name) : `Run ${runNumber}`;
     const statusClass = selected && productGateStatus(state.detail?.summary?.long_run_gate || {}, state.detail?.handoff_packet || {}).className === "fail"
       ? "warn"
@@ -2549,6 +2549,18 @@ function productRecentRuns() {
       icon: statusClass === "warn" ? "warning" : "check",
     };
   });
+}
+
+function productSelectedRunStageLabel() {
+  const gate = state.detail?.summary?.long_run_gate || {};
+  if (gate.status === "blocked") return "Release gate";
+  if (state.detail?.sft_report?.losses?.length) return "SFT";
+  if (state.detail?.base_report?.losses?.length) return "Train";
+  const preflight = state.detail?.preflight || state.detail?.summary?.preflight || {};
+  if ((preflight.checks || []).length || (preflight.warning_checks || []).length || (preflight.blocking_checks || []).length) {
+    return "Preflight";
+  }
+  return "Selected run";
 }
 
 function productPipelineHealthRows() {

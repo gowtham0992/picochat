@@ -155,6 +155,23 @@ def test_product_shell_mobile_backdrop_closes_nav():
     assert "$(\"product-shell\").classList.toggle(\"nav-open\", state.productMobileNavOpen)" in js
 
 
+def test_product_shell_recent_runs_use_run_stage_not_current_page_title():
+    js = Path("src/picochat/web_assets/app.js").read_text(encoding="utf-8")
+
+    assert "function productSelectedRunStageLabel()" in js
+    assert "const stage = run.eval_score || (selected ? productSelectedRunStageLabel() : \"Local run\");" in js
+    assert "const stage = selected ? productPageMeta(state.activeProductSection).title" not in js
+
+
+def test_product_shell_keeps_long_rows_and_copyable_paths_readable():
+    css = Path("src/picochat/web_assets/product.css").read_text(encoding="utf-8")
+
+    assert ".product-list:not(.compact) .product-list-row" in css
+    assert ".product-kv-row.copyable" in css
+    assert "overflow-wrap: anywhere !important;" in css
+    assert ".product-alert.busy" in css
+
+
 def write_run(root, name):
     run_dir = root / name
     (run_dir / "eval").mkdir(parents=True)
