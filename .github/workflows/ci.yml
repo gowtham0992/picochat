@@ -68,3 +68,15 @@ jobs:
 
       - name: Verify build is in sync with committed assets
         run: git diff --exit-code -- src/picochat/web_assets/react
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t picochat:ci .
+
+      - name: Smoke test entrypoint
+        run: docker run --rm picochat:ci pico --help

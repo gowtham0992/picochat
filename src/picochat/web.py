@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import importlib.resources
@@ -24,6 +24,7 @@ import time
 import uuid
 from urllib.parse import parse_qs, urlparse
 
+from picochat import __version__
 from picochat.compare import compare_runs
 from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus_sources
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack, update_dataset_pack_tuning_paths
@@ -1785,7 +1786,9 @@ def _make_handler(config: WebConfig):
                 self._send_json(_unauthorized_payload(), status=401)
                 return
             try:
-                if parsed.path == "/":
+                if parsed.path == "/healthz":
+                    self._send_json(_health_payload())
+                elif parsed.path == "/":
                     self._send_app_shell()
                 elif parsed.path.startswith("/react/"):
                     self._send_react_asset(parsed.path)
@@ -1834,6 +1837,7 @@ def _make_handler(config: WebConfig):
             if parsed.path.startswith("/api/") and not self._is_authorized():
                 self._send_json(_unauthorized_payload(), status=401)
                 return
+            outcome = "ok"
             try:
                 if parsed.path == "/api/generate":
                     self._send_json(generate_run_text(config.runs_dir, self._read_json_body()))
@@ -1866,9 +1870,20 @@ def _make_handler(config: WebConfig):
                 elif parsed.path == "/api/run/import":
                     self._send_json(import_run_plan(config.runs_dir, self._read_json_body()))
                 else:
+                    outcome = "not_found"
                     self.send_error(404, "Not found")
             except Exception as exc:
+                outcome = "error"
                 self._send_json(_error_payload(exc), status=400)
+            finally:
+                if parsed.path.startswith("/api/"):
+                    _append_audit(
+                        config.runs_dir,
+                        action=parsed.path,
+                        actor=self.client_address[0] if self.client_address else "?",
+                        outcome=outcome,
+                        params=_safe_audit_params(getattr(self, "_cached_body", None)),
+                    )
 
         def log_message(self, format: str, *args) -> None:
             return
@@ -1895,6 +1910,8 @@ def _make_handler(config: WebConfig):
             return urlparse(origin).netloc == self.headers.get("Host", "")
 
         def _content_type_for_route(self, path: str) -> str | None:
+            if path == "/healthz":
+                return "application/json; charset=utf-8"
             if path == "/":
                 return "text/html; charset=utf-8"
             if path.startswith("/react/"):
@@ -1959,11 +1976,15 @@ def _make_handler(config: WebConfig):
                 return
 
         def _read_json_body(self) -> dict:
+            cached = getattr(self, "_cached_body", None)
+            if cached is not None:
+                return cached
             length = int(self.headers.get("Content-Length", "0") or 0)
             raw = self.rfile.read(length) if length else b"{}"
             payload = json.loads(raw.decode("utf-8") or "{}")
             if not isinstance(payload, dict):
                 raise ValueError("request body must be a JSON object")
+            self._cached_body = payload
             return payload
 
     return PicoWebHandler
@@ -2143,6 +2164,46 @@ def _unauthorized_payload() -> dict:
         "error_type": "Unauthorized",
         "message": "Missing or invalid auth token. Open the URL printed by `pico web` (it includes ?token=...).",
     }
+
+
+def _health_payload() -> dict:
+    with _RUN_JOBS_LOCK:
+        active = sum(
+            1 for job in _RUN_JOBS.values()
+            if (proc := job.get("process")) is not None and proc.poll() is None
+        )
+    return {"status": "ok", "version": __version__, "active_jobs": active}
+
+
+# Audit log: append-only record of who triggered which state-changing action.
+# Whitelisted keys only — never persist tokens, HF credentials, or free text.
+_AUDIT_PARAM_KEYS = (
+    "run", "run_name", "run_names", "job_id", "dataset_pack",
+    "checkpoint", "out_dir", "preset", "source_path",
+)
+
+
+def _safe_audit_params(body) -> dict:
+    if not isinstance(body, dict):
+        return {}
+    return {key: body[key] for key in _AUDIT_PARAM_KEYS if key in body}
+
+
+def _append_audit(runs_dir: str | Path, *, action: str, actor: str, outcome: str, params: dict) -> None:
+    try:
+        audit_dir = Path(runs_dir) / ".audit"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "actor": actor,
+            "action": action,
+            "outcome": outcome,
+            "params": params,
+        }
+        with (audit_dir / "audit.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record) + "\n")
+    except OSError:
+        pass
 
 
 def _combined_tuning_status(chat_status: str, eval_status: str) -> str:

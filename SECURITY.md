@@ -39,9 +39,21 @@ State-changing requests to `pico web` are rejected when the `Origin` header does
 not match the request `Host`. This blocks a malicious web page from driving the
 localhost API in a logged-in browser, and mitigates DNS-rebinding.
 
+### Audit log
+
+`pico web` appends every state-changing `/api/*` action to
+`<runs-dir>/.audit/audit.jsonl` (timestamp, client address, action, outcome, and
+a whitelist of non-secret params). Tokens and credentials are never written.
+
+### Health
+
+`GET /healthz` is unauthenticated and returns `{status, version, active_jobs}`
+for container/orchestrator probes.
+
 ### What is still out of scope
 
-- No multi-user accounts, roles, or per-user audit log yet (single trusted
-  operator model). Do not expose either server to untrusted networks.
+- Single trusted operator model: no multi-user accounts or roles yet. The audit
+  log records the client address, not an authenticated identity. Do not expose
+  either server to untrusted networks.
 - Tokens are bearer credentials with no rotation/expiry; treat them as secrets.
 - The dashboard does not sandbox the training commands it launches.

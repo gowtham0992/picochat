@@ -2051,6 +2051,12 @@ def build_parser() -> argparse.ArgumentParser:
     web_parser.add_argument("--runs-dir", default="runs", help="Directory containing run folders.")
     web_parser.add_argument("--host", default="127.0.0.1")
     web_parser.add_argument("--port", type=int, default=8765)
+    web_parser.add_argument(
+        "--auth-token",
+        default=os.environ.get("PICOCHAT_AUTH_TOKEN") or None,
+        help="Require this token on /api/* (env: PICOCHAT_AUTH_TOKEN). "
+             "Auto-generated when binding a non-loopback host without one.",
+    )
     return parser
 
 
@@ -3651,6 +3657,7 @@ def run_web(args: argparse.Namespace) -> int:
         runs_dir=args.runs_dir,
         host=args.host,
         port=args.port,
+        auth_token=args.auth_token,
     ))
     return 0
 

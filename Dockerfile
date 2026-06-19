@@ -21,4 +21,10 @@ USER pico
 
 EXPOSE 8765 8000
 
+# The web UI binds 0.0.0.0 here, so it requires an auth token. Set one
+# explicitly for a stable URL: `-e PICOCHAT_AUTH_TOKEN=...` (otherwise the
+# server mints one and prints it to the container logs at startup).
+HEALTHCHECK --interval=30s --timeout=4s --start-period=20s --retries=3 \
+    CMD python -c "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=3).status==200 else 1)"
+
 CMD ["pico", "web", "--runs-dir", "/workspace/runs", "--host", "0.0.0.0", "--port", "8765"]
