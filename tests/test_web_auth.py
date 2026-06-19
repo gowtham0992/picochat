@@ -121,6 +121,46 @@ def test_audit_log_records_state_changing_posts(tmp_path):
         server.shutdown()
 
 
+def test_log_stream_emits_event_and_closes_for_finished_run(tmp_path):
+    run_dir = tmp_path / "done-run"
+    run_dir.mkdir()
+    (run_dir / "web_run.log").write_text("$ python -m picochat.cli run tiny\nline1\nline2\n", encoding="utf-8")
+    (run_dir / "summary.json").write_text(json.dumps({"config": {}}), encoding="utf-8")
+
+    server = _serve(tmp_path)
+    try:
+        with urllib.request.urlopen(f"{_base(server)}/api/run/log/stream?run=done-run", timeout=5) as resp:
+            assert resp.headers.get_content_type() == "text/event-stream"
+            body = resp.read().decode("utf-8")  # finished run -> one event, then close
+        data_line = next(line for line in body.splitlines() if line.startswith("data: "))
+        payload = json.loads(data_line[len("data: "):])
+        assert payload["run_name"] == "done-run"
+        assert payload["state"] == "succeeded"
+        assert payload["running"] is False
+        assert "line2" in payload["log_tail"]
+    finally:
+        server.shutdown()
+
+
+def test_log_stream_requires_token_via_query(tmp_path):
+    run_dir = tmp_path / "done-run"
+    run_dir.mkdir()
+    (run_dir / "web_run.log").write_text("$ cmd\nx\n", encoding="utf-8")
+    (run_dir / "summary.json").write_text(json.dumps({"config": {}}), encoding="utf-8")
+
+    server = _serve(tmp_path, auth_token="s3cret")
+    try:
+        base = _base(server)
+        with pytest.raises(urllib.error.HTTPError) as missing:
+            urllib.request.urlopen(f"{base}/api/run/log/stream?run=done-run", timeout=5)
+        assert missing.value.code == 401
+
+        with urllib.request.urlopen(f"{base}/api/run/log/stream?run=done-run&token=s3cret", timeout=5) as resp:
+            assert resp.status == 200
+    finally:
+        server.shutdown()
+
+
 def test_post_rejects_cross_origin(tmp_path):
     server = _serve(tmp_path, auth_token=None)
     try:

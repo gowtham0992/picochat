@@ -55,6 +55,10 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
 _RUN_JOBS: dict[str, dict] = {}
 _RUN_JOBS_LOCK = threading.Lock()
+# Server-sent-events log stream cadence. The cap bounds a single connection;
+# the browser's EventSource auto-reconnects for runs longer than that.
+_STREAM_INTERVAL_SECONDS = 1.0
+_STREAM_MAX_TICKS = 3600
 CLIMBMIX_DATASET = "karpathy/climbmix-400b-shuffle"
 CLIMBMIX_LARGE_IMPORT_ROWS = 100_000
 CLIMBMIX_LARGE_IMPORT_DOCUMENT_SHARD_ROWS = 1000
@@ -1816,6 +1820,13 @@ def _make_handler(config: WebConfig):
                     query = parse_qs(parsed.query)
                     job_id = query.get("job", [None])[0]
                     self._send_json(run_status_plan(job_id, config.runs_dir))
+                elif parsed.path == "/api/run/log/stream":
+                    query = parse_qs(parsed.query)
+                    self._stream_run_log(
+                        run_name=query.get("run", [None])[0],
+                        job_id=query.get("job", [None])[0],
+                        limit=_bounded_int(query.get("limit", ["50000"])[0], 1_000, 200_000),
+                    )
                 elif parsed.path == "/api/run/log":
                     query = parse_qs(parsed.query)
                     run_name = query.get("run", [None])[0]
@@ -1897,6 +1908,9 @@ def _make_handler(config: WebConfig):
                 auth = self.headers.get("Authorization", "")
                 if auth.startswith("Bearer "):
                     provided = auth[len("Bearer "):]
+            if not provided:
+                # EventSource cannot set headers, so allow ?token= for streams.
+                provided = parse_qs(urlparse(self.path).query).get("token", [""])[0]
             return bool(provided) and hmac.compare_digest(provided, token)
 
         def _origin_ok(self) -> bool:
@@ -1974,6 +1988,38 @@ def _make_handler(config: WebConfig):
                 self.wfile.write(data)
             except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
                 return
+
+        def _stream_run_log(self, *, run_name, job_id, limit) -> None:
+            """Server-sent-events stream of a run's log/status until it ends."""
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "close")
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return
+            for _ in range(_STREAM_MAX_TICKS):
+                try:
+                    payload = run_log_plan(config.runs_dir, run_name=run_name, job_id=job_id, limit=limit)
+                except Exception as exc:  # unknown job, transient read error, etc.
+                    self._write_sse_event({"error": str(exc), "running": False, "state": "unknown"})
+                    return
+                if not self._write_sse_event(payload):
+                    return  # client disconnected
+                if not payload.get("running"):
+                    return  # terminal state; client closes the EventSource
+                time.sleep(_STREAM_INTERVAL_SECONDS)
+
+        def _write_sse_event(self, payload: dict) -> bool:
+            try:
+                self.wfile.write(b"data: ")
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+                self.wfile.write(b"\n\n")
+                self.wfile.flush()
+                return True
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return False
 
         def _read_json_body(self) -> dict:
             cached = getattr(self, "_cached_body", None)

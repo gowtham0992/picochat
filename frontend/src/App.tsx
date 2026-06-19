@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, generateText, listRuns, loadRun, loadRunLog, loadStatus, startRun } from "./api";
+import { archiveRuns, cancelRun, generateText, listRuns, loadRun, loadStatus, runLogStreamUrl, startRun } from "./api";
 import ModelViewer from "./ModelViewer";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
@@ -770,11 +770,21 @@ function Empty({ label }: { label: string }) {
 function LogModal({ target, onClose, onCancel }: { target: { run?: string; job?: string }; onClose: () => void; onCancel: (id: string) => Promise<any> }) {
   const [log, setLog] = useState<RunLog | null>(null);
   const [err, setErr] = useState("");
-  const refresh = async () => {
-    try { setLog(await loadRunLog({ ...target, limit: 80_000 })); setErr(""); }
-    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-  };
-  useEffect(() => { refresh(); const t = window.setInterval(refresh, 2500); return () => window.clearInterval(t); /* eslint-disable-next-line */ }, [target.run, target.job]);
+  useEffect(() => {
+    const source = new EventSource(runLogStreamUrl({ ...target, limit: 80_000 }));
+    source.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as RunLog & { error?: string };
+        if (payload.error) { setErr(payload.error); source.close(); return; }
+        setLog(payload);
+        setErr("");
+        if (payload.running === false) source.close(); // run ended; stop reconnecting
+      } catch { /* ignore malformed frame */ }
+    };
+    // EventSource auto-reconnects on transient drops; nothing to do here.
+    source.onerror = () => {};
+    return () => source.close();
+  }, [target.run, target.job]);
   return (
     <div className="pc-modal-back" onClick={onClose}>
       <section className="pc-modal" onClick={(e) => e.stopPropagation()}>
@@ -782,7 +792,7 @@ function LogModal({ target, onClose, onCancel }: { target: { run?: string; job?:
           <div><span className="pc-eyebrow">Live run log</span><h2>{log?.run_name || target.run || target.job || "Run"}</h2></div>
           <div className="pc-row">
             <StatusDot tone={log?.running ? "running" : log?.state === "succeeded" ? "pass" : "neutral"} label={log?.state || "loading"} />
-            {log?.running && log.job_id ? <button className="pc-btn ghost danger" onClick={() => onCancel(log.job_id!).then(refresh)}>Cancel</button> : null}
+            {log?.running && log.job_id ? <button className="pc-btn ghost danger" onClick={() => onCancel(log.job_id!)}>Cancel</button> : null}
             <button className="pc-btn ghost" onClick={() => navigator.clipboard?.writeText(log?.log_tail || "")}><Copy size={14} /> Copy</button>
             <button className="pc-btn ghost" onClick={onClose}>Close</button>
           </div>

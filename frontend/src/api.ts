@@ -56,6 +56,17 @@ export function loadRunLog(args: { run?: string; job?: string; limit?: number })
   return jsonRequest(`/api/run/log?${params.toString()}`);
 }
 
+// Server-sent-events log stream. EventSource can't set headers, so the token
+// (when present) is passed as a query param.
+export function runLogStreamUrl(args: { run?: string; job?: string; limit?: number }): string {
+  const params = new URLSearchParams();
+  if (args.run) params.set("run", args.run);
+  if (args.job) params.set("job", args.job);
+  if (args.limit) params.set("limit", String(args.limit));
+  if (AUTH_TOKEN) params.set("token", AUTH_TOKEN);
+  return `/api/run/log/stream?${params.toString()}`;
+}
+
 export function startRun(payload: Record<string, any>): Promise<{ job: JobStatus }> {
   return jsonRequest("/api/run/start", { method: "POST", body: JSON.stringify(payload) });
 }
