@@ -13,7 +13,6 @@ from typing import Any
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from picochat.chat import render_chat_prompt
 from picochat.device import resolve_device
 from picochat.optim import LR_DECAYS, learning_rate_for_step
 from picochat.precision import (

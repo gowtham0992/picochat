@@ -1,15 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
   <title id="title">Picochat symbol</title>
-  <desc id="desc">A compact pc monogram with an upward training arrow.</desc>
-  <defs>
-    <linearGradient id="pc-teal" x1="16" y1="82" x2="84" y2="14" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#0b5f70"/>
-      <stop offset="1" stop-color="#0f8a99"/>
-    </linearGradient>
-  </defs>
-  <path d="M24 78V41c0-15 11-26 27-26 9 0 17 3 22 9" fill="none" stroke="url(#pc-teal)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M38 73V43c0-8 6-14 15-14 5 0 10 2 13 6" fill="none" stroke="url(#pc-teal)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M57 58c4 8 17 10 26 2" fill="none" stroke="url(#pc-teal)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M58 55 80 20v25" fill="none" stroke="url(#pc-teal)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M58 55h22" fill="none" stroke="url(#pc-teal)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <desc id="desc">An indigo chat bubble holding three ascending training bars.</desc>
+  <rect x="12" y="10" width="72" height="60" rx="18" fill="#6366f1"/>
+  <polygon points="26,64 14,86 46,66" fill="#6366f1"/>
+  <rect x="24" y="46" width="11" height="12" rx="3" fill="#ffffff"/>
+  <rect x="43" y="36" width="11" height="22" rx="3" fill="#ffffff"/>
+  <rect x="62" y="26" width="11" height="32" rx="3" fill="#ffffff"/>
 </svg>

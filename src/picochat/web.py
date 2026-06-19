@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import hmac
 import importlib.resources
+import ipaddress
 import json
+import mimetypes
 import os
 from pathlib import Path
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -195,6 +199,21 @@ class WebConfig:
     runs_dir: str = "runs"
     host: str = "127.0.0.1"
     port: int = 8765
+    # When set, every /api/* request must present this token (X-Picochat-Token
+    # header or `Authorization: Bearer`). Required automatically for any
+    # non-loopback bind so the code-executing API is never silently exposed.
+    auth_token: str | None = None
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True for localhost-style hosts that are safe to serve without auth."""
+    name = (host or "").strip().lower()
+    if name in {"", "localhost"}:
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
 
 
 def discover_runs(runs_dir: str | Path) -> list[dict]:
@@ -1709,10 +1728,17 @@ def run_presets_plan() -> dict:
 
 def serve_web(config: WebConfig) -> None:
     """Start the blocking local web server."""
+    if not _is_loopback_host(config.host) and not config.auth_token:
+        # The API can launch training subprocesses and write files. Never expose
+        # it on a non-loopback interface without a token; mint one and require it.
+        config = replace(config, auth_token=secrets.token_urlsafe(24))
+        print("WARNING: binding to a non-loopback address — requiring an auth token.")
     handler = _make_handler(config)
     server = ThreadingHTTPServer((config.host, config.port), handler)
     url = f"http://{config.host}:{config.port}"
     print(f"Picochat web UI: {url}")
+    if config.auth_token:
+        print(f"Auth token required. Open: {url}/?token={config.auth_token}")
     print("Press Ctrl-C to stop.")
     try:
         server.serve_forever()
@@ -1726,32 +1752,24 @@ def _make_handler(config: WebConfig):
     class PicoWebHandler(BaseHTTPRequestHandler):
         def do_HEAD(self) -> None:
             parsed = urlparse(self.path)
-            if parsed.path == "/":
+            content_type = self._content_type_for_route(parsed.path)
+            if content_type:
                 self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.end_headers()
-            elif parsed.path == "/assets/picochat-symbol.svg":
-                self.send_response(200)
-                self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
-                self.end_headers()
-            elif parsed.path == "/assets/picochat-symbol.png":
-                self.send_response(200)
-                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Type", content_type)
                 self.end_headers()
             else:
                 self.send_error(404, "Not found")
 
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path.startswith("/api/") and not self._is_authorized():
+                self._send_json(_unauthorized_payload(), status=401)
+                return
             try:
                 if parsed.path == "/":
-                    self._send_asset("index.html", "text/html; charset=utf-8")
-                elif parsed.path == "/assets/style.css":
-                    self._send_asset("style.css", "text/css; charset=utf-8")
-                elif parsed.path == "/assets/product.css":
-                    self._send_asset("product.css", "text/css; charset=utf-8")
-                elif parsed.path == "/assets/app.js":
-                    self._send_asset("app.js", "application/javascript; charset=utf-8")
+                    self._send_app_shell()
+                elif parsed.path.startswith("/react/"):
+                    self._send_react_asset(parsed.path)
                 elif parsed.path == "/assets/picochat-symbol.svg":
                     self._send_asset("picochat-symbol.svg", "image/svg+xml; charset=utf-8")
                 elif parsed.path == "/assets/picochat-symbol.png":
@@ -1791,6 +1809,12 @@ def _make_handler(config: WebConfig):
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
+            if not self._origin_ok():
+                self.send_error(403, "Cross-origin request rejected")
+                return
+            if parsed.path.startswith("/api/") and not self._is_authorized():
+                self._send_json(_unauthorized_payload(), status=401)
+                return
             try:
                 if parsed.path == "/api/generate":
                     self._send_json(generate_run_text(config.runs_dir, self._read_json_body()))
@@ -1830,12 +1854,71 @@ def _make_handler(config: WebConfig):
         def log_message(self, format: str, *args) -> None:
             return
 
+        def _is_authorized(self) -> bool:
+            token = config.auth_token
+            if not token:
+                return True
+            provided = self.headers.get("X-Picochat-Token", "")
+            if not provided:
+                auth = self.headers.get("Authorization", "")
+                if auth.startswith("Bearer "):
+                    provided = auth[len("Bearer "):]
+            return bool(provided) and hmac.compare_digest(provided, token)
+
+        def _origin_ok(self) -> bool:
+            # Browsers send Origin on state-changing requests; rejecting any
+            # cross-origin Origin blocks CSRF and DNS-rebinding against the
+            # localhost API. Non-browser clients (no Origin) fall back to the
+            # token check.
+            origin = self.headers.get("Origin")
+            if not origin:
+                return True
+            return urlparse(origin).netloc == self.headers.get("Host", "")
+
+        def _content_type_for_route(self, path: str) -> str | None:
+            if path == "/":
+                return "text/html; charset=utf-8"
+            if path.startswith("/react/"):
+                asset_name = path.removeprefix("/react/")
+                if not asset_name:
+                    asset_name = "index.html"
+                if _asset_exists("react", *asset_name.split("/")):
+                    return _content_type_for_asset(asset_name)
+                return None
+            if path == "/assets/picochat-symbol.svg":
+                return "image/svg+xml; charset=utf-8"
+            if path == "/assets/picochat-symbol.png":
+                return "image/png"
+            return None
+
+        def _send_app_shell(self) -> None:
+            if _asset_exists("react/index.html"):
+                self._send_asset_path(("react", "index.html"), "text/html; charset=utf-8")
+                return
+            self.send_error(503, "Web UI not built. Run: npm ci && npm run frontend:build")
+
+        def _send_react_asset(self, path: str) -> None:
+            asset_name = path.removeprefix("/react/")
+            if not asset_name:
+                asset_name = "index.html"
+            if ".." in Path(asset_name).parts:
+                self.send_error(404, "Not found")
+                return
+            parts = tuple(part for part in asset_name.split("/") if part)
+            if not parts:
+                parts = ("index.html",)
+            if not _asset_exists("react", *parts):
+                # React owns the /react prefix. Unknown subpaths still load the app
+                # shell so client-side deep links resolve instead of 404ing.
+                self._send_asset_path(("react", "index.html"), "text/html; charset=utf-8")
+                return
+            self._send_asset_path(("react", *parts), _content_type_for_asset(asset_name))
+
         def _send_asset(self, name: str, content_type: str) -> None:
-            data = (
-                importlib.resources.files("picochat.web_assets")
-                .joinpath(name)
-                .read_bytes()
-            )
+            self._send_asset_path((name,), content_type)
+
+        def _send_asset_path(self, parts: tuple[str, ...], content_type: str) -> None:
+            data = _read_asset(*parts)
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
@@ -1865,6 +1948,36 @@ def _make_handler(config: WebConfig):
             return payload
 
     return PicoWebHandler
+
+
+def _asset_exists(*parts: str) -> bool:
+    try:
+        path = importlib.resources.files("picochat.web_assets")
+        for part in parts:
+            path = path.joinpath(part)
+        return path.is_file()
+    except (FileNotFoundError, ModuleNotFoundError):
+        return False
+
+
+def _read_asset(*parts: str) -> bytes:
+    path = importlib.resources.files("picochat.web_assets")
+    for part in parts:
+        path = path.joinpath(part)
+    return path.read_bytes()
+
+
+def _content_type_for_asset(name: str) -> str:
+    if name.endswith(".js"):
+        return "application/javascript; charset=utf-8"
+    if name.endswith(".css"):
+        return "text/css; charset=utf-8"
+    if name.endswith(".html"):
+        return "text/html; charset=utf-8"
+    if name.endswith(".svg"):
+        return "image/svg+xml; charset=utf-8"
+    content_type, _ = mimetypes.guess_type(name)
+    return content_type or "application/octet-stream"
 
 
 def _safe_child(root: Path, name: str) -> Path:
@@ -2003,6 +2116,14 @@ def _error_payload(error: Exception) -> dict:
             "available_splits": error.available_splits,
         })
     return payload
+
+
+def _unauthorized_payload() -> dict:
+    return {
+        "error": "unauthorized",
+        "error_type": "Unauthorized",
+        "message": "Missing or invalid auth token. Open the URL printed by `pico web` (it includes ?token=...).",
+    }
 
 
 def _combined_tuning_status(chat_status: str, eval_status: str) -> str:

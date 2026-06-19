@@ -14,6 +14,19 @@ python -m pip install -e ".[dev,hf,monitor]"
 PYTHONPATH=src pytest -q
 ```
 
+The dashboard is a React + Vite app in `frontend/`, built into
+`src/picochat/web_assets/react/` and served at `/react/`:
+
+```bash
+npm ci
+npm run frontend:check   # tsc typecheck
+npm run frontend:build   # rebuild the served bundle
+npm run frontend:dev     # hot-reload dev server (proxies /api to :8765)
+```
+
+Commit the rebuilt `src/picochat/web_assets/react/` along with any frontend
+source change — CI verifies the committed bundle matches `frontend/`.
+
 ## Contribution Standards
 
 - Keep generated runs, checkpoints, logs, model weights, and private notes out
@@ -30,9 +43,21 @@ PYTHONPATH=src pytest -q
 
 - `PYTHONPATH=src pytest -q` passes locally or the PR explains why it could not
   be run.
+- `ruff check src tests` passes (lint runs in CI).
+- Frontend changes include a rebuilt `src/picochat/web_assets/react/`, and
+  `npm run frontend:check` passes.
 - Public docs are updated for user-facing commands or workflow changes.
 - No generated artifacts are included.
 - New release claims include a reproducible eval command and an honesty report.
+
+## Licensing and provenance
+
+Picochat is MIT licensed. By submitting a contribution you certify the
+[Developer Certificate of Origin](https://developercertificate.org/) (DCO): you
+wrote the change or otherwise have the right to submit it under the project
+license, and you agree it is provided under the MIT License. Sign off each
+commit with `git commit -s` (adds a `Signed-off-by:` trailer). Do not contribute
+code, weights, or data you are not licensed to redistribute.
 
 ## Scope
 

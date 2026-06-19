@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from picochat.benchmark_pack import (
-    BENCHMARK_SKILL_ANSWER_STYLES,
-    BENCHMARK_SOURCES,
     _assert_no_prompt_overlap,
     _build_benchmark_eval_result,
     _build_benchmark_sft_result,

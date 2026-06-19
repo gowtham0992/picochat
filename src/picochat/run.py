@@ -16,7 +16,6 @@ from picochat.data import (
     DEFAULT_EVAL_INPUT,
     build_corpus_artifacts,
 )
-from picochat.device import resolve_device
 from picochat.distributed import barrier_if_distributed, ddp_env_metadata, is_main_process
 from picochat.dpo import DPOConfig, train_dpo
 from picochat.eval import ChatEvalConfig, run_chat_eval, write_sft_fit_eval

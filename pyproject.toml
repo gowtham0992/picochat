@@ -46,8 +46,25 @@ pico = "picochat.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"picochat.web_assets" = ["*.html", "*.css", "*.js"]
+"picochat.web_assets" = [
+    "*.png",
+    "*.svg",
+    "react/*.html",
+    "react/assets/*.css",
+    "react/assets/*.js",
+    "react/assets/*.png",
+    "react/assets/*.svg",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+# Start with the high-signal pyflakes + syntax rules (unused imports/vars,
+# undefined names, f-string mistakes). Tighten over time as the tree is cleaned.
+select = ["F", "E9"]

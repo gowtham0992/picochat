@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ipaddress
 import json
+import secrets
 import threading
 from time import time
 import uuid
@@ -32,8 +34,25 @@ class ServeConfig:
     api_key: str | None = None
 
 
+def _is_loopback_host(host: str) -> bool:
+    """True for localhost-style hosts that are safe to serve without a key."""
+    name = (host or "").strip().lower()
+    if name in {"", "localhost"}:
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
+
+
 def serve_model(config: ServeConfig) -> None:
     """Start a blocking local OpenAI-compatible HTTP server."""
+    if not _is_loopback_host(config.host) and not config.api_key:
+        # Inference still spends compute and exposes the model; never open it on
+        # a public interface without a bearer key.
+        config = replace(config, api_key=secrets.token_urlsafe(24))
+        print("WARNING: binding to a non-loopback address — requiring a bearer API key.")
+        print(f"API key: {config.api_key}")
     engine = LoadedGenerator(
         checkpoint_path=config.checkpoint_path,
         tokenizer_path=config.tokenizer_path,

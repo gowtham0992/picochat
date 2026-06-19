@@ -1,0 +1,836 @@
+import {
+  Archive,
+  BarChart3,
+  Boxes,
+  Check,
+  ChevronDown,
+  CircleAlert,
+  Command,
+  Copy,
+  Cpu,
+  Database,
+  FlaskConical,
+  Gauge,
+  LayoutGrid,
+  Loader2,
+  Lock,
+  type LucideIcon,
+  MessageSquare,
+  Moon,
+  RefreshCw,
+  Send,
+  ShieldCheck,
+  Sun,
+  Terminal,
+  X
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type * as React from "react";
+import { archiveRuns, cancelRun, generateText, listRuns, loadRun, loadRunLog, loadStatus, startRun } from "./api";
+import ModelViewer from "./ModelViewer";
+import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
+import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
+
+type SectionId = "overview" | "runs" | "playground" | "training" | "eval" | "release" | "dataset" | "settings";
+
+const NAV: Array<{ id: SectionId; label: string; icon: LucideIcon; group: "main" | "model" | "system" }> = [
+  { id: "overview", label: "Overview", icon: LayoutGrid, group: "main" },
+  { id: "runs", label: "Runs", icon: Boxes, group: "main" },
+  { id: "playground", label: "Playground", icon: MessageSquare, group: "model" },
+  { id: "training", label: "Training", icon: Gauge, group: "model" },
+  { id: "eval", label: "Evaluation", icon: BarChart3, group: "model" },
+  { id: "release", label: "Release gate", icon: Lock, group: "model" },
+  { id: "dataset", label: "Dataset", icon: Database, group: "system" },
+  { id: "settings", label: "Settings", icon: ShieldCheck, group: "system" }
+];
+
+const DEFAULT_SETTINGS = {
+  theme: "dark",
+  autoRefresh: true,
+  refreshSeconds: 5,
+  hfToken: "",
+  defaultDataset: "HuggingFaceTB/smollm-corpus"
+};
+type SettingsState = typeof DEFAULT_SETTINGS;
+
+function readSettings(): SettingsState {
+  try {
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem("picochat.forge.settings") || "{}") };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+const ACCENTS: Record<Tone, [number, number, number]> = {
+  pass: [0.36, 0.86, 0.62],
+  warn: [0.92, 0.68, 0.32],
+  block: [0.96, 0.42, 0.4],
+  info: [0.51, 0.55, 1.0],
+  neutral: [0.51, 0.55, 1.0],
+  running: [0.51, 0.55, 1.0]
+};
+
+export default function App() {
+  const [section, setSection] = useState<SectionId>("overview");
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [selectedRunName, setSelectedRunName] = useState("");
+  const [detail, setDetail] = useState<RunDetail | null>(null);
+  const [jobs, setJobs] = useState<JobStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [settings, setSettings] = useState<SettingsState>(() => readSettings());
+  const [logTarget, setLogTarget] = useState<{ run?: string; job?: string } | null>(null);
+  const [navOpen, setNavOpen] = useState(false);
+  const lastRefresh = useRef<Date | null>(null);
+
+  const selectedRun = useMemo(() => runs.find((r) => r.name === selectedRunName) || latestRun(runs), [runs, selectedRunName]);
+  const activeJob = useMemo(
+    () => jobs.find((j) => j.run_name === selectedRun?.name) || jobs.find((j) => j.state === "running") || null,
+    [jobs, selectedRun?.name]
+  );
+
+  const refresh = async (quiet = false) => {
+    if (document.activeElement?.closest("input, textarea, select, [contenteditable='true']")) return;
+    try {
+      if (!quiet) setLoading(true);
+      const [runsPayload, statusPayload] = await Promise.all([listRuns(), loadStatus().catch(() => ({ jobs: [], job: null }))]);
+      setRuns(runsPayload.runs || []);
+      setJobs(statusPayload.jobs || []);
+      const nextName = selectedRunName || latestRun(runsPayload.runs || [])?.name || "";
+      if (nextName) {
+        setSelectedRunName(nextName);
+        setDetail(await loadRun(nextName));
+      } else {
+        setDetail(null);
+      }
+      setError("");
+      lastRefresh.current = new Date();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { refresh(false); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { if (selectedRunName) loadRun(selectedRunName).then(setDetail).catch((e) => setError(e.message)); }, [selectedRunName]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = settings.theme;
+    localStorage.setItem("picochat.forge.settings", JSON.stringify(settings));
+  }, [settings]);
+  useEffect(() => {
+    if (!settings.autoRefresh) return;
+    const ms = Math.max(2, Number(settings.refreshSeconds) || 5) * 1000;
+    const handle = window.setInterval(() => refresh(true), ms);
+    return () => window.clearInterval(handle);
+    // eslint-disable-next-line
+  }, [settings.autoRefresh, settings.refreshSeconds, selectedRunName]);
+
+  const tone = releaseTone(detail);
+  const update = <K extends keyof SettingsState>(k: K, v: SettingsState[K]) => setSettings((s) => ({ ...s, [k]: v }));
+
+  const launchSmoke = async (preflightOnly = false) => {
+    const datasetPack = (detail as any)?.summary?.artifacts?.dataset_pack || (detail as any)?.summary?.config?.dataset_pack || "examples/tiny_dataset_pack.json";
+    setBusy(preflightOnly ? "Running preflight" : "Launching smoke run");
+    try {
+      const started = await startRun({
+        run_name: `${preflightOnly ? "preflight" : "ui-smoke"}-${Date.now()}`,
+        dataset_pack: datasetPack, preset: "smoke", preflight_only: preflightOnly, sft_peft: "none", sft_steps: 1, base_steps: 1
+      });
+      setLogTarget({ job: started.job?.id, run: started.job?.run_name });
+      await refresh(true);
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); } finally { setBusy(""); }
+  };
+
+  const archiveSelected = async () => {
+    if (!selectedRun?.name) return;
+    setBusy("Archiving run");
+    try { await archiveRuns([selectedRun.name]); await refresh(true); }
+    catch (err) { setError(err instanceof Error ? err.message : String(err)); } finally { setBusy(""); }
+  };
+
+  const ctx: SectionProps = {
+    section, runs, selectedRun: selectedRun ?? null, detail, jobs, settings, tone,
+    update, launchSmoke, archiveSelected, selectRun: setSelectedRunName,
+    openLogs: () => selectedRun && setLogTarget({ run: selectedRun.name, job: activeJob?.id }),
+    setSection
+  };
+
+  return (
+    <div className="pc">
+      <aside className={`pc-rail ${navOpen ? "open" : ""}`}>
+        <div className="pc-brand">
+          <span className="pc-logo"><img src="/assets/picochat-symbol.svg" alt="" /></span>
+          <div><strong>Picochat</strong><span>SLM factory</span></div>
+        </div>
+        <nav className="pc-nav">
+          <NavGroup items={NAV.filter((i) => i.group === "main")} {...ctx} close={() => setNavOpen(false)} />
+          <NavGroup title="Model" items={NAV.filter((i) => i.group === "model")} {...ctx} close={() => setNavOpen(false)} />
+          <NavGroup title="Pipeline" items={NAV.filter((i) => i.group === "system")} {...ctx} close={() => setNavOpen(false)} />
+        </nav>
+        <div className="pc-rail-foot">
+          <button className="pc-theme" onClick={() => update("theme", settings.theme === "dark" ? "light" : "dark")}>
+            {settings.theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+            <span>{settings.theme === "dark" ? "Light" : "Dark"}</span>
+          </button>
+          <div className="pc-live"><span className={activeJob?.state === "running" ? "run" : ""} />{activeJob?.state === "running" ? "Training" : "Idle"} · {settings.autoRefresh ? `${settings.refreshSeconds}s` : "paused"}</div>
+        </div>
+      </aside>
+      {navOpen ? <button className="pc-scrim" aria-label="Close" onClick={() => setNavOpen(false)} /> : null}
+
+      <main className="pc-main">
+        <header className="pc-top">
+          <div className="pc-top-l">
+            <button className="pc-burger" onClick={() => setNavOpen(true)} aria-label="Menu"><LayoutGrid size={18} /></button>
+            <span className="pc-bc">{NAV.find((n) => n.id === section)?.label}</span>
+            {selectedRun ? <StatusDot tone={tone} label={statusLabel(tone)} /> : null}
+          </div>
+          <div className="pc-top-r">
+            <div className="pc-kbd"><Command size={13} /> K</div>
+            <RunPicker runs={runs} value={selectedRun?.name || ""} onChange={setSelectedRunName} />
+            <button className="pc-btn ghost" onClick={() => refresh(false)} disabled={loading || !!busy}><RefreshCw size={15} className={loading ? "spin" : ""} /> Sync</button>
+          </div>
+        </header>
+
+        <section className="pc-content">
+          {error ? <Banner tone="block" title="Action failed" body={error} onClose={() => setError("")} /> : null}
+          {busy ? <Banner tone="info" title={busy} body="Running a backend action — live status and logs update automatically." /> : null}
+          {render(ctx)}
+        </section>
+      </main>
+
+      {logTarget ? <LogModal target={logTarget} onClose={() => setLogTarget(null)} onCancel={cancelRun} /> : null}
+    </div>
+  );
+}
+
+type SectionProps = {
+  section: SectionId;
+  runs: RunSummary[];
+  selectedRun: RunSummary | null;
+  detail: RunDetail | null;
+  jobs: JobStatus[];
+  settings: SettingsState;
+  tone: Tone;
+  update: <K extends keyof SettingsState>(k: K, v: SettingsState[K]) => void;
+  launchSmoke: (preflightOnly?: boolean) => void;
+  archiveSelected: () => void;
+  selectRun: (name: string) => void;
+  openLogs: () => void;
+  setSection: (s: SectionId) => void;
+};
+
+function render(p: SectionProps) {
+  switch (p.section) {
+    case "runs": return <RunsView {...p} />;
+    case "playground": return <PlaygroundView {...p} />;
+    case "training": return <TrainingView {...p} />;
+    case "eval": return <EvalView {...p} />;
+    case "release": return <ReleaseView {...p} />;
+    case "dataset": return <DatasetView {...p} />;
+    case "settings": return <SettingsView {...p} />;
+    default: return <OverviewView {...p} />;
+  }
+}
+
+/* --------------------------------------------------------------- overview */
+
+function modelConfig(detail: RunDetail | null, run: RunSummary | null): ModelConfig {
+  const c = (detail as any)?.summary?.config || {};
+  return {
+    n_layer: Number(c.n_layer) || 1,
+    n_head: Number(c.n_head) || 1,
+    n_embd: Number(c.n_embd) || 0,
+    context_size: Number(c.context_size) || run?.context_size || 0,
+    params: (detail as any)?.summary?.base?.num_parameters || run?.num_parameters || 0
+  };
+}
+
+function OverviewView(p: SectionProps) {
+  const { detail, selectedRun, tone, setSection } = p;
+  const s = (detail as any)?.summary || {};
+  const cfg = modelConfig(detail, selectedRun);
+  const heat = Math.max(0.08, Math.min(1, selectedRun?.pass_rate ?? 0));
+  const valBpb = s.sft?.final_val_bpb ?? s.base?.final_val_bpb;
+  const tps = s.sft?.throughput?.tokens_per_second ?? s.base?.throughput?.tokens_per_second;
+
+  return (
+    <div className="pc-stack">
+      <section className="pc-hero">
+        <div className="pc-model-panel">
+          <div className="pc-model-stage">
+            {cfg.n_layer ? <ModelViewer config={cfg} heat={heat} accent={ACCENTS[tone]} /> : <Empty label="No model yet" />}
+            <div className="pc-model-cap">
+              <span>{cfg.n_layer} blocks · {cfg.n_head} heads · d{cfg.n_embd}</span>
+              <em>eval-charged schematic</em>
+            </div>
+          </div>
+          <div className="pc-model-bar">
+            <div>
+              <span className="pc-eyebrow">{s.config?.scale || "model"}</span>
+              <strong>{compactNumber(cfg.params)} parameters</strong>
+            </div>
+            <button className="pc-btn" onClick={() => setSection("playground")}><MessageSquare size={15} /> Open playground</button>
+          </div>
+        </div>
+
+        <div className="pc-hero-side">
+          <VerdictCard detail={detail} tone={tone} setSection={setSection} />
+          <div className="pc-kpis">
+            <Kpi label="Eval pass" value={percent(selectedRun?.pass_rate)} sub={selectedRun?.eval_score || "--"} tone={runTone(selectedRun)} />
+            <Kpi label="SFT val loss" value={fixed(selectedRun?.sft_val_loss, 3)} sub="lower is better" />
+            <Kpi label="Val BPB" value={fixed(valBpb, 3)} sub="bits / byte" />
+            <Kpi label="Throughput" value={tps ? compactNumber(tps) : "--"} sub="tokens / s" />
+          </div>
+        </div>
+      </section>
+
+      <div className="pc-grid two">
+        <Panel title="Training loss" sub="base → SFT" >
+          <LossChart points={lossPoints(detail)} />
+        </Panel>
+        <Panel title="Architecture">
+          <Spec rows={{
+            Layers: cfg.n_layer, Heads: cfg.n_head, "Embedding dim": cfg.n_embd || "--",
+            Context: cfg.context_size || "--", Norm: s.config?.norm_type || "--",
+            Position: s.config?.position_encoding || "--", Activation: s.config?.activation || "--",
+            Precision: s.config?.precision || "--", Optimizer: s.config?.base_optimizer || "--",
+            "Vocab size": (detail as any)?.summary?.tokenizer?.vocab_size || "--"
+          }} />
+        </Panel>
+      </div>
+
+      <Panel title="Recent runs" action={<button className="pc-link" onClick={() => setSection("runs")}>All runs →</button>}>
+        <RunTable runs={p.runs.slice(-6).reverse()} selected={selectedRun?.name} onSelect={p.selectRun} />
+      </Panel>
+    </div>
+  );
+}
+
+function VerdictCard({ detail, tone, setSection }: { detail: RunDetail | null; tone: Tone; setSection: (s: SectionId) => void }) {
+  const reasons = gateReasons(detail);
+  const title = tone === "pass" ? "Ready for handoff" : tone === "block" ? "Release blocked" : tone === "neutral" ? "No evidence yet" : "Needs review";
+  return (
+    <button className={`pc-verdict ${tone}`} onClick={() => setSection("release")}>
+      <div className="pc-verdict-head">
+        <StatusGlyph tone={tone} />
+        <div><span className="pc-eyebrow">Release gate</span><strong>{title}</strong></div>
+        <ChevronDown size={16} className="pc-verdict-arrow" />
+      </div>
+      <ul className="pc-verdict-list">
+        {reasons.slice(0, 3).map((r, i) => (
+          <li key={i} className={r.tone}><StatusGlyph tone={r.tone} small /> {r.label}</li>
+        ))}
+      </ul>
+    </button>
+  );
+}
+
+/* ------------------------------------------------------------------ runs */
+
+function RunsView(p: SectionProps) {
+  const { runs, selectedRun, detail, launchSmoke, openLogs, archiveSelected } = p;
+  return (
+    <div className="pc-stack">
+      <div className="pc-toolbar">
+        <div className="pc-toolbar-meta"><strong>{runs.length}</strong> runs in the local bank</div>
+        <div className="pc-row">
+          <button className="pc-btn" onClick={() => launchSmoke(true)}><ShieldCheck size={15} /> Preflight</button>
+          <button className="pc-btn" onClick={() => launchSmoke(false)}><Terminal size={15} /> Smoke run</button>
+          <button className="pc-btn ghost" onClick={openLogs}>Logs</button>
+          {selectedRun ? <button className="pc-btn ghost danger" onClick={archiveSelected}><Archive size={15} /> Archive</button> : null}
+        </div>
+      </div>
+      <Panel flush>
+        <RunTable runs={[...runs].reverse()} selected={selectedRun?.name} onSelect={p.selectRun} detailed />
+      </Panel>
+      {selectedRun ? (
+        <div className="pc-grid two">
+          <Spec title="Selected run" rows={{
+            Name: selectedRun.name,
+            Parameters: compactNumber(selectedRun.num_parameters),
+            "Eval pass": `${percent(selectedRun.pass_rate)} (${selectedRun.eval_score})`,
+            "Base val loss": fixed(selectedRun.base_val_loss, 3),
+            "SFT val loss": fixed(selectedRun.sft_val_loss, 3),
+            Context: selectedRun.context_size || "--",
+            "Truncated SFT": selectedRun.truncated_examples ?? "--"
+          }} />
+          <Spec title="Run config" rows={{
+            Scale: (detail as any)?.summary?.config?.scale || "--",
+            Device: (detail as any)?.summary?.config?.device || "--",
+            Precision: (detail as any)?.summary?.config?.precision || "--",
+            "torch.compile": (detail as any)?.summary?.config?.torch_compile ? "on" : "off",
+            DDP: (detail as any)?.summary?.config?.ddp ? "on" : "off",
+            Seed: (detail as any)?.summary?.config?.seed ?? "--"
+          }} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- playground */
+
+type ChatMsg = { role: "user" | "assistant"; content: string; meta?: string };
+
+function PlaygroundView({ selectedRun, detail }: SectionProps) {
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [input, setInput] = useState("");
+  const [checkpoint, setCheckpoint] = useState<"base" | "sft">("sft");
+  const [temperature, setTemperature] = useState(0.8);
+  const [maxTokens, setMaxTokens] = useState(80);
+  const [sending, setSending] = useState(false);
+  const [genError, setGenError] = useState("");
+  const threadRef = useRef<HTMLDivElement | null>(null);
+  const runName = selectedRun?.name || "";
+
+  useEffect(() => { threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" }); }, [messages, sending]);
+
+  const send = async () => {
+    const prompt = input.trim();
+    if (!prompt || !runName || sending) return;
+    setMessages((m) => [...m, { role: "user", content: prompt }]);
+    setInput("");
+    setSending(true);
+    setGenError("");
+    try {
+      const res: GenerateResult = await generateText({ run: runName, prompt, checkpoint, max_new_tokens: maxTokens, temperature });
+      const text = (res.completion || res.text || "").trim() || "(empty completion)";
+      setMessages((m) => [...m, { role: "assistant", content: text, meta: `${res.completion_tokens} tok · ${res.finish_reason} · ${checkpoint}` }]);
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : String(err));
+    } finally { setSending(false); }
+  };
+
+  return (
+    <div className="pc-play">
+      <div className="pc-play-main">
+        <div className="pc-play-head">
+          <div><strong>{runName || "No run selected"}</strong><span>Native PyTorch inference · CPU</span></div>
+          <Segmented value={checkpoint} options={["base", "sft"]} onChange={(v) => setCheckpoint(v as "base" | "sft")} />
+        </div>
+        <div className="pc-thread" ref={threadRef}>
+          {messages.length === 0 && !sending ? (
+            <div className="pc-thread-empty">
+              <FlaskConical size={26} />
+              <p>Talk to the model you trained.</p>
+              <div className="pc-suggest">
+                {["What is Picochat?", "Write a haiku about GPUs.", "2 + 2 ="].map((q) => (
+                  <button key={q} onClick={() => setInput(q)}>{q}</button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {messages.map((m, i) => (
+            <div key={i} className={`pc-msg ${m.role}`}>
+              <div className="pc-msg-role">{m.role === "user" ? "You" : "picochat"}</div>
+              <div className="pc-msg-body">{m.content}{m.meta ? <span className="pc-msg-meta">{m.meta}</span> : null}</div>
+            </div>
+          ))}
+          {sending ? <div className="pc-msg assistant"><div className="pc-msg-role">picochat</div><div className="pc-msg-body"><span className="pc-typing"><i /><i /><i /></span></div></div> : null}
+          {genError ? <Banner tone="block" title="Generation failed" body={genError} onClose={() => setGenError("")} /> : null}
+        </div>
+        <div className="pc-composer">
+          <textarea
+            value={input}
+            placeholder={runName ? "Message the model…" : "Select a trained run first"}
+            disabled={!runName}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+          />
+          <button className="pc-btn primary" onClick={send} disabled={!input.trim() || !runName || sending}>
+            {sending ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
+          </button>
+        </div>
+      </div>
+      <aside className="pc-play-side">
+        <Panel title="Sampling">
+          <Slider label="Temperature" value={temperature} min={0} max={2} step={0.05} onChange={setTemperature} />
+          <Slider label="Max new tokens" value={maxTokens} min={8} max={240} step={8} onChange={(v) => setMaxTokens(Math.round(v))} fmt={(v) => String(Math.round(v))} />
+          <div className="pc-hint">Checkpoint: <code>{checkpoint}</code>. The <code>sft</code> checkpoint is chat-tuned; <code>base</code> is raw pretraining.</div>
+        </Panel>
+        <Panel title="Model">
+          <Spec rows={{
+            Run: runName || "--",
+            Eval: selectedRun ? percent(selectedRun.pass_rate) : "--",
+            Params: compactNumber(selectedRun?.num_parameters),
+            Context: (detail as any)?.summary?.config?.context_size || selectedRun?.context_size || "--"
+          }} />
+        </Panel>
+      </aside>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------- training */
+
+function TrainingView({ detail, selectedRun, openLogs }: SectionProps) {
+  const s = (detail as any)?.summary || {};
+  const tps = s.sft?.throughput?.tokens_per_second ?? s.base?.throughput?.tokens_per_second;
+  return (
+    <div className="pc-stack">
+      <div className="pc-kpis four">
+        <Kpi label="Base val loss" value={fixed(s.base?.final_val_loss ?? selectedRun?.base_val_loss, 3)} sub="final" />
+        <Kpi label="SFT val loss" value={fixed(s.sft?.final_val_loss ?? selectedRun?.sft_val_loss, 3)} sub="final" />
+        <Kpi label="Val BPB" value={fixed(s.sft?.final_val_bpb ?? s.base?.final_val_bpb, 3)} sub="bits/byte" />
+        <Kpi label="Throughput" value={tps ? compactNumber(tps) : "--"} sub="tokens/s" />
+      </div>
+      <Panel title="Loss curve" action={<button className="pc-link" onClick={openLogs}>Live log →</button>}>
+        <LossChart points={lossPoints(detail)} />
+      </Panel>
+      <div className="pc-grid two">
+        <Spec title="Hyperparameters" rows={{
+          "Base LR": s.config?.base_learning_rate ?? "--",
+          "SFT LR": s.config?.sft_learning_rate ?? "--",
+          "Base steps": s.config?.base_steps ?? "--",
+          "SFT steps": s.config?.sft_steps ?? "--",
+          "Batch (base/sft)": `${s.config?.base_batch_size ?? "--"} / ${s.config?.sft_batch_size ?? "--"}`,
+          "Stop reason": s.base?.stop_reason || "--"
+        }} />
+        <Spec title="Hardware & runtime" rows={{
+          Device: s.config?.device || "--",
+          Precision: s.config?.precision || "--",
+          "torch.compile": s.config?.torch_compile ? "on" : "off",
+          "Grad checkpointing": s.config?.gradient_checkpointing ? "on" : "off",
+          DDP: s.config?.ddp ? "on" : "off",
+          "Packing efficiency": s.sft?.packing_efficiency != null ? percent(s.sft.packing_efficiency) : "--"
+        }} />
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------- eval */
+
+function EvalView({ detail, selectedRun }: SectionProps) {
+  const s = (detail as any)?.summary || {};
+  const ev = s.eval || {};
+  const score = parseEvalScore(selectedRun?.eval_score);
+  const cats: Record<string, any> = ev.category_breakdown || {};
+  const catRows = Object.entries(cats).slice(0, 8);
+  return (
+    <div className="pc-stack">
+      <div className="pc-kpis four">
+        <Kpi label="Overall" value={percent(selectedRun?.pass_rate)} sub={selectedRun?.eval_score || "--"} tone={runTone(selectedRun)} />
+        <Kpi label="Domain" value={percent(ev.domain_pass_rate)} sub="answerable" />
+        <Kpi label="Refusal" value={percent(ev.refusal_pass_rate)} sub="should refuse" />
+        <Kpi label="Prompt echo" value={percent(ev.prompt_echo_rate || 0)} sub="keep low" tone={(ev.prompt_echo_rate || 0) > 0.1 ? "warn" : "pass"} />
+      </div>
+      {catRows.length ? (
+        <Panel title="By category">
+          <div className="pc-bars">
+            {catRows.map(([name, v]) => {
+              const rate = typeof v === "object" ? (v.pass_rate ?? v.accuracy ?? 0) : Number(v) || 0;
+              return (
+                <div className="pc-bar-row" key={name}>
+                  <span className="pc-bar-label">{name}</span>
+                  <div className="pc-bar-track"><i className={barTone(rate)} style={{ width: `${Math.round(rate * 100)}%` }} /></div>
+                  <span className="pc-bar-val">{percent(rate)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      ) : null}
+      <div className="pc-grid two">
+        <Spec title="Scoreboard" rows={{
+          Passed: score.passed, Failed: Math.max(0, score.total - score.passed), Total: score.total,
+          "Choice accuracy": ev.choice_accuracy != null ? percent(ev.choice_accuracy) : "--",
+          "Unsupported claims": ev.unsupported_claims ?? "--",
+          "Length violations": ev.length_violations ?? "--"
+        }} />
+        <Panel title="Honesty">
+          <Spec rows={{
+            Status: s.honesty?.status || "--",
+            "Exact leaks": s.honesty?.exact_prompt_leaks ?? "0",
+            "Near leaks": s.honesty?.near_prompt_leaks ?? "0",
+            "Corpus hits": s.honesty?.corpus_prompt_hits ?? "0",
+            "Duplicate eval": s.honesty?.duplicate_eval_prompts ?? "0"
+          }} />
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- release */
+
+function ReleaseView({ detail, tone }: SectionProps) {
+  const reasons = gateReasons(detail);
+  return (
+    <div className="pc-stack">
+      <Banner
+        tone={tone}
+        title={tone === "pass" ? "Release gate passed" : tone === "block" ? "Release gate blocked" : tone === "neutral" ? "No release evidence yet" : "Release gate needs review"}
+        body={tone === "pass" ? "Every checked gate is satisfied. This run can move to handoff." : "Resolve the failing checks below before publishing or handing off this model."}
+      />
+      <Panel title="Gate checks" flush>
+        <div className="pc-checks">
+          {reasons.map((r, i) => (
+            <div className={`pc-check ${r.tone}`} key={i}>
+              <StatusGlyph tone={r.tone} />
+              <div><strong>{r.label}</strong>{r.detail ? <span>{r.detail}</span> : null}</div>
+              <span className="pc-chip2">{statusLabel(r.tone)}</span>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- dataset */
+
+function DatasetView({ detail, settings, update }: SectionProps) {
+  const s = (detail as any)?.summary || {};
+  const corpus = s.corpus || {};
+  const preview = (detail as any)?.corpus_preview || "";
+  return (
+    <div className="pc-stack">
+      <div className="pc-kpis four">
+        <Kpi label="Documents" value={corpus.num_documents != null ? compactNumber(corpus.num_documents) : "--"} sub="in corpus" />
+        <Kpi label="Characters" value={corpus.num_characters != null ? compactNumber(corpus.num_characters) : "--"} sub="total" />
+        <Kpi label="Dup docs" value={corpus.duplicate_document_rate != null ? percent(corpus.duplicate_document_rate) : "--"} sub="lower is better" tone={(corpus.duplicate_document_rate || 0) > 0.2 ? "warn" : "pass"} />
+        <Kpi label="Non-ASCII" value={corpus.non_ascii_rate != null ? percent(corpus.non_ascii_rate) : "--"} sub="rate" />
+      </div>
+      <div className="pc-grid two">
+        <Spec title="Tokenizer" rows={{
+          Type: s.tokenizer?.tokenizer_type || "--",
+          "Vocab size": s.tokenizer?.vocab_size || "--",
+          "Special tokens": s.tokenizer?.num_special_tokens ?? "--",
+          "Text tokens": s.tokenizer?.num_text_tokens ?? "--"
+        }} />
+        <Panel title="Import from Hugging Face">
+          <label className="pc-field">Dataset
+            <input value={settings.defaultDataset} onChange={(e) => update("defaultDataset", e.target.value)} />
+          </label>
+          <div className="pc-hint">Imports run on the backend and write a local dataset pack. Token is optional and stays local.</div>
+        </Panel>
+      </div>
+      {preview ? (
+        <Panel title="Corpus preview">
+          <pre className="pc-pre">{String(preview).slice(0, 1600)}</pre>
+        </Panel>
+      ) : null}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------- settings */
+
+function SettingsView({ settings, update }: SectionProps) {
+  return (
+    <div className="pc-grid two">
+      <Panel title="Workbench">
+        <div className="pc-set-row"><span>Theme</span><Segmented value={settings.theme} options={["light", "dark"]} onChange={(v) => update("theme", v)} /></div>
+        <div className="pc-set-row"><span>Auto refresh</span><input type="checkbox" checked={settings.autoRefresh} onChange={(e) => update("autoRefresh", e.target.checked)} /></div>
+        <label className="pc-field">Refresh interval (s)<input value={settings.refreshSeconds} onChange={(e) => update("refreshSeconds", Number(e.target.value) || 5)} /></label>
+      </Panel>
+      <Panel title="Hugging Face">
+        <label className="pc-field">Access token<input value={settings.hfToken} onChange={(e) => update("hfToken", e.target.value)} placeholder="stored locally" /></label>
+        <label className="pc-field">Default dataset<input value={settings.defaultDataset} onChange={(e) => update("defaultDataset", e.target.value)} /></label>
+        <div className="pc-hint">Secrets are kept in your browser only and never committed.</div>
+      </Panel>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ primitives */
+
+function NavGroup(p: { title?: string; items: typeof NAV; section: SectionId; setSection: (s: SectionId) => void; close: () => void; runs: RunSummary[] }) {
+  return (
+    <div className="pc-nav-group">
+      {p.title ? <div className="pc-nav-title">{p.title}</div> : null}
+      {p.items.map((item) => {
+        const Icon = item.icon;
+        return (
+          <button key={item.id} className={p.section === item.id ? "active" : ""} onClick={() => { p.setSection(item.id); p.close(); }}>
+            <Icon size={16} /><span>{item.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function RunPicker({ runs, value, onChange }: { runs: RunSummary[]; value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="pc-picker">
+      <Cpu size={14} />
+      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Select run">
+        {runs.length ? runs.map((r) => <option key={r.name} value={r.name}>{r.name}</option>) : <option>No runs</option>}
+      </select>
+      <ChevronDown size={14} />
+    </div>
+  );
+}
+
+function Kpi({ label, value, sub, tone = "neutral" }: { label: string; value: React.ReactNode; sub?: string; tone?: Tone }) {
+  return <div className={`pc-kpi ${tone}`}><span>{label}</span><strong>{value}</strong>{sub ? <em>{sub}</em> : null}</div>;
+}
+
+function Panel({ title, sub, action, children, flush }: { title?: string; sub?: string; action?: React.ReactNode; children: React.ReactNode; flush?: boolean }) {
+  return (
+    <section className="pc-panel">
+      {title ? <header><div><h2>{title}</h2>{sub ? <span>{sub}</span> : null}</div>{action}</header> : null}
+      <div className={flush ? "flush" : ""}>{children}</div>
+    </section>
+  );
+}
+
+function Spec({ title, rows }: { title?: string; rows: Record<string, React.ReactNode> }) {
+  const body = <dl className="pc-spec">{Object.entries(rows).map(([k, v]) => <div key={k}><dt>{k}</dt><dd title={String(v)}>{v}</dd></div>)}</dl>;
+  return title ? <Panel title={title}>{body}</Panel> : body;
+}
+
+function Banner({ tone, title, body, onClose }: { tone: Tone; title: string; body: string; onClose?: () => void }) {
+  const Icon = tone === "pass" ? Check : tone === "info" ? Loader2 : CircleAlert;
+  return <div className={`pc-banner ${tone}`}><Icon size={17} className={tone === "info" ? "spin" : ""} /><div><strong>{title}</strong><p>{body}</p></div>{onClose ? <button onClick={onClose} aria-label="Dismiss"><X size={15} /></button> : null}</div>;
+}
+
+function StatusDot({ tone, label }: { tone: Tone; label: string }) {
+  return <span className={`pc-status ${tone}`}><i />{label}</span>;
+}
+
+function StatusGlyph({ tone, small }: { tone: Tone; small?: boolean }) {
+  const size = small ? 13 : 16;
+  if (tone === "pass") return <Check size={size} className="pc-g pass" />;
+  if (tone === "block") return <CircleAlert size={size} className="pc-g block" />;
+  if (tone === "warn") return <CircleAlert size={size} className="pc-g warn" />;
+  return <span className={`pc-g-dot ${small ? "sm" : ""}`} />;
+}
+
+function RunTable({ runs, selected, onSelect, detailed }: { runs: RunSummary[]; selected?: string; onSelect?: (name: string) => void; detailed?: boolean }) {
+  if (!runs.length) return <Empty label="No runs yet — launch a smoke run to begin." />;
+  return (
+    <div className="pc-table">
+      <div className="pc-tr pc-th">
+        <span>Run</span><span>Params</span><span>Eval</span><span>SFT loss</span>{detailed ? <span>Context</span> : null}<span>Status</span>
+      </div>
+      {runs.map((r) => {
+        const t = runTone(r);
+        return (
+          <button key={r.name} className={`pc-tr ${selected === r.name ? "sel" : ""}`} onClick={() => onSelect?.(r.name)}>
+            <span className="pc-tname">{r.name}</span>
+            <span className="pc-mono">{compactNumber(r.num_parameters)}</span>
+            <span className="pc-mono">{percent(r.pass_rate)}</span>
+            <span className="pc-mono">{fixed(r.sft_val_loss, 3)}</span>
+            {detailed ? <span className="pc-mono">{r.context_size || "--"}</span> : null}
+            <span><StatusDot tone={t} label={statusLabel(t)} /></span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function LossChart({ points }: { points: Array<{ step: number; train?: number; val?: number }> }) {
+  const W = 940, H = 280;
+  const vals = points.flatMap((p) => [p.train, p.val]).filter((v): v is number => v != null && Number.isFinite(v));
+  if (!vals.length) return <Empty label="No loss points recorded yet." />;
+  const min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
+  const x = (i: number) => 50 + (i / Math.max(points.length - 1, 1)) * (W - 90);
+  const y = (v: number) => 230 - ((v - min) / span) * 170;
+  const line = (k: "train" | "val") => points.map((p, i) => (p[k] == null ? "" : `${i ? "L" : "M"} ${x(i).toFixed(1)} ${y(p[k] as number).toFixed(1)}`)).join(" ");
+  const area = () => {
+    const segs = points.map((p, i) => (p.train == null ? "" : `${i ? "L" : "M"} ${x(i).toFixed(1)} ${y(p.train).toFixed(1)}`)).filter(Boolean);
+    return segs.length ? `${segs.join(" ")} L ${x(points.length - 1).toFixed(1)} 230 L ${x(0).toFixed(1)} 230 Z` : "";
+  };
+  return (
+    <svg className="pc-loss" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Training and validation loss">
+      <defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--ac)" stopOpacity="0.22" /><stop offset="100%" stopColor="var(--ac)" stopOpacity="0" /></linearGradient></defs>
+      {[0, 0.5, 1].map((t) => <line key={t} x1="50" x2={W - 40} y1={60 + t * 170} y2={60 + t * 170} />)}
+      <path className="area" d={area()} fill="url(#lg)" stroke="none" />
+      <path className="train" d={line("train")} />
+      <path className="val" d={line("val")} />
+      <text x={W - 96} y="52">train</text>
+      <text x={W - 96} y="72" className="vl">val</text>
+    </svg>
+  );
+}
+
+function Segmented({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) {
+  return <div className="pc-seg">{options.map((o) => <button key={o} className={value === o ? "on" : ""} onClick={() => onChange(o)}>{o}</button>)}</div>;
+}
+
+function Slider({ label, value, min, max, step, onChange, fmt }: { label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void; fmt?: (v: number) => string }) {
+  return (
+    <label className="pc-slider">
+      <div><span>{label}</span><strong>{fmt ? fmt(value) : value.toFixed(2)}</strong></div>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+    </label>
+  );
+}
+
+function Empty({ label }: { label: string }) {
+  return <div className="pc-empty">{label}</div>;
+}
+
+function LogModal({ target, onClose, onCancel }: { target: { run?: string; job?: string }; onClose: () => void; onCancel: (id: string) => Promise<any> }) {
+  const [log, setLog] = useState<RunLog | null>(null);
+  const [err, setErr] = useState("");
+  const refresh = async () => {
+    try { setLog(await loadRunLog({ ...target, limit: 80_000 })); setErr(""); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  };
+  useEffect(() => { refresh(); const t = window.setInterval(refresh, 2500); return () => window.clearInterval(t); /* eslint-disable-next-line */ }, [target.run, target.job]);
+  return (
+    <div className="pc-modal-back" onClick={onClose}>
+      <section className="pc-modal" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div><span className="pc-eyebrow">Live run log</span><h2>{log?.run_name || target.run || target.job || "Run"}</h2></div>
+          <div className="pc-row">
+            <StatusDot tone={log?.running ? "running" : log?.state === "succeeded" ? "pass" : "neutral"} label={log?.state || "loading"} />
+            {log?.running && log.job_id ? <button className="pc-btn ghost danger" onClick={() => onCancel(log.job_id!).then(refresh)}>Cancel</button> : null}
+            <button className="pc-btn ghost" onClick={() => navigator.clipboard?.writeText(log?.log_tail || "")}><Copy size={14} /> Copy</button>
+            <button className="pc-btn ghost" onClick={onClose}>Close</button>
+          </div>
+        </header>
+        <pre>{err || log?.log_tail || "Waiting for log output…"}</pre>
+      </section>
+    </div>
+  );
+}
+
+/* --------------------------------------------------------------- helpers */
+
+function barTone(rate: number): Tone {
+  if (rate >= 0.7) return "pass";
+  if (rate >= 0.4) return "warn";
+  return "block";
+}
+
+function gateReasons(detail: RunDetail | null): Array<{ label: string; detail?: string; tone: Tone }> {
+  const s = (detail as any)?.summary || {};
+  if (!detail || !s.config) return [{ label: "No run evidence yet", detail: "Train a run to populate the gate.", tone: "neutral" }];
+  const out: Array<{ label: string; detail?: string; tone: Tone }> = [];
+
+  const pf = s.preflight || (detail as any).preflight || {};
+  const pfStatus = String(pf.status || "").toLowerCase();
+  const blocking = (pf.blocking_checks || []).length;
+  const warning = (pf.warning_checks || []).length;
+  out.push({
+    label: "Preflight",
+    detail: blocking ? `${blocking} blocking check(s)` : warning ? `${warning} warning(s)` : pf.summary || "checks recorded",
+    tone: blocking || pfStatus.includes("block") ? "block" : warning || pfStatus.includes("warn") ? "warn" : pf.status ? "pass" : "warn"
+  });
+
+  const ev = s.eval || {};
+  const rate = ev.pass_rate ?? 0;
+  out.push({ label: "Visible eval", detail: `${ev.num_passed ?? 0}/${ev.num_examples ?? 0} passed`, tone: rate >= 0.5 ? "pass" : rate > 0 ? "warn" : "block" });
+
+  const echo = ev.prompt_echo_rate ?? 0;
+  out.push({ label: "Prompt echo", detail: percent(echo), tone: echo > 0.1 ? "warn" : "pass" });
+
+  const hon = s.honesty || {};
+  const leaks = (hon.exact_prompt_leaks ?? 0) + (hon.near_prompt_leaks ?? 0);
+  out.push({ label: "Data honesty", detail: leaks ? `${leaks} prompt leak(s)` : hon.summary || "no leaks detected", tone: leaks ? "block" : hon.status ? "pass" : "warn" });
+
+  const gate = s.long_run_gate || s.release_gate || {};
+  const gs = String(gate.status || gate.verdict || "").toLowerCase();
+  if (gate.status || gate.verdict) {
+    out.push({ label: "Release gate", detail: gate.summary || (gate.issues || []).slice(0, 1).join("; ") || gs, tone: gs.includes("pass") || gs.includes("approv") ? "pass" : gs.includes("block") || gs.includes("fail") ? "block" : "warn" });
+  }
+  return out;
+}
