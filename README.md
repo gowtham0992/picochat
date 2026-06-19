@@ -1,13 +1,13 @@
 <p align="center">
-  <img src="docs/assets/picochat-os-wordmark.svg" width="560" alt="Picochat">
+  <img src="docs/assets/picochat-wordmark.png" width="620" alt="Picochat">
 </p>
 
 <h3 align="center">Build small language models without hiding the evidence.</h3>
 
 <p align="center">
-  Picochat is an honest SLM training factory: dataset import, tokenizer
-  training, base pretraining, SFT, optional DPO, eval, serving, and release
-  gates in one inspectable repo.
+  Picochat is an evidence-first SLM factory: dataset import, tokenizer training,
+  base pretraining, SFT, optional DPO, eval, serving, and release gates in one
+  inspectable repo.
 </p>
 
 <p align="center">
@@ -33,6 +33,10 @@
 </p>
 
 ![Picochat workbench release readiness](docs/screenshots/workbench-release-readiness.jpg)
+
+Picochat is deliberately artifact-driven: a run is not a release claim until
+its model card, release manifest, benchmark report, and honesty evidence ship
+together.
 
 ## What is Picochat?
 
@@ -97,7 +101,8 @@ What is ready:
 - Post-run gates that block release when SFT fit, held-out fit, visible eval,
   external benchmarks, prompt echo, refusal behavior, or honesty checks fail.
 - A local web dashboard with release readiness, loss curves, preflight output,
-  Scale Up commands, paid-GPU confirmation, and DDP dry-run commands.
+  external training launch commands, Scale Up commands, paid-GPU confirmation,
+  and DDP dry-run commands.
 - Native PyTorch serving through `picochat serve`, including local
   OpenAI-compatible `/v1/completions`, `/v1/chat/completions`, and `/v1/models`
   endpoints plus `stream=true` SSE response framing for smoke integrations.
@@ -326,12 +331,12 @@ Key stations:
 - **Eval Scoreboard:** pass/fail rows, failure causes, prompt echo, and repair
   guidance.
 - **Release Readiness:** the post-run gate in both beginner and research modes.
-- **Scale Up:** remote setup, sanity, import, benchmark, preflight, DDP dry run,
-  full train, bundle, and return commands.
+- **External Train:** Modal, Colab, and Lambda launch setup for remote GPU
+  runs without changing the local recipe.
 
 ![Training dash loss curves](docs/screenshots/training-dash-loss-curves.jpg)
 
-![Scale Up commands](docs/screenshots/scale-up-commands.jpg)
+![External train setup](docs/screenshots/scale-up-commands.jpg)
 
 ## Documentation
 

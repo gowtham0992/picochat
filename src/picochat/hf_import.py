@@ -32,6 +32,7 @@ class HFImportConfig:
     dataset: str
     out_path: str
     config_name: str | None = None
+    token: str | None = None
     split: str = "train"
     text_column: str = "text"
     max_rows: int = 1000
@@ -281,6 +282,8 @@ def _load_dataset(config: HFImportConfig, loader: DatasetLoader | None) -> Itera
     if config.config_name:
         args.append(config.config_name)
     kwargs = {"split": config.split, "streaming": config.streaming}
+    if config.token:
+        kwargs["token"] = config.token
     if config.data_files:
         kwargs["data_files"] = list(config.data_files)
     try:

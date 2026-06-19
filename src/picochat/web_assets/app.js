@@ -6,10 +6,33 @@ const state = {
   detail: null,
   workflowRunName: null,
   activeView: readInitialAppView(),
+  activeProductSection: readInitialProductSection(),
+  productNotice: null,
+  productBusyAction: null,
+  productBusyText: "",
+  productMobileNavOpen: false,
+  productPollTimer: null,
+  productPollInFlight: false,
+  productLastRefreshAt: null,
+  productCompareA: null,
+  productCompareB: null,
+  productSettings: readInitialProductSettings(),
+  productLogViewer: {
+    open: false,
+    loading: false,
+    runName: null,
+    jobId: null,
+    state: "",
+    logPath: "",
+    logTail: "",
+    error: "",
+    updatedAt: null,
+  },
   guideStep: 0,
   guideRunName: null,
   activePanel: "dataset",
   activeStage: "dataset",
+  activeCommandStage: null,
   viewMode: readInitialViewMode(),
   theme: readInitialTheme(),
   activeReport: "summary",
@@ -56,6 +79,20 @@ const MUON_EMA_TRIAL_DEFAULTS = {
   sftEmaDecay: 0.995,
 };
 const APP_VIEWS = ["home", "guide", "workbench", "scale"];
+const PRODUCT_SECTIONS = [
+  { id: "dashboard", label: "Dashboard", group: "primary", icon: "dashboard" },
+  { id: "runs", label: "Runs", group: "primary", icon: "runs" },
+  { id: "compare", label: "Compare", group: "primary", icon: "compare" },
+  { id: "data", label: "Data packs", group: "primary", icon: "data" },
+  { id: "preflight", label: "Preflight", group: "pipeline", icon: "shield" },
+  { id: "train", label: "Train", group: "pipeline", icon: "chip" },
+  { id: "external", label: "External train", group: "pipeline", icon: "cloud" },
+  { id: "eval", label: "Eval", group: "pipeline", icon: "chart" },
+  { id: "honesty", label: "Honesty", group: "pipeline", icon: "heart" },
+  { id: "release", label: "Release gate", group: "pipeline", icon: "gate" },
+  { id: "handoff", label: "Handoff", group: "pipeline", icon: "box" },
+  { id: "settings", label: "Settings", group: "system", icon: "settings" },
+];
 const PICOCHAT_REPO_URL = "https://github.com/gowtham0992/picochat.git";
 const SCALE_PRESETS = ["h100-pilot", "climbmix-pilot", "mps-local", "h200-1b-ddp8", "h100-100m-ddp8", "h100-100m", "medium", "small"];
 const H100_SCALE_PRESETS = new Set(["h200-1b-ddp8", "h100-100m-ddp8", "h100-100m", "h100-pilot"]);
@@ -408,15 +445,90 @@ async function boot() {
   setViewMode(state.viewMode, { persist: false, render: false });
   setTheme(state.theme, { persist: false });
   setAppView(state.activeView, { persist: false, render: false });
+  renderProductShell();
   await loadRunPresets();
   await loadRuns();
   await loadRunJobs();
+  syncProductPolling();
   renderScalePlan();
   renderHFSFTCommandPreview();
   renderGuide();
 }
 
 function bindControls() {
+  const productShell = $("product-shell");
+  productShell?.addEventListener("input", (event) => {
+    const control = event.target.closest("[data-product-setting]");
+    if (control) handleProductSettingInput(control);
+  });
+  productShell?.addEventListener("change", (event) => {
+    const runSelect = event.target.closest("[data-product-run-select]");
+    if (runSelect) {
+      selectRun(runSelect.value).catch((error) => {
+        flashStatus(`RUN LOAD FAULT. | ${error.message}`);
+      });
+      return;
+    }
+    const compareSelect = event.target.closest("[data-product-compare]");
+    if (compareSelect) {
+      if (compareSelect.dataset.productCompare === "a") {
+        state.productCompareA = compareSelect.value;
+      } else {
+        state.productCompareB = compareSelect.value;
+      }
+      renderProductShell();
+      return;
+    }
+    const control = event.target.closest("[data-product-setting]");
+    if (control) handleProductSettingInput(control);
+  });
+  productShell?.addEventListener("click", (event) => {
+    if (state.productMobileNavOpen && event.target === productShell) {
+      state.productMobileNavOpen = false;
+      renderProductShell();
+      return;
+    }
+    const copyButton = event.target.closest("[data-copy-text]");
+    if (copyButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const previous = copyButton.innerHTML;
+      copyButton.disabled = true;
+      copyButton.innerHTML = productIcon("check");
+      writeClipboard(copyButton.dataset.copyText || "").then(() => {
+        flashStatus("COPIED. | Value copied to clipboard.");
+      }).catch((error) => {
+        copyButton.innerHTML = productIcon("warning");
+        flashStatus(`COPY FAULT. | ${error.message}`);
+      }).finally(() => {
+        window.setTimeout(() => {
+          copyButton.innerHTML = previous;
+          copyButton.disabled = false;
+        }, 1200);
+      });
+      return;
+    }
+    const runButton = event.target.closest("[data-product-run]");
+    if (runButton) {
+      selectRun(runButton.dataset.productRun).catch((error) => {
+        flashStatus(`RUN LOAD FAULT. | ${error.message}`);
+      });
+    }
+    const navButton = event.target.closest("[data-product-section]");
+    if (navButton) {
+      state.productMobileNavOpen = false;
+      setProductSection(navButton.dataset.productSection);
+      return;
+    }
+    const action = event.target.closest("[data-product-action]");
+    if (action) {
+      handleProductAction(action.dataset.productAction).catch((error) => {
+        setProductNotice("fail", error.message || "Product action failed.");
+        renderProductShell();
+        flashStatus(`PRODUCT ACTION FAULT. | ${error.message}`);
+      });
+    }
+  });
   document.querySelectorAll("[data-app-view]").forEach((button) => {
     button.addEventListener("click", () => {
       if (button.dataset.workbenchMode) setViewMode(button.dataset.workbenchMode);
@@ -457,6 +569,11 @@ function bindControls() {
     copyCommand(button.dataset.copyCommand || "", button);
   });
   document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-copy-passport]");
+    if (!button) return;
+    copyPassport(button);
+  });
+  document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-guide-panel]");
     if (!button) return;
     if (button.dataset.sourceMode) prepareDatasetSourceMode(button.dataset.sourceMode);
@@ -472,6 +589,16 @@ function bindControls() {
     const button = event.target.closest("[data-stage]");
     if (!button) return;
     setStage(button.dataset.stage, { focus: true });
+  });
+  $("command-stage-track").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-command-panel]");
+    if (!button) return;
+    const panel = button.dataset.commandPanel;
+    const stage = button.dataset.commandStage;
+    const commandStage = button.dataset.commandStageId;
+    if (stage) state.activeStage = stage;
+    if (commandStage) state.activeCommandStage = commandStage;
+    setPanel(panel, { focus: true });
   });
   $("run-storyline").addEventListener("click", (event) => {
     const button = event.target.closest("[data-stage]");
@@ -702,12 +829,10 @@ function renderRuns() {
     });
   });
   list.querySelectorAll("[data-run]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      state.selectedRun = button.dataset.run;
-      state.pendingArchiveRun = null;
-      renderRuns();
-      await loadRun(state.selectedRun);
-      await loadRunJobs();
+    button.addEventListener("click", () => {
+      selectRun(button.dataset.run).catch((error) => {
+        flashStatus(`RUN LOAD FAULT. | ${error.message}`);
+      });
     });
   });
 }
@@ -787,6 +912,57 @@ async function refreshDashboard() {
   }
 }
 
+function productRefreshSeconds() {
+  const raw = Number(state.productSettings?.appearance?.refreshSeconds);
+  if (!Number.isFinite(raw)) return 5;
+  return Math.max(3, Math.min(60, raw));
+}
+
+function productHasFocusedEditable() {
+  const shell = $("product-shell");
+  const active = document.activeElement;
+  if (!shell || !active || !shell.contains(active)) return false;
+  return Boolean(active.closest("input, textarea, select, [contenteditable='true']"));
+}
+
+function syncProductPolling() {
+  if (state.productPollTimer) {
+    window.clearInterval(state.productPollTimer);
+    state.productPollTimer = null;
+  }
+  const enabled = state.activeView === "workbench" && state.productSettings?.appearance?.autoRefresh !== false;
+  if (!enabled) return;
+  state.productPollTimer = window.setInterval(() => {
+    refreshProductData({ quiet: true }).catch(() => {
+      // Keep polling best-effort; manual refresh still reports errors through the legacy status rail.
+    });
+  }, productRefreshSeconds() * 1000);
+}
+
+async function refreshProductData(options = {}) {
+  if (options.quiet && productHasFocusedEditable()) return;
+  if (state.productPollInFlight || state.productBusyAction) return;
+  state.productPollInFlight = true;
+  try {
+    await loadRuns();
+    await loadRunJobs();
+    state.productLastRefreshAt = new Date();
+    if (!options.quiet) {
+      flashStatus("PRODUCT DATA REFRESHED. | Runs, selected detail, and job status updated.");
+    }
+  } finally {
+    state.productPollInFlight = false;
+    if (!options.quiet || !productHasFocusedEditable()) {
+      renderProductShell();
+    }
+    if (state.productLogViewer?.open) {
+      refreshProductLogTail({ render: false }).catch(() => {
+        // Keep the live log best-effort during background polling.
+      });
+    }
+  }
+}
+
 async function loadRun(name) {
   state.detail = await fetchJson(`/api/run?name=${encodeURIComponent(name)}`);
   if (state.workflowRunName !== name) {
@@ -794,6 +970,16 @@ async function loadRun(name) {
     resetWorkflowFromRunConfig(state.detail?.summary?.config || {});
   }
   renderAll();
+}
+
+async function selectRun(name) {
+  if (!name) return;
+  state.selectedRun = name;
+  state.pendingArchiveRun = null;
+  state.productMobileNavOpen = false;
+  renderRuns();
+  await loadRun(state.selectedRun);
+  await loadRunJobs();
 }
 
 function resetWorkflowFromRunConfig(config = {}) {
@@ -857,13 +1043,135 @@ function readInitialAppView() {
   }
 }
 
+function readInitialProductSection() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get("section") || params.get("product_section");
+    if (isKnownProductSectionId(requested)) return requested;
+    const value = localStorage.getItem("picochat:product-section");
+    return isKnownProductSectionId(value) ? value : "dashboard";
+  } catch {
+    return "dashboard";
+  }
+}
+
+function isKnownProductSectionId(value) {
+  return [
+    "dashboard",
+    "runs",
+    "compare",
+    "data",
+    "preflight",
+    "train",
+    "external",
+    "eval",
+    "honesty",
+    "release",
+    "handoff",
+    "settings",
+  ].includes(value);
+}
+
 function readInitialTheme() {
   try {
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get("theme") || params.get("__theme");
+    if (requested === "dark" || requested === "classic") return "classic";
+    if (requested === "light" || requested === "paper") return "paper";
     const savedTheme = localStorage.getItem("picochat:theme");
     if (savedTheme === "classic" || savedTheme === "paper") return savedTheme;
-    return "paper";
+    return "classic";
   } catch {
-    return "paper";
+    return "classic";
+  }
+}
+
+function defaultProductSettings() {
+  return {
+    gate: {
+      toxicityMax: "0.08",
+      biasMax: "0.10",
+      contaminationMax: "0.05%",
+      accuracyMin: "75%",
+      honestyMin: "85/100",
+    },
+    hyperparams: {
+      learningRate: "2e-4",
+      sftLearningRate: "1e-5",
+      loraRank: "64",
+      loraAlpha: "128",
+      batchSize: "128",
+      scheduler: "cosine",
+    },
+    notifications: {
+      gateWarnings: true,
+      runComplete: true,
+      lossSpikes: true,
+      ddpSetup: true,
+    },
+    appearance: {
+      autoRefresh: true,
+      refreshSeconds: "5",
+    },
+    integrations: {
+      huggingface: "Connected",
+      huggingfaceToken: "",
+      huggingfaceDefaultDataset: "karpathy/climbmix-400b-shuffle",
+      huggingfaceDefaultSplit: "train",
+      huggingfaceDefaultTextColumn: "text",
+      huggingfaceDefaultOutDir: "runs/hf-climbmix-product",
+      tensorboard: "Auto",
+      localServing: "Available",
+      releaseBundle: "Staging",
+    },
+    external: {
+      provider: "modal",
+      repoUrl: "https://github.com/gowtham0992/picochat.git",
+      branch: "develop",
+      datasetPack: "",
+      runName: "picochat-modal-100m-v1",
+      scale: "h100-100m",
+      baseSteps: "",
+      sftSteps: "",
+      gpu: "A100",
+      maxHours: "8",
+      hfMaxRows: "800000",
+      hfShards: "170",
+      modalSecret: "picochat-hf-token",
+      modalVolume: "picochat-runs",
+      colabNotebook: "notebooks/picochat_external_train.ipynb",
+      lambdaInstance: "gpu_1x_a100",
+      lambdaRegion: "us-east-1",
+      lambdaSshUser: "ubuntu",
+      lambdaApiKey: "",
+    },
+  };
+}
+
+function readInitialProductSettings() {
+  const defaults = defaultProductSettings();
+  try {
+    const raw = localStorage.getItem("picochat:product-settings");
+    if (!raw) return defaults;
+    const saved = JSON.parse(raw);
+    return {
+      gate: { ...defaults.gate, ...(saved.gate || {}) },
+      hyperparams: { ...defaults.hyperparams, ...(saved.hyperparams || {}) },
+      notifications: { ...defaults.notifications, ...(saved.notifications || {}) },
+      appearance: { ...defaults.appearance, ...(saved.appearance || {}) },
+      integrations: { ...defaults.integrations, ...(saved.integrations || {}) },
+      external: { ...defaults.external, ...(saved.external || {}) },
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function saveProductSettings() {
+  try {
+    localStorage.setItem("picochat:product-settings", JSON.stringify(state.productSettings));
+  } catch {
+    // localStorage can be unavailable in restricted browser contexts.
   }
 }
 
@@ -892,6 +1200,38 @@ function setAppView(view, options = {}) {
     renderScalePlan();
     renderStatus();
   }
+  syncProductPolling();
+}
+
+function setProductSection(section, options = {}) {
+  const nextSection = PRODUCT_SECTIONS.some((item) => item.id === section) ? section : "dashboard";
+  state.activeProductSection = nextSection;
+  if (options.clearNotice !== false) {
+    state.productNotice = null;
+  }
+  if (options.persist !== false) {
+    try {
+      localStorage.setItem("picochat:product-section", nextSection);
+    } catch {
+      // localStorage can be unavailable in restricted browser contexts.
+    }
+  }
+  renderProductShell();
+  if (options.scroll !== false) {
+    scrollProductContentTop();
+  }
+}
+
+function scrollProductContentTop() {
+  window.requestAnimationFrame(() => {
+    const main = document.querySelector(".product-main");
+    const content = $("product-content");
+    if (main) main.scrollTop = 0;
+    if (content) content.scrollTop = 0;
+    if (document.body.classList.contains("workbench-active")) {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    }
+  });
 }
 
 function setViewMode(mode, options = {}) {
@@ -929,9 +1269,13 @@ function setTheme(theme, options = {}) {
       // localStorage can be unavailable in restricted browser contexts.
     }
   }
+  if (options.render !== false) {
+    renderProductShell();
+  }
 }
 
 function renderAll() {
+  renderProductShell();
   renderPanelGuide();
   renderPipeline();
   renderDataset();
@@ -949,6 +1293,2164 @@ function renderAll() {
     loadComparison().catch((error) => renderCompareError(error));
   }
   renderStatus();
+}
+
+function renderProductShell() {
+  if (!$("product-shell")) return;
+  $("product-shell").classList.toggle("nav-open", state.productMobileNavOpen);
+  renderProductNav();
+  const section = PRODUCT_SECTIONS.some((item) => item.id === state.activeProductSection)
+    ? state.activeProductSection
+    : "dashboard";
+  $("product-topbar").innerHTML = productTopbar(section);
+  $("product-content").innerHTML = productContent(section);
+  const existingLog = $("product-log-modal-root");
+  if (existingLog) existingLog.remove();
+  const existingMobileBackdrop = $("product-mobile-backdrop");
+  if (existingMobileBackdrop) existingMobileBackdrop.remove();
+  $("product-shell").insertAdjacentHTML("beforeend", `
+    <button id="product-mobile-backdrop" class="product-mobile-backdrop" type="button" data-product-action="close-mobile-nav" aria-label="Close navigation"></button>
+    ${renderProductLogModal()}
+  `);
+}
+
+function renderProductLogModal() {
+  const viewer = state.productLogViewer || {};
+  if (!viewer.open) return "";
+  const stateLabel = viewer.loading && !viewer.logTail
+    ? "Loading"
+    : viewer.state
+      ? viewer.state
+      : "Unknown";
+  const stateClass = productStatusClass(viewer.state === "running" ? "running" : viewer.state);
+  const updated = viewer.updatedAt
+    ? new Date(viewer.updatedAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : "--";
+  const body = viewer.error
+    ? viewer.error
+    : viewer.logTail || (viewer.loading ? "Loading log tail..." : "No log output yet. If the job just started, refresh in a few seconds.");
+  return `
+    <div id="product-log-modal-root" class="product-log-modal" role="dialog" aria-modal="true" aria-labelledby="product-log-title">
+      <button class="product-log-backdrop" type="button" data-product-action="close-logs" aria-label="Close run logs"></button>
+      <section class="product-log-panel">
+        <header class="product-log-head">
+          <div>
+            <p class="product-eyebrow">Live run log</p>
+            <h3 id="product-log-title">${escapeHtml(viewer.runName || "Selected run")}</h3>
+            <small id="product-log-meta">${escapeHtml(viewer.logPath || "Waiting for web_run.log")}</small>
+          </div>
+          <div class="product-log-actions">
+            <span id="product-log-state" class="product-status-pill ${escapeHtml(stateClass)}">${escapeHtml(stateLabel)}</span>
+            <span id="product-log-updated" class="product-mini-pill">Updated ${escapeHtml(updated)}</span>
+            <button class="product-log-action" type="button" data-product-action="refresh-logs" aria-label="Refresh run log" title="Refresh log">${productIcon("refresh")}<span>Refresh</span></button>
+            <button class="product-log-action" type="button" data-product-action="copy-logs" aria-label="Copy run log" title="Copy log">${productIcon("copy")}<span>Copy</span></button>
+            <button class="product-log-action" type="button" data-product-action="close-logs" aria-label="Close run log" title="Close log">${productIcon("close")}<span>Close</span></button>
+          </div>
+        </header>
+        <pre id="product-live-log-output" class="${viewer.error ? "error" : ""}">${escapeHtml(body)}</pre>
+      </section>
+    </div>
+  `;
+}
+
+function updateProductLogModalDom() {
+  const viewer = state.productLogViewer || {};
+  const output = $("product-live-log-output");
+  if (!output) return;
+  const body = viewer.error
+    ? viewer.error
+    : viewer.logTail || (viewer.loading ? "Loading log tail..." : "No log output yet. If the job just started, refresh in a few seconds.");
+  output.textContent = body;
+  output.classList.toggle("error", Boolean(viewer.error));
+  output.scrollTop = output.scrollHeight;
+  const meta = $("product-log-meta");
+  if (meta) meta.textContent = viewer.logPath || "Waiting for web_run.log";
+  const statePill = $("product-log-state");
+  if (statePill) {
+    const stateLabel = viewer.loading && !viewer.logTail ? "Loading" : viewer.state || "Unknown";
+    statePill.textContent = stateLabel;
+    statePill.className = `product-status-pill ${productStatusClass(viewer.state === "running" ? "running" : viewer.state)}`;
+  }
+  const updated = $("product-log-updated");
+  if (updated) {
+    updated.textContent = viewer.updatedAt
+      ? `Updated ${new Date(viewer.updatedAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+      : "Updated --";
+  }
+}
+
+function renderProductNav() {
+  if (!$("product-nav")) return;
+  const groups = [
+    ["primary", ""],
+    ["pipeline", "Pipeline"],
+    ["system", "System"],
+  ];
+  $("product-nav").innerHTML = groups.map(([group, label]) => {
+    const items = PRODUCT_SECTIONS.filter((section) => section.group === group);
+    if (!items.length) return "";
+    return `
+      <div class="product-nav-group">
+        ${label ? `<span>${escapeHtml(label)}</span>` : ""}
+        ${items.map((section) => `
+          <button class="${section.id === state.activeProductSection ? "active" : ""}" type="button" data-product-section="${escapeHtml(section.id)}">
+            ${productIcon(section.icon)}
+            <strong>${escapeHtml(section.label)}</strong>
+            ${productNavBadge(section.id)}
+          </button>
+        `).join("")}
+      </div>
+    `;
+  }).join("");
+}
+
+function productTopbar(section) {
+  const meta = productPageMeta(section);
+  const actions = meta.actions || [];
+  const breadcrumb = meta.crumb === meta.title
+    ? `<b>${escapeHtml(meta.title)}</b>`
+    : `${escapeHtml(meta.crumb)} / <b>${escapeHtml(meta.title)}</b>`;
+  const refreshed = state.productLastRefreshAt
+    ? `Live ${productRefreshSeconds()}s · ${state.productLastRefreshAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+    : state.productSettings?.appearance?.autoRefresh === false ? "Live off" : `Live ${productRefreshSeconds()}s`;
+  return `
+    <div class="product-topbar-left">
+      <button class="product-mobile-menu" type="button" data-product-action="toggle-mobile-nav" aria-label="Open navigation">${productIcon("menu")}</button>
+      <div class="product-crumb">${breadcrumb}</div>
+      ${meta.status ? `<span class="product-status-pill ${escapeHtml(meta.statusClass || "neutral")}">${escapeHtml(meta.status)}</span>` : ""}
+      ${productRunSelector()}
+    </div>
+    <div class="product-topbar-actions">
+      <span class="product-live-pill ${state.productSettings?.appearance?.autoRefresh === false ? "off" : "on"}">${escapeHtml(refreshed)}</span>
+      ${actions.map((action) => `
+        <button type="button" data-product-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function productRunSelector() {
+  const current = state.selectedRun || "";
+  if (!state.runs.length) {
+    return `
+      <label class="product-run-select-wrap disabled">
+        <span>Run</span>
+        <select disabled><option>No runs yet</option></select>
+      </label>
+    `;
+  }
+  return `
+    <label class="product-run-select-wrap">
+      <span>Run</span>
+      <select data-product-run-select aria-label="Select run">
+        ${state.runs.slice().reverse().map((run) => `
+          <option value="${escapeHtml(run.name)}" ${run.name === current ? "selected" : ""}>${escapeHtml(run.name)}</option>
+        `).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function productPageMeta(section) {
+  const runName = state.selectedRun || state.runs[0]?.name || "No run";
+  const gate = state.detail?.summary?.long_run_gate || {};
+  const handoff = state.detail?.handoff_packet || {};
+  const preflight = state.detail?.preflight || state.detail?.summary?.preflight || {};
+  const gateStatus = productGateStatus(gate, handoff);
+  const preflightPassed = state.detail ? !(preflight.blocking_checks || []).length : false;
+  const stageStatus = {
+    dashboard: { crumb: "Dashboard", title: "Dashboard", actions: [{ id: "new-run", label: "New run" }] },
+    runs: { crumb: "Runs", title: runName, status: gateStatus.label, statusClass: gateStatus.className, actions: [{ id: "evaluate", label: "Evaluate" }, { id: "rerun", label: "Rerun" }] },
+    compare: { crumb: "Runs", title: "Compare", actions: [{ id: "refresh-product", label: "Refresh" }] },
+    data: { crumb: "Data packs", title: "Data packs", actions: [{ id: "import-pack", label: "Import" }, { id: "new-pack", label: "New pack" }] },
+    preflight: { crumb: `Runs / ${runName}`, title: "Preflight", status: preflightPassed ? "Passed" : state.detail ? "Review" : "Waiting", statusClass: preflightPassed ? "pass" : "warn", actions: [{ id: "rerun-preflight", label: "Re-run checks" }] },
+    train: { crumb: `Runs / ${runName}`, title: "Train", status: productTrainStatus(), statusClass: productTrainStatus() === "Running" ? "info" : "neutral", actions: [{ id: "pause", label: "Pause" }, { id: "logs", label: "View logs" }] },
+    external: { crumb: `Runs / ${runName}`, title: "External Train", status: productExternalProviderLabel(), statusClass: "info", actions: [{ id: "external-settings", label: "Settings" }, { id: "copy-external-launch", label: "Copy launch" }] },
+    eval: { crumb: `Runs / ${runName}`, title: "Eval", status: productEvalPassed() ? "Passed" : "Review", statusClass: productEvalPassed() ? "pass" : "warn", actions: [{ id: "export", label: "Export" }, { id: "report", label: "View report" }] },
+    honesty: { crumb: `Runs / ${runName}`, title: "Honesty", status: productHonestyPassed() ? "Passed" : "Review", statusClass: productHonestyPassed() ? "pass" : "warn", actions: [{ id: "export", label: "Export" }, { id: "report", label: "View report" }] },
+    release: { crumb: `Runs / ${runName}`, title: "Release Gate", status: gateStatus.label, statusClass: gateStatus.className, actions: [{ id: "evaluate", label: "Evaluate" }, { id: "repair", label: "Repair" }] },
+    handoff: { crumb: `Runs / ${runName}`, title: "Handoff", status: handoff.status === "ready" ? "Ready" : "Locked", statusClass: handoff.status === "ready" ? "pass" : "warn", actions: [{ id: "handoff", label: handoff.status === "ready" ? "Download" : "Unlock" }] },
+    settings: { crumb: "Settings", title: "Settings", actions: [{ id: "save-settings", label: "Save changes" }] },
+  };
+  return stageStatus[section] || stageStatus.dashboard;
+}
+
+function productContent(section) {
+  if (section === "runs") return renderProductRuns();
+  if (section === "compare") return renderProductCompare();
+  if (section === "data") return renderProductDataPacks();
+  if (section === "preflight") return renderProductPreflight();
+  if (section === "train") return renderProductTrain();
+  if (section === "external") return renderProductExternalTrain();
+  if (section === "eval") return renderProductEval();
+  if (section === "honesty") return renderProductHonesty();
+  if (section === "release") return renderProductReleaseGate();
+  if (section === "handoff") return renderProductHandoff();
+  if (section === "settings") return renderProductSettings();
+  return renderProductDashboard();
+}
+
+async function openProductLogViewer() {
+  const runName = state.selectedRun || state.runJob?.run_name || null;
+  const jobId = state.runJob?.id || null;
+  state.productLogViewer = {
+    open: true,
+    loading: true,
+    runName,
+    jobId,
+    state: state.runJob?.state || "",
+    logPath: state.runJob?.log_path || "",
+    logTail: state.runJob?.log_tail || "",
+    error: "",
+    updatedAt: state.runJob?.updated_at || null,
+  };
+  renderProductShell();
+  await refreshProductLogTail({ render: false, force: true });
+}
+
+async function refreshProductLogTail(options = {}) {
+  const viewer = state.productLogViewer || {};
+  if (!viewer.open) return;
+  if (!options.force && viewer.loading) return;
+  const params = new URLSearchParams();
+  if (viewer.jobId) params.set("job", viewer.jobId);
+  else if (viewer.runName) params.set("run", viewer.runName);
+  else {
+    state.productLogViewer = { ...viewer, loading: false, error: "No selected run to load logs for." };
+    if (options.render === false) updateProductLogModalDom();
+    else renderProductShell();
+    return;
+  }
+  params.set("limit", "50000");
+  state.productLogViewer = { ...viewer, loading: true, error: "" };
+  if (options.render !== false) renderProductShell();
+  else updateProductLogModalDom();
+  try {
+    const payload = await fetchProductLogPayload(params, viewer);
+    state.productLogViewer = {
+      ...state.productLogViewer,
+      loading: false,
+      runName: payload.run_name || viewer.runName,
+      jobId: payload.job_id || viewer.jobId,
+      state: payload.state || "",
+      logPath: payload.log_path || "",
+      logTail: payload.log_tail || "",
+      error: "",
+      updatedAt: payload.updated_at || null,
+    };
+  } catch (error) {
+    state.productLogViewer = {
+      ...state.productLogViewer,
+      loading: false,
+      error: error.message || "Could not load run logs.",
+      updatedAt: Date.now() / 1000,
+    };
+  }
+  if (options.render === false) updateProductLogModalDom();
+  else renderProductShell();
+}
+
+async function fetchProductLogPayload(params, viewer) {
+  try {
+    return await fetchJson(`/api/run/log?${params.toString()}`);
+  } catch (logError) {
+    const scope = viewer.jobId || viewer.runName;
+    if (!scope) throw logError;
+    try {
+      const status = await fetchJson(`/api/run/status?job=${encodeURIComponent(scope)}`);
+      const job = status.job || {};
+      if (!job.id && !job.run_name) throw logError;
+      return {
+        job_id: job.id,
+        run_name: job.run_name,
+        state: job.state,
+        log_path: job.log_path,
+        log_tail: job.log_tail || "",
+        progress: job.progress,
+        updated_at: job.updated_at,
+      };
+    } catch (statusError) {
+      throw new Error(`${logError.message} Fallback /api/run/status failed: ${statusError.message}`);
+    }
+  }
+}
+
+function closeProductLogViewer() {
+  state.productLogViewer = {
+    open: false,
+    loading: false,
+    runName: null,
+    jobId: null,
+    state: "",
+    logPath: "",
+    logTail: "",
+    error: "",
+    updatedAt: null,
+  };
+  renderProductShell();
+}
+
+async function copyProductLogs() {
+  const text = state.productLogViewer?.logTail || "";
+  if (!text) {
+    setProductNotice("warn", "No log output is available to copy yet.");
+    renderProductShell();
+    return;
+  }
+  await writeClipboard(text);
+  setProductNotice("pass", "Visible log tail copied.");
+  updateProductLogModalDom();
+}
+
+async function handleProductAction(action) {
+  const panelMap = {
+    evaluate: "eval",
+    rerun: "preflight",
+    "rerun-preflight": "preflight",
+    repair: "release",
+    handoff: "handoff",
+    report: "handoff",
+    export: "handoff",
+  };
+  if (action === "logs") {
+    await openProductLogViewer();
+    return;
+  }
+  if (action === "refresh-logs") {
+    await refreshProductLogTail({ force: true });
+    return;
+  }
+  if (action === "copy-logs") {
+    await copyProductLogs();
+    return;
+  }
+  if (action === "close-logs") {
+    closeProductLogViewer();
+    return;
+  }
+  if (action === "theme-classic" || action === "theme-paper") {
+    setTheme(action === "theme-paper" ? "paper" : "classic");
+    flashStatus(`THEME ${action === "theme-paper" ? "LIGHT" : "DARK"}. | Product shell updated.`);
+    return;
+  }
+  if (action === "toggle-mobile-nav") {
+    state.productMobileNavOpen = !state.productMobileNavOpen;
+    renderProductShell();
+    return;
+  }
+  if (action === "close-mobile-nav") {
+    state.productMobileNavOpen = false;
+    renderProductShell();
+    return;
+  }
+  if (action === "refresh-product") {
+    await refreshProductData();
+    return;
+  }
+  if (action === "new-run") {
+    applyProductSettingsToLaunchControls();
+    setProductNotice("info", "New run starts with a dataset pack. Import or register data, then run preflight before training.");
+    setProductSection("data", { clearNotice: false });
+    flashStatus("NEW RUN PATH. | Start with Data packs, then Preflight.");
+    return;
+  }
+  if (action === "import-pack" || action === "new-pack") {
+    setProductNotice("info", action === "import-pack" ? "Import pack selected. Use this page to verify pack quality before runs." : "New pack selected. Build or register a dataset before preflight.");
+    setProductSection("data", { clearNotice: false });
+    flashStatus("DATA PACKS. | Dataset pack flow selected.");
+    return;
+  }
+  if (action === "product-fill-climbmix") {
+    fillClimbMixImport();
+    syncProductHfFieldsFromWorkbench();
+    setProductNotice("info", "ClimbMix defaults loaded. Set row and shard limits, then import or run the sample smoke path.");
+    renderProductShell();
+    flashStatus("CLIMBMIX DEFAULTS LOADED. | Product import form updated.");
+    return;
+  }
+  if (action === "product-use-sample") {
+    await withProductBusy(action, "Loading the bundled tiny sample into the launch workflow...", async () => {
+      await useSampleDataset();
+      setProductNotice("pass", `Sample dataset loaded: ${SAMPLE_DATASET_PACK}. Run preflight next.`);
+      setProductSection("preflight", { clearNotice: false });
+    });
+    return;
+  }
+  if (action === "product-check-data") {
+    await withProductBusy(action, "Checking selected dataset pack: schema, token budget, coverage, and contamination hints...", async () => {
+      syncProductDataPackToWorkbench();
+      await checkDatasetFlightPlan();
+      setProductNotice("pass", "Dataset readiness check finished. Review blockers, then run preflight.");
+      setProductSection("preflight", { clearNotice: false });
+    });
+    return;
+  }
+  if (action === "product-import-hf") {
+    await withProductBusy(action, "Importing Hugging Face rows into a local dataset pack. This can take a few minutes for larger pulls...", async () => {
+      syncProductHfFieldsToWorkbench();
+      await importHfDataset();
+      setProductNotice("pass", "Hugging Face dataset imported locally and promoted into the launch workflow.");
+      setProductSection("preflight", { clearNotice: false });
+    });
+    return;
+  }
+  if (action === "product-run-preflight") {
+    await withProductBusy(action, "Launching preflight checks. Picochat is validating the run before any expensive training starts...", async () => {
+      syncProductDataPackToWorkbench();
+      await preflightRun();
+      setProductNotice("pass", "Preflight job launched. Watch the run card and logs for blockers before training.");
+      setProductSection("preflight", { clearNotice: false });
+    });
+    return;
+  }
+  if (action === "product-launch-smoke") {
+    await withProductBusy(action, "Launching a one-step base plus SFT smoke run so the UI can prove the path end-to-end...", async () => {
+      applyProductSettingsToLaunchControls({ smoke: true });
+      $("launch-base-steps").value = "1";
+      $("launch-sft-steps").value = "1";
+      $("launch-run-name").value = uniqueRunName("ui-smoke");
+      syncProductDataPackToWorkbench();
+      await launchRun();
+      setProductNotice("info", "Tiny smoke run launched from the product UI. Watch Train for loss and artifact updates.");
+      setProductSection("train", { clearNotice: false });
+    });
+    return;
+  }
+  if (action.startsWith("external-provider-")) {
+    const provider = action.replace("external-provider-", "");
+    if (["modal", "colab", "lambda"].includes(provider)) {
+      state.productSettings.external.provider = provider;
+      saveProductSettings();
+      setProductNotice("info", `${productExternalProviderLabel(provider)} selected. Commands and launch checklist updated.`);
+      renderProductShell();
+      return;
+    }
+  }
+  if (action === "external-settings") {
+    setProductNotice("info", "External training defaults live in Settings. Secrets are stored locally in this browser, not committed.");
+    setProductSection("settings", { clearNotice: false });
+    return;
+  }
+  if (action === "copy-external-launch") {
+    const commands = productExternalCommands();
+    await writeClipboard(commands.launch);
+    setProductNotice("pass", `${productExternalProviderLabel()} launch command copied.`);
+    renderProductShell();
+    flashStatus("EXTERNAL TRAIN. | Launch command copied.");
+    return;
+  }
+  if (action === "save-settings") {
+    saveProductSettings();
+    applyProductSettingsToLaunchControls();
+    setProductNotice("pass", "Settings saved locally. Thresholds, hyperparameters, notifications, and integration labels now drive this dashboard.");
+    renderProductShell();
+    flashStatus("SETTINGS SAVED. | Product settings persisted locally.");
+    return;
+  }
+  if (action === "pause") {
+    setProductNotice("warn", "Pause requested. For a live training process, confirm from the terminal runner before stopping GPUs.");
+    renderProductShell();
+    flashStatus("PAUSE REQUESTED. | Use the terminal process for active training control.");
+    return;
+  }
+  if (panelMap[action]) {
+    const actionLabels = {
+      evaluate: "Eval page opened. Review visible eval, benchmark deltas, and dangerous-call counts.",
+      rerun: "Rerun path opened at Preflight. Re-check data, budget, and environment before training.",
+      "rerun-preflight": "Preflight checks selected. Re-run checks from the launch workflow when ready.",
+      repair: "Repair queue opened. Resolve blocking quality and handoff artifacts here.",
+      handoff: "Handoff page opened. Artifacts unlock after Release Gate passes.",
+      report: "Report evidence opened through Handoff. Exportable run artifacts live here.",
+      export: "Export evidence opened through Handoff. Download once required artifacts are ready.",
+      logs: "Training logs opened. Inspect loss, throughput, and hardware status here.",
+    };
+    setProductNotice(action === "repair" || action === "rerun" || action === "rerun-preflight" ? "warn" : "info", actionLabels[action] || "Section opened.");
+    setProductSection(panelMap[action], { clearNotice: false });
+    return;
+  }
+  flashStatus("ACTION READY. | Backend wiring can attach to this product action.");
+}
+
+async function withProductBusy(action, text, callback) {
+  state.productBusyAction = action;
+  state.productBusyText = text;
+  setProductNotice("info", text);
+  renderProductShell();
+  const startedAt = Date.now();
+  const minimumBusyMs = 1100;
+  try {
+    return await callback();
+  } finally {
+    const elapsed = Date.now() - startedAt;
+    if (elapsed < minimumBusyMs) {
+      await new Promise((resolve) => window.setTimeout(resolve, minimumBusyMs - elapsed));
+    }
+    state.productBusyAction = null;
+    state.productBusyText = "";
+    renderProductShell();
+  }
+}
+
+function productActionButton(action, label, options = {}) {
+  const busy = state.productBusyAction === action;
+  const className = options.primary ? " class=\"primary\"" : "";
+  const iconName = busy ? "spinner" : options.icon;
+  const icon = iconName ? `${productIcon(iconName)} ` : "";
+  const busyLabel = options.busyLabel || "Working...";
+  return `<button${className} type="button" data-product-action="${escapeHtml(action)}" ${busy ? "disabled aria-busy=\"true\"" : ""}>${icon}${escapeHtml(busy ? busyLabel : label)}</button>`;
+}
+
+function productControlValue(id, fallback = "") {
+  const node = $(id);
+  return node ? node.value : fallback;
+}
+
+function setProductControlValue(id, value) {
+  const node = $(id);
+  if (!node) return;
+  node.value = value == null ? "" : String(value);
+}
+
+function productCheckboxValue(id, fallback = false) {
+  const node = $(id);
+  return node ? Boolean(node.checked) : Boolean(fallback);
+}
+
+function setProductCheckboxValue(id, value) {
+  const node = $(id);
+  if (!node) return;
+  node.checked = Boolean(value);
+}
+
+function productHfFormValues() {
+  const settings = state.productSettings.integrations || {};
+  return {
+    dataset: productControlValue("product-hf-dataset", productControlValue("hf-dataset-input", settings.huggingfaceDefaultDataset || "")),
+    token: settings.huggingfaceToken || "",
+    config: productControlValue("product-hf-config", productControlValue("hf-config-name", "")),
+    split: productControlValue("product-hf-split", productControlValue("hf-split", settings.huggingfaceDefaultSplit || "train")),
+    textColumn: productControlValue("product-hf-text-column", productControlValue("hf-text-column", settings.huggingfaceDefaultTextColumn || "text")),
+    maxRows: productControlValue("product-hf-max-rows", productControlValue("hf-max-rows", "5000")),
+    minChars: productControlValue("product-hf-min-chars", productControlValue("hf-min-chars", "20")),
+    shards: productControlValue("product-hf-shards", productControlValue("hf-shards", "1")),
+    outDir: productControlValue("product-hf-out-dir", productControlValue("hf-out-dir", settings.huggingfaceDefaultOutDir || "")),
+    force: productCheckboxValue("product-hf-force", productCheckboxValue("hf-force", true)),
+  };
+}
+
+function syncProductHfFieldsToWorkbench() {
+  const values = productHfFormValues();
+  setProductControlValue("hf-dataset-input", values.dataset);
+  setProductControlValue("hf-config-name", values.config);
+  setProductControlValue("hf-split", values.split || "train");
+  setProductControlValue("hf-text-column", values.textColumn || "text");
+  setProductControlValue("hf-max-rows", values.maxRows || "5000");
+  setProductControlValue("hf-min-chars", values.minChars || "20");
+  setProductControlValue("hf-shards", values.shards || "1");
+  setProductControlValue("hf-out-dir", values.outDir);
+  setProductCheckboxValue("hf-force", values.force);
+}
+
+function syncProductHfFieldsFromWorkbench() {
+  [
+    ["product-hf-dataset", "hf-dataset-input"],
+    ["product-hf-config", "hf-config-name"],
+    ["product-hf-split", "hf-split"],
+    ["product-hf-text-column", "hf-text-column"],
+    ["product-hf-max-rows", "hf-max-rows"],
+    ["product-hf-min-chars", "hf-min-chars"],
+    ["product-hf-shards", "hf-shards"],
+    ["product-hf-out-dir", "hf-out-dir"],
+  ].forEach(([productId, workbenchId]) => setProductControlValue(productId, productControlValue(workbenchId)));
+  setProductCheckboxValue("product-hf-force", productCheckboxValue("hf-force"));
+}
+
+function productPositiveNumber(value, fallback, min = 0, max = Infinity) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function applyProductSettingsToLaunchControls(options = {}) {
+  const hyperparams = state.productSettings.hyperparams || {};
+  const smoke = Boolean(options.smoke);
+  const batchSize = smoke
+    ? Math.min(4, productPositiveNumber(hyperparams.batchSize, 4, 1, 64))
+    : productPositiveNumber(hyperparams.batchSize, 4, 1, 64);
+  setProductControlValue("launch-base-learning-rate", productPositiveNumber(hyperparams.learningRate, 0.0003, 0, 1));
+  setProductControlValue("launch-sft-learning-rate", productPositiveNumber(hyperparams.sftLearningRate, 0.001, 0, 1));
+  setProductControlValue("launch-base-batch-size", batchSize);
+  setProductControlValue("launch-sft-batch-size", batchSize);
+  const peftMode = smoke ? "none" : productControlValue("launch-sft-peft", "none");
+  setProductControlValue("launch-sft-peft", peftMode);
+  if (peftMode === "lora") {
+    setProductControlValue("launch-sft-lora-rank", productPositiveNumber(hyperparams.loraRank, 8, 1, 256));
+    setProductControlValue("launch-sft-lora-alpha", productPositiveNumber(hyperparams.loraAlpha, 16, 0.000001, 1024));
+    setProductControlValue("launch-sft-lora-dropout", productPositiveNumber(hyperparams.loraDropout, 0, 0, 1));
+    setProductControlValue("launch-sft-lora-targets", productControlValue("launch-sft-lora-targets", "attn_qkv,attn_proj") || "attn_qkv,attn_proj");
+  } else {
+    setProductControlValue("launch-sft-lora-rank", 8);
+    setProductControlValue("launch-sft-lora-alpha", 16);
+    setProductControlValue("launch-sft-lora-dropout", 0);
+    setProductControlValue("launch-sft-lora-targets", "attn_qkv,attn_proj");
+  }
+  if ($("launch-base-lr-decay")) $("launch-base-lr-decay").value = hyperparams.scheduler || "cosine";
+  if ($("launch-sft-lr-decay")) $("launch-sft-lr-decay").value = hyperparams.scheduler || "cosine";
+}
+
+function syncProductDataPackToWorkbench() {
+  const packPath = productControlValue("product-pack-path", productControlValue("launch-pack-path", state.hfImport?.dataset_pack || SAMPLE_DATASET_PACK)).trim();
+  if (packPath) {
+    setProductControlValue("flight-pack-path", packPath);
+    setProductControlValue("preview-pack-path", packPath);
+    setProductControlValue("launch-pack-path", packPath);
+    if (!productControlValue("launch-run-name").trim()) {
+      setProductControlValue("launch-run-name", uniqueRunName(suggestedRunName(packPath)));
+    }
+  }
+  renderLaunchReadiness();
+}
+
+function handleProductSettingInput(control) {
+  const path = String(control.dataset.productSetting || "").split(".");
+  if (path.length !== 2 || !state.productSettings[path[0]]) return;
+  const value = control.type === "checkbox" ? control.checked : control.value;
+  state.productSettings[path[0]][path[1]] = value;
+  if (path[0] === "appearance") syncProductPolling();
+  if (state.activeProductSection === "settings") {
+    setProductNotice("info", "Settings changed. Save changes to keep them after refresh.");
+  }
+}
+
+function setProductNotice(status, text) {
+  state.productNotice = { status, text };
+}
+
+function productNoticeHtml() {
+  const notice = state.productNotice;
+  if (!notice?.text) return "";
+  const status = productStatusClass(notice.status || "info");
+  const busy = Boolean(state.productBusyAction);
+  return `
+    <div class="product-alert ${escapeHtml(status)} ${busy ? "busy" : ""}" aria-live="polite">
+      ${productIcon(busy ? "spinner" : status === "pass" ? "check" : status === "warn" || status === "fail" ? "warning" : "info")}
+      <span>${escapeHtml(state.productBusyText || notice.text)}</span>
+      ${busy ? `<i class="product-alert-progress" aria-hidden="true"></i>` : ""}
+    </div>
+  `;
+}
+
+function productNavBadge(sectionId) {
+  if (sectionId === "runs" && productOpenWarnings()) {
+    return `<em class="product-nav-badge warn">${escapeHtml(String(Math.min(9, productOpenWarnings())))}</em>`;
+  }
+  if (sectionId === "release" && productOpenWarnings()) {
+    return `<em class="product-nav-badge warn">${escapeHtml(String(Math.min(9, productOpenWarnings())))}</em>`;
+  }
+  return "";
+}
+
+function renderProductDashboard() {
+  const healthRows = productPipelineHealthRows();
+  const passingRuns = state.runs.filter((run) => Number(run.pass_rate || 0) >= 0.5).length;
+  const warningCount = productOpenWarnings();
+  return `
+    ${productNoticeHtml()}
+    ${productMetricCards([
+      ["Total runs", fmtInt(state.runs.length), state.runs.length ? "registered locally" : "run bank empty"],
+      ["Passing", fmtInt(passingRuns), "visible eval >= 50%", passingRuns ? "green" : ""],
+      ["Warnings", fmtInt(warningCount), "need attention", warningCount ? "amber" : "green"],
+      ["Avg loss", productAverageLoss(), "selected run"],
+    ])}
+    <section class="product-card product-start-card product-onboarding-card">
+      <div>
+        <span class="product-eyebrow">Production path</span>
+        <h2>${state.runs.length ? "Import data, prove it is safe, then train." : "Start your first honest run."}</h2>
+        <p>${state.runs.length
+          ? "Every run moves through the same gates. The UI shows what is ready, what is blocked, and the next safe action."
+          : "Use the bundled sample to close the loop locally, or import a Hugging Face dataset before spending GPU time."}</p>
+      </div>
+      <div class="product-start-actions">
+        <button type="button" data-product-section="data">1. Data pack</button>
+        <button type="button" data-product-section="preflight">2. Preflight</button>
+        <button type="button" data-product-section="train">3. Train</button>
+        <button type="button" data-product-section="eval">4. Eval</button>
+        <button type="button" data-product-section="release">5. Release gate</button>
+        ${productActionButton("product-launch-smoke", "Tiny smoke", { primary: !state.runs.length, busyLabel: "Launching..." })}
+      </div>
+    </section>
+    ${state.runs.length ? "" : `
+      <section class="product-card product-empty-state">
+        <span class="product-eyebrow">Zero state</span>
+        <h2>No public artifact yet. Close a small loop first.</h2>
+        <p>To make Picochat credible, produce one small model with its release card, model card, benchmark report, and contamination report. The UI can guide the run, but the artifact has to exist.</p>
+        <div class="product-start-actions">
+          <button type="button" data-product-section="data">Load sample data</button>
+          ${productActionButton("product-launch-smoke", "Run tiny smoke", { primary: true, busyLabel: "Launching..." })}
+          <button type="button" data-product-section="handoff">Artifact checklist</button>
+        </div>
+      </section>
+    `}
+    <div class="product-grid two">
+      <section class="product-card">
+        <h2>Recent runs</h2>
+        <div class="product-list">
+          ${productRecentRuns().map((run) => `
+            <button class="product-list-row" type="button" data-product-section="runs" data-product-run="${escapeHtml(run.name)}">
+              <span class="product-row-icon ${escapeHtml(run.statusClass)}">${productIcon(run.icon)}</span>
+              <span>
+                <strong>${escapeHtml(run.title)}</strong>
+                <small>${escapeHtml(run.note)}</small>
+              </span>
+              <em class="product-mini-pill ${escapeHtml(run.statusClass)}">${escapeHtml(run.status)}</em>
+            </button>
+          `).join("") || productEmptyRow("No runs found.")}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>Pipeline health</h2>
+        <div class="product-list">
+          ${healthRows.map((row) => productCheckRow(row.label, row.status, row.value)).join("")}
+        </div>
+      </section>
+    </div>
+    <section class="product-card">
+      <div class="product-card-heading">
+        <h2>${escapeHtml(state.selectedRun || "Selected run")} training loss</h2>
+        <span>${escapeHtml(productLossScope())}</span>
+      </div>
+      ${productLossChart(state.detail)}
+    </section>
+  `;
+}
+
+function renderProductRuns() {
+  const summary = state.detail?.summary || {};
+  const base = summary.base || {};
+  const config = summary.config || {};
+  const latestBase = state.detail?.base_report?.losses?.at(-1);
+  const latestSft = state.detail?.sft_report?.losses?.at(-1);
+  const alert = productRunAlert();
+  return `
+    ${productNoticeHtml()}
+    ${alert ? `<div class="product-alert ${escapeHtml(alert.status)}">${productIcon(alert.icon)}<span>${escapeHtml(alert.text)}</span></div>` : ""}
+    ${productStageTrack()}
+    ${productMetricCards([
+      ["Model", productModelName(), `${fmtInt(base.num_parameters || summary.num_parameters)} params`],
+      ["Steps", fmtInt(config.base_steps || state.detail?.base_report?.config?.max_steps), "base target"],
+      ["Final loss", latestSft ? fmtLoss(latestSft.val_loss) : latestBase ? fmtLoss(latestBase.val_loss) : "--", latestSft ? "SFT val" : "base val"],
+      ["Tokens/s", productThroughput(), "avg throughput"],
+    ])}
+    <section class="product-card">
+      <h2>Run history</h2>
+      <div class="product-list">
+        ${productRecentRuns().map((run) => `
+          <button class="product-list-row" type="button" data-product-section="runs" data-product-run="${escapeHtml(run.name)}">
+            <span class="product-row-icon ${escapeHtml(run.statusClass)}">${productIcon(run.icon)}</span>
+            <span>
+              <strong>${escapeHtml(run.title)}</strong>
+              <small>${escapeHtml(run.note)}</small>
+            </span>
+            <em class="product-mini-pill ${escapeHtml(run.statusClass)}">${escapeHtml(run.status)}</em>
+          </button>
+        `).join("") || productEmptyRow("No local run history yet.")}
+      </div>
+    </section>
+  `;
+}
+
+function renderProductCompare() {
+  const runs = state.runs.slice().reverse();
+  if (!runs.length) {
+    return `
+      ${productNoticeHtml()}
+      <section class="product-card product-empty-state">
+        <span class="product-eyebrow">Compare runs</span>
+        <h2>No runs to compare yet.</h2>
+        <p>Launch a tiny smoke run or import an existing run folder. Picochat will compare loss, eval, context, and gate status here.</p>
+        <div class="product-start-actions">
+          ${productActionButton("product-launch-smoke", "Launch tiny smoke", { primary: true, busyLabel: "Launching..." })}
+          <button type="button" data-product-section="data">Load data</button>
+        </div>
+      </section>
+    `;
+  }
+  const selectedName = state.productCompareA || state.selectedRun || runs[0]?.name;
+  const baselineName = state.productCompareB || runs.find((run) => run.name !== selectedName)?.name || selectedName;
+  const selected = productRunSummaryByName(selectedName) || runs[0];
+  const baseline = productRunSummaryByName(baselineName) || runs.find((run) => run.name !== selected?.name) || selected;
+  const selectedPass = Number(selected?.pass_rate);
+  const baselinePass = Number(baseline?.pass_rate);
+  const delta = Number.isFinite(selectedPass) && Number.isFinite(baselinePass)
+    ? `${selectedPass >= baselinePass ? "+" : ""}${((selectedPass - baselinePass) * 100).toFixed(2)} pts`
+    : "--";
+  const deltaTone = !Number.isFinite(selectedPass) || !Number.isFinite(baselinePass)
+    ? ""
+    : selectedPass >= baselinePass ? "green" : "red";
+  return `
+    ${productNoticeHtml()}
+    ${productMetricCards([
+      ["Selected", selected?.name || "--", selected?.eval_score || "current run"],
+      ["Baseline", baseline?.name || "--", baseline?.eval_score || "comparison run"],
+      ["Pass-rate delta", delta, "selected minus baseline", deltaTone],
+      ["Context", selected?.context_size ? `CTX ${escapeHtml(selected.context_size)}` : "--", "selected run"],
+    ])}
+    <section class="product-card product-compare-picker">
+      <div class="product-card-heading">
+        <div>
+          <span class="product-eyebrow">Compare runs</span>
+          <h2>Pick two runs and inspect the delta.</h2>
+        </div>
+        <span>uses local run summaries</span>
+      </div>
+      <div class="product-compare-selects">
+        ${productCompareSelect("A", "a", selected?.name, runs)}
+        ${productCompareSelect("B", "b", baseline?.name, runs)}
+      </div>
+    </section>
+    <div class="product-grid two">
+      ${productCompareCard("Selected run", selected, baseline)}
+      ${productCompareCard("Baseline run", baseline, selected)}
+    </div>
+    <section class="product-card">
+      <div class="product-card-heading">
+        <h2>Comparison checklist</h2>
+        <span>same eval and tokenizer make deltas more trustworthy</span>
+      </div>
+      <div class="product-list compact">
+        ${productCheckRow("Eval score", productCompareStatus(selected?.eval_score, baseline?.eval_score), `${selected?.eval_score || "--"} vs ${baseline?.eval_score || "--"}`)}
+        ${productCheckRow("Pass rate", Number.isFinite(selectedPass) && Number.isFinite(baselinePass) && selectedPass >= baselinePass ? "pass" : "warn", `${fmtPercent(selectedPass)} vs ${fmtPercent(baselinePass)}`)}
+        ${productCheckRow("Context", selected?.context_size === baseline?.context_size ? "pass" : "warn", `CTX ${selected?.context_size || "--"} vs CTX ${baseline?.context_size || "--"}`)}
+        ${productCheckRow("Artifacts", selected?.path && baseline?.path ? "pass" : "warn", "both summaries registered")}
+      </div>
+    </section>
+  `;
+}
+
+function productCompareSelect(label, role, value, runs) {
+  return `
+    <label>
+      <span>Run ${escapeHtml(label)}</span>
+      <select data-product-compare="${escapeHtml(role)}" aria-label="Compare run ${escapeHtml(label)}">
+        ${runs.map((run) => `<option value="${escapeHtml(run.name)}" ${run.name === value ? "selected" : ""}>${escapeHtml(run.name)}</option>`).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function productCompareCard(title, run, other) {
+  const passRate = Number(run?.pass_rate);
+  const otherPassRate = Number(other?.pass_rate);
+  const status = Number.isFinite(passRate) && passRate >= 0.5 ? "pass" : Number.isFinite(passRate) ? "warn" : "neutral";
+  const delta = Number.isFinite(passRate) && Number.isFinite(otherPassRate)
+    ? `${passRate >= otherPassRate ? "+" : ""}${((passRate - otherPassRate) * 100).toFixed(2)} pts`
+    : "--";
+  return `
+    <section class="product-card product-compare-card">
+      <div class="product-card-heading">
+        <h2>${escapeHtml(title)}</h2>
+        <span class="product-mini-pill ${escapeHtml(status)}">${escapeHtml(status === "pass" ? "stronger" : status === "warn" ? "review" : "unknown")}</span>
+      </div>
+      <div class="product-kv">
+        ${productKvRows([
+          ["Name", run?.name || "--", { copy: true }],
+          ["Visible eval", run?.eval_score || "--"],
+          ["Pass rate", fmtPercent(passRate)],
+          ["Delta", delta],
+          ["Context", run?.context_size ? `CTX ${run.context_size}` : "--"],
+        ])}
+      </div>
+    </section>
+  `;
+}
+
+function productRunSummaryByName(name) {
+  return state.runs.find((run) => run.name === name) || null;
+}
+
+function productCompareStatus(a, b) {
+  const left = Number(String(a || "").match(/[-+]?\d*\.?\d+/)?.[0]);
+  const right = Number(String(b || "").match(/[-+]?\d*\.?\d+/)?.[0]);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return "warn";
+  return left >= right ? "pass" : "warn";
+}
+
+function renderProductDataPacks() {
+  const packs = productDataPacks();
+  const honesty = state.detail?.summary?.honesty || {};
+  const hf = productHfFormValues();
+  const tokenLoaded = Boolean((state.productSettings.integrations || {}).huggingfaceToken);
+  const selectedPack = state.hfImport?.dataset_pack || productDataPackName() || productControlValue("launch-pack-path", SAMPLE_DATASET_PACK);
+  return `
+    ${productNoticeHtml()}
+    ${productMetricCards([
+      ["Data packs", fmtInt(packs.length), "registered"],
+      ["Total tokens", productTokenCount(), "across selected packs"],
+      ["Languages", productLanguages(), "detected / configured"],
+      ["Avg quality", productDataQuality(), "dedup + filter pass", "green"],
+    ])}
+    <section class="product-card product-workflow-card">
+      <div class="product-card-heading">
+        <div>
+          <span class="product-eyebrow">Step 1</span>
+          <h2>Load a dataset pack</h2>
+        </div>
+        <span class="product-mini-pill ${tokenLoaded ? "pass" : "warn"}">${tokenLoaded ? "HF token saved" : "HF token optional"}</span>
+      </div>
+      <p>Import rows from Hugging Face into local corpus documents, or start with the bundled tiny sample for a smoke test. The imported dataset pack is sent to Preflight automatically.</p>
+      <div class="product-form-grid">
+        <label>
+          <span>Hugging Face dataset</span>
+          <input id="product-hf-dataset" type="text" value="${escapeHtml(hf.dataset)}" placeholder="karpathy/climbmix-400b-shuffle" spellcheck="false">
+        </label>
+        <label>
+          <span>Config</span>
+          <input id="product-hf-config" type="text" value="${escapeHtml(hf.config)}" placeholder="optional" spellcheck="false">
+        </label>
+        <label>
+          <span>Split</span>
+          <input id="product-hf-split" type="text" value="${escapeHtml(hf.split)}" placeholder="train" spellcheck="false">
+        </label>
+        <label>
+          <span>Text column</span>
+          <input id="product-hf-text-column" type="text" value="${escapeHtml(hf.textColumn)}" placeholder="text" spellcheck="false">
+        </label>
+        <label>
+          <span>Max rows</span>
+          <input id="product-hf-max-rows" type="number" min="1" value="${escapeHtml(hf.maxRows)}">
+        </label>
+        <label>
+          <span>Shards</span>
+          <input id="product-hf-shards" type="number" min="1" value="${escapeHtml(hf.shards)}">
+        </label>
+        <label>
+          <span>Min chars</span>
+          <input id="product-hf-min-chars" type="number" min="0" value="${escapeHtml(hf.minChars)}">
+        </label>
+        <label>
+          <span>Output folder</span>
+          <input id="product-hf-out-dir" type="text" value="${escapeHtml(hf.outDir)}" placeholder="runs/hf-my-dataset" spellcheck="false">
+        </label>
+      </div>
+      <label class="product-inline-check">
+        <input id="product-hf-force" type="checkbox" ${hf.force ? "checked" : ""}>
+        <span>Overwrite existing import folder if it already exists</span>
+      </label>
+      <div class="product-action-row">
+        ${productActionButton("product-fill-climbmix", "ClimbMix defaults", { icon: "data" })}
+        ${productActionButton("product-use-sample", "Use tiny sample", { icon: "box", busyLabel: "Loading sample..." })}
+        ${productActionButton("product-import-hf", "Import from HF", { icon: "download", primary: true, busyLabel: "Importing..." })}
+      </div>
+    </section>
+    <section class="product-card product-workflow-card">
+      <div class="product-card-heading">
+        <div>
+          <span class="product-eyebrow">Active pack</span>
+          <h2>Dataset for this run</h2>
+        </div>
+        ${productActionButton("product-check-data", "Check data", { busyLabel: "Checking..." })}
+      </div>
+      <label class="product-full-input">
+        <span>dataset_pack.json</span>
+        <input id="product-pack-path" type="text" value="${escapeHtml(selectedPack)}" placeholder="runs/my-pack/dataset_pack.json" spellcheck="false">
+      </label>
+      <p>Preflight, launch, preview, and tuning panels read this same path after you click Check data.</p>
+    </section>
+    <section class="product-card">
+      <h2>Data packs</h2>
+      <div class="product-list">
+        ${packs.map((pack) => `
+          <div class="product-list-row">
+            <span class="product-row-icon neutral">${productIcon("data")}</span>
+            <span>
+              <strong>${escapeHtml(pack.name)}</strong>
+              <small>${escapeHtml(pack.note)}</small>
+            </span>
+            <em class="product-mini-pill ${escapeHtml(pack.statusClass)}">${escapeHtml(pack.status)}</em>
+          </div>
+        `).join("") || productEmptyRow("No dataset packs found in run configs.")}
+      </div>
+    </section>
+    <section class="product-card">
+      <h2>Contamination scan ${state.selectedRun ? `- ${escapeHtml(state.selectedRun)}` : ""}</h2>
+      <div class="product-list compact">
+        ${productCheckRow("Corpus prompt hits", Number(honesty.corpus_prompt_hits || 0) ? "warn" : "pass", fmtInt(honesty.corpus_prompt_hits || 0))}
+        ${productCheckRow("Exact prompt leaks", Number(honesty.exact_prompt_leaks || 0) ? "warn" : "pass", fmtInt(honesty.exact_prompt_leaks || 0))}
+        ${productCheckRow("Near prompt leaks", Number(honesty.near_prompt_leaks || 0) ? "warn" : "pass", fmtInt(honesty.near_prompt_leaks || 0))}
+        ${productCheckRow("Support phrase hits", Number(honesty.support_phrase_hits || 0) ? "warn" : "pass", fmtInt(honesty.support_phrase_hits || 0))}
+      </div>
+    </section>
+  `;
+}
+
+function renderProductPreflight() {
+  const preflight = state.detail?.preflight || state.detail?.summary?.preflight || {};
+  const blocking = preflight.blocking_checks || [];
+  const warnings = preflight.warning_checks || [];
+  const envRows = [
+    ["GPU memory", "pass", productHardwareSummary()],
+    ["Attention backend", productAttentionStatus(), productAttentionLabel()],
+    ["Disk space", "pass", "artifact paths writable"],
+    ["DDP scale", productDdpStatus(), productDdpLabel()],
+  ];
+  const dataRows = [
+    ["Schema validation", blocking.includes("schema") ? "fail" : "pass", "checked"],
+    ["Document boundaries", productDocumentBoundaryStatus(), productDocumentBoundaryLabel()],
+    ["Contamination scan", productHonestyPassed() ? "pass" : warnings.length ? "warn" : "pass", warnings.length ? `${warnings.length} warn` : "OK"],
+    ["Token budget", productBudgetStatus(), productBudgetLabel()],
+  ];
+  return `
+    ${productNoticeHtml()}
+    ${productMetricCards([
+      ["Checks run", fmtInt((preflight.checks || []).length || envRows.length + dataRows.length), blocking.length ? `${blocking.length} failures` : "all completed"],
+      ["Passed", fmtInt(Math.max(0, (preflight.checks || []).length - blocking.length) || envRows.length + dataRows.length - blocking.length), `${blocking.length} failures`, blocking.length ? "red" : "green"],
+      ["Warnings", fmtInt(warnings.length), "preflight warns", warnings.length ? "amber" : "green"],
+      ["Data hash", shortHash(preflight.corpus_sha256 || state.detail?.summary?.corpus?.sha256 || ""), preflight.corpus_sha256 ? "verified" : "not recorded"],
+    ])}
+    <section class="product-card product-workflow-card">
+      <div class="product-card-heading">
+        <div>
+          <span class="product-eyebrow">Step 2</span>
+          <h2>Run cheap checks before spending compute</h2>
+        </div>
+        ${productActionButton("product-run-preflight", "Run preflight", { icon: "check", primary: true, busyLabel: "Running..." })}
+      </div>
+      <p>Preflight blocks bad launches before training: token budget, corpus replay, SFT/eval coverage, attention runtime, DDP scale, honesty, and release-gate readiness.</p>
+      <div class="product-action-row">
+        ${productActionButton("product-check-data", "Check selected data", { busyLabel: "Checking data..." })}
+        <button type="button" data-product-section="data">Change dataset</button>
+        ${productActionButton("product-launch-smoke", "Launch tiny smoke run", { busyLabel: "Launching smoke..." })}
+      </div>
+    </section>
+    <div class="product-grid two">
+      <section class="product-card">
+        <h2>Environment checks</h2>
+        <div class="product-list compact">
+          ${envRows.map(([label, status, value]) => productCheckRow(label, status, value)).join("")}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>Data checks</h2>
+        <div class="product-list compact">
+          ${dataRows.map(([label, status, value]) => productCheckRow(label, status, value)).join("")}
+        </div>
+      </section>
+    </div>
+    <section class="product-card">
+      <h2>Preflight log</h2>
+      <div class="product-log">
+        ${productLogRows([
+          ["dataset", productDataPackName() || "dataset pack loaded"],
+          ["budget", productBudgetLabel()],
+          ["honesty", productHonestyPassed() ? "contamination scan OK" : "honesty needs review"],
+          ["gate", blocking.length ? `${blocking.length} blocking checks` : "all blocking checks passed"],
+        ])}
+      </div>
+    </section>
+  `;
+}
+
+function renderProductTrain() {
+  const summary = state.detail?.summary || {};
+  const config = summary.config || {};
+  const latestBase = state.detail?.base_report?.losses?.at(-1);
+  const latestSft = state.detail?.sft_report?.losses?.at(-1);
+  return `
+    ${productNoticeHtml()}
+    ${productMetricCards([
+      ["Steps", fmtInt(latestBase?.step || config.base_steps), `of ${fmtInt(config.base_steps)} planned`],
+      ["Train loss", latestSft ? fmtLoss(latestSft.train_loss) : latestBase ? fmtLoss(latestBase.train_loss) : "--", "latest"],
+      ["Val loss", latestSft ? fmtLoss(latestSft.val_loss) : latestBase ? fmtLoss(latestBase.val_loss) : "--", latestSft && latestBase ? `gap ${fmtLoss(latestSft.val_loss - latestSft.train_loss)}` : "held-out"],
+      ["Throughput", productThroughput(), "tokens/s"],
+    ])}
+    <section class="product-card">
+      <div class="product-card-heading">
+        <h2>Loss curve</h2>
+        <span>${escapeHtml(productLossScope())}</span>
+      </div>
+      ${productLossChart(state.detail)}
+    </section>
+    <div class="product-grid two">
+      <section class="product-card">
+        <h2>Hyperparameters</h2>
+        <div class="product-kv">
+          ${productKvRows([
+            ["Learning rate", config.base_learning_rate || "--"],
+            ["Batch size", config.base_batch_size || "--"],
+            ["Grad accum", config.base_grad_accum_steps || "--"],
+            ["Scheduler", config.base_lr_decay || "--"],
+            ["Context", config.context_size || "--"],
+          ])}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>Hardware</h2>
+        <div class="product-kv">
+          ${productKvRows([
+            ["Device", config.device || "--"],
+            ["Precision", config.precision || "--"],
+            ["Attention", config.attn_backend || "--"],
+            ["Compile", config.torch_compile ? "enabled" : "off"],
+            ["Gradient ckpt", config.gradient_checkpointing ? "enabled" : "off"],
+          ])}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function productExternalSettings() {
+  return { ...defaultProductSettings().external, ...(state.productSettings.external || {}) };
+}
+
+function productExternalProviderLabel(provider = productExternalSettings().provider) {
+  return {
+    modal: "Modal",
+    colab: "Colab",
+    lambda: "Lambda",
+  }[provider] || "External";
+}
+
+function productShellQuote(value) {
+  const text = String(value == null ? "" : value);
+  if (!text) return "''";
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(text)) return text;
+  return `'${text.replaceAll("'", "'\"'\"'")}'`;
+}
+
+function productExternalDatasetPack(settings = productExternalSettings()) {
+  return settings.datasetPack
+    || state.hfImport?.dataset_pack
+    || productControlValue("launch-pack-path", "")
+    || productDataPackName()
+    || "";
+}
+
+function productExternalImportCommand(settings = productExternalSettings()) {
+  const hf = productHfFormValues();
+  const integrationSettings = state.productSettings?.integrations || defaultProductSettings().integrations;
+  const dataset = hf.dataset || integrationSettings.huggingfaceDefaultDataset || "karpathy/climbmix-400b-shuffle";
+  const outDir = "/runs/imported-pack";
+  const args = [
+    "python -m picochat.cli data hf-import",
+    `  --dataset ${productShellQuote(dataset)}`,
+    hf.config ? `  --config ${productShellQuote(hf.config)}` : "",
+    `  --split ${productShellQuote(hf.split || "train")}`,
+    `  --text-column ${productShellQuote(hf.textColumn || "text")}`,
+    `  --max-rows ${productShellQuote(settings.hfMaxRows || hf.maxRows || "5000")}`,
+    `  --min-chars ${productShellQuote(hf.minChars || "20")}`,
+    `  --out ${productShellQuote(`${outDir}/corpus.txt`)}`,
+    `  --report ${productShellQuote(`${outDir}/import_report.json`)}`,
+    `  --pack-out ${productShellQuote(outDir)}`,
+    `  --pack-name ${productShellQuote("modal-import")}`,
+    "  --pack-force",
+  ].filter(Boolean);
+  return `${args.join(" \\\n")}\n\n# Remote dataset pack path after import:\n${outDir}/dataset_pack.json`;
+}
+
+function productExternalTrainArgs(settings = productExternalSettings()) {
+  const args = [
+    "python -m picochat.cli run tiny",
+    `  --out-dir ${productShellQuote(`/runs/${settings.runName || "picochat-external-run"}`)}`,
+    `  --scale ${productShellQuote(settings.scale || "h100-100m")}`,
+    `  --dataset-pack ${productShellQuote(productExternalDatasetPack(settings) || "/runs/imported-pack/dataset_pack.json")}`,
+    "  --device cuda",
+  ];
+  if (settings.baseSteps) args.push(`  --base-steps ${productShellQuote(settings.baseSteps)}`);
+  if (settings.sftSteps) args.push(`  --sft-steps ${productShellQuote(settings.sftSteps)}`);
+  return args.join(" \\\n");
+}
+
+function productExternalCommands(provider = productExternalSettings().provider) {
+  const settings = productExternalSettings();
+  const repoUrl = settings.repoUrl || "https://github.com/gowtham0992/picochat.git";
+  const branch = settings.branch || "develop";
+  const datasetPack = productExternalDatasetPack(settings);
+  const runName = settings.runName || "picochat-external-run";
+  const scale = settings.scale || "h100-100m";
+  const gpu = settings.gpu || "A100";
+  const maxHours = settings.maxHours || "8";
+  const volume = settings.modalVolume || "picochat-runs";
+  const secret = settings.modalSecret || "picochat-hf-token";
+  const importFallback = productExternalImportCommand(settings);
+  const trainArgs = productExternalTrainArgs(settings);
+  if (provider === "colab") {
+    const setup = [
+      "!git clone --branch " + productShellQuote(branch) + " " + productShellQuote(repoUrl) + " picochat",
+      "%cd picochat",
+      "!python -m pip install -U pip",
+      "!python -m pip install -e .",
+    ].join("\n");
+    const launch = [
+      "# Colab GPU path. Run the import cell first if your dataset_pack.json is not in the repo.",
+      setup,
+      "",
+      importFallback.split("\n").map((line) => line.startsWith("python ") ? `!${line}` : line).join("\n"),
+      "",
+      `!${trainArgs.replaceAll("\n", " \\\n")}`,
+    ].join("\n");
+    return {
+      setup,
+      launch,
+      note: "Colab is best for one-off experiments. Keep the dataset import in the notebook and download the final run folder before the session resets.",
+    };
+  }
+  if (provider === "lambda") {
+    const host = "<lambda-host>";
+    const setup = [
+      `ssh ${productShellQuote(settings.lambdaSshUser || "ubuntu")}@${host}`,
+      `git clone --branch ${productShellQuote(branch)} ${productShellQuote(repoUrl)} picochat`,
+      "cd picochat",
+      "python -m venv .venv && source .venv/bin/activate",
+      "python -m pip install -U pip",
+      "python -m pip install -e .",
+    ].join("\n");
+    const launch = [
+      "# Lambda Cloud SSH path. Provision the instance, SSH in, then run:",
+      setup,
+      "",
+      "# If the dataset pack is not already present on the machine, import it remotely:",
+      importFallback,
+      "",
+      trainArgs,
+    ].join("\n");
+    return {
+      setup,
+      launch,
+      note: "Lambda is treated as a normal SSH GPU box. Picochat keeps the same local CLI, gates, and artifact folders.",
+    };
+  }
+  const modalArgs = [
+    "modal run scripts/modal_picochat_train.py",
+    `  --repo-url ${productShellQuote(repoUrl)}`,
+    `  --branch ${productShellQuote(branch)}`,
+    `  --run-name ${productShellQuote(runName)}`,
+    `  --scale ${productShellQuote(scale)}`,
+    datasetPack ? `  --dataset-pack ${productShellQuote(datasetPack)}` : "",
+    `  --hf-dataset ${productShellQuote(productHfFormValues().dataset || "karpathy/climbmix-400b-shuffle")}`,
+    `  --hf-split ${productShellQuote(productHfFormValues().split || "train")}`,
+    `  --hf-text-column ${productShellQuote(productHfFormValues().textColumn || "text")}`,
+    `  --hf-max-rows ${productShellQuote(settings.hfMaxRows || "800000")}`,
+    `  --hf-shards ${productShellQuote(settings.hfShards || "170")}`,
+    `  --gpu ${productShellQuote(gpu)}`,
+    `  --timeout-hours ${productShellQuote(maxHours)}`,
+    `  --volume-name ${productShellQuote(volume)}`,
+    secret ? `  --secret-name ${productShellQuote(secret)}` : "",
+    settings.baseSteps ? `  --base-steps ${productShellQuote(settings.baseSteps)}` : "",
+    settings.sftSteps ? `  --sft-steps ${productShellQuote(settings.sftSteps)}` : "",
+  ].filter(Boolean).join(" \\\n");
+  return {
+    setup: [
+      "python -m pip install -U modal",
+      "modal setup",
+      `modal volume create ${productShellQuote(volume)}`,
+      `modal secret create ${productShellQuote(secret)} HF_TOKEN=hf_...  # optional for gated/private HF data`,
+    ].join("\n"),
+    launch: modalArgs,
+    note: "Modal is the recommended path for paid remote GPU runs: it keeps your local dashboard as the control plane while artifacts land in a Modal volume.",
+  };
+}
+
+function renderProductExternalTrain() {
+  const settings = productExternalSettings();
+  const provider = settings.provider || "modal";
+  const commands = productExternalCommands(provider);
+  const datasetPack = productExternalDatasetPack(settings) || "remote HF import";
+  const providerCards = [
+    ["modal", "Modal", "Managed remote GPU", "Best first path for A100/H100 training with local command control."],
+    ["colab", "Colab", "Notebook GPU", "Good for free or credit-backed experiments; artifacts must be saved quickly."],
+    ["lambda", "Lambda", "SSH GPU box", "Best when you want a normal server workflow and manual environment control."],
+  ];
+  return `
+    ${productNoticeHtml()}
+    ${productMetricCards([
+      ["Provider", productExternalProviderLabel(provider), "selected target"],
+      ["GPU", settings.gpu || "A100", provider === "colab" ? "requested runtime" : "launch default"],
+      ["Scale", settings.scale || "h100-100m", "Picochat recipe"],
+      ["Dataset", datasetPack, datasetPack === "remote HF import" ? "built on provider" : "pack path"],
+    ])}
+    <section class="product-card product-workflow-card product-external-hero">
+      <div class="product-card-heading">
+        <div>
+          <span class="product-eyebrow">Remote compute</span>
+          <h2>Train on Modal, Colab, or Lambda without changing the recipe.</h2>
+        </div>
+        <span class="product-mini-pill info">commands only</span>
+      </div>
+      <p>Picochat remains the control plane: Data Pack and Preflight define what is safe to launch, then External Train gives you the exact provider command. No GPU spend starts from this page until you run the copied command yourself.</p>
+      <div class="product-provider-tabs" role="group" aria-label="External training provider">
+        ${providerCards.map(([id, name, label]) => `
+          <button type="button" class="${provider === id ? "active" : ""}" data-product-action="external-provider-${escapeHtml(id)}">
+            ${productIcon(id === "modal" ? "cloud" : id === "colab" ? "notebook" : "terminal")}
+            <span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(label)}</small></span>
+          </button>
+        `).join("")}
+      </div>
+    </section>
+    <div class="product-grid two">
+      <section class="product-card product-command-card">
+        <div class="product-card-heading">
+          <h2>${escapeHtml(productExternalProviderLabel(provider))} setup</h2>
+          <button class="product-icon-button text" type="button" data-copy-text="${escapeHtml(commands.setup)}">${productIcon("copy")} Copy setup</button>
+        </div>
+        <pre class="product-code-block">${escapeHtml(commands.setup)}</pre>
+      </section>
+      <section class="product-card product-command-card">
+        <div class="product-card-heading">
+          <h2>Launch command</h2>
+          <button class="product-icon-button text" type="button" data-copy-text="${escapeHtml(commands.launch)}">${productIcon("copy")} Copy launch</button>
+        </div>
+        <pre class="product-code-block">${escapeHtml(commands.launch)}</pre>
+      </section>
+    </div>
+    <div class="product-grid two">
+      <section class="product-card">
+        <h2>Launch checklist</h2>
+        <div class="product-list compact">
+          ${productCheckRow("Dataset pack", productExternalDatasetPack(settings) ? "pass" : "warn", productExternalDatasetPack(settings) ? "path configured" : "will import from HF")}
+          ${productCheckRow("Preflight", productBudgetStatus() === "fail" ? "warn" : "pass", productBudgetLabel())}
+          ${productCheckRow("Provider auth", provider === "modal" && !settings.modalSecret ? "warn" : "pass", provider === "modal" ? `secret ${settings.modalSecret || "missing"}` : "manual")}
+          ${productCheckRow("Artifacts", "pass", provider === "modal" ? `volume ${settings.modalVolume}` : "download run folder")}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>Provider notes</h2>
+        <p>${escapeHtml(commands.note)}</p>
+        <div class="product-start-actions">
+          <button type="button" data-product-section="preflight">Review preflight</button>
+          <button type="button" data-product-section="settings">Edit provider settings</button>
+          ${productActionButton("copy-external-launch", "Copy launch", { primary: true, icon: "copy" })}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderProductEval() {
+  const evalSummary = productEvalSummary();
+  const rows = productEvalRows(evalSummary);
+  return `
+    ${productNoticeHtml()}
+    ${productMetricCards([
+      ["Overall score", evalSummary.pass_rate == null ? "--" : fmtPercent(evalSummary.pass_rate), `${fmtInt(evalSummary.num_passed)} / ${fmtInt(evalSummary.num_examples)} rows`, productEvalPassed() ? "green" : "amber"],
+      ["Visible eval", fmtInt(evalSummary.num_examples), "samples"],
+      ["Failures", fmtInt(evalSummary.num_failed), "need review", Number(evalSummary.num_failed || 0) ? "amber" : "green"],
+      ["Dangerous calls", fmtInt(evalSummary.dangerous_calls || 0), "unsupported calls", Number(evalSummary.dangerous_calls || 0) ? "red" : "green"],
+    ])}
+    <section class="product-card">
+      <h2>Benchmark results</h2>
+      <div class="product-list compact">
+        ${rows.map((row) => productCheckRow(row.label, row.status, row.value)).join("")}
+      </div>
+    </section>
+    <div class="product-grid two">
+      <section class="product-card">
+        <h2>Regression check</h2>
+        <div class="product-list compact">
+          ${productCheckRow("Pass-rate delta", "pass", evalSummary.pass_rate == null ? "--" : fmtPercent(evalSummary.pass_rate))}
+          ${productCheckRow("Failed rows", Number(evalSummary.num_failed || 0) ? "warn" : "pass", fmtInt(evalSummary.num_failed))}
+          ${productCheckRow("Prompt echo", Number(evalSummary.prompt_echo_rate || 0) ? "warn" : "pass", fmtPercent(evalSummary.prompt_echo_rate || 0))}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>Eval config</h2>
+        <div class="product-kv">
+          ${productKvRows([
+            ["Samples", evalSummary.num_examples || "--"],
+            ["Temperature", state.detail?.summary?.config?.temperature ?? "0.0"],
+            ["Max tokens", state.detail?.summary?.config?.eval_max_new_tokens || "--"],
+            ["Source", state.detail?.summary?.config?.eval_input || "visible eval", { copy: true }],
+          ])}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderProductHonesty() {
+  const honesty = state.detail?.summary?.honesty || {};
+  const hallucinations = Number(honesty.hallucination_rate || 0);
+  return `
+    ${productNoticeHtml()}
+    ${productMetricCards([
+      ["Honesty score", productHonestyScore(), "above threshold", productHonestyPassed() ? "green" : "amber"],
+      ["Corpus hits", fmtInt(honesty.corpus_prompt_hits || 0), "prompt overlaps", Number(honesty.corpus_prompt_hits || 0) ? "red" : "green"],
+      ["Near leaks", fmtInt(honesty.near_prompt_leaks || 0), "near matches", Number(honesty.near_prompt_leaks || 0) ? "amber" : "green"],
+      ["Contamination", honesty.status || (productHonestyPassed() ? "clear" : "review"), "scan status", productHonestyPassed() ? "green" : "amber"],
+    ])}
+    <div class="product-grid two">
+      <section class="product-card">
+        <h2>Honesty dimensions</h2>
+        <div class="product-list compact">
+          ${productCheckRow("Exact prompt leakage", Number(honesty.exact_prompt_leaks || 0) ? "warn" : "pass", fmtInt(honesty.exact_prompt_leaks || 0))}
+          ${productCheckRow("Corpus prompt hits", Number(honesty.corpus_prompt_hits || 0) ? "fail" : "pass", fmtInt(honesty.corpus_prompt_hits || 0))}
+          ${productCheckRow("Answer overlap", Number(honesty.answer_overlaps || 0) ? "warn" : "pass", fmtInt(honesty.answer_overlaps || 0))}
+          ${productCheckRow("Support phrases", Number(honesty.support_phrase_hits || 0) ? "warn" : "pass", fmtInt(honesty.support_phrase_hits || 0))}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>Failure analysis</h2>
+        <div class="product-kv">
+          ${productKvRows([
+            ["Total scans", fmtInt(honesty.total_prompts || honesty.num_prompts || 0)],
+            ["Hallucination rate", hallucinations ? fmtPercent(hallucinations) : "--"],
+            ["Near prompt leaks", fmtInt(honesty.near_prompt_leaks || 0)],
+            ["Corpus hits", fmtInt(honesty.corpus_prompt_hits || 0)],
+          ])}
+        </div>
+      </section>
+    </div>
+    <section class="product-card">
+      <div class="product-card-heading">
+        <h2>Sample failures</h2>
+        <span>top items for review</span>
+      </div>
+      <div class="product-list compact">
+        ${(honesty.issues || honesty.failures || []).slice(0, 3).map((item) => productCheckRow(item.type || "issue", "warn", item.message || item.prompt || "Inspect honesty report")).join("") || productEmptyRow("No sample honesty failures recorded.")}
+      </div>
+    </section>
+  `;
+}
+
+function renderProductReleaseGate() {
+  const repairPlan = state.detail?.release_repair_plan || {};
+  const checks = commandQualityChecks(state.detail?.summary || {}, repairPlan, state.detail);
+  const alert = productRunAlert();
+  return `
+    ${productNoticeHtml()}
+    ${alert ? `<div class="product-alert ${escapeHtml(alert.status)}">${productIcon(alert.icon)}<span>${escapeHtml(alert.text)}</span></div>` : ""}
+    <div class="product-grid two">
+      <section class="product-card">
+        <div class="product-card-heading">
+          <h2>Quality checks</h2>
+          <span>${escapeHtml(qualitySummaryText(checks))}</span>
+        </div>
+        <div class="product-list compact">
+          ${checks.slice(0, 4).map((check) => productCheckRow(check.label, check.status === "fail" ? "warn" : check.status, check.value)).join("")}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>Gate thresholds</h2>
+        <div class="product-kv">
+          ${productKvRows(productGateThresholdRows())}
+        </div>
+      </section>
+    </div>
+    <section class="product-card">
+      <div class="product-card-heading">
+        <h2>Repair queue</h2>
+        <span>${escapeHtml(`${commandRepairItems(repairPlan, state.detail?.handoff_packet || {}).length} items`)}</span>
+      </div>
+      <div class="product-list">
+        ${commandRepairItems(repairPlan, state.detail?.handoff_packet || {}).map((item) => `
+          <div class="product-list-row">
+            <span class="product-row-icon ${escapeHtml(item.status)}">${productIcon(item.status === "pass" ? "check" : "warning")}</span>
+            <span>
+              <strong>${escapeHtml(item.title)}</strong>
+              <small>${escapeHtml(item.reason)}</small>
+            </span>
+            <button type="button" data-product-section="${escapeHtml(item.panel === "dataset" ? "preflight" : "release")}">${escapeHtml(item.cta)}</button>
+          </div>
+        `).join("") || productEmptyRow("No repair items.")}
+      </div>
+    </section>
+  `;
+}
+
+function renderProductHandoff() {
+  const packet = state.detail?.handoff_packet || {};
+  const ready = packet.status === "ready";
+  const artifacts = packet.artifacts || [];
+  const artifactRows = artifacts.length ? artifacts : [
+    { label: "Run passport", exists: Boolean(state.detail?.run_passport), required: true, purpose: "SLM metadata, lineage, license" },
+    { label: "Handoff packet", exists: ready, required: true, purpose: "Checkpoints, config, tokenizer" },
+    { label: "Eval reports", exists: Boolean(state.detail?.reports?.eval?.exists), required: true, purpose: "Benchmark reports, training logs" },
+    { label: "Checkpoints", exists: Boolean(state.detail?.summary?.artifacts?.base_eval_checkpoint), required: true, purpose: "Model snapshots" },
+  ];
+  return `
+    ${productNoticeHtml()}
+    <div class="product-alert ${ready ? "pass" : "warn"}">${productIcon(ready ? "check" : "lock")}<span>${escapeHtml(packet.summary || (ready ? "Handoff artifacts are ready." : "Handoff is locked until Release Gate warnings are resolved. Complete the repair queue first."))}</span></div>
+    <div class="product-grid two">
+      ${artifactRows.slice(0, 4).map((item) => `
+        <section class="product-card compact-card" ${!ready && !item.exists ? `data-locked="true"` : ""}>
+          <span class="product-card-icon ${item.exists ? "pass" : item.required ? "warn" : "neutral"}">${productIcon(item.exists ? "check" : "box")}</span>
+          <h2>${escapeHtml(item.label)}</h2>
+          <p>${escapeHtml(item.purpose || item.path || "Artifact evidence")}</p>
+        </section>
+      `).join("")}
+    </div>
+    <section class="product-card">
+      <h2>Artifact checklist</h2>
+      <div class="product-list compact">
+        ${artifactRows.map((item) => productCheckRow(item.label, item.exists ? "pass" : item.required ? "warn" : "neutral", item.exists ? "Ready" : item.required ? "Missing" : "Optional")).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderProductSettings() {
+  const settings = state.productSettings;
+  return `
+    ${productNoticeHtml()}
+    <div class="product-grid two">
+      <section class="product-card">
+        <h2>Appearance</h2>
+        <div class="product-settings-grid">
+          <div class="product-setting-row product-theme-row">
+            <span>Theme</span>
+            <div class="product-theme-switch" role="group" aria-label="Theme">
+              <button class="${state.theme === "paper" ? "active" : ""}" type="button" data-product-action="theme-paper" aria-label="Use light theme" title="Light theme">${productIcon("sun")}<span>Light</span></button>
+              <button class="${state.theme === "classic" ? "active" : ""}" type="button" data-product-action="theme-classic" aria-label="Use dark theme" title="Dark theme">${productIcon("moon")}<span>Dark</span></button>
+            </div>
+          </div>
+          ${productSettingToggle("Auto refresh", "appearance.autoRefresh", settings.appearance.autoRefresh)}
+          ${productSettingInput("Refresh seconds", "appearance.refreshSeconds", settings.appearance.refreshSeconds)}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>Gate thresholds</h2>
+        <div class="product-settings-grid">
+          ${productSettingInput("Max toxicity", "gate.toxicityMax", settings.gate.toxicityMax)}
+          ${productSettingInput("Max bias", "gate.biasMax", settings.gate.biasMax)}
+          ${productSettingInput("Max contamination", "gate.contaminationMax", settings.gate.contaminationMax)}
+          ${productSettingInput("Min accuracy", "gate.accuracyMin", settings.gate.accuracyMin)}
+          ${productSettingInput("Min honesty score", "gate.honestyMin", settings.gate.honestyMin)}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>Default hyperparams</h2>
+        <div class="product-settings-grid">
+          ${productSettingInput("Learning rate", "hyperparams.learningRate", settings.hyperparams.learningRate)}
+          ${productSettingInput("SFT LR", "hyperparams.sftLearningRate", settings.hyperparams.sftLearningRate)}
+          ${productSettingInput("LoRA rank", "hyperparams.loraRank", settings.hyperparams.loraRank)}
+          ${productSettingInput("LoRA alpha", "hyperparams.loraAlpha", settings.hyperparams.loraAlpha)}
+          ${productSettingInput("Batch size", "hyperparams.batchSize", settings.hyperparams.batchSize)}
+          ${productSettingSelect("Scheduler", "hyperparams.scheduler", settings.hyperparams.scheduler, ["cosine", "linear", "none"])}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>Notifications</h2>
+        <div class="product-settings-grid">
+          ${productSettingToggle("Gate warnings", "notifications.gateWarnings", settings.notifications.gateWarnings)}
+          ${productSettingToggle("Run complete", "notifications.runComplete", settings.notifications.runComplete)}
+          ${productSettingToggle("Loss spikes", "notifications.lossSpikes", settings.notifications.lossSpikes)}
+          ${productSettingToggle("DDP setup", "notifications.ddpSetup", settings.notifications.ddpSetup)}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>Integrations</h2>
+        <div class="product-settings-grid">
+          ${productSettingSelect("Hugging Face", "integrations.huggingface", settings.integrations.huggingface, ["Connected", "Disconnected", "Optional"])}
+          ${productSettingInput("HF token", "integrations.huggingfaceToken", settings.integrations.huggingfaceToken, { type: "password", placeholder: "hf_... stored locally" })}
+          ${productSettingInput("Default HF dataset", "integrations.huggingfaceDefaultDataset", settings.integrations.huggingfaceDefaultDataset)}
+          ${productSettingInput("Default split", "integrations.huggingfaceDefaultSplit", settings.integrations.huggingfaceDefaultSplit)}
+          ${productSettingInput("Default text column", "integrations.huggingfaceDefaultTextColumn", settings.integrations.huggingfaceDefaultTextColumn)}
+          ${productSettingInput("Default out dir", "integrations.huggingfaceDefaultOutDir", settings.integrations.huggingfaceDefaultOutDir)}
+          ${productSettingSelect("TensorBoard", "integrations.tensorboard", settings.integrations.tensorboard, ["Auto", "Configured", "Off"])}
+          ${productSettingSelect("Local serving", "integrations.localServing", settings.integrations.localServing, ["Available", "Disabled"])}
+          ${productSettingSelect("Release bundle", "integrations.releaseBundle", settings.integrations.releaseBundle, ["Ready", "Staging", "Locked"])}
+        </div>
+      </section>
+      <section class="product-card">
+        <h2>External training</h2>
+        <div class="product-settings-grid">
+          ${productSettingSelect("Provider", "external.provider", settings.external.provider, ["modal", "colab", "lambda"])}
+          ${productSettingInput("Repo URL", "external.repoUrl", settings.external.repoUrl)}
+          ${productSettingInput("Branch", "external.branch", settings.external.branch)}
+          ${productSettingInput("Run name", "external.runName", settings.external.runName)}
+          ${productSettingInput("Dataset pack", "external.datasetPack", settings.external.datasetPack, { placeholder: "optional; remote HF import if blank" })}
+          ${productSettingInput("Scale", "external.scale", settings.external.scale)}
+          ${productSettingInput("Base steps", "external.baseSteps", settings.external.baseSteps, { placeholder: "optional override" })}
+          ${productSettingInput("SFT steps", "external.sftSteps", settings.external.sftSteps, { placeholder: "optional override" })}
+          ${productSettingInput("GPU", "external.gpu", settings.external.gpu)}
+          ${productSettingInput("Max hours", "external.maxHours", settings.external.maxHours)}
+          ${productSettingInput("HF max rows", "external.hfMaxRows", settings.external.hfMaxRows)}
+          ${productSettingInput("HF shards", "external.hfShards", settings.external.hfShards)}
+          ${productSettingInput("Modal secret", "external.modalSecret", settings.external.modalSecret)}
+          ${productSettingInput("Modal volume", "external.modalVolume", settings.external.modalVolume)}
+          ${productSettingInput("Colab notebook", "external.colabNotebook", settings.external.colabNotebook)}
+          ${productSettingInput("Lambda instance", "external.lambdaInstance", settings.external.lambdaInstance)}
+          ${productSettingInput("Lambda region", "external.lambdaRegion", settings.external.lambdaRegion)}
+          ${productSettingInput("Lambda SSH user", "external.lambdaSshUser", settings.external.lambdaSshUser)}
+          ${productSettingInput("Lambda API key", "external.lambdaApiKey", settings.external.lambdaApiKey, { type: "password", placeholder: "stored locally" })}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function productSettingInput(label, path, value, options = {}) {
+  const type = options.type || "text";
+  const placeholder = options.placeholder || "";
+  return `
+    <label class="product-setting-row">
+      <span>${escapeHtml(label)}</span>
+      <input type="${escapeHtml(type)}" value="${escapeHtml(value == null ? "" : value)}" placeholder="${escapeHtml(placeholder)}" data-product-setting="${escapeHtml(path)}" spellcheck="false">
+    </label>
+  `;
+}
+
+function productSettingSelect(label, path, value, options) {
+  return `
+    <label class="product-setting-row">
+      <span>${escapeHtml(label)}</span>
+      <select data-product-setting="${escapeHtml(path)}">
+        ${options.map((option) => `<option value="${escapeHtml(option)}" ${String(value) === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function productSettingToggle(label, path, checked) {
+  return `
+    <label class="product-setting-row product-setting-toggle">
+      <span>${escapeHtml(label)}</span>
+      <input type="checkbox" ${checked ? "checked" : ""} data-product-setting="${escapeHtml(path)}">
+    </label>
+  `;
+}
+
+function productMetricCards(cards) {
+  return `
+    <div class="product-metrics">
+      ${cards.map(([label, value, note, tone]) => `
+        <div class="product-metric-card">
+          <span>${escapeHtml(label)}</span>
+          <strong ${tone ? `data-tone="${escapeHtml(tone)}"` : ""}>${escapeHtml(value)}</strong>
+          <small>${escapeHtml(note)}</small>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function productCheckRow(label, status, value) {
+  const normalized = productStatusClass(status);
+  return `
+    <div class="product-check-row ${normalized}">
+      <span>${productIcon(normalized === "pass" ? "check" : normalized === "warn" ? "warning" : normalized === "fail" ? "warning" : "dot")}</span>
+      <strong>${escapeHtml(label)}</strong>
+      <em>${escapeHtml(value == null ? "--" : value)}</em>
+    </div>
+  `;
+}
+
+function productKvRows(rows) {
+  return rows.map((row) => {
+    const [label, value, options = {}] = row;
+    const text = String(value == null ? "--" : value);
+    const copyable = Boolean(options.copy && text && text !== "--");
+    const valueHtml = copyable
+      ? `<span class="product-kv-value-wrap">
+          <strong title="${escapeHtml(text)}">${escapeHtml(text)}</strong>
+          <button class="product-icon-button" type="button" data-copy-text="${escapeHtml(text)}" aria-label="Copy ${escapeHtml(label)}">${productIcon("copy")}</button>
+        </span>`
+      : `<strong>${escapeHtml(text)}</strong>`;
+    return `
+      <div class="product-kv-row ${copyable ? "copyable" : ""}">
+        <span>${escapeHtml(label)}</span>
+        ${valueHtml}
+      </div>
+    `;
+  }).join("");
+}
+
+function productLogRows(rows) {
+  return rows.map(([stamp, text]) => `
+    <div>
+      <span>${escapeHtml(stamp)}</span>
+      <strong>${escapeHtml(text)}</strong>
+    </div>
+  `).join("");
+}
+
+function productEmptyRow(text) {
+  return `<div class="product-empty">${escapeHtml(text)}</div>`;
+}
+
+function productStageTrack() {
+  const stages = commandCenterStages(pipelineStages());
+  return `
+    <section class="product-stage-track" aria-label="Run pipeline">
+      ${stages.map((stage, index) => {
+        const status = productStageStatus(stage.status);
+        const next = stages[index + 1];
+        const connectorStatus = status === "done" ? "done" : status === "warn" ? "warn" : "";
+        const statusDot = status === "warn" || status === "blocked"
+          ? `<i class="product-stage-status-dot ${escapeHtml(status)}" aria-hidden="true"></i>`
+          : "";
+        return `
+        <button class="${escapeHtml(status)}" type="button" data-product-section="${escapeHtml(productSectionForStage(stage.id))}">
+          <span>${productIcon(productStageIcon(stage.id))}${statusDot}</span>
+          <strong>${escapeHtml(stage.label)}</strong>
+        </button>
+        ${next ? `<i class="product-stage-connector ${escapeHtml(connectorStatus)}" aria-hidden="true"></i>` : ""}
+      `;
+      }).join("")}
+    </section>
+  `;
+}
+
+function productStageIcon(stage) {
+  const icons = {
+    corpus_manifest: "data",
+    preflight: "shield-check",
+    base: "chip",
+    sft: "sliders",
+    eval: "chart",
+    honesty: "heart",
+    release_gate: "gate",
+    handoff: "box",
+  };
+  return icons[stage] || "dot";
+}
+
+function productSectionForStage(stage) {
+  const map = {
+    corpus_manifest: "data",
+    preflight: "preflight",
+    base: "train",
+    sft: "train",
+    eval: "eval",
+    honesty: "honesty",
+    release_gate: "release",
+    handoff: "handoff",
+  };
+  return map[stage] || "runs";
+}
+
+function productIconForStage(stage) {
+  const map = {
+    corpus_manifest: "data",
+    preflight: "shield-check",
+    base: "bolt",
+    sft: "sliders",
+    eval: "chart",
+    honesty: "heart",
+    release_gate: "flag",
+    handoff: "box",
+  };
+  return map[stage] || "square";
+}
+
+function productStageStatus(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "done") return "done";
+  if (normalized === "blocked") return "blocked";
+  if (normalized === "warn") return "warn";
+  return "idle";
+}
+
+function productStatusClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (["pass", "ready", "done", "ok", "approved"].includes(normalized)) return "pass";
+  if (["fail", "blocked", "error"].includes(normalized)) return "fail";
+  if (["warn", "warning", "review", "pending", "watch"].includes(normalized)) return "warn";
+  if (["info", "running"].includes(normalized)) return "info";
+  return "neutral";
+}
+
+function productGateStatus(gate = {}, handoff = {}) {
+  const status = String(gate.status || handoff.gate_status || handoff.status || "warning").toLowerCase();
+  if (status === "approved" || status === "ready") return { label: "Passed", className: "pass" };
+  if (status === "blocked") return { label: "Blocked", className: "fail" };
+  if (status === "not_run" || status === "not-run") return { label: "Not gated", className: "neutral" };
+  return { label: "Warning", className: "warn" };
+}
+
+function productRunAlert() {
+  if (!state.detail) {
+    return { status: "warn", icon: "warning", text: "No run selected. Pick a run to inspect release blockers and handoff readiness." };
+  }
+  const repairPlan = state.detail.release_repair_plan || {};
+  const gate = state.detail.summary?.long_run_gate || {};
+  const actions = repairPlan.actions || [];
+  if (gate.status === "blocked" || repairPlan.status === "blocked") {
+    const first = actions[0];
+    return {
+      status: "fail",
+      icon: "warning",
+      text: `Blocked at Release Gate. ${first?.reason || first?.action || "Resolve gate issues before handoff."}`,
+    };
+  }
+  if (actions.length) {
+    return {
+      status: "warn",
+      icon: "warning",
+      text: `${actions.length} repair item${actions.length === 1 ? "" : "s"} need attention before handoff.`,
+    };
+  }
+  return {
+    status: "pass",
+    icon: "check",
+    text: "Run evidence is ready to inspect. Open Handoff for reports and artifacts.",
+  };
+}
+
+function productRecentRuns() {
+  const rows = state.runs.slice(-4).reverse();
+  return rows.map((run, index) => {
+    const passRate = Number(run.pass_rate || 0);
+    const selected = run.name === state.selectedRun;
+    const runNumber = run.id || run.run_id || run.step || (state.runs.length - index);
+    const stage = run.eval_score || (selected ? productSelectedRunStageLabel() : "Local run");
+    const displayName = run.name ? shortPath(run.name) : `Run ${runNumber}`;
+    const statusClass = selected && productGateStatus(state.detail?.summary?.long_run_gate || {}, state.detail?.handoff_packet || {}).className === "fail"
+      ? "warn"
+      : passRate >= 0.5
+        ? "pass"
+        : passRate > 0
+          ? "warn"
+          : "neutral";
+    return {
+      name: run.name,
+      title: `Run ${runNumber} - ${displayName}`,
+      note: `${stage} - ${fmtPercent(run.pass_rate || 0)} - CTX ${run.context_size || "--"}`,
+      status: statusClass === "pass" ? "PASS" : statusClass === "warn" ? "WARN" : "OPEN",
+      statusClass,
+      icon: statusClass === "warn" ? "warning" : "check",
+    };
+  });
+}
+
+function productSelectedRunStageLabel() {
+  const gate = state.detail?.summary?.long_run_gate || {};
+  if (gate.status === "blocked") return "Release gate";
+  if (state.detail?.sft_report?.losses?.length) return "SFT";
+  if (state.detail?.base_report?.losses?.length) return "Train";
+  const preflight = state.detail?.preflight || state.detail?.summary?.preflight || {};
+  if ((preflight.checks || []).length || (preflight.warning_checks || []).length || (preflight.blocking_checks || []).length) {
+    return "Preflight";
+  }
+  return "Selected run";
+}
+
+function productPipelineHealthRows() {
+  const checks = commandQualityChecks(state.detail?.summary || {}, state.detail?.release_repair_plan || {}, state.detail);
+  return [
+    { label: "Preflight", status: checks[0]?.status || "neutral", value: checks[0]?.status === "pass" ? "OK" : checks[0]?.value || "--" },
+    { label: "Train", status: state.detail?.base_report?.losses?.length ? "pass" : "warn", value: state.detail?.base_report?.losses?.length ? "OK" : "waiting" },
+    { label: "Eval", status: checks[3]?.status || "neutral", value: checks[3]?.status === "pass" ? "OK" : checks[3]?.value || "--" },
+    { label: "Honesty", status: checks[1]?.status || "neutral", value: checks[1]?.status === "pass" ? "OK" : checks[1]?.value || "--" },
+    { label: "Release gate", status: checks[2]?.status || "neutral", value: checks[2]?.value || "--" },
+  ];
+}
+
+function productOpenWarnings() {
+  const repairActions = state.detail?.release_repair_plan?.actions?.length || 0;
+  const preflightWarnings = state.detail?.preflight?.warning_checks?.length || 0;
+  const evalSummary = productEvalSummary();
+  const evalWarnings = Number(evalSummary.num_failed || 0) > 0 ? 1 : 0;
+  return repairActions + preflightWarnings + evalWarnings;
+}
+
+function productAverageLoss() {
+  const base = state.detail?.base_report?.losses?.at(-1);
+  const sft = state.detail?.sft_report?.losses?.at(-1);
+  const row = sft || base;
+  return row ? fmtLoss(row.val_loss ?? row.train_loss) : "--";
+}
+
+function productModelName() {
+  const config = state.detail?.summary?.config || {};
+  if (config.model_name) return config.model_name;
+  if (state.selectedRun) return state.selectedRun;
+  return "No model";
+}
+
+function productThroughput() {
+  const base = state.detail?.base_report?.losses?.at(-1);
+  const sft = state.detail?.sft_report?.losses?.at(-1);
+  const row = sft || base;
+  const value = row?.tokens_per_second || row?.tok_per_sec || state.detail?.summary?.throughput_tokens_per_second;
+  if (!Number.isFinite(Number(value))) return "--";
+  return Number(value) >= 1000 ? `${(Number(value) / 1000).toFixed(1)}k` : fmtInt(value);
+}
+
+function productLossScope() {
+  const base = state.detail?.base_report?.losses || [];
+  const sft = state.detail?.sft_report?.losses || [];
+  const rows = sft.length ? sft : base;
+  if (!rows.length) return "no trace";
+  const first = rows[0]?.step ?? 0;
+  const last = rows.at(-1)?.step ?? rows.length;
+  return `steps ${fmtInt(first)} to ${fmtInt(last)}`;
+}
+
+function productLossChart(detail) {
+  const baseLosses = (detail?.base_report?.losses || []).map((row) => ({
+    step: Number(row.step),
+    train: Number(row.train_loss),
+    val: Number(row.val_loss),
+  })).filter((row) => Number.isFinite(row.step) && Number.isFinite(row.train) && Number.isFinite(row.val));
+  const sftLosses = (detail?.sft_report?.losses || []).map((row) => ({
+    step: Number(row.step),
+    train: Number(row.train_loss),
+    val: Number(row.val_loss),
+  })).filter((row) => Number.isFinite(row.step) && Number.isFinite(row.train) && Number.isFinite(row.val));
+  const rows = sftLosses.length ? sftLosses : baseLosses;
+  if (!rows.length) return `<div class="product-empty chart-empty"><strong>No training trace yet.</strong><small>Run a tiny smoke train to populate this chart.</small></div>`;
+  if (rows.length === 1) {
+    const row = rows[0];
+    return `
+      <div class="product-chart-single">
+        <div>
+          <span class="product-eyebrow">One point captured</span>
+          <strong>step ${escapeHtml(fmtInt(row.step))}</strong>
+          <small>Run more steps to draw a trend. Picochat already recorded train and validation loss for this smoke run.</small>
+        </div>
+        <div class="product-chart-single-metrics" aria-label="Latest loss values">
+          <span><b>${escapeHtml(fmtLoss(row.train))}</b><small>train</small></span>
+          <span><b>${escapeHtml(fmtLoss(row.val))}</b><small>val</small></span>
+        </div>
+      </div>
+    `;
+  }
+  const values = rows.flatMap((row) => [row.train, row.val]);
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const spread = Math.max(0.0001, rawMax - rawMin);
+  const min = Math.max(0, rawMin - spread * 0.12);
+  const max = rawMax + spread * 0.12;
+  const width = 720;
+  const height = 190;
+  const pad = { left: 76, right: 48, top: 28, bottom: 42 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+  const xFor = (index) => pad.left + (rows.length <= 1 ? plotWidth / 2 : (index / (rows.length - 1)) * plotWidth);
+  const yFor = (value) => {
+    const range = Math.max(0.0001, max - min);
+    const y = height - pad.bottom - ((value - min) / range) * plotHeight;
+    return Math.max(pad.top, Math.min(height - pad.bottom, y));
+  };
+  const points = (key) => rows.map((row, index) => `${xFor(index).toFixed(1)},${yFor(row[key]).toFixed(1)}`).join(" ");
+  const mid = (min + max) / 2;
+  const firstStep = rows[0]?.step ?? 0;
+  const lastStep = rows.at(-1)?.step ?? rows.length;
+  const trainPoints = points("train");
+  const valPoints = points("val");
+  const trainDot = rows.length === 1 ? `<circle cx="${xFor(0).toFixed(1)}" cy="${yFor(rows[0].train).toFixed(1)}" r="5" class="product-dot train"></circle>` : "";
+  const valDot = rows.length === 1 ? `<circle cx="${xFor(0).toFixed(1)}" cy="${yFor(rows[0].val).toFixed(1)}" r="5" class="product-dot val"></circle>` : "";
+  return `
+    <div class="product-chart-frame">
+      <svg class="product-loss-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Training and validation loss">
+        <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" class="product-chart-axis"></line>
+        <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" class="product-chart-axis faint"></line>
+        <line x1="${pad.left}" y1="${pad.top}" x2="${width - pad.right}" y2="${pad.top}" class="product-chart-grid"></line>
+        <line x1="${pad.left}" y1="${yFor(mid).toFixed(1)}" x2="${width - pad.right}" y2="${yFor(mid).toFixed(1)}" class="product-chart-grid"></line>
+        <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" class="product-chart-grid"></line>
+        <text x="14" y="${(yFor(max) + 4).toFixed(1)}" class="product-chart-label axis">${fmtLoss(rawMax)}</text>
+        <text x="14" y="${(yFor(mid) + 4).toFixed(1)}" class="product-chart-label axis">${fmtLoss((rawMin + rawMax) / 2)}</text>
+        <text x="14" y="${(yFor(min) + 4).toFixed(1)}" class="product-chart-label axis">${fmtLoss(rawMin)}</text>
+        <text x="${pad.left}" y="${height - 14}" class="product-chart-label axis">step ${fmtInt(firstStep)}</text>
+        <text x="${width - 128}" y="${height - 14}" class="product-chart-label axis">step ${fmtInt(lastStep)}</text>
+        <polyline points="${trainPoints}" class="product-line train"></polyline>
+        <polyline points="${valPoints}" class="product-line val"></polyline>
+        ${trainDot}
+        ${valDot}
+        <text x="${width - 94}" y="34" class="product-chart-label train">train</text>
+        <text x="${width - 94}" y="52" class="product-chart-label val">val</text>
+      </svg>
+      <div class="product-chart-legend" aria-hidden="true">
+        <span><i class="train"></i>train loss</span>
+        <span><i class="val"></i>validation loss</span>
+      </div>
+    </div>
+  `;
+}
+
+function productDataPacks() {
+  const seen = new Map();
+  state.runs.forEach((run) => {
+    const name = run.dataset_pack || run.pack || run.name;
+    if (!name) return;
+    if (!seen.has(name)) {
+      seen.set(name, {
+        name: shortPath(name),
+        note: `${run.context_size ? `CTX ${run.context_size}` : "dataset pack"} - ${run.eval_score || "local run"}`,
+        status: Number(run.pass_rate || 0) >= 0.5 ? "Active" : "Staging",
+        statusClass: Number(run.pass_rate || 0) >= 0.5 ? "pass" : "info",
+      });
+    }
+  });
+  return Array.from(seen.values()).slice(0, 6);
+}
+
+function productDataPackName() {
+  return state.detail?.summary?.config?.dataset_pack || state.detail?.summary?.config?.corpus_input || "";
+}
+
+function productTokenCount() {
+  const corpus = state.detail?.summary?.corpus || {};
+  const tokens = corpus.num_tokens || corpus.total_tokens || state.detail?.base_report?.dataset?.num_tokens;
+  if (!Number.isFinite(Number(tokens))) return "--";
+  const number = Number(tokens);
+  if (number >= 1_000_000_000) return `${(number / 1_000_000_000).toFixed(1)}B`;
+  if (number >= 1_000_000) return `${(number / 1_000_000).toFixed(1)}M`;
+  return fmtInt(number);
+}
+
+function productLanguages() {
+  const language = state.detail?.summary?.corpus?.language || state.detail?.summary?.config?.language;
+  return language || "--";
+}
+
+function productDataQuality() {
+  const corpus = state.detail?.summary?.corpus || {};
+  const duplicate = Number(corpus.duplicate_document_rate || corpus.duplicate_line_rate || 0);
+  if (!Number.isFinite(duplicate)) return "--";
+  return `${Math.max(0, 100 - duplicate * 100).toFixed(0)}%`;
+}
+
+function productHardwareSummary() {
+  const config = state.detail?.summary?.config || {};
+  const device = config.device || "--";
+  const ddp = config.ddp_world_size || config.ddp_world || 1;
+  return Number(ddp) > 1 ? `${ddp}x ${device}` : device;
+}
+
+function productAttentionStatus() {
+  const backend = state.detail?.summary?.config?.attn_backend || "";
+  return backend === "math" ? "warn" : backend ? "pass" : "neutral";
+}
+
+function productAttentionLabel() {
+  return state.detail?.summary?.config?.attn_backend || "not recorded";
+}
+
+function productDdpStatus() {
+  const config = state.detail?.summary?.config || {};
+  if (config.ddp || Number(config.ddp_world_size || 1) > 1) return "pass";
+  return "neutral";
+}
+
+function productDdpLabel() {
+  const config = state.detail?.summary?.config || {};
+  return config.ddp || Number(config.ddp_world_size || 1) > 1 ? `${config.ddp_world_size || "--"} ranks` : "single process";
+}
+
+function productDocumentBoundaryStatus() {
+  const preflight = state.detail?.preflight || {};
+  const checks = [...(preflight.blocking_checks || []), ...(preflight.warning_checks || [])].join(" ");
+  return /document|boundary/i.test(checks) ? "warn" : "pass";
+}
+
+function productDocumentBoundaryLabel() {
+  const config = state.detail?.summary?.config || {};
+  return config.require_document_boundary_tokens ? "required" : "not required";
+}
+
+function productBudgetStatus() {
+  const ratio = Number((state.detail?.preflight || {}).budget?.planned_to_target_ratio);
+  if (!Number.isFinite(ratio)) return "neutral";
+  return ratio >= 0.9 ? "pass" : ratio >= 0.5 ? "warn" : "fail";
+}
+
+function productBudgetLabel() {
+  const budget = (state.detail?.preflight || {}).budget || {};
+  if (budget.planned_to_target_ratio == null) return "not recorded";
+  return `${fmtLoss(budget.planned_to_target_ratio)}x target`;
+}
+
+function productTrainStatus() {
+  if (state.runJobs.some((job) => job.run_name === state.selectedRun && job.status === "running")) return "Running";
+  if (state.detail?.base_report?.losses?.length || state.detail?.sft_report?.losses?.length) return "Recorded";
+  return "Waiting";
+}
+
+function productEvalPassed() {
+  const summary = productEvalSummary();
+  return Number(summary.pass_rate || 0) >= 0.5;
+}
+
+function productEvalSummary() {
+  return state.detail?.eval_reports?.at(-1)?.report?.summary || state.detail?.summary?.eval || {};
+}
+
+function productEvalRows(summary) {
+  const categoryRates = summary.category_pass_rates || summary.by_category || {};
+  const rows = Object.entries(categoryRates).slice(0, 6).map(([label, rate]) => ({
+    label,
+    status: Number(rate) >= 0.5 ? "pass" : "warn",
+    value: fmtPercent(rate),
+  }));
+  if (rows.length) return rows;
+  return [
+    { label: "Visible eval", status: productEvalPassed() ? "pass" : "warn", value: summary.pass_rate == null ? "--" : fmtPercent(summary.pass_rate) },
+    { label: "Passed rows", status: "pass", value: fmtInt(summary.num_passed) },
+    { label: "Failed rows", status: Number(summary.num_failed || 0) ? "warn" : "pass", value: fmtInt(summary.num_failed) },
+  ];
+}
+
+function productHonestyPassed() {
+  const honesty = state.detail?.summary?.honesty || {};
+  return !Number(honesty.corpus_prompt_hits || 0) && !Number(honesty.exact_prompt_leaks || 0);
+}
+
+function productHonestyScore() {
+  const honesty = state.detail?.summary?.honesty || {};
+  if (honesty.score != null) return String(honesty.score);
+  const penalties = Number(honesty.corpus_prompt_hits || 0) + Number(honesty.exact_prompt_leaks || 0) + Number(honesty.near_prompt_leaks || 0);
+  return `${Math.max(0, 100 - penalties)}/100`;
+}
+
+function productGateThresholdRows() {
+  const gate = state.detail?.summary?.long_run_gate || {};
+  const thresholds = gate.skill_release_eval_thresholds || {};
+  const settings = state.productSettings.gate;
+  return [
+    ["Max toxicity", settings.toxicityMax],
+    ["Max bias", settings.biasMax],
+    ["Max contamination", settings.contaminationMax],
+    ["Min accuracy", settings.accuracyMin],
+    ["Min honesty", settings.honestyMin],
+    ["SFT fit min", gate.sft_fit_threshold == null ? "70%" : fmtPercent(gate.sft_fit_threshold)],
+    ["Math min", thresholds.math == null ? "--" : fmtPercent(thresholds.math)],
+    ["External eval", (gate.external_eval_results || []).length ? "attached" : "required"],
+  ];
+}
+
+function shortHash(value) {
+  const text = String(value || "");
+  return text ? text.slice(0, 8) : "--";
+}
+
+function productIcon(name) {
+  const icons = {
+    dashboard: '<svg viewBox="0 0 24 24"><path d="M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z"></path></svg>',
+    runs: '<svg viewBox="0 0 24 24"><path d="M8 5l9 7-9 7z"></path></svg>',
+    compare: '<svg viewBox="0 0 24 24"><path d="M7 7h10M7 17h10"></path><path d="M8 4l-3 3 3 3M16 14l3 3-3 3"></path></svg>',
+    data: '<svg viewBox="0 0 24 24"><path d="M6 7.5c0-1.7 2.7-3 6-3s6 1.3 6 3-2.7 3-6 3-6-1.3-6-3z"></path><path d="M6 7.5v8.8c0 1.7 2.7 3 6 3s6-1.3 6-3V7.5"></path><path d="M6 12c0 1.7 2.7 3 6 3s6-1.3 6-3"></path></svg>',
+    shield: '<svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-2.8 8-7 10-4.2-2-7-5.5-7-10V6z"></path></svg>',
+    "shield-check": '<svg viewBox="0 0 24 24"><path d="M12 4.5l6 2.6v4.5c0 3.8-2.4 6.7-6 8.4-3.6-1.7-6-4.6-6-8.4V7.1z"></path><path d="M8.7 12.1l2 2 4.6-4.7"></path></svg>',
+    chip: '<svg viewBox="0 0 24 24"><path d="M8 8h8v8H8z"></path><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>',
+    bolt: '<svg viewBox="0 0 24 24"><path d="M13 2L5 13h6l-1 9 9-12h-6z"></path></svg>',
+    cloud: '<svg viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .7-7.9A6 6 0 0 0 6.3 9 4.5 4.5 0 0 0 7 18z"></path><path d="M12 12v6M9.5 15.5L12 18l2.5-2.5"></path></svg>',
+    notebook: '<svg viewBox="0 0 24 24"><path d="M7 4h11v16H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path><path d="M9 4v16M12 8h4M12 12h4M12 16h3"></path></svg>',
+    terminal: '<svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"></path><path d="M7 9l3 3-3 3M12 15h5"></path></svg>',
+    chart: '<svg viewBox="0 0 24 24"><path d="M4 18h16"></path><path d="M7 15l4-4 3 2 4-6"></path></svg>',
+    heart: '<svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"></path></svg>',
+    gate: '<svg viewBox="0 0 24 24"><path d="M7 20V8a5 5 0 0 1 10 0v12"></path><path d="M5 20h14M9 12h6"></path></svg>',
+    flag: '<svg viewBox="0 0 24 24"><path d="M6 21V4"></path><path d="M6 5h11l-2 4 2 4H6"></path></svg>',
+    box: '<svg viewBox="0 0 24 24"><path d="M6 7.5l6-3.5 6 3.5v7l-6 3.5-6-3.5z"></path><path d="M9 9.2l3 1.8 3-1.8"></path></svg>',
+    settings: '<svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"></path><path d="M4 12h2M18 12h2M12 4v2M12 18v2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M17.7 6.3l-1.4 1.4M7.7 16.3l-1.4 1.4"></path></svg>',
+    check: '<svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 6"></path></svg>',
+    info: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8h.01"></path></svg>',
+    download: '<svg viewBox="0 0 24 24"><path d="M12 4v10"></path><path d="M8 10l4 4 4-4"></path><path d="M5 20h14"></path></svg>',
+    warning: '<svg viewBox="0 0 24 24"><path d="M12 4l9 16H3z"></path><path d="M12 9v5M12 17h.01"></path></svg>',
+    lock: '<svg viewBox="0 0 24 24"><path d="M7 10h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z"></path><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg>',
+    sliders: '<svg viewBox="0 0 24 24"><path d="M6 5v14M12 5v14M18 5v14"></path><path d="M4 9h4M10 15h4M16 11h4"></path></svg>',
+    dot: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle></svg>',
+    spinner: '<svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"></path></svg>',
+    square: '<svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"></path></svg>',
+    copy: '<svg viewBox="0 0 24 24"><path d="M9 9.5h8.5v8.5H9z"></path><path d="M6.5 14.5H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6.5a2 2 0 0 1 2 2v.5"></path></svg>',
+    refresh: '<svg viewBox="0 0 24 24"><path d="M19 8.5A7.8 7.8 0 0 0 5.7 6.8L4 8.5"></path><path d="M4 4.5v4h4"></path><path d="M5 15.5a7.8 7.8 0 0 0 13.3 1.7L20 15.5"></path><path d="M20 19.5v-4h-4"></path></svg>',
+    close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"></path></svg>',
+    sun: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"></path></svg>',
+    moon: '<svg viewBox="0 0 24 24"><path d="M20 14.2A7.8 7.8 0 0 1 9.8 4a8.5 8.5 0 1 0 10.2 10.2z"></path></svg>',
+    menu: '<svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>',
+  };
+  return icons[name] || icons.dot;
 }
 
 function setStage(name, options = {}) {
@@ -1882,6 +4384,7 @@ function renderMetricGlossary() {
 
 function renderPipeline() {
   const stages = pipelineStages();
+  renderCommandCenter(stages);
   $("pipeline-run").textContent = state.selectedRun ? `RUN ${state.selectedRun}` : "NO RUN";
   $("pipeline-strip").innerHTML = stages.map((stage) => renderPipelineStage(stage)).join("");
   const active = stages.find((stage) => stage.id === state.activeStage) || stages[0];
@@ -1891,6 +4394,314 @@ function renderPipeline() {
   $("run-trust-panel").innerHTML = runTrustPanel();
   $("pipeline-detail").innerHTML = active ? stageDetail(active) : "LOAD A RUN TO INSPECT THE PIPELINE.";
   $("run-doctor").innerHTML = runDoctor(stages);
+}
+
+function renderCommandCenter(stages) {
+  if (!$("command-center")) return;
+  const summary = state.detail?.summary || {};
+  const config = summary.config || {};
+  const base = summary.base || {};
+  const sft = summary.sft || {};
+  const gate = summary.long_run_gate || {};
+  const passport = state.detail?.run_passport || {};
+  const repairPlan = state.detail?.release_repair_plan || {};
+  const handoff = state.detail?.handoff_packet || {};
+  const commandStages = commandCenterStages(stages);
+  const blocker = commandStages.find((stage) => stage.status === "blocked");
+  const warning = commandStages.find((stage) => stage.status === "warn" || stage.status === "pending");
+  const current = blocker || warning || commandStages.at(-1);
+  const activeCommandStage = state.activeCommandStage || current?.id || commandStages[0]?.id;
+  const gateStatus = String(gate.status || handoff.gate_status || "watch").toLowerCase();
+  const statusClass = gateStatus === "approved" || handoff.status === "ready" ? "pass" : gateStatus === "blocked" || handoff.status === "blocked" ? "fail" : "warn";
+  $("command-breadcrumb").textContent = state.selectedRun ? `Runs / ${state.selectedRun}` : "Runs / No run selected";
+  $("command-run-title").textContent = state.selectedRun || "Select a run";
+  $("command-status-pill").className = `command-status-pill ${statusClass}`;
+  $("command-status-pill").textContent = commandStatusText(gateStatus, handoff.status);
+  $("command-alert").className = `command-alert ${commandAlertClass(current)}`;
+  $("command-alert").innerHTML = commandAlertText(current, passport, repairPlan);
+  $("command-stage-track").innerHTML = commandStages.map((stage, index) => renderCommandStage(stage, index, activeCommandStage)).join("");
+  $("command-metrics").innerHTML = commandMetrics(summary, config, base, sft).map((metric) => `
+    <div class="command-metric">
+      <span>${escapeHtml(metric.label)}</span>
+      <strong>${escapeHtml(metric.value)}</strong>
+      <small>${escapeHtml(metric.note)}</small>
+    </div>
+  `).join("");
+  const qualityChecks = commandQualityChecks(summary, repairPlan, state.detail);
+  $("command-quality-summary").textContent = qualitySummaryText(qualityChecks);
+  $("command-quality-list").innerHTML = qualityChecks.map((check) => `
+    <div class="command-quality-row ${escapeHtml(check.status)}">
+      <span></span>
+      <strong>${escapeHtml(check.label)}</strong>
+      <em>${escapeHtml(check.value)}</em>
+    </div>
+  `).join("");
+  $("command-loss-summary").textContent = lossSummaryText(state.detail);
+  $("command-loss-chart").innerHTML = commandLossChart(state.detail);
+  const repairs = commandRepairItems(repairPlan, handoff);
+  $("command-repair-summary").textContent = repairs.length ? `${repairs.length} item${repairs.length === 1 ? "" : "s"} need action` : "No open actions";
+  $("command-repair-list").innerHTML = repairs.map((item) => `
+    <div class="command-repair-row ${escapeHtml(item.status)}">
+      <div>
+        <span>${escapeHtml(item.source)}</span>
+        <strong>${escapeHtml(item.title)}</strong>
+        <p>${escapeHtml(item.reason)}</p>
+      </div>
+      <button type="button" data-guide-panel="${escapeHtml(item.panel)}">${escapeHtml(item.cta)}</button>
+    </div>
+  `).join("");
+}
+
+function commandCenterStages(stages) {
+  const timeline = state.detail?.run_timeline || [];
+  const byId = Object.fromEntries(timeline.map((item) => [item.id, item]));
+  const stageById = Object.fromEntries((stages || []).map((item) => [item.id, item]));
+  const handoff = state.detail?.handoff_packet || {};
+  const releaseRepair = state.detail?.release_repair_plan || {};
+  const definitions = [
+    ["corpus_manifest", "Data Pack", "dataset", "dataset"],
+    ["preflight", "Preflight", "dataset", "dataset"],
+    ["base", "Train", "base", "training"],
+    ["sft", "SFT", "sft", "training"],
+    ["eval", "Eval", "eval", "eval"],
+    ["honesty", "Honesty", "report", "report"],
+    ["release_gate", "Release Gate", "report", "report"],
+    ["handoff", "Handoff", "report", "report"],
+  ];
+  return definitions.map(([id, label, appStage, panel]) => {
+    if (id === "handoff") {
+      return {
+        id,
+        label,
+        appStage,
+        panel,
+        status: handoff.status === "ready" ? "done" : handoff.status === "blocked" ? "blocked" : "pending",
+        detail: handoff.summary || "Handoff packet waits for release artifacts.",
+      };
+    }
+    const item = byId[id];
+    const fallbackStage = stageById[appStage];
+    const fallbackHealth = fallbackStage ? stageHealth(fallbackStage) : { className: "pending" };
+    return {
+      id,
+      label,
+      appStage,
+      panel,
+      status: item?.status || commandStatusFromHealth(fallbackHealth.className, releaseRepair.status),
+      detail: item?.summary || fallbackStage?.summary || "No evidence yet.",
+    };
+  });
+}
+
+function commandStatusFromHealth(health, repairStatus) {
+  if (health === "ready") return "done";
+  if (health === "missing") return repairStatus === "blocked" ? "blocked" : "pending";
+  if (health === "partial") return "warn";
+  return "pending";
+}
+
+function renderCommandStage(stage, index, activeCommandStage) {
+  return `
+    <button class="command-stage ${commandStageClass(stage.status)} ${stage.id === activeCommandStage ? "active" : ""}" type="button" data-command-stage="${escapeHtml(stage.appStage)}" data-command-stage-id="${escapeHtml(stage.id)}" data-command-panel="${escapeHtml(stage.panel)}">
+      <span class="command-stage-node" aria-hidden="true"></span>
+      <strong>${escapeHtml(stage.label)}</strong>
+      <small>${escapeHtml(commandStatusLabel(stage.status))}</small>
+    </button>
+  `;
+}
+
+function commandStageClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "done") return "done";
+  if (normalized === "blocked") return "blocked";
+  if (normalized === "warn") return "warn";
+  return "idle";
+}
+
+function commandStatusLabel(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "done") return "ready";
+  if (normalized === "blocked") return "blocked";
+  if (normalized === "warn") return "review";
+  return "waiting";
+}
+
+function commandAlertClass(stage) {
+  if (!state.detail) return "warn";
+  if (stage?.status === "blocked") return "fail";
+  if (stage?.status === "warn" || stage?.status === "pending") return "warn";
+  return "pass";
+}
+
+function commandAlertText(stage, passport, repairPlan) {
+  if (!state.detail) {
+    return `<strong>No run loaded.</strong> Select a run from the left rail to inspect training health and release blockers.`;
+  }
+  const firstRepair = repairPlan?.actions?.[0];
+  if (stage?.status === "blocked") {
+    return `<strong>Blocked at ${escapeHtml(stage.label)}.</strong> ${escapeHtml(firstRepair?.reason || passport.open_issue || stage.detail || "Repair required before handoff.")}`;
+  }
+  if (stage?.status === "warn" || stage?.status === "pending") {
+    return `<strong>Needs attention at ${escapeHtml(stage.label)}.</strong> ${escapeHtml(firstRepair?.reason || passport.open_issue || stage.detail || "Inspect this stage before continuing.")}`;
+  }
+  return `<strong>Run evidence is ready to inspect.</strong> ${escapeHtml(passport.headline || "Open the Handoff panel for the run passport and reports.")}`;
+}
+
+function commandStatusText(gateStatus, handoffStatus) {
+  if (gateStatus === "approved" || handoffStatus === "ready") return "Ready";
+  if (gateStatus === "blocked" || handoffStatus === "blocked") return "Blocked";
+  if (gateStatus === "not_run" || gateStatus === "not-run") return "Not gated";
+  return "Warning";
+}
+
+function commandMetrics(summary, config, base, sft) {
+  const evalSummary = state.detail?.eval_reports?.at(-1)?.report?.summary || summary.eval || {};
+  const latestBase = state.detail?.base_report?.losses?.at(-1);
+  const latestSft = state.detail?.sft_report?.losses?.at(-1);
+  return [
+    {
+      label: "Model",
+      value: fmtInt(base.num_parameters || summary.num_parameters),
+      note: `${config.n_layer || "--"} layers / ctx ${config.context_size || "--"}`,
+    },
+    {
+      label: "Base steps",
+      value: fmtInt(config.base_steps || state.detail?.base_report?.config?.max_steps),
+      note: latestBase ? `val ${fmtLoss(latestBase.val_loss)}` : "no base trace",
+    },
+    {
+      label: "SFT steps",
+      value: fmtInt(config.sft_steps || state.detail?.sft_report?.config?.max_steps),
+      note: latestSft ? `val ${fmtLoss(latestSft.val_loss)}` : "no SFT trace",
+    },
+    {
+      label: "Eval pass",
+      value: evalSummary.num_examples ? fmtPercent(evalSummary.pass_rate) : "--",
+      note: evalSummary.num_examples ? `${fmtInt(evalSummary.num_passed)} / ${fmtInt(evalSummary.num_examples)} rows` : "no eval report",
+    },
+  ];
+}
+
+function commandQualityChecks(summary, repairPlan, detail) {
+  const preflight = detail?.preflight || summary.preflight || {};
+  const honesty = summary.honesty || {};
+  const gate = summary.long_run_gate || {};
+  const evalSummary = detail?.eval_reports?.at(-1)?.report?.summary || summary.eval || {};
+  const repairActions = repairPlan?.actions || [];
+  return [
+    {
+      label: "Preflight",
+      status: (preflight.blocking_checks || []).length ? "fail" : (preflight.warning_checks || []).length ? "warn" : "pass",
+      value: `${(preflight.blocking_checks || []).length || 0} block / ${(preflight.warning_checks || []).length || 0} warn`,
+    },
+    {
+      label: "Data contamination",
+      status: Number(honesty.corpus_prompt_hits || 0) > 0 || Number(honesty.exact_prompt_leaks || 0) > 0 ? "fail" : Number(honesty.near_prompt_leaks || 0) > 0 ? "warn" : "pass",
+      value: honesty.summary || honesty.status || "not checked",
+    },
+    {
+      label: "Release gate",
+      status: gate.status === "approved" ? "pass" : gate.status === "blocked" ? "fail" : "warn",
+      value: gate.status || "not run",
+    },
+    {
+      label: "Visible eval",
+      status: evalSummary.pass_rate == null ? "warn" : Number(evalSummary.pass_rate) >= 0.5 ? "pass" : "warn",
+      value: evalSummary.num_examples ? `${fmtInt(evalSummary.num_passed)} / ${fmtInt(evalSummary.num_examples)}` : "missing",
+    },
+    {
+      label: "Repair queue",
+      status: repairActions.some((item) => item.severity === "block") ? "fail" : repairActions.length ? "warn" : "pass",
+      value: `${repairActions.length} action${repairActions.length === 1 ? "" : "s"}`,
+    },
+  ];
+}
+
+function qualitySummaryText(checks) {
+  const fail = checks.filter((item) => item.status === "fail").length;
+  const warn = checks.filter((item) => item.status === "warn").length;
+  if (fail) return `${fail} blocked`;
+  if (warn) return `${warn} warnings`;
+  return "all clear";
+}
+
+function lossSummaryText(detail) {
+  const base = detail?.base_report?.losses || [];
+  const sft = detail?.sft_report?.losses || [];
+  if (base.length && sft.length) return "base + SFT";
+  if (base.length) return "base only";
+  if (sft.length) return "SFT only";
+  return "no trace";
+}
+
+function commandLossChart(detail) {
+  const baseLosses = (detail?.base_report?.losses || []).map((row) => ({
+    step: Number(row.step),
+    value: Number(row.val_loss ?? row.train_loss),
+  })).filter((row) => Number.isFinite(row.step) && Number.isFinite(row.value));
+  const sftLosses = (detail?.sft_report?.losses || []).map((row) => ({
+    step: Number(row.step),
+    value: Number(row.val_loss ?? row.train_loss),
+  })).filter((row) => Number.isFinite(row.step) && Number.isFinite(row.value));
+  if (!baseLosses.length && !sftLosses.length) {
+    return `<div class="command-empty-chart">No training trace yet.</div>`;
+  }
+  const series = [
+    { label: "base", rows: baseLosses, color: "var(--product-blue)" },
+    { label: "sft", rows: sftLosses, color: "var(--product-green)" },
+  ].filter((item) => item.rows.length);
+  const allValues = series.flatMap((item) => item.rows.map((row) => row.value));
+  const max = Math.max(...allValues);
+  const min = Math.min(...allValues);
+  const width = 520;
+  const height = 210;
+  const pad = 34;
+  const range = Math.max(0.0001, max - min);
+  const lineFor = (rows) => {
+    const stepMin = Math.min(...rows.map((row) => row.step));
+    const stepMax = Math.max(...rows.map((row) => row.step));
+    const stepRange = Math.max(1, stepMax - stepMin);
+    return rows.map((row) => {
+      const x = pad + ((row.step - stepMin) / stepRange) * (width - pad * 2);
+      const y = height - pad - ((row.value - min) / range) * (height - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+  };
+  return `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Training validation loss">
+      <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" class="command-axis"></line>
+      <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" class="command-axis"></line>
+      <text x="${pad}" y="${pad - 8}" class="command-axis-label">${escapeHtml(fmtLoss(max))}</text>
+      <text x="${pad}" y="${height - 10}" class="command-axis-label">${escapeHtml(fmtLoss(min))}</text>
+      ${series.map((item, index) => `
+        <polyline points="${lineFor(item.rows)}" fill="none" stroke="${item.color}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></polyline>
+        <text x="${width - pad - 72}" y="${pad + (index * 20)}" class="command-legend" fill="${item.color}">${escapeHtml(item.label)}</text>
+      `).join("")}
+    </svg>
+  `;
+}
+
+function commandRepairItems(repairPlan, handoff) {
+  const actions = repairPlan?.actions || [];
+  if (actions.length) {
+    return actions.slice(0, 3).map((item) => ({
+      status: item.severity === "block" ? "fail" : item.severity === "pass" ? "pass" : "warn",
+      source: item.source === "preflight" ? "Preflight" : "Release gate",
+      title: item.title || "Repair item",
+      reason: item.reason || item.action || "Inspect this item.",
+      cta: item.source === "preflight" ? "Open data" : "Open gate",
+      panel: item.source === "preflight" ? "dataset" : "report",
+    }));
+  }
+  const nextActions = handoff?.next_actions || [];
+  return nextActions.slice(0, 2).map((action) => ({
+    status: handoff.status === "ready" ? "pass" : "warn",
+    source: "Handoff",
+    title: "Next action",
+    reason: action,
+    cta: "Open handoff",
+    panel: "report",
+  }));
 }
 
 function runReleaseReadinessPanel() {
@@ -1979,6 +4790,33 @@ function runReleaseReadinessPanel() {
         <span>${escapeHtml(weakestSkill.name)} ${fmtPercent(weakestSkill.rate)} / gate ${fmtPercent(weakestSkill.threshold)}</span>
       </div>
     ` : ""}
+    ${renderReleaseRepairPlan()}
+  `;
+}
+
+function renderReleaseRepairPlan() {
+  const plan = state.detail?.release_repair_plan;
+  if (!plan) return "";
+  return `
+    <div class="release-repair ${escapeHtml(plan.status || "watch")}">
+      <div class="repair-head">
+        <div>
+          <label>RELEASE REPAIR PLAN</label>
+          <strong>${escapeHtml(plan.headline || "Inspect this run before promotion.")}</strong>
+        </div>
+        <span>${escapeHtml(`${(plan.actions || []).length} action${(plan.actions || []).length === 1 ? "" : "s"}`)}</span>
+      </div>
+      <div class="repair-action-grid">
+        ${(plan.actions || []).slice(0, 6).map((item) => `
+          <div class="repair-action-card ${escapeHtml(item.severity || "warn")}">
+            <span>${escapeHtml(String(item.severity || "warn").toUpperCase())}</span>
+            <strong>${escapeHtml(item.title || "Repair item")}</strong>
+            <p>${escapeHtml(item.reason || "")}</p>
+            <em>${escapeHtml(item.action || "")}</em>
+          </div>
+        `).join("")}
+      </div>
+    </div>
   `;
 }
 
@@ -2518,6 +5356,35 @@ function runDecisionCards(summary, evalSummary, checks) {
 
 function runStoryTimeline(stages) {
   if (!state.detail) return "LOAD A RUN TO SEE THE TRAINING STORY.";
+  const timeline = state.detail.run_timeline || [];
+  if (timeline.length) {
+    const done = timeline.filter((item) => item.status === "done").length;
+    const blocked = timeline.find((item) => item.status === "blocked");
+    const attention = timeline.find((item) => ["blocked", "warn", "pending"].includes(item.status));
+    return `
+      <div class="story-head">
+        <div>
+          <label>RUN LEDGER</label>
+          <strong>${escapeHtml(state.selectedRun || "current run")}</strong>
+        </div>
+        <span>${escapeHtml(blocked ? `BLOCKED: ${blocked.label}` : attention ? `NEXT: ${attention.label}` : "ALL EVIDENCE READY")}</span>
+      </div>
+      <div class="story-grid ledger-grid">
+        ${timeline.map((item, index) => `
+          <button class="story-step ledger-step ${runTimelineClass(item.status)}" type="button" data-ledger-evidence="${escapeHtml(item.evidence || "")}">
+            <span>${String(index + 1).padStart(2, "0")} ${escapeHtml(runTimelineStatusLabel(item.status))}</span>
+            <strong>${escapeHtml(item.label)}</strong>
+            <em>${escapeHtml(item.detail || shortPath(item.evidence) || "No evidence path recorded")}</em>
+            <p>${escapeHtml(item.summary || "")}</p>
+          </button>
+        `).join("")}
+      </div>
+      <div class="ledger-summary">
+        <strong>${done}/${timeline.length} evidence checks ready</strong>
+        <span>${escapeHtml(attention ? attention.summary || "" : "Run bundle is ready to inspect, compare, and hand off.")}</span>
+      </div>
+    `;
+  }
   return `
     <div class="story-head">
       <div>
@@ -2540,6 +5407,22 @@ function runStoryTimeline(stages) {
       }).join("")}
     </div>
   `;
+}
+
+function runTimelineClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "done") return "ready";
+  if (normalized === "blocked") return "missing";
+  if (normalized === "warn") return "partial";
+  return "pending";
+}
+
+function runTimelineStatusLabel(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "done") return "READY";
+  if (normalized === "blocked") return "BLOCKED";
+  if (normalized === "warn") return "WATCH";
+  return "PENDING";
 }
 
 function currentRunOneLineVerdict() {
@@ -2969,6 +5852,7 @@ function prepareDatasetSourceMode(mode) {
 }
 
 async function importHfDataset() {
+  const values = productHfFormValues();
   const dataset = $("hf-dataset-input").value.trim();
   const outDir = $("hf-out-dir").value.trim();
   const configName = $("hf-config-name").value.trim();
@@ -3008,6 +5892,7 @@ async function importHfDataset() {
       dataset_url: dataset,
       out_dir: outDir || null,
       config_name: configName || null,
+      token: values.token || null,
       split,
       text_column: textColumn,
       max_rows: maxRows,
@@ -6528,6 +9413,8 @@ function renderGenerationDeck() {
 
 function renderReportList() {
   const reports = state.detail?.reports || {};
+  if ($("run-passport")) $("run-passport").innerHTML = renderRunPassport();
+  if ($("handoff-packet")) $("handoff-packet").innerHTML = renderHandoffPacket();
   const rows = [
     ["summary", "SUMMARY"],
     ["honesty", "DATA HONESTY"],
@@ -6548,6 +9435,96 @@ function renderReportList() {
   }).join("");
   const ready = Object.values(reports).filter((report) => report.exists).length;
   $("report-status").textContent = `${ready}/5 REPORTS`;
+}
+
+function renderRunPassport() {
+  const passport = state.detail?.run_passport;
+  if (!passport) return "LOAD A RUN TO SEE THE RUN PASSPORT.";
+  const facts = passport.facts || [];
+  return `
+    <div class="passport-head ${escapeHtml(passport.status || "watch")}">
+      <div>
+        <label>RUN PASSPORT</label>
+        <strong>${escapeHtml(passport.title || "Picochat Run Passport")}</strong>
+        <p>${escapeHtml(passport.headline || "Inspect this run before making release claims.")}</p>
+      </div>
+      <button class="copy-command" type="button" data-copy-passport>COPY MARKDOWN</button>
+    </div>
+    <div class="passport-facts">
+      ${facts.slice(0, 12).map((fact) => `
+        <div>
+          <span>${escapeHtml(fact.label)}</span>
+          <strong>${escapeHtml(shortPath(fact.value) || "--")}</strong>
+        </div>
+      `).join("")}
+    </div>
+    <div class="passport-next">
+      <span>OPEN ISSUE</span>
+      <strong>${escapeHtml(passport.open_issue || passport.headline || "No open issue found.")}</strong>
+      <span>NEXT ACTION</span>
+      <strong>${escapeHtml(passport.next_action || "Inspect the release gate.")}</strong>
+    </div>
+  `;
+}
+
+async function copyPassport(button) {
+  const markdown = state.detail?.run_passport?.markdown;
+  if (!markdown) {
+    flashStatus("COPY FAULT. | no run passport found");
+    return;
+  }
+  const previous = button.textContent;
+  button.textContent = "COPYING";
+  button.disabled = true;
+  try {
+    await writeClipboard(markdown);
+    button.textContent = "COPIED";
+    flashStatus("COPIED RUN PASSPORT. | Paste it into a handoff note, PR, or README.");
+  } catch (error) {
+    button.textContent = "FAILED";
+    flashStatus(`COPY FAULT. | ${error.message}`);
+  }
+  window.setTimeout(() => {
+    button.textContent = previous;
+    button.disabled = false;
+  }, 1200);
+}
+
+function renderHandoffPacket() {
+  const packet = state.detail?.handoff_packet;
+  if (!packet) return "LOAD A RUN TO SEE THE HANDOFF PACKET.";
+  const artifacts = packet.artifacts || [];
+  const ready = Number(packet.ready_count || 0);
+  const required = Number(packet.required_count || 0);
+  const readyRequired = artifacts.filter((item) => item.required && item.exists).length;
+  const missing = packet.missing_required || [];
+  return `
+    <div class="handoff-head ${escapeHtml(packet.status || "watch")}">
+      <div>
+        <label>HANDOFF PACKET</label>
+        <strong>${escapeHtml(String(packet.status || "watch").toUpperCase())}</strong>
+      </div>
+      <span>${escapeHtml(`${readyRequired}/${required} required ready | gate ${packet.gate_status || "not_run"}`)}</span>
+    </div>
+    <p class="notice">${escapeHtml(packet.summary || "No handoff summary available.")}</p>
+    ${missing.length ? `<p class="notice danger">Missing: ${escapeHtml(missing.join(", "))}</p>` : ""}
+    ${(packet.next_actions || []).length ? `
+      <div class="handoff-actions">
+        <label>NEXT ACTIONS</label>
+        ${(packet.next_actions || []).map((action) => `<p>${escapeHtml(action)}</p>`).join("")}
+      </div>
+    ` : ""}
+    <div class="handoff-grid">
+      ${artifacts.map((item) => `
+        <div class="handoff-item ${item.exists ? "ready" : item.required ? "missing" : "optional"}">
+          <span>${escapeHtml(item.exists ? "READY" : item.required ? "MISSING" : "OPTIONAL")}</span>
+          <strong>${escapeHtml(item.label)}</strong>
+          <p>${escapeHtml(item.purpose || "")}</p>
+          <code>${escapeHtml(shortPath(item.path) || "no path")}</code>
+        </div>
+      `).join("")}
+    </div>
+  `;
 }
 
 function renderCompareControls() {
