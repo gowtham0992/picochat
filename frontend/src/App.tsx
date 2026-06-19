@@ -27,7 +27,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import { archiveRuns, cancelRun, generateText, listRuns, loadRun, loadStatus, runLogStreamUrl, startRun } from "./api";
-import ModelViewer from "./ModelViewer";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
@@ -60,15 +59,6 @@ function readSettings(): SettingsState {
     return DEFAULT_SETTINGS;
   }
 }
-
-const ACCENTS: Record<Tone, [number, number, number]> = {
-  pass: [0.36, 0.86, 0.62],
-  warn: [0.92, 0.68, 0.32],
-  block: [0.96, 0.42, 0.4],
-  info: [0.51, 0.55, 1.0],
-  neutral: [0.51, 0.55, 1.0],
-  running: [0.51, 0.55, 1.0]
-};
 
 export default function App() {
   const [section, setSection] = useState<SectionId>("overview");
@@ -251,40 +241,29 @@ function OverviewView(p: SectionProps) {
   const { detail, selectedRun, tone, setSection } = p;
   const s = (detail as any)?.summary || {};
   const cfg = modelConfig(detail, selectedRun);
-  const heat = Math.max(0.08, Math.min(1, selectedRun?.pass_rate ?? 0));
   const valBpb = s.sft?.final_val_bpb ?? s.base?.final_val_bpb;
   const tps = s.sft?.throughput?.tokens_per_second ?? s.base?.throughput?.tokens_per_second;
 
   return (
     <div className="pc-stack">
-      <section className="pc-hero">
-        <div className="pc-model-panel">
-          <div className="pc-model-stage">
-            {cfg.n_layer ? <ModelViewer config={cfg} heat={heat} accent={ACCENTS[tone]} /> : <Empty label="No model yet" />}
-            <div className="pc-model-cap">
-              <span>{cfg.n_layer} blocks · {cfg.n_head} heads · d{cfg.n_embd}</span>
-              <em>eval-charged schematic</em>
-            </div>
-          </div>
-          <div className="pc-model-bar">
-            <div>
-              <span className="pc-eyebrow">{s.config?.scale || "model"}</span>
-              <strong>{compactNumber(cfg.params)} parameters</strong>
-            </div>
-            <button className="pc-btn" onClick={() => setSection("playground")}><MessageSquare size={15} /> Open playground</button>
-          </div>
+      <section className="pc-overview-top">
+        <div className="pc-overview-id">
+          <span className="pc-eyebrow">{s.config?.scale || "model"}</span>
+          <strong>{selectedRun?.name || "No run selected"}</strong>
+          <span>{compactNumber(cfg.params)} parameters · {cfg.n_layer} blocks · {cfg.n_head} heads · d{cfg.n_embd || "--"}</span>
         </div>
-
-        <div className="pc-hero-side">
-          <VerdictCard detail={detail} tone={tone} setSection={setSection} />
-          <div className="pc-kpis">
-            <Kpi label="Eval pass" value={percent(selectedRun?.pass_rate)} sub={selectedRun?.eval_score || "--"} tone={runTone(selectedRun)} />
-            <Kpi label="SFT val loss" value={fixed(selectedRun?.sft_val_loss, 3)} sub="lower is better" />
-            <Kpi label="Val BPB" value={fixed(valBpb, 3)} sub="bits / byte" />
-            <Kpi label="Throughput" value={tps ? compactNumber(tps) : "--"} sub="tokens / s" />
-          </div>
-        </div>
+        <button className="pc-btn" onClick={() => setSection("playground")}><MessageSquare size={15} /> Open playground</button>
       </section>
+
+      <div className="pc-grid two">
+        <VerdictCard detail={detail} tone={tone} setSection={setSection} />
+        <div className="pc-kpis">
+          <Kpi label="Eval pass" value={percent(selectedRun?.pass_rate)} sub={selectedRun?.eval_score || "--"} tone={runTone(selectedRun)} />
+          <Kpi label="SFT val loss" value={fixed(selectedRun?.sft_val_loss, 3)} sub="lower is better" />
+          <Kpi label="Val BPB" value={fixed(valBpb, 3)} sub="bits / byte" />
+          <Kpi label="Throughput" value={tps ? compactNumber(tps) : "--"} sub="tokens / s" />
+        </div>
+      </div>
 
       <div className="pc-grid two">
         <Panel title="Training loss" sub="base → SFT" >
