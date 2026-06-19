@@ -16,6 +16,7 @@ import re
 import secrets
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -1529,6 +1530,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             stdout=log_file,
             stderr=subprocess.STDOUT,
             text=True,
+            # Own session/process group so the whole tree (incl. DDP workers)
+            # can be signalled on cancel, and so the run survives a server exit.
+            start_new_session=True,
         )
     finally:
         log_file.close()
@@ -1543,6 +1547,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         "command": _shell_command(*command),
         "started_at": time.time(),
         "process": process,
+        "pid": process.pid,
         "preset": preset_name,
         "min_quality_score": min_quality_score,
         "launch_config": launch_config,
@@ -1555,6 +1560,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     }
     with _RUN_JOBS_LOCK:
         _RUN_JOBS[job_id] = job
+    # Persist a sidecar so the job survives a server restart: status discovery
+    # and cancel can find the pid even after _RUN_JOBS is gone.
+    _write_job_record(out_dir, job)
     return run_status_plan(job_id, runs_dir)
 
 
@@ -1620,7 +1628,7 @@ def run_log_plan(
 
 
 def cancel_run_plan(runs_dir: str | Path, payload: dict) -> dict:
-    """Terminate a running web-launched job."""
+    """Terminate a running web-launched job, including any orphaned process tree."""
     if not isinstance(payload, dict):
         raise ValueError("request body must be a JSON object")
     job_id = _optional_string(payload.get("job_id"))
@@ -1628,12 +1636,20 @@ def cancel_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         raise ValueError("job_id is required")
     with _RUN_JOBS_LOCK:
         job = _RUN_JOBS.get(job_id)
-    if job is None:
+    if job is not None:
+        _terminate_job(job)
+        return run_status_plan(job_id, runs_dir)
+
+    # Not in memory (e.g. after a server restart): cancel via the persisted pid.
+    record = _find_job_record(runs_dir, job_id)
+    if record is None:
         raise ValueError(f"unknown active run job: {job_id}")
-    process = job["process"]
-    if process.poll() is None:
-        process.terminate()
-        time.sleep(0.05)
+    pid = record.get("pid")
+    if not _pid_alive(pid):
+        raise ValueError(f"run job is not running: {job_id}")
+    _kill_process_group(pid, signal.SIGTERM)
+    time.sleep(0.05)
+    _write_returncode(Path(record["out_dir"]) / "web_returncode.txt", -int(signal.SIGTERM))
     return run_status_plan(job_id, runs_dir)
 
 
@@ -1733,6 +1749,9 @@ def serve_web(config: WebConfig) -> None:
         # it on a non-loopback interface without a token; mint one and require it.
         config = replace(config, auth_token=secrets.token_urlsafe(24))
         print("WARNING: binding to a non-loopback address — requiring an auth token.")
+    # Mark any runs whose subprocess died while the server was down so they do
+    # not linger as "running"; live runs resurface as reconnectable orphans.
+    reconcile_orphan_jobs(config.runs_dir)
     handler = _make_handler(config)
     server = ThreadingHTTPServer((config.host, config.port), handler)
     url = f"http://{config.host}:{config.port}"
@@ -2331,35 +2350,47 @@ def _discover_run_jobs(runs_dir: str | Path, limit: int = 20) -> list[dict]:
         summary_path = run_dir / "summary.json"
         returncode_path = run_dir / "web_returncode.txt"
         returncode = _read_returncode(returncode_path)
+        summary_exists = summary_path.exists()
+        record = _read_job_record(run_dir)
+        pid = record.get("pid") if record else None
+        unfinished = returncode is None and not summary_exists
+        alive = bool(record) and unfinished and _pid_alive(pid)
         log_tail = _read_log_tail(log_path)
-        state = (
-            "succeeded" if summary_path.exists()
-            else "failed" if returncode not in (None, 0)
-            else "stopped"
-        )
-        updated_at = max(log_path.stat().st_mtime, summary_path.stat().st_mtime if summary_path.exists() else 0)
+        if summary_exists:
+            state = "succeeded"
+        elif returncode not in (None, 0):
+            state = "failed"
+        elif alive:
+            state = "running"
+        elif record and unfinished:
+            state = "interrupted"
+        else:
+            state = "stopped"
+        updated_at = max(log_path.stat().st_mtime, summary_path.stat().st_mtime if summary_exists else 0)
+        started_at = record.get("started_at") if record else None
         jobs.append({
-            "id": f"run-{_slug(run_dir.name)}",
+            "id": record["id"] if record and record.get("id") else f"run-{_slug(run_dir.name)}",
             "run_name": run_dir.name,
             "out_dir": str(run_dir),
-            "dataset_pack": _dataset_pack_from_summary(summary_path),
+            "dataset_pack": (record.get("dataset_pack") if record else None) or _dataset_pack_from_summary(summary_path),
             "log_path": str(log_path),
-            "command": _command_from_log(log_path),
-            "pid": None,
+            "command": (record.get("command") if record else None) or _command_from_log(log_path),
+            "pid": pid if alive else None,
             "state": state,
             "returncode": returncode,
-            "elapsed_seconds": None,
-            "summary_exists": summary_path.exists(),
+            "elapsed_seconds": round(time.time() - started_at, 1) if (alive and started_at) else None,
+            "summary_exists": summary_exists,
             "log_tail": log_tail,
-            "progress": _parse_run_progress(log_tail, state=state, summary_exists=summary_path.exists()),
-            "can_cancel": False,
-            "source": "disk",
+            "progress": _parse_run_progress(log_tail, state=state, summary_exists=summary_exists),
+            "can_cancel": alive,
+            "source": "orphan" if alive else "disk",
             "updated_at": updated_at,
-            "preset": None,
-            "min_quality_score": None,
-            "launch_readiness": None,
-            "launch_tuning": None,
-            "launch_preflight": _preflight_from_run_dir(run_dir),
+            "preset": record.get("preset") if record else None,
+            "min_quality_score": record.get("min_quality_score") if record else None,
+            "launch_config": record.get("launch_config") if record else None,
+            "launch_readiness": record.get("launch_readiness") if record else None,
+            "launch_tuning": record.get("launch_tuning") if record else None,
+            "launch_preflight": (record.get("launch_preflight") if record else None) or _preflight_from_run_dir(run_dir),
         })
     return sorted(jobs, key=lambda item: item["updated_at"])[-limit:]
 
@@ -2392,6 +2423,97 @@ def _write_returncode(path: Path, returncode: int) -> None:
         path.write_text(f"{returncode}\n", encoding="utf-8")
     except OSError:
         pass
+
+
+_JOB_RECORD_NAME = "web_job.json"
+_JOB_RECORD_FIELDS = (
+    "id", "run_name", "out_dir", "dataset_pack", "log_path", "command",
+    "started_at", "preset", "min_quality_score", "launch_config",
+    "launch_readiness", "launch_tuning", "launch_preflight",
+)
+
+
+def _write_job_record(out_dir: str | Path, job: dict) -> None:
+    record = {field: job.get(field) for field in _JOB_RECORD_FIELDS}
+    record["pid"] = job.get("pid")
+    try:
+        (Path(out_dir) / _JOB_RECORD_NAME).write_text(json.dumps(record), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _read_job_record(run_dir: Path) -> dict | None:
+    path = Path(run_dir) / _JOB_RECORD_NAME
+    if not path.exists():
+        return None
+    try:
+        return _read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _find_job_record(runs_dir: str | Path, job_id: str) -> dict | None:
+    root = Path(runs_dir)
+    if not root.exists():
+        return None
+    for run_dir in root.iterdir():
+        if not run_dir.is_dir():
+            continue
+        record = _read_job_record(run_dir)
+        if record and (record.get("id") == job_id or record.get("run_name") == job_id):
+            return record
+    return None
+
+
+def _pid_alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True
+    return True
+
+
+def _kill_process_group(pid: int | None, sig: int) -> None:
+    """Best-effort signal to the child's whole process group (DDP-safe)."""
+    if not pid:
+        return
+    try:
+        os.killpg(os.getpgid(int(pid)), sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
+def _terminate_job(job: dict) -> None:
+    process = job.get("process")
+    if process is not None and process.poll() is None:
+        process.terminate()
+        time.sleep(0.05)
+    _kill_process_group(job.get("pid"), signal.SIGTERM)
+
+
+def reconcile_orphan_jobs(runs_dir: str | Path = "runs") -> None:
+    """At startup, mark sidecar jobs whose process died as interrupted.
+
+    Safe to call only when no jobs are tracked in memory (e.g. fresh process
+    start): live runs keep their sidecar and resurface as reconnectable orphans.
+    """
+    root = Path(runs_dir)
+    if not root.exists():
+        return
+    for run_dir in root.iterdir():
+        if not run_dir.is_dir():
+            continue
+        record = _read_job_record(run_dir)
+        if not record:
+            continue
+        if (run_dir / "web_returncode.txt").exists() or (run_dir / "summary.json").exists():
+            continue
+        if not _pid_alive(record.get("pid")):
+            _write_returncode(run_dir / "web_returncode.txt", -1)
 
 
 def _dataset_pack_from_summary(summary_path: Path) -> str | None:
