@@ -101,8 +101,8 @@ What is ready:
 - Post-run gates that block release when SFT fit, held-out fit, visible eval,
   external benchmarks, prompt echo, refusal behavior, or honesty checks fail.
 - A local web dashboard with release readiness, loss curves, preflight output,
-  external training launch commands, paid-GPU confirmation, and DDP dry-run
-  commands.
+  external training launch commands, Scale Up commands, paid-GPU confirmation,
+  and DDP dry-run commands.
 - Native PyTorch serving through `picochat serve`, including local
   OpenAI-compatible `/v1/completions`, `/v1/chat/completions`, and `/v1/models`
   endpoints plus `stream=true` SSE response framing for smoke integrations.
