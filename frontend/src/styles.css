@@ -294,6 +294,35 @@ input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; accent-color:
 .pc-modal h2 { margin: 2px 0; letter-spacing: -0.02em; font-size: 15px; }
 .pc-modal pre { margin: 0; overflow: auto; padding: 18px; background: var(--bg); color: #cdd6e4; font-family: var(--mono); font-size: 11.5px; line-height: 1.6; }
 
+/* --------------------------------------------------------- getting started */
+.pc-welcome { max-width: 920px; margin: 0 auto; display: grid; gap: 26px; padding: 18px 0 8px; }
+.pc-welcome-hero { display: grid; gap: 12px; }
+.pc-welcome-hero h1 { margin: 2px 0; font-size: clamp(26px, 3.6vw, 38px); letter-spacing: -0.03em; line-height: 1.05; }
+.pc-welcome-hero p { margin: 0; max-width: 64ch; color: var(--muted); font-size: 14.5px; line-height: 1.65; }
+.pc-welcome-cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.pc-welcome-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.pc-welcome-step { position: relative; display: grid; gap: 7px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); align-content: start; }
+.pc-welcome-step svg { color: var(--iris); }
+.pc-welcome-step strong { font-size: 14px; letter-spacing: -0.01em; }
+.pc-welcome-step p { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+.pc-welcome-num { position: absolute; top: 12px; right: 14px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+.pc-welcome-foot { display: grid; gap: 8px; padding: 16px; border: 1px dashed var(--line-2); border-radius: var(--radius); }
+.pc-welcome-foot code { font-family: var(--mono); font-size: 12px; color: var(--muted); background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; overflow-x: auto; }
+
+/* ------------------------------------------------------------- new model */
+.pc-new { width: min(560px, calc(100vw - 48px)); grid-template-rows: auto 1fr auto; }
+.pc-new-body { padding: 18px; overflow: auto; display: grid; gap: 4px; }
+.pc-new-examples { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: -4px 0 12px; }
+.pc-new-examples span { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; }
+.pc-chip { font-family: var(--mono); font-size: 11.5px; color: var(--muted); padding: 5px 10px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--panel); cursor: pointer; }
+.pc-chip.on { border-color: var(--iris); color: var(--text); }
+.pc-new-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--line); }
+
+/* ----------------------------------------------------------------- forms */
+.pc-form { display: grid; gap: 12px; }
+.pc-import-result { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 14px; border: 1px solid color-mix(in srgb, var(--green) 34%, var(--line)); border-radius: var(--radius); background: var(--panel); }
+.pc-import-result code { display: block; margin-top: 4px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
 /* ------------------------------------------------------------- responsive */
 @media (max-width: 1080px) {
   .pc { grid-template-columns: 1fr; }
@@ -303,12 +332,14 @@ input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; accent-color:
   .pc-burger { display: inline-flex; }
   .pc-grid.two { grid-template-columns: 1fr; }
   .pc-overview-top { flex-direction: column; align-items: flex-start; }
+  .pc-welcome-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pc-play { grid-template-columns: 1fr; height: auto; }
   .pc-thread { min-height: 360px; }
 }
 @media (max-width: 680px) {
   .pc-content { padding: 14px; }
   .pc-kpis, .pc-kpis.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pc-welcome-steps { grid-template-columns: 1fr; }
   .pc-kbd { display: none; }
   .pc-tr { grid-template-columns: minmax(0, 2fr) 0.8fr 1fr; }
   .pc-tr span:nth-child(4), .pc-tr span:nth-child(5) { display: none; }

@@ -83,6 +83,10 @@ export function loadPresets(): Promise<{ presets: PresetMap }> {
   return jsonRequest("/api/run/presets");
 }
 
+export function importHf(payload: Record<string, unknown>): Promise<Record<string, any>> {
+  return jsonRequest("/api/hf/import", { method: "POST", body: JSON.stringify(payload) });
+}
+
 export function generateText(payload: {
   run: string;
   prompt: string;

@@ -5,7 +5,6 @@ import {
   Check,
   ChevronDown,
   CircleAlert,
-  Command,
   Copy,
   Cpu,
   Database,
@@ -17,6 +16,7 @@ import {
   type LucideIcon,
   MessageSquare,
   Moon,
+  Plus,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, generateText, listRuns, loadRun, loadStatus, runLogStreamUrl, startRun } from "./api";
+import { archiveRuns, cancelRun, generateText, importHf, listRuns, loadPresets, loadRun, loadStatus, runLogStreamUrl, startRun } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
@@ -71,6 +71,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [settings, setSettings] = useState<SettingsState>(() => readSettings());
   const [logTarget, setLogTarget] = useState<{ run?: string; job?: string } | null>(null);
+  const [newRun, setNewRun] = useState<{ pack?: string } | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const lastRefresh = useRef<Date | null>(null);
 
@@ -144,6 +145,7 @@ export default function App() {
     section, runs, selectedRun: selectedRun ?? null, detail, jobs, settings, tone,
     update, launchSmoke, archiveSelected, selectRun: setSelectedRunName,
     openLogs: () => selectedRun && setLogTarget({ run: selectedRun.name, job: activeJob?.id }),
+    openNew: (pack?: string) => setNewRun({ pack }),
     setSection
   };
 
@@ -177,20 +179,21 @@ export default function App() {
             {selectedRun ? <StatusDot tone={tone} label={statusLabel(tone)} /> : null}
           </div>
           <div className="pc-top-r">
-            <div className="pc-kbd"><Command size={13} /> K</div>
             <RunPicker runs={runs} value={selectedRun?.name || ""} onChange={setSelectedRunName} />
             <button className="pc-btn ghost" onClick={() => refresh(false)} disabled={loading || !!busy}><RefreshCw size={15} className={loading ? "spin" : ""} /> Sync</button>
+            <button className="pc-btn primary" onClick={() => setNewRun({})}><Plus size={15} /> New model</button>
           </div>
         </header>
 
         <section className="pc-content">
           {error ? <Banner tone="block" title="Action failed" body={error} onClose={() => setError("")} /> : null}
           {busy ? <Banner tone="info" title={busy} body="Running a backend action — live status and logs update automatically." /> : null}
-          {render(ctx)}
+          {!loading && runs.length === 0 ? <Welcome {...ctx} /> : render(ctx)}
         </section>
       </main>
 
       {logTarget ? <LogModal target={logTarget} onClose={() => setLogTarget(null)} onCancel={cancelRun} /> : null}
+      {newRun ? <NewRunModal initialPack={newRun.pack} onClose={() => setNewRun(null)} onLaunched={(t) => { setNewRun(null); setLogTarget(t); refresh(true); }} /> : null}
     </div>
   );
 }
@@ -208,6 +211,7 @@ type SectionProps = {
   archiveSelected: () => void;
   selectRun: (name: string) => void;
   openLogs: () => void;
+  openNew: (pack?: string) => void;
   setSection: (s: SectionId) => void;
 };
 
@@ -561,36 +565,80 @@ function ReleaseView({ detail, tone }: SectionProps) {
 
 /* --------------------------------------------------------------- dataset */
 
-function DatasetView({ detail, settings, update }: SectionProps) {
+function DatasetView({ detail, settings, openNew }: SectionProps) {
   const s = (detail as any)?.summary || {};
   const corpus = s.corpus || {};
   const preview = (detail as any)?.corpus_preview || "";
   return (
     <div className="pc-stack">
-      <div className="pc-kpis four">
-        <Kpi label="Documents" value={corpus.num_documents != null ? compactNumber(corpus.num_documents) : "--"} sub="in corpus" />
-        <Kpi label="Characters" value={corpus.num_characters != null ? compactNumber(corpus.num_characters) : "--"} sub="total" />
-        <Kpi label="Dup docs" value={corpus.duplicate_document_rate != null ? percent(corpus.duplicate_document_rate) : "--"} sub="lower is better" tone={(corpus.duplicate_document_rate || 0) > 0.2 ? "warn" : "pass"} />
-        <Kpi label="Non-ASCII" value={corpus.non_ascii_rate != null ? percent(corpus.non_ascii_rate) : "--"} sub="rate" />
-      </div>
-      <div className="pc-grid two">
-        <Spec title="Tokenizer" rows={{
-          Type: s.tokenizer?.tokenizer_type || "--",
-          "Vocab size": s.tokenizer?.vocab_size || "--",
-          "Special tokens": s.tokenizer?.num_special_tokens ?? "--",
-          "Text tokens": s.tokenizer?.num_text_tokens ?? "--"
-        }} />
-        <Panel title="Import from Hugging Face">
-          <label className="pc-field">Dataset
-            <input value={settings.defaultDataset} onChange={(e) => update("defaultDataset", e.target.value)} />
-          </label>
-          <div className="pc-hint">Imports run on the backend and write a local dataset pack. Token is optional and stays local.</div>
-        </Panel>
-      </div>
+      <Panel title="Import a Hugging Face dataset" sub="Turn a public dataset into a local pack you can train on">
+        <HfImport defaultDataset={settings.defaultDataset} token={settings.hfToken} openNew={openNew} />
+      </Panel>
+      {s.corpus || s.tokenizer ? (
+        <>
+          <div className="pc-kpis four">
+            <Kpi label="Documents" value={corpus.num_documents != null ? compactNumber(corpus.num_documents) : "--"} sub="in corpus" />
+            <Kpi label="Characters" value={corpus.num_characters != null ? compactNumber(corpus.num_characters) : "--"} sub="total" />
+            <Kpi label="Dup docs" value={corpus.duplicate_document_rate != null ? percent(corpus.duplicate_document_rate) : "--"} sub="lower is better" tone={(corpus.duplicate_document_rate || 0) > 0.2 ? "warn" : "pass"} />
+            <Kpi label="Non-ASCII" value={corpus.non_ascii_rate != null ? percent(corpus.non_ascii_rate) : "--"} sub="rate" />
+          </div>
+          <Spec title="Tokenizer" rows={{
+            Type: s.tokenizer?.tokenizer_type || "--",
+            "Vocab size": s.tokenizer?.vocab_size || "--",
+            "Special tokens": s.tokenizer?.num_special_tokens ?? "--",
+            "Text tokens": s.tokenizer?.num_text_tokens ?? "--"
+          }} />
+        </>
+      ) : null}
       {preview ? (
         <Panel title="Corpus preview">
           <pre className="pc-pre">{String(preview).slice(0, 1600)}</pre>
         </Panel>
+      ) : null}
+    </div>
+  );
+}
+
+function HfImport({ defaultDataset, token, openNew }: { defaultDataset: string; token: string; openNew: (pack?: string) => void }) {
+  const [dataset, setDataset] = useState(defaultDataset || "HuggingFaceTB/smollm-corpus");
+  const [maxRows, setMaxRows] = useState(2000);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [result, setResult] = useState<Record<string, any> | null>(null);
+  const run = async () => {
+    if (!dataset.trim()) { setErr("Enter a dataset id, e.g. org/name."); return; }
+    setBusy(true); setErr(""); setResult(null);
+    try {
+      const payload: Record<string, unknown> = { dataset: dataset.trim(), max_rows: maxRows, force: true };
+      if (token.trim()) payload.token = token.trim();
+      setResult(await importHf(payload));
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <div className="pc-form">
+      <div className="pc-grid two">
+        <label className="pc-field">Dataset
+          <input value={dataset} onChange={(e) => setDataset(e.target.value)} placeholder="org/dataset" />
+        </label>
+        <label className="pc-field">Max rows
+          <input type="number" value={maxRows} onChange={(e) => setMaxRows(Math.max(1, Number(e.target.value) || 1000))} />
+        </label>
+      </div>
+      <div className="pc-row">
+        <button className="pc-btn primary" onClick={run} disabled={busy}>
+          {busy ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Import dataset
+        </button>
+        <span className="pc-hint">Downloads to a local pack with starter chat/eval files. Token is optional and stays local.</span>
+      </div>
+      {err ? <Banner tone="block" title="Import failed" body={err} onClose={() => setErr("")} /> : null}
+      {result ? (
+        <div className="pc-import-result">
+          <div>
+            <strong>Imported {compactNumber(result.rows_written)} rows.</strong>
+            <code>{result.dataset_pack}</code>
+          </div>
+          <button className="pc-btn primary" onClick={() => openNew(result.dataset_pack)}>Train on this pack →</button>
+        </div>
       ) : null}
     </div>
   );
@@ -744,6 +792,116 @@ function Slider({ label, value, min, max, step, onChange, fmt }: { label: string
 
 function Empty({ label }: { label: string }) {
   return <div className="pc-empty">{label}</div>;
+}
+
+/* --------------------------------------------------------- getting started */
+
+function Welcome({ launchSmoke, openNew, setSection }: SectionProps) {
+  const steps: Array<{ icon: LucideIcon; t: string; d: string }> = [
+    { icon: Database, t: "Bring your data", d: "Point Picochat at your domain text — a folder, a file, or a public Hugging Face dataset." },
+    { icon: Gauge, t: "Train a model", d: "Pick a preset. It builds a tokenizer, pretrains, fine-tunes on chat, and evaluates — all locally." },
+    { icon: MessageSquare, t: "Test it", d: "Chat with the model you trained in the Playground and inspect what it actually learned." },
+    { icon: ShieldCheck, t: "Share with your team", d: "Pass the release gate, then serve an OpenAI-compatible endpoint your team can call." }
+  ];
+  return (
+    <div className="pc-welcome">
+      <div className="pc-welcome-hero">
+        <span className="pc-eyebrow">Get started</span>
+        <h1>Train a small language model on your domain.</h1>
+        <p>
+          Picochat turns your own text into a compact, specialized model you can run locally, evaluate
+          honestly, and share with your team — no giant GPU bill, no black box. These are small focused
+          models, not a general chatbot: best when the domain is narrow and the data is yours.
+        </p>
+        <div className="pc-welcome-cta">
+          <button className="pc-btn primary" onClick={() => openNew()}><Gauge size={15} /> Train your first model</button>
+          <button className="pc-btn" onClick={() => launchSmoke(false)}><FlaskConical size={15} /> Run the demo</button>
+          <button className="pc-btn ghost" onClick={() => setSection("dataset")}><Database size={15} /> Bring your own data</button>
+        </div>
+      </div>
+      <div className="pc-welcome-steps">
+        {steps.map((step, i) => {
+          const Icon = step.icon;
+          return (
+            <div className="pc-welcome-step" key={i}>
+              <span className="pc-welcome-num">{i + 1}</span>
+              <Icon size={18} />
+              <strong>{step.t}</strong>
+              <p>{step.d}</p>
+            </div>
+          );
+        })}
+      </div>
+      <div className="pc-welcome-foot">
+        <span className="pc-eyebrow">Prefer the terminal?</span>
+        <code>picochat data hf-import --dataset &lt;hf/dataset&gt; --pack-out my_pack</code>
+        <code>picochat run tiny --dataset-pack my_pack/dataset_pack.json</code>
+      </div>
+    </div>
+  );
+}
+
+const PRESET_FALLBACK = ["smoke", "tiny", "small-local", "small", "medium"];
+const EXAMPLE_PACKS = ["examples/tiny_dataset_pack.json", "examples/tinystories_dataset_pack.json"];
+
+function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: string; onClose: () => void; onLaunched: (t: { run?: string; job?: string }) => void }) {
+  const [pack, setPack] = useState(initialPack || EXAMPLE_PACKS[0]);
+  const [name, setName] = useState("");
+  const [preset, setPreset] = useState("tiny");
+  const [presets, setPresets] = useState<Record<string, any>>({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => { loadPresets().then((p) => setPresets(p.presets || {})).catch(() => {}); }, []);
+  const keys = Object.keys(presets).length ? Object.keys(presets) : PRESET_FALLBACK;
+
+  const launch = async () => {
+    if (!pack.trim()) { setErr("Choose a dataset pack to train on."); return; }
+    setBusy(true); setErr("");
+    try {
+      const started = await startRun({ dataset_pack: pack.trim(), run_name: name.trim() || undefined, preset });
+      onLaunched({ job: started.job?.id, run: started.job?.run_name });
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="pc-modal-back" onClick={onClose}>
+      <section className="pc-modal pc-new" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div><span className="pc-eyebrow">Train a model</span><h2>New model</h2></div>
+          <button className="pc-btn ghost" onClick={onClose}><X size={15} /></button>
+        </header>
+        <div className="pc-new-body">
+          <label className="pc-field">Dataset pack
+            <input value={pack} onChange={(e) => setPack(e.target.value)} placeholder="path/to/dataset_pack.json" />
+          </label>
+          <div className="pc-new-examples">
+            <span>Examples</span>
+            {EXAMPLE_PACKS.map((ex) => (
+              <button key={ex} className={`pc-chip ${pack === ex ? "on" : ""}`} onClick={() => setPack(ex)}>{ex.split("/").pop()}</button>
+            ))}
+          </div>
+          <div className="pc-grid two">
+            <label className="pc-field">Run name (optional)
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-domain-v1" />
+            </label>
+            <label className="pc-field">Preset
+              <select value={preset} onChange={(e) => setPreset(e.target.value)}>
+                {keys.map((k) => <option key={k} value={k}>{presets[k]?.label || k}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="pc-hint">{presets[preset]?.description || "Builds tokenizer → base pretraining → SFT → eval, then opens the live training log."}</div>
+          {err ? <Banner tone="block" title="Could not launch" body={err} onClose={() => setErr("")} /> : null}
+        </div>
+        <footer className="pc-new-foot">
+          <button className="pc-btn ghost" onClick={onClose}>Cancel</button>
+          <button className="pc-btn primary" onClick={launch} disabled={busy}>
+            {busy ? <Loader2 size={15} className="spin" /> : <Gauge size={15} />} Start training
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
 }
 
 function LogModal({ target, onClose, onCancel }: { target: { run?: string; job?: string }; onClose: () => void; onCancel: (id: string) => Promise<any> }) {
