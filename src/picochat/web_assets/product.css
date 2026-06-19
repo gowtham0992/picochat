@@ -1994,22 +1994,19 @@ body.classic-theme .product-card-heading {
 }
 
 .product-brand {
-  height: 58px !important;
-  gap: 11px !important;
+  height: 64px !important;
+  gap: 12px !important;
   padding: 0 16px !important;
 }
 
 .product-brand-mark {
-  width: 30px !important;
-  height: 30px !important;
-  flex: 0 0 30px !important;
-  border: 1px solid color-mix(in srgb, var(--pc-teal), var(--pc-border-soft) 46%) !important;
-  border-radius: 10px !important;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--pc-teal), var(--pc-card-raised) 58%), var(--pc-card-raised)) !important;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    0 8px 18px color-mix(in srgb, var(--pc-teal), transparent 82%) !important;
+  width: 42px !important;
+  height: 42px !important;
+  flex: 0 0 42px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .product-brand-mark svg {
@@ -2018,8 +2015,12 @@ body.classic-theme .product-card-heading {
 }
 
 .product-brand-mark img {
-  width: 23px !important;
-  height: 23px !important;
+  width: 35px !important;
+  height: 42px !important;
+  object-fit: contain !important;
+  filter:
+    drop-shadow(0 0 10px color-mix(in srgb, var(--pc-teal), transparent 72%))
+    drop-shadow(0 1px 0 color-mix(in srgb, var(--pc-shell), transparent 20%)) !important;
 }
 
 .product-brand-mark .mark-flow {
@@ -2793,16 +2794,12 @@ body.classic-theme #product-live-log-output {
 }
 
 body.classic-theme .product-brand-mark {
-  background:
-    radial-gradient(circle at 72% 28%, color-mix(in srgb, var(--pc-teal), transparent 68%), transparent 34%),
-    linear-gradient(135deg, #18241f, #0f1512) !important;
+  background: transparent !important;
 }
 
 body.paper-theme .product-brand-mark,
 body:not(.classic-theme) .product-brand-mark {
-  background:
-    radial-gradient(circle at 72% 28%, color-mix(in srgb, var(--pc-teal), transparent 72%), transparent 36%),
-    linear-gradient(135deg, #fffaf0, #eef8f3) !important;
+  background: transparent !important;
 }
 
 @media (max-width: 980px) {
