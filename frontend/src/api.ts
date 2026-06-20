@@ -43,6 +43,15 @@ export function loadRun(name: string): Promise<RunDetail> {
   return jsonRequest(`/api/run?name=${encodeURIComponent(name)}`);
 }
 
+export function loadReport(name: string, report: string): Promise<{ run: string; report: string; path: string; markdown: string }> {
+  return jsonRequest(`/api/report?name=${encodeURIComponent(name)}&report=${encodeURIComponent(report)}`);
+}
+
+export function compareRuns(names: string[]): Promise<Record<string, any>> {
+  const query = names.map((n) => `run=${encodeURIComponent(n)}`).join("&");
+  return jsonRequest(`/api/compare?${query}`);
+}
+
 export function loadStatus(job?: string): Promise<{ jobs: JobStatus[]; job: JobStatus | null }> {
   const suffix = job ? `?job=${encodeURIComponent(job)}` : "";
   return jsonRequest(`/api/run/status${suffix}`);

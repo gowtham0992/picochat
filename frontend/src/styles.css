@@ -354,6 +354,38 @@ input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; accent-color:
 .pc-pull { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--line-2); display: grid; gap: 10px; justify-items: start; }
 .pc-pull .pc-field { width: 100%; }
 
+/* --------------------------------------------------------------- reports */
+.pc-report { width: min(820px, calc(100vw - 48px)); }
+.pc-report-body { padding: 20px 22px; overflow: auto; }
+.pc-md { color: var(--muted); font-size: 13.5px; line-height: 1.65; }
+.pc-md h2 { font-size: 18px; margin: 18px 0 8px; color: var(--text); letter-spacing: -0.02em; }
+.pc-md h2:first-child { margin-top: 0; }
+.pc-md h3 { font-size: 15px; margin: 16px 0 6px; color: var(--text); }
+.pc-md h4 { font-size: 13px; margin: 14px 0 6px; color: var(--text); }
+.pc-md p { margin: 8px 0; }
+.pc-md ul { margin: 8px 0; padding-left: 20px; display: grid; gap: 4px; }
+.pc-md code { font-family: var(--mono); font-size: 12px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; color: var(--text); }
+.pc-md strong { color: var(--text); font-weight: 600; }
+.pc-md-table { overflow-x: auto; margin: 10px 0; }
+.pc-md-table table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.pc-md-table th, .pc-md-table td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; white-space: nowrap; }
+.pc-md-table th { background: var(--bg-2); color: var(--text); font-weight: 600; }
+.pc-md-table td code { background: transparent; border: none; padding: 0; }
+
+/* --------------------------------------------------------------- compare */
+.pc-pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.pc-pick { display: flex; align-items: center; gap: 9px; padding: 9px 11px; border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--panel); cursor: pointer; font-size: 12.5px; }
+.pc-pick.on { border-color: var(--iris); background: color-mix(in srgb, var(--iris) 8%, var(--panel)); }
+.pc-pick span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-pick em { font-style: normal; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+.pc-ctable { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.pc-ctable-row { display: grid; background: var(--panel); }
+.pc-ctable-row > span { padding: 9px 12px; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; }
+.pc-ctable-row.head { background: var(--bg-2); }
+.pc-ctable-row.head > span { font-weight: 600; color: var(--text); font-size: 12px; }
+.pc-ctable-k { color: var(--faint); }
+.pc-ctable-row > span.best { color: var(--green); font-weight: 600; }
+
 /* ------------------------------------------------------------- responsive */
 @media (max-width: 1080px) {
   .pc { grid-template-columns: 1fr; }

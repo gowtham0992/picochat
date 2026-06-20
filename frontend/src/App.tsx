@@ -9,8 +9,10 @@ import {
   Copy,
   Cpu,
   Database,
+  FileText,
   FlaskConical,
   Gauge,
+  GitCompare,
   LayoutGrid,
   Loader2,
   Lock,
@@ -27,15 +29,16 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, generateEvalStarter, generateSftStarter, generateText, importHf, inspectTuning, listRuns, loadPresets, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
+import { archiveRuns, cancelRun, compareRuns, generateEvalStarter, generateSftStarter, generateText, importHf, inspectTuning, listRuns, loadPresets, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
-type SectionId = "overview" | "runs" | "playground" | "training" | "eval" | "release" | "dataset" | "cloud" | "settings";
+type SectionId = "overview" | "runs" | "compare" | "playground" | "training" | "eval" | "release" | "dataset" | "cloud" | "settings";
 
 const NAV: Array<{ id: SectionId; label: string; icon: LucideIcon; group: "main" | "model" | "system" }> = [
   { id: "overview", label: "Overview", icon: LayoutGrid, group: "main" },
   { id: "runs", label: "Runs", icon: Boxes, group: "main" },
+  { id: "compare", label: "Compare", icon: GitCompare, group: "main" },
   { id: "playground", label: "Playground", icon: MessageSquare, group: "model" },
   { id: "training", label: "Training", icon: Gauge, group: "model" },
   { id: "eval", label: "Evaluation", icon: BarChart3, group: "model" },
@@ -74,6 +77,7 @@ export default function App() {
   const [settings, setSettings] = useState<SettingsState>(() => readSettings());
   const [logTarget, setLogTarget] = useState<{ run?: string; job?: string } | null>(null);
   const [newRun, setNewRun] = useState<{ pack?: string } | null>(null);
+  const [reportTarget, setReportTarget] = useState<{ run: string; report: string } | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const lastRefresh = useRef<Date | null>(null);
 
@@ -149,6 +153,7 @@ export default function App() {
     openLogs: () => selectedRun && setLogTarget({ run: selectedRun.name, job: activeJob?.id }),
     openLogsFor: (t) => setLogTarget(t),
     openNew: (pack?: string) => setNewRun({ pack }),
+    openReport: (report: string) => selectedRun && setReportTarget({ run: selectedRun.name, report }),
     setSection
   };
 
@@ -197,6 +202,7 @@ export default function App() {
 
       {logTarget ? <LogModal target={logTarget} onClose={() => setLogTarget(null)} onCancel={cancelRun} /> : null}
       {newRun ? <NewRunModal initialPack={newRun.pack} onClose={() => setNewRun(null)} onLaunched={(t) => { setNewRun(null); setLogTarget(t); refresh(true); }} /> : null}
+      {reportTarget ? <ReportModal target={reportTarget} onClose={() => setReportTarget(null)} /> : null}
     </div>
   );
 }
@@ -216,12 +222,14 @@ type SectionProps = {
   openLogs: () => void;
   openLogsFor: (t: { run?: string; job?: string }) => void;
   openNew: (pack?: string) => void;
+  openReport: (report: string) => void;
   setSection: (s: SectionId) => void;
 };
 
 function render(p: SectionProps) {
   switch (p.section) {
     case "runs": return <RunsView {...p} />;
+    case "compare": return <CompareView {...p} />;
     case "playground": return <PlaygroundView {...p} />;
     case "training": return <TrainingView {...p} />;
     case "eval": return <EvalView {...p} />;
@@ -517,11 +525,12 @@ function ServePanel({ run }: { run: string }) {
 
 /* -------------------------------------------------------------- training */
 
-function TrainingView({ detail, selectedRun, openLogs }: SectionProps) {
+function TrainingView({ detail, selectedRun, openLogs, openReport }: SectionProps) {
   const s = (detail as any)?.summary || {};
   const tps = s.sft?.throughput?.tokens_per_second ?? s.base?.throughput?.tokens_per_second;
   return (
     <div className="pc-stack">
+      <ReportLinks reports={detail?.reports} openReport={openReport} only={["base", "sft"]} />
       <div className="pc-kpis four">
         <Kpi label="Base val loss" value={fixed(s.base?.final_val_loss ?? selectedRun?.base_val_loss, 3)} sub="final" />
         <Kpi label="SFT val loss" value={fixed(s.sft?.final_val_loss ?? selectedRun?.sft_val_loss, 3)} sub="final" />
@@ -555,7 +564,7 @@ function TrainingView({ detail, selectedRun, openLogs }: SectionProps) {
 
 /* ----------------------------------------------------------------- eval */
 
-function EvalView({ detail, selectedRun }: SectionProps) {
+function EvalView({ detail, selectedRun, openReport }: SectionProps) {
   const s = (detail as any)?.summary || {};
   const ev = s.eval || {};
   const score = parseEvalScore(selectedRun?.eval_score);
@@ -563,6 +572,7 @@ function EvalView({ detail, selectedRun }: SectionProps) {
   const catRows = Object.entries(cats).slice(0, 8);
   return (
     <div className="pc-stack">
+      <ReportLinks reports={detail?.reports} openReport={openReport} only={["eval", "honesty"]} />
       <div className="pc-kpis four">
         <Kpi label="Overall" value={percent(selectedRun?.pass_rate)} sub={selectedRun?.eval_score || "--"} tone={runTone(selectedRun)} />
         <Kpi label="Domain" value={percent(ev.domain_pass_rate)} sub="answerable" />
@@ -608,7 +618,7 @@ function EvalView({ detail, selectedRun }: SectionProps) {
 
 /* --------------------------------------------------------------- release */
 
-function ReleaseView({ detail, tone }: SectionProps) {
+function ReleaseView({ detail, tone, openReport }: SectionProps) {
   const reasons = gateReasons(detail);
   return (
     <div className="pc-stack">
@@ -617,6 +627,7 @@ function ReleaseView({ detail, tone }: SectionProps) {
         title={tone === "pass" ? "Release gate passed" : tone === "block" ? "Release gate blocked" : tone === "neutral" ? "No release evidence yet" : "Release gate needs review"}
         body={tone === "pass" ? "Every checked gate is satisfied. This run can move to handoff." : "Resolve the failing checks below before publishing or handing off this model."}
       />
+      <ReportLinks reports={detail?.reports} openReport={openReport} only={["honesty", "summary"]} />
       <Panel title="Gate checks" flush>
         <div className="pc-checks">
           {reasons.map((r, i) => (
@@ -1260,6 +1271,180 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
 
 function Stat({ label, value, tone }: { label: string; value: React.ReactNode; tone: Tone }) {
   return <div className={`pc-stat ${tone}`}><span>{label}</span><strong>{value}</strong></div>;
+}
+
+/* --------------------------------------------------------------- reports */
+
+const REPORT_LABELS: Record<string, string> = {
+  summary: "Model card",
+  honesty: "Honesty report",
+  base: "Base report",
+  sft: "SFT report",
+  eval: "Eval report"
+};
+
+function ReportLinks({ reports, openReport, only }: { reports?: Record<string, { exists?: boolean }>; openReport: (r: string) => void; only?: string[] }) {
+  const keys = (only || Object.keys(REPORT_LABELS)).filter((k) => reports?.[k]?.exists);
+  if (!keys.length) return null;
+  return (
+    <div className="pc-row">
+      {keys.map((k) => (
+        <button key={k} className="pc-btn ghost" onClick={() => openReport(k)}><FileText size={14} /> {REPORT_LABELS[k]}</button>
+      ))}
+    </div>
+  );
+}
+
+function ReportModal({ target, onClose }: { target: { run: string; report: string }; onClose: () => void }) {
+  const [markdown, setMarkdown] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    setMarkdown(null); setErr("");
+    loadReport(target.run, target.report).then((d) => setMarkdown(d.markdown || "")).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }, [target.run, target.report]);
+  return (
+    <div className="pc-modal-back" onClick={onClose}>
+      <section className="pc-modal pc-report" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div><span className="pc-eyebrow">{target.run}</span><h2>{REPORT_LABELS[target.report] || target.report}</h2></div>
+          <button className="pc-btn ghost" onClick={onClose}><X size={15} /></button>
+        </header>
+        <div className="pc-report-body">
+          {err ? <Banner tone="block" title="Could not load report" body={err} /> : markdown != null ? <Markdown source={markdown} /> : <div className="pc-hint"><Loader2 size={14} className="spin" /> Loading…</div>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function inlineMd(text: string, keyBase: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  text.split(/(`[^`]+`)/g).forEach((chunk, i) => {
+    if (chunk.startsWith("`") && chunk.endsWith("`")) {
+      out.push(<code key={`${keyBase}-c${i}`}>{chunk.slice(1, -1)}</code>);
+    } else {
+      chunk.split(/(\*\*[^*]+\*\*)/g).forEach((part, j) => {
+        if (part.startsWith("**") && part.endsWith("**")) out.push(<strong key={`${keyBase}-b${i}-${j}`}>{part.slice(2, -2)}</strong>);
+        else if (part) out.push(<span key={`${keyBase}-t${i}-${j}`}>{part}</span>);
+      });
+    }
+  });
+  return out;
+}
+
+function Markdown({ source }: { source: string }) {
+  const lines = source.replace(/\r/g, "").split("\n");
+  const blocks: React.ReactNode[] = [];
+  let i = 0;
+  const isTableSep = (s: string) => /^\s*\|?[\s:|-]+\|?\s*$/.test(s) && s.includes("-");
+  const cells = (row: string) => row.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map((c) => c.trim());
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i += 1; continue; }
+    const heading = line.match(/^(#{1,4})\s+(.*)/);
+    if (heading) {
+      const level = heading[1].length;
+      const Tag = (`h${Math.min(level + 1, 4)}`) as "h2" | "h3" | "h4";
+      blocks.push(<Tag key={i}>{inlineMd(heading[2], `h${i}`)}</Tag>);
+      i += 1; continue;
+    }
+    if (line.trim().startsWith("|") && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      const header = cells(line);
+      const body: string[][] = [];
+      i += 2;
+      while (i < lines.length && lines[i].trim().startsWith("|")) { body.push(cells(lines[i])); i += 1; }
+      blocks.push(
+        <div className="pc-md-table" key={`tbl${i}`}>
+          <table>
+            <thead><tr>{header.map((h, c) => <th key={c}>{inlineMd(h, `th${i}-${c}`)}</th>)}</tr></thead>
+            <tbody>{body.map((r, ri) => <tr key={ri}>{r.map((cell, ci) => <td key={ci}>{inlineMd(cell, `td${ri}-${ci}`)}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+    if (/^\s*[-*]\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*]\s+/, "")); i += 1; }
+      blocks.push(<ul key={`ul${i}`}>{items.map((it, k) => <li key={k}>{inlineMd(it, `li${i}-${k}`)}</li>)}</ul>);
+      continue;
+    }
+    const para: string[] = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|\s*[-*]\s|\s*\|)/.test(lines[i])) { para.push(lines[i]); i += 1; }
+    blocks.push(<p key={`p${i}`}>{inlineMd(para.join(" "), `p${i}`)}</p>);
+  }
+  return <div className="pc-md">{blocks}</div>;
+}
+
+/* --------------------------------------------------------------- compare */
+
+function CompareView({ runs }: SectionProps) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [data, setData] = useState<Record<string, any> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const toggle = (name: string) => setSelected((s) => s.includes(name) ? s.filter((n) => n !== name) : [...s, name]);
+  const run = async () => {
+    setBusy(true); setErr("");
+    try { setData(await compareRuns(selected)); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  const rows = (data?.rows || []) as Array<Record<string, any>>;
+  return (
+    <div className="pc-stack">
+      <div className="pc-toolbar">
+        <div className="pc-toolbar-meta">Pick two or more runs to compare side by side.</div>
+        <button className="pc-btn primary" onClick={run} disabled={busy || selected.length < 2}>{busy ? <Loader2 size={15} className="spin" /> : <GitCompare size={15} />} Compare {selected.length || ""}</button>
+      </div>
+      <Panel title="Runs" sub="Select runs to compare">
+        {runs.length ? (
+          <div className="pc-pick-grid">
+            {runs.map((r) => (
+              <label key={r.name} className={`pc-pick ${selected.includes(r.name) ? "on" : ""}`}>
+                <input type="checkbox" checked={selected.includes(r.name)} onChange={() => toggle(r.name)} />
+                <span>{r.name}</span><em>{percent(r.pass_rate)}</em>
+              </label>
+            ))}
+          </div>
+        ) : <Empty label="No runs to compare yet." />}
+      </Panel>
+      {err ? <Banner tone="block" title="Compare failed" body={err} onClose={() => setErr("")} /> : null}
+      {rows.length ? (
+        <Panel title="Comparison" sub={data?.best_run ? `Best eval: ${data.best_run}` : undefined}>
+          <CompareTable rows={rows} best={data?.best_run} />
+        </Panel>
+      ) : null}
+    </div>
+  );
+}
+
+function CompareTable({ rows, best }: { rows: Array<Record<string, any>>; best?: string }) {
+  const metrics: Array<[string, (r: Record<string, any>) => React.ReactNode]> = [
+    ["Eval pass", (r) => percent(r.pass_rate)],
+    ["Eval score", (r) => r.eval_score ?? "--"],
+    ["Refusal", (r) => r.refusal_pass_rate != null ? percent(r.refusal_pass_rate) : "--"],
+    ["Prompt echo", (r) => r.prompt_echo_rate != null ? percent(r.prompt_echo_rate) : "--"],
+    ["SFT val loss", (r) => fixed(r.sft_val_loss, 3)],
+    ["Base val loss", (r) => fixed(r.base_val_loss, 3)],
+    ["SFT BPB", (r) => fixed(r.sft_val_bpb, 3)],
+    ["Params", (r) => compactNumber(r.num_parameters)],
+    ["Context", (r) => r.context_size ?? "--"],
+    ["Device", (r) => r.device ?? "--"]
+  ];
+  const cols = `170px repeat(${rows.length}, minmax(0, 1fr))`;
+  return (
+    <div className="pc-ctable">
+      <div className="pc-ctable-row head" style={{ gridTemplateColumns: cols }}>
+        <span>Metric</span>
+        {rows.map((r) => <span key={r.run} className={r.run === best ? "best" : ""}>{r.run}{r.run === best ? " ★" : ""}</span>)}
+      </div>
+      {metrics.map(([label, fn]) => (
+        <div className="pc-ctable-row" key={label} style={{ gridTemplateColumns: cols }}>
+          <span className="pc-ctable-k">{label}</span>
+          {rows.map((r) => <span key={r.run} className={`pc-mono ${r.run === best ? "best" : ""}`}>{fn(r)}</span>)}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function LogModal({ target, onClose, onCancel }: { target: { run?: string; job?: string }; onClose: () => void; onCancel: (id: string) => Promise<any> }) {
