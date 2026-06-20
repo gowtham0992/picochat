@@ -5,7 +5,7 @@ import json
 import pytest
 
 import picochat.web as web
-from picochat.web import hf_sft_start_plan
+from picochat.web import discover_runs, hf_sft_start_plan, serve_start_plan, serve_stop_plan
 
 
 class FakeProc:
@@ -62,3 +62,47 @@ def test_hf_sft_requires_data(tmp_path):
     web._RUN_JOBS.clear()
     with pytest.raises(ValueError, match="dataset_pack or input is required"):
         hf_sft_start_plan(tmp_path, {"model": "org/base"})
+
+
+def _make_hf_run(tmp_path, name="hf-demo"):
+    run = tmp_path / name
+    (run / "final_model").mkdir(parents=True)
+    (run / "hf_sft_report.json").write_text(
+        json.dumps({"model": "org/base", "best_val_loss": 1.0}), encoding="utf-8"
+    )
+    return run
+
+
+def test_discover_runs_surfaces_hf_run(tmp_path):
+    _make_hf_run(tmp_path)
+    rows = [r for r in discover_runs(tmp_path) if r["name"] == "hf-demo"]
+    assert rows and rows[0]["kind"] == "hf-sft"
+    assert rows[0]["base_model"] == "org/base"
+
+
+def test_serve_hf_run_uses_hf_model_flag(tmp_path, monkeypatch):
+    captured = {}
+
+    class CapturingProc:
+        pid = 4242
+
+        def __init__(self, command, *args, **kwargs):
+            captured["command"] = command
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+    monkeypatch.setattr("picochat.web.subprocess.Popen", CapturingProc)
+    web._SERVE_JOBS.clear()
+    run = _make_hf_run(tmp_path)
+
+    started = serve_start_plan(tmp_path, {"run": "hf-demo"}, host="127.0.0.1")
+    assert started["server"]["run"] == "hf-demo"
+    assert "--hf-model" in captured["command"]
+    assert str(run / "final_model") in captured["command"]
+    assert "--checkpoint" not in captured["command"]
+
+    serve_stop_plan({"run": "hf-demo"})

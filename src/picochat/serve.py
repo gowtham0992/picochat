@@ -17,8 +17,11 @@ from picochat.generate import LoadedGenerator
 
 @dataclass(frozen=True)
 class ServeConfig:
-    checkpoint_path: str
-    tokenizer_path: str
+    checkpoint_path: str = ""
+    tokenizer_path: str = ""
+    # When set, serve a fine-tuned Hugging Face model dir instead of a native
+    # Picochat checkpoint (checkpoint_path/tokenizer_path are then unused).
+    hf_model: str | None = None
     host: str = "127.0.0.1"
     port: int = 8000
     model_name: str = "picochat"
@@ -53,11 +56,15 @@ def serve_model(config: ServeConfig) -> None:
         config = replace(config, api_key=secrets.token_urlsafe(24))
         print("WARNING: binding to a non-loopback address — requiring a bearer API key.")
         print(f"API key: {config.api_key}")
-    engine = LoadedGenerator(
-        checkpoint_path=config.checkpoint_path,
-        tokenizer_path=config.tokenizer_path,
-        device=config.device,
-    )
+    if config.hf_model:
+        from picochat.hf_infer import HFGenerator
+        engine = HFGenerator(model_path=config.hf_model, device=config.device)
+    else:
+        engine = LoadedGenerator(
+            checkpoint_path=config.checkpoint_path,
+            tokenizer_path=config.tokenizer_path,
+            device=config.device,
+        )
     handler = _handler_factory(config, engine)
     server = ThreadingHTTPServer((config.host, config.port), handler)
     print(f"pico serve: http://{config.host}:{config.port}")

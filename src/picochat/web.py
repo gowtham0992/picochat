@@ -251,7 +251,62 @@ def discover_runs(runs_dir: str | Path) -> list[dict]:
             "truncated_examples": summary["sft"]["truncated_examples"],
             "skipped_long_examples": summary["sft"].get("skipped_long_examples", 0),
         })
+
+    # Fine-tuned Hugging Face runs (output of `train hf-sft`) have no summary.json
+    # but produce a final_model/ + hf_sft_report.json; surface them so they are
+    # selectable for chat and serving.
+    hf_dirs = sorted(
+        path for path in root.iterdir()
+        if path.is_dir() and not (path / "summary.json").exists() and (path / "hf_sft_report.json").exists()
+    )
+    for run_dir in hf_dirs:
+        report = _read_json_if_exists(run_dir / "hf_sft_report.json") or {}
+        rows.append({
+            "name": run_dir.name,
+            "path": str(run_dir),
+            "kind": "hf-sft",
+            "base_model": report.get("model"),
+            "eval_score": "--",
+            "pass_rate": None,
+            "domain_pass_rate": None,
+            "refusal_pass_rate": None,
+            "base_val_loss": None,
+            "sft_val_loss": report.get("best_val_loss"),
+            "num_parameters": report.get("num_parameters"),
+            "context_size": None,
+            "truncated_examples": None,
+            "skipped_long_examples": None,
+        })
     return rows
+
+
+def _hf_run_detail(run_dir: Path) -> dict:
+    """Minimal detail payload for a fine-tuned HF run (no native summary)."""
+    report = _read_json_if_exists(run_dir / "hf_sft_report.json") or {}
+    return {
+        "summary": {
+            "kind": "hf-sft",
+            "config": {"scale": "hf-sft", "base_model": report.get("model")},
+            "hf_sft_report": report,
+        },
+        "corpus_preview": "",
+        "corpus_manifest": None,
+        "corpus_report": "",
+        "tokenizer_detail": None,
+        "base_report": None,
+        "sft_report": None,
+        "eval": None,
+        "eval_reports": [],
+        "preflight": None,
+        "base_sample": "",
+        "sft_sample": "",
+        "reports": {},
+        "artifact_inventory": {"by_path": {}},
+        "run_timeline": [],
+        "handoff_packet": None,
+        "release_repair_plan": None,
+        "run_passport": None,
+    }
 
 
 def load_run_detail(runs_dir: str | Path, run_name: str) -> dict:
@@ -259,6 +314,8 @@ def load_run_detail(runs_dir: str | Path, run_name: str) -> dict:
     run_dir = _safe_child(Path(runs_dir), run_name)
     summary_path = run_dir / "summary.json"
     if not summary_path.exists():
+        if (run_dir / "final_model").exists() or (run_dir / "hf_sft_report.json").exists():
+            return _hf_run_detail(run_dir)
         raise FileNotFoundError(f"missing run summary: {summary_path}")
 
     summary = _read_json(summary_path)
@@ -325,19 +382,10 @@ def generate_run_text(runs_dir: str | Path, payload: dict) -> dict:
     run_name = str(payload.get("run", ""))
     run_dir = _safe_child(Path(runs_dir), run_name)
     summary_path = run_dir / "summary.json"
-    if not summary_path.exists():
+    hf_model_dir = run_dir / "final_model"
+    is_hf = hf_model_dir.exists() and not summary_path.exists()
+    if not is_hf and not summary_path.exists():
         raise FileNotFoundError(f"missing run summary: {summary_path}")
-
-    checkpoint = str(payload.get("checkpoint", "sft")).lower()
-    if checkpoint not in {"base", "sft"}:
-        raise ValueError("checkpoint must be 'base' or 'sft'")
-
-    checkpoint_path = run_dir / checkpoint / "checkpoint"
-    tokenizer_path = run_dir / "tokenizer.json"
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"missing checkpoint: {checkpoint_path}")
-    if not tokenizer_path.exists():
-        raise FileNotFoundError(f"missing tokenizer: {tokenizer_path}")
 
     max_new_tokens = _bounded_int(payload.get("max_new_tokens", 80), 1, 240)
     temperature = _bounded_float(payload.get("temperature", 0.8), 0.0, 2.0)
@@ -347,18 +395,40 @@ def generate_run_text(runs_dir: str | Path, payload: dict) -> dict:
     seed = _bounded_int(payload.get("seed", 42), 0, 9999)
     prompt = str(payload.get("prompt", ""))[:4000]
 
-    result = generate_text_with_trace(GenerateConfig(
-        checkpoint_path=str(checkpoint_path),
-        tokenizer_path=str(tokenizer_path),
-        prompt=prompt,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_k=None if top_k <= 0 else top_k,
-        top_p=top_p,
-        repetition_penalty=repetition_penalty,
-        seed=seed,
-        device="cpu",
-    ))
+    if is_hf:
+        from picochat.hf_infer import HFGenerator
+        checkpoint = "hf"
+        result = HFGenerator(model_path=str(hf_model_dir), device="cpu").generate(
+            prompt=prompt,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=None if top_k <= 0 else top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            seed=seed,
+        )
+    else:
+        checkpoint = str(payload.get("checkpoint", "sft")).lower()
+        if checkpoint not in {"base", "sft"}:
+            raise ValueError("checkpoint must be 'base' or 'sft'")
+        checkpoint_path = run_dir / checkpoint / "checkpoint"
+        tokenizer_path = run_dir / "tokenizer.json"
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"missing checkpoint: {checkpoint_path}")
+        if not tokenizer_path.exists():
+            raise FileNotFoundError(f"missing tokenizer: {tokenizer_path}")
+        result = generate_text_with_trace(GenerateConfig(
+            checkpoint_path=str(checkpoint_path),
+            tokenizer_path=str(tokenizer_path),
+            prompt=prompt,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=None if top_k <= 0 else top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            seed=seed,
+            device="cpu",
+        ))
     return {
         "run": run_name,
         "checkpoint": checkpoint,
@@ -1802,12 +1872,15 @@ def serve_start_plan(runs_dir: str | Path, payload: dict, *, host: str = "127.0.
     if not run_name:
         raise ValueError("run is required")
     run_dir = _safe_child(Path(runs_dir), run_name)
+    hf_model_dir = run_dir / "final_model"
     checkpoint = run_dir / "sft" / "checkpoint"
     tokenizer = run_dir / "tokenizer.json"
-    if not checkpoint.exists():
-        raise FileNotFoundError(f"missing SFT checkpoint for {run_name}: {checkpoint}")
-    if not tokenizer.exists():
-        raise FileNotFoundError(f"missing tokenizer for {run_name}: {tokenizer}")
+    is_hf = hf_model_dir.exists() and not checkpoint.exists()
+    if not is_hf:
+        if not checkpoint.exists():
+            raise FileNotFoundError(f"missing SFT checkpoint for {run_name}: {checkpoint}")
+        if not tokenizer.exists():
+            raise FileNotFoundError(f"missing tokenizer for {run_name}: {tokenizer}")
 
     with _SERVE_JOBS_LOCK:
         existing = _SERVE_JOBS.get(run_name)
@@ -1817,10 +1890,13 @@ def serve_start_plan(runs_dir: str | Path, payload: dict, *, host: str = "127.0.
 
     port = _find_free_port()
     api_key = None if _is_loopback_host(host) else secrets.token_urlsafe(16)
+    serve_args = (
+        ["--hf-model", str(hf_model_dir)] if is_hf
+        else ["--checkpoint", str(checkpoint), "--tokenizer", str(tokenizer)]
+    )
     command = [
         sys.executable, "-m", "picochat.cli", "serve",
-        "--checkpoint", str(checkpoint),
-        "--tokenizer", str(tokenizer),
+        *serve_args,
         "--host", host,
         "--port", str(port),
         "--model-name", run_name,
