@@ -351,6 +351,8 @@ input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; accent-color:
 .pc-form { display: grid; gap: 12px; }
 .pc-import-result { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 14px; border: 1px solid color-mix(in srgb, var(--green) 34%, var(--line)); border-radius: var(--radius); background: var(--panel); }
 .pc-import-result code { display: block; margin-top: 4px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.pc-pull { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--line-2); display: grid; gap: 10px; justify-items: start; }
+.pc-pull .pc-field { width: 100%; }
 
 /* ------------------------------------------------------------- responsive */
 @media (max-width: 1080px) {

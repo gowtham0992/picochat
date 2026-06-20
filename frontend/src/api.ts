@@ -123,6 +123,10 @@ export function remoteModalStart(payload: Record<string, unknown>): Promise<{ jo
   return jsonRequest("/api/remote/modal/start", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export function remoteModalPull(run: string): Promise<{ job: JobStatus }> {
+  return jsonRequest("/api/remote/modal/pull", { method: "POST", body: JSON.stringify({ run }) });
+}
+
 export function generateText(payload: {
   run: string;
   prompt: string;

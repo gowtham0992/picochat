@@ -2054,6 +2054,65 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
     return run_status_plan(job_id, runs_dir)
 
 
+def remote_modal_pull_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Download a finished Modal run from its volume into local runs/."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    if shutil.which("modal") is None:
+        raise ValueError(
+            "the `modal` CLI is not installed or not on PATH. "
+            "Install it with `pip install modal`, then run `modal token new`."
+        )
+    run_name = _slug(_optional_string(payload.get("run")) or "")
+    if not run_name:
+        raise ValueError("run is required")
+    volume = _optional_string(payload.get("volume")) or "picochat-runs"
+
+    dest_root = Path(runs_dir)
+    landed = _safe_child(dest_root, run_name)
+    if landed.exists() and any(landed.iterdir()):
+        raise FileExistsError(f"run already exists locally: {landed}")
+    dest_root.mkdir(parents=True, exist_ok=True)
+    track_dir = dest_root / ".pulls" / run_name
+    track_dir.mkdir(parents=True, exist_ok=True)
+
+    command = ["modal", "volume", "get", volume, run_name, str(dest_root.resolve())]
+    log_path = track_dir / "web_run.log"
+    log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
+    log_file = log_path.open("a", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=Path.cwd(),
+            env=_child_env(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "id": job_id,
+        "run_name": f"pull-{run_name}",
+        "out_dir": str(track_dir),
+        "dataset_pack": None,
+        "log_path": str(log_path),
+        "command": _shell_command(*command),
+        "started_at": time.time(),
+        "process": process,
+        "pid": process.pid,
+        "preset": "modal-pull",
+        "min_quality_score": 0,
+        "launch_config": {"kind": "modal-pull", "run": run_name, "volume": volume},
+    }
+    with _RUN_JOBS_LOCK:
+        _RUN_JOBS[job_id] = job
+    return run_status_plan(job_id, runs_dir)
+
+
 def archive_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     """Move a completed run out of the active run bank without deleting it."""
     if not isinstance(payload, dict):
@@ -2288,6 +2347,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(serve_stop_plan(self._read_json_body()))
                 elif parsed.path == "/api/remote/modal/start":
                     self._send_json(remote_modal_start_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/remote/modal/pull":
+                    self._send_json(remote_modal_pull_plan(config.runs_dir, self._read_json_body()))
                 else:
                     outcome = "not_found"
                     self.send_error(404, "Not found")

@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, generateEvalStarter, generateSftStarter, generateText, importHf, inspectTuning, listRuns, loadPresets, loadRun, loadStatus, remoteModalStart, remoteStatus, runLogStreamUrl, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
+import { archiveRuns, cancelRun, generateEvalStarter, generateSftStarter, generateText, importHf, inspectTuning, listRuns, loadPresets, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
@@ -731,8 +731,12 @@ function RemoteView({ openLogsFor }: SectionProps) {
   const [modal, setModal] = useState<{ modal_available: boolean; modal_script: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [pullRun, setPullRun] = useState("");
+  const [pullBusy, setPullBusy] = useState(false);
 
   useEffect(() => { remoteStatus().then(setModal).catch(() => setModal({ modal_available: false, modal_script: true })); }, []);
+
+  const modalDisabled = !!(modal && !modal.modal_available);
 
   const launchModal = async () => {
     setBusy(true); setErr("");
@@ -740,6 +744,15 @@ function RemoteView({ openLogsFor }: SectionProps) {
       const started = await remoteModalStart({ repo_url: REMOTE_REPO, branch, run_name: runName, scale, gpu, hf_dataset: hfDataset, hf_max_rows: hfMaxRows, secret_name: secretName || undefined });
       openLogsFor({ job: started.job?.id, run: started.job?.run_name });
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+
+  const pull = async () => {
+    if (!pullRun.trim()) { setErr("Enter the cloud run name to pull."); return; }
+    setPullBusy(true); setErr("");
+    try {
+      const started = await remoteModalPull(pullRun.trim());
+      openLogsFor({ job: started.job?.id, run: started.job?.run_name });
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setPullBusy(false); }
   };
 
   const colabSnippet = `!pip install -q "picochat[hf] @ git+${REMOTE_REPO}@${branch}"\n!picochat data hf-import --dataset ${hfDataset} --pack-out my_pack --max-rows ${Math.min(hfMaxRows, 20000)}\n!picochat run ${scale} --dataset-pack my_pack/dataset_pack.json --device cuda --out-dir runs/${runName}`;
@@ -773,8 +786,15 @@ function RemoteView({ openLogsFor }: SectionProps) {
               <label className="pc-field">Modal secret (HF token)<input value={secretName} onChange={(e) => setSecretName(e.target.value)} placeholder="optional, e.g. hf-secret" /></label>
             </div>
             <div className="pc-hint">Runs <code>modal run scripts/modal_picochat_train.py</code> and streams logs here. Artifacts land on the Modal <code>picochat-runs</code> volume — pull with <code>modal volume get picochat-runs {runName}</code>.</div>
-            {err ? <Banner tone="block" title="Launch failed" body={err} onClose={() => setErr("")} /> : null}
-            <button className="pc-btn primary" onClick={launchModal} disabled={busy || !!(modal && !modal.modal_available)}>{busy ? <Loader2 size={15} className="spin" /> : <Cloud size={15} />} Launch on Modal</button>
+            {err ? <Banner tone="block" title="Modal action failed" body={err} onClose={() => setErr("")} /> : null}
+            <button className="pc-btn primary" onClick={launchModal} disabled={busy || modalDisabled}>{busy ? <Loader2 size={15} className="spin" /> : <Cloud size={15} />} Launch on Modal</button>
+            <div className="pc-pull">
+              <label className="pc-field">Pull a finished cloud run into local runs/
+                <input value={pullRun} onChange={(e) => setPullRun(e.target.value)} placeholder="run name on the Modal volume" />
+              </label>
+              <button className="pc-btn" onClick={pull} disabled={pullBusy || modalDisabled}>{pullBusy ? <Loader2 size={15} className="spin" /> : <Boxes size={15} />} Pull from Modal</button>
+              <div className="pc-hint">Downloads it locally so it appears in the run picker for chat and serving.</div>
+            </div>
           </Panel>
         ) : null}
 
