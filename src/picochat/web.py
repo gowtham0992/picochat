@@ -17,6 +17,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -55,6 +56,9 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
 _RUN_JOBS: dict[str, dict] = {}
 _RUN_JOBS_LOCK = threading.Lock()
+# Background `pico serve` processes, keyed by run name.
+_SERVE_JOBS: dict[str, dict] = {}
+_SERVE_JOBS_LOCK = threading.Lock()
 # Server-sent-events log stream cadence. The cap bounds a single connection;
 # the browser's EventSource auto-reconnects for runs longer than that.
 _STREAM_INTERVAL_SECONDS = 1.0
@@ -1658,6 +1662,123 @@ def cancel_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     return run_status_plan(job_id, runs_dir)
 
 
+def _find_free_port(start: int = 8001, span: int = 200) -> int:
+    for port in range(start, start + span):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def _serve_job_status(job: dict) -> dict:
+    return {
+        "run": job["run"],
+        "host": job["host"],
+        "port": job["port"],
+        "api_key": job.get("api_key"),
+        "pid": job.get("pid"),
+        "model_name": job.get("model_name", "picochat"),
+        "log_path": job.get("log_path"),
+        "state": "running",
+        "uptime_seconds": round(time.time() - job["started_at"], 1),
+    }
+
+
+def serve_status_plan(runs_dir: str | Path = "runs", *, run: str | None = None) -> dict:
+    """List background serving processes, pruning any that have exited."""
+    with _SERVE_JOBS_LOCK:
+        for name, job in list(_SERVE_JOBS.items()):
+            if job["process"].poll() is not None:
+                _SERVE_JOBS.pop(name, None)
+        jobs = list(_SERVE_JOBS.values())
+    servers = [_serve_job_status(job) for job in jobs]
+    selected = next((s for s in servers if s["run"] == run), None) if run else (servers[-1] if servers else None)
+    return {"servers": servers, "server": selected}
+
+
+def serve_start_plan(runs_dir: str | Path, payload: dict, *, host: str = "127.0.0.1") -> dict:
+    """Launch an OpenAI-compatible `pico serve` for a run's SFT checkpoint."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    run_name = _optional_string(payload.get("run"))
+    if not run_name:
+        raise ValueError("run is required")
+    run_dir = _safe_child(Path(runs_dir), run_name)
+    checkpoint = run_dir / "sft" / "checkpoint"
+    tokenizer = run_dir / "tokenizer.json"
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"missing SFT checkpoint for {run_name}: {checkpoint}")
+    if not tokenizer.exists():
+        raise FileNotFoundError(f"missing tokenizer for {run_name}: {tokenizer}")
+
+    with _SERVE_JOBS_LOCK:
+        existing = _SERVE_JOBS.get(run_name)
+        alive = existing is not None and existing["process"].poll() is None
+    if alive:
+        return serve_status_plan(runs_dir, run=run_name)
+
+    port = _find_free_port()
+    api_key = None if _is_loopback_host(host) else secrets.token_urlsafe(16)
+    command = [
+        sys.executable, "-m", "picochat.cli", "serve",
+        "--checkpoint", str(checkpoint),
+        "--tokenizer", str(tokenizer),
+        "--host", host,
+        "--port", str(port),
+        "--model-name", run_name,
+    ]
+    if api_key:
+        command.extend(["--api-key", api_key])
+    log_path = run_dir / "web_serve.log"
+    log_file = log_path.open("w", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=Path.cwd(),
+            env=_child_env(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+    job = {
+        "run": run_name,
+        "host": host,
+        "port": port,
+        "api_key": api_key,
+        "pid": process.pid,
+        "process": process,
+        "started_at": time.time(),
+        "log_path": str(log_path),
+        "model_name": run_name,
+    }
+    with _SERVE_JOBS_LOCK:
+        _SERVE_JOBS[run_name] = job
+    return serve_status_plan(runs_dir, run=run_name)
+
+
+def serve_stop_plan(payload: dict) -> dict:
+    """Stop a background serving process for a run."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    run_name = _optional_string(payload.get("run"))
+    if not run_name:
+        raise ValueError("run is required")
+    with _SERVE_JOBS_LOCK:
+        job = _SERVE_JOBS.pop(run_name, None)
+    if job is None:
+        raise ValueError(f"no server running for run: {run_name}")
+    _terminate_job(job)
+    return {"stopped": True, "run": run_name}
+
+
 def archive_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     """Move a completed run out of the active run bank without deleting it."""
     if not isinstance(payload, dict):
@@ -1835,6 +1956,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(run_log_plan(config.runs_dir, run_name=run_name, job_id=job_id, limit=limit))
                 elif parsed.path == "/api/run/presets":
                     self._send_json(run_presets_plan())
+                elif parsed.path == "/api/serve/status":
+                    self._send_json(serve_status_plan(config.runs_dir))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -1880,6 +2003,10 @@ def _make_handler(config: WebConfig):
                     self._send_json(archive_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/run/import":
                     self._send_json(import_run_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/serve/start":
+                    self._send_json(serve_start_plan(config.runs_dir, self._read_json_body(), host=config.host))
+                elif parsed.path == "/api/serve/stop":
+                    self._send_json(serve_stop_plan(self._read_json_body()))
                 else:
                     outcome = "not_found"
                     self.send_error(404, "Not found")

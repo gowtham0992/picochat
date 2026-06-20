@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, generateEvalStarter, generateSftStarter, generateText, importHf, inspectTuning, listRuns, loadPresets, loadRun, loadStatus, runLogStreamUrl, startRun } from "./api";
+import { archiveRuns, cancelRun, generateEvalStarter, generateSftStarter, generateText, importHf, inspectTuning, listRuns, loadPresets, loadRun, loadStatus, runLogStreamUrl, serveStart, serveStatus, serveStop, startRun } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
@@ -441,7 +441,71 @@ function PlaygroundView({ selectedRun, detail }: SectionProps) {
             Context: (detail as any)?.summary?.config?.context_size || selectedRun?.context_size || "--"
           }} />
         </Panel>
+        <Panel title="Share / API access">
+          <ServePanel run={runName} />
+        </Panel>
       </aside>
+    </div>
+  );
+}
+
+function ServePanel({ run }: { run: string }) {
+  const [server, setServer] = useState<Record<string, any> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const pick = (payload: { servers?: Array<Record<string, any>>; server?: Record<string, any> | null }) =>
+    (payload.servers || []).find((s) => s.run === run) || payload.server || null;
+
+  useEffect(() => {
+    setServer(null);
+    if (!run) return;
+    serveStatus().then((s) => setServer(pick(s))).catch(() => {});
+    // eslint-disable-next-line
+  }, [run]);
+
+  const start = async () => {
+    setBusy(true); setErr("");
+    try { setServer(pick(await serveStart(run))); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  const stop = async () => {
+    setBusy(true); setErr("");
+    try { await serveStop(run); setServer(null); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+
+  if (!run) return <div className="pc-hint">Select a run to share it as an API.</div>;
+
+  const host = (typeof window !== "undefined" && window.location.hostname) || "127.0.0.1";
+  const base = server ? `http://${host}:${server.port}/v1` : "";
+  const auth = server?.api_key ? ` -H "authorization: Bearer ${server.api_key}"` : "";
+  const snippet = server
+    ? `curl ${base}/chat/completions -H "content-type: application/json"${auth} -d '{"model":"${run}","messages":[{"role":"user","content":"hello"}]}'`
+    : "";
+  const copy = () => { navigator.clipboard?.writeText(snippet); setCopied(true); window.setTimeout(() => setCopied(false), 1500); };
+
+  return (
+    <div className="pc-serve">
+      {server ? (
+        <>
+          <div className="pc-serve-on"><StatusDot tone="running" label="Serving" /><button className="pc-btn ghost danger" onClick={stop} disabled={busy}>Stop</button></div>
+          <label className="pc-field">Endpoint<input readOnly value={base} onFocus={(e) => e.target.select()} /></label>
+          {server.api_key ? <label className="pc-field">API key<input readOnly value={server.api_key} onFocus={(e) => e.target.select()} /></label> : null}
+          <div className="pc-serve-snip">
+            <pre>{snippet}</pre>
+            <button className="pc-btn ghost" onClick={copy}><Copy size={14} /> {copied ? "Copied" : "Copy"}</button>
+          </div>
+          <div className="pc-hint">OpenAI-compatible — point any client at <code>{base}</code> using model <code>{run}</code>.</div>
+        </>
+      ) : (
+        <>
+          <button className="pc-btn primary" onClick={start} disabled={busy}>{busy ? <Loader2 size={15} className="spin" /> : <Send size={15} />} Serve for your team</button>
+          <div className="pc-hint">Starts an OpenAI-compatible endpoint your team can call from code.</div>
+        </>
+      )}
+      {err ? <Banner tone="block" title="Serve failed" body={err} onClose={() => setErr("")} /> : null}
     </div>
   );
 }

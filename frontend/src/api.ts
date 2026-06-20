@@ -99,6 +99,18 @@ export function generateEvalStarter(payload: Record<string, unknown>): Promise<R
   return jsonRequest("/api/eval/starter", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export function serveStatus(): Promise<{ servers: Array<Record<string, any>>; server: Record<string, any> | null }> {
+  return jsonRequest("/api/serve/status");
+}
+
+export function serveStart(run: string): Promise<{ servers: Array<Record<string, any>>; server: Record<string, any> | null }> {
+  return jsonRequest("/api/serve/start", { method: "POST", body: JSON.stringify({ run }) });
+}
+
+export function serveStop(run: string): Promise<{ stopped: boolean; run: string }> {
+  return jsonRequest("/api/serve/stop", { method: "POST", body: JSON.stringify({ run }) });
+}
+
 export function generateText(payload: {
   run: string;
   prompt: string;
