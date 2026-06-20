@@ -1961,6 +1961,99 @@ def serve_stop_plan(payload: dict) -> dict:
     return {"stopped": True, "run": run_name}
 
 
+_MODAL_SCRIPT = Path("scripts/modal_picochat_train.py")
+
+
+def remote_status_plan() -> dict:
+    """Report which remote providers the local machine can drive directly."""
+    return {
+        "modal_available": shutil.which("modal") is not None,
+        "modal_script": _MODAL_SCRIPT.exists(),
+    }
+
+
+def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Launch a Picochat training recipe on Modal as a tracked job."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    if shutil.which("modal") is None:
+        raise ValueError(
+            "the `modal` CLI is not installed or not on PATH. "
+            "Install it with `pip install modal`, then run `modal token new`."
+        )
+    if not _MODAL_SCRIPT.exists():
+        raise FileNotFoundError(f"missing Modal launch script: {_MODAL_SCRIPT}")
+
+    repo_url = _optional_string(payload.get("repo_url")) or "https://github.com/gowtham0992/picochat.git"
+    branch = _optional_string(payload.get("branch")) or "develop"
+    run_name = _slug(_optional_string(payload.get("run_name")) or "picochat-modal-v1")
+    scale = _optional_string(payload.get("scale")) or "h100-100m"
+    gpu = _optional_string(payload.get("gpu")) or "A100"
+    hf_dataset = _optional_string(payload.get("hf_dataset")) or "karpathy/climbmix-400b-shuffle"
+    hf_max_rows = _bounded_int(payload.get("hf_max_rows", 800_000), 1, 100_000_000)
+    secret_name = _optional_string(payload.get("secret_name"))
+
+    out_dir = _safe_child(Path(runs_dir), run_name)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise FileExistsError(f"run output already exists: {out_dir}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    command = [
+        "modal", "run", str(_MODAL_SCRIPT),
+        "--repo-url", repo_url,
+        "--branch", branch,
+        "--run-name", run_name,
+        "--scale", scale,
+        "--gpu", gpu,
+        "--hf-dataset", hf_dataset,
+        "--hf-max-rows", str(hf_max_rows),
+    ]
+    if secret_name:
+        command.extend(["--secret-name", secret_name])
+
+    log_path = out_dir / "web_run.log"
+    log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
+    log_file = log_path.open("a", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=Path.cwd(),
+            env=_child_env(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "id": job_id,
+        "run_name": run_name,
+        "out_dir": str(out_dir),
+        "dataset_pack": None,
+        "log_path": str(log_path),
+        "command": _shell_command(*command),
+        "started_at": time.time(),
+        "process": process,
+        "pid": process.pid,
+        "preset": "modal",
+        "min_quality_score": 0,
+        "launch_config": {
+            "kind": "modal",
+            "gpu": gpu,
+            "scale": scale,
+            "hf_dataset": hf_dataset,
+            "run_name": run_name,
+        },
+    }
+    with _RUN_JOBS_LOCK:
+        _RUN_JOBS[job_id] = job
+    _write_job_record(out_dir, job)
+    return run_status_plan(job_id, runs_dir)
+
+
 def archive_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     """Move a completed run out of the active run bank without deleting it."""
     if not isinstance(payload, dict):
@@ -2140,6 +2233,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(run_presets_plan())
                 elif parsed.path == "/api/serve/status":
                     self._send_json(serve_status_plan(config.runs_dir))
+                elif parsed.path == "/api/remote/status":
+                    self._send_json(remote_status_plan())
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -2191,6 +2286,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(serve_start_plan(config.runs_dir, self._read_json_body(), host=config.host))
                 elif parsed.path == "/api/serve/stop":
                     self._send_json(serve_stop_plan(self._read_json_body()))
+                elif parsed.path == "/api/remote/modal/start":
+                    self._send_json(remote_modal_start_plan(config.runs_dir, self._read_json_body()))
                 else:
                     outcome = "not_found"
                     self.send_error(404, "Not found")

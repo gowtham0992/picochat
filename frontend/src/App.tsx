@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   CircleAlert,
+  Cloud,
   Copy,
   Cpu,
   Database,
@@ -26,11 +27,11 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, generateEvalStarter, generateSftStarter, generateText, importHf, inspectTuning, listRuns, loadPresets, loadRun, loadStatus, runLogStreamUrl, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
+import { archiveRuns, cancelRun, generateEvalStarter, generateSftStarter, generateText, importHf, inspectTuning, listRuns, loadPresets, loadRun, loadStatus, remoteModalStart, remoteStatus, runLogStreamUrl, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
-type SectionId = "overview" | "runs" | "playground" | "training" | "eval" | "release" | "dataset" | "settings";
+type SectionId = "overview" | "runs" | "playground" | "training" | "eval" | "release" | "dataset" | "cloud" | "settings";
 
 const NAV: Array<{ id: SectionId; label: string; icon: LucideIcon; group: "main" | "model" | "system" }> = [
   { id: "overview", label: "Overview", icon: LayoutGrid, group: "main" },
@@ -40,6 +41,7 @@ const NAV: Array<{ id: SectionId; label: string; icon: LucideIcon; group: "main"
   { id: "eval", label: "Evaluation", icon: BarChart3, group: "model" },
   { id: "release", label: "Release gate", icon: Lock, group: "model" },
   { id: "dataset", label: "Dataset", icon: Database, group: "system" },
+  { id: "cloud", label: "Cloud", icon: Cloud, group: "system" },
   { id: "settings", label: "Settings", icon: ShieldCheck, group: "system" }
 ];
 
@@ -145,6 +147,7 @@ export default function App() {
     section, runs, selectedRun: selectedRun ?? null, detail, jobs, settings, tone,
     update, launchSmoke, archiveSelected, selectRun: setSelectedRunName,
     openLogs: () => selectedRun && setLogTarget({ run: selectedRun.name, job: activeJob?.id }),
+    openLogsFor: (t) => setLogTarget(t),
     openNew: (pack?: string) => setNewRun({ pack }),
     setSection
   };
@@ -188,7 +191,7 @@ export default function App() {
         <section className="pc-content">
           {error ? <Banner tone="block" title="Action failed" body={error} onClose={() => setError("")} /> : null}
           {busy ? <Banner tone="info" title={busy} body="Running a backend action — live status and logs update automatically." /> : null}
-          {!loading && runs.length === 0 ? <Welcome {...ctx} /> : render(ctx)}
+          {!loading && runs.length === 0 && section === "overview" ? <Welcome {...ctx} /> : render(ctx)}
         </section>
       </main>
 
@@ -211,6 +214,7 @@ type SectionProps = {
   archiveSelected: () => void;
   selectRun: (name: string) => void;
   openLogs: () => void;
+  openLogsFor: (t: { run?: string; job?: string }) => void;
   openNew: (pack?: string) => void;
   setSection: (s: SectionId) => void;
 };
@@ -223,6 +227,7 @@ function render(p: SectionProps) {
     case "eval": return <EvalView {...p} />;
     case "release": return <ReleaseView {...p} />;
     case "dataset": return <DatasetView {...p} />;
+    case "cloud": return <RemoteView {...p} />;
     case "settings": return <SettingsView {...p} />;
     default: return <OverviewView {...p} />;
   }
@@ -704,6 +709,100 @@ function HfImport({ defaultDataset, token, openNew }: { defaultDataset: string; 
           <button className="pc-btn primary" onClick={() => openNew(result.dataset_pack)}>Train on this pack →</button>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------- cloud */
+
+const REMOTE_REPO = "https://github.com/gowtham0992/picochat.git";
+const REMOTE_SCALES = ["smoke", "tiny", "small", "medium", "h100-100m", "h200-1b-ddp8"];
+const REMOTE_GPUS = ["A100", "H100", "A10G", "L4", "T4"];
+
+function RemoteView({ openLogsFor }: SectionProps) {
+  const [provider, setProvider] = useState<"modal" | "colab" | "lambda">("modal");
+  const [branch, setBranch] = useState("develop");
+  const [runName, setRunName] = useState("picochat-cloud-v1");
+  const [scale, setScale] = useState("h100-100m");
+  const [hfDataset, setHfDataset] = useState("karpathy/climbmix-400b-shuffle");
+  const [hfMaxRows, setHfMaxRows] = useState(800000);
+  const [gpu, setGpu] = useState("A100");
+  const [secretName, setSecretName] = useState("");
+  const [modal, setModal] = useState<{ modal_available: boolean; modal_script: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => { remoteStatus().then(setModal).catch(() => setModal({ modal_available: false, modal_script: true })); }, []);
+
+  const launchModal = async () => {
+    setBusy(true); setErr("");
+    try {
+      const started = await remoteModalStart({ repo_url: REMOTE_REPO, branch, run_name: runName, scale, gpu, hf_dataset: hfDataset, hf_max_rows: hfMaxRows, secret_name: secretName || undefined });
+      openLogsFor({ job: started.job?.id, run: started.job?.run_name });
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+
+  const colabSnippet = `!pip install -q "picochat[hf] @ git+${REMOTE_REPO}@${branch}"\n!picochat data hf-import --dataset ${hfDataset} --pack-out my_pack --max-rows ${Math.min(hfMaxRows, 20000)}\n!picochat run ${scale} --dataset-pack my_pack/dataset_pack.json --device cuda --out-dir runs/${runName}`;
+  const lambdaSnippet = `# On a fresh Lambda GPU instance (cloud.lambda.ai):\ngit clone -b ${branch} ${REMOTE_REPO} && cd picochat\npip install -e ".[hf]"\npicochat data hf-import --dataset ${hfDataset} --pack-out my_pack --max-rows ${Math.min(hfMaxRows, 100000)}\npicochat run ${scale} --dataset-pack my_pack/dataset_pack.json --device cuda --out-dir runs/${runName}`;
+
+  return (
+    <div className="pc-stack">
+      <div className="pc-toolbar">
+        <div className="pc-toolbar-meta"><strong>Cloud training</strong> — train on remote GPUs with this dashboard as the control plane.</div>
+        <Segmented value={provider} options={["modal", "colab", "lambda"]} onChange={(v) => setProvider(v as "modal" | "colab" | "lambda")} />
+      </div>
+
+      <div className="pc-grid two">
+        <Panel title="Recipe" sub="Shared across providers">
+          <label className="pc-field">Run name<input value={runName} onChange={(e) => setRunName(e.target.value)} /></label>
+          <div className="pc-grid two">
+            <label className="pc-field">Scale<select value={scale} onChange={(e) => setScale(e.target.value)}>{REMOTE_SCALES.map((s) => <option key={s}>{s}</option>)}</select></label>
+            <label className="pc-field">Branch<input value={branch} onChange={(e) => setBranch(e.target.value)} /></label>
+          </div>
+          <label className="pc-field">Hugging Face dataset<input value={hfDataset} onChange={(e) => setHfDataset(e.target.value)} /></label>
+          <label className="pc-field">Max rows<input type="number" value={hfMaxRows} onChange={(e) => setHfMaxRows(Math.max(1, Number(e.target.value) || 1000))} /></label>
+        </Panel>
+
+        {provider === "modal" ? (
+          <Panel title="Modal" sub="Serverless GPUs, launched from here">
+            {modal && !modal.modal_available ? (
+              <Banner tone="warn" title="Modal CLI not detected" body="Install with `pip install modal`, then `modal token new` to authenticate. Re-open this tab afterward." />
+            ) : null}
+            <div className="pc-grid two">
+              <label className="pc-field">GPU<select value={gpu} onChange={(e) => setGpu(e.target.value)}>{REMOTE_GPUS.map((g) => <option key={g}>{g}</option>)}</select></label>
+              <label className="pc-field">Modal secret (HF token)<input value={secretName} onChange={(e) => setSecretName(e.target.value)} placeholder="optional, e.g. hf-secret" /></label>
+            </div>
+            <div className="pc-hint">Runs <code>modal run scripts/modal_picochat_train.py</code> and streams logs here. Artifacts land on the Modal <code>picochat-runs</code> volume — pull with <code>modal volume get picochat-runs {runName}</code>.</div>
+            {err ? <Banner tone="block" title="Launch failed" body={err} onClose={() => setErr("")} /> : null}
+            <button className="pc-btn primary" onClick={launchModal} disabled={busy || !!(modal && !modal.modal_available)}>{busy ? <Loader2 size={15} className="spin" /> : <Cloud size={15} />} Launch on Modal</button>
+          </Panel>
+        ) : null}
+
+        {provider === "colab" ? (
+          <Panel title="Google Colab" action={<a className="pc-link" href="https://colab.research.google.com/#create=true" target="_blank" rel="noreferrer">Open Colab →</a>}>
+            <div className="pc-hint">Open a GPU notebook (Runtime → Change runtime type → GPU), then paste:</div>
+            <CodeBlock code={colabSnippet} />
+          </Panel>
+        ) : null}
+
+        {provider === "lambda" ? (
+          <Panel title="Lambda Cloud" action={<a className="pc-link" href="https://cloud.lambda.ai" target="_blank" rel="noreferrer">Open Lambda →</a>}>
+            <div className="pc-hint">Launch a GPU instance, SSH in, then run:</div>
+            <CodeBlock code={lambdaSnippet} />
+          </Panel>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function CodeBlock({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => { navigator.clipboard?.writeText(code); setCopied(true); window.setTimeout(() => setCopied(false), 1500); };
+  return (
+    <div className="pc-serve-snip">
+      <pre>{code}</pre>
+      <button className="pc-btn ghost" onClick={copy}><Copy size={14} /> {copied ? "Copied" : "Copy"}</button>
     </div>
   );
 }
