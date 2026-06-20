@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, compareRuns, generateEvalStarter, generateSftStarter, generateText, importHf, inspectTuning, listRuns, loadPresets, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
+import { archiveRuns, cancelRun, compareRuns, generateEvalStarter, generateSftStarter, generateText, importHf, initDatasetPack, inspectTuning, listRuns, loadPackEditor, loadPresets, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
@@ -1039,7 +1039,7 @@ const PRESET_FALLBACK = ["smoke", "tiny", "small-local", "small", "medium"];
 const EXAMPLE_PACKS = ["examples/tiny_dataset_pack.json", "examples/tinystories_dataset_pack.json"];
 
 type WizStep = 1 | 2 | 3;
-type DataSource = "example" | "pack" | "hf";
+type DataSource = "example" | "folder" | "pack" | "hf";
 
 function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: string; onClose: () => void; onLaunched: (t: { run?: string; job?: string }) => void }) {
   const [step, setStep] = useState<WizStep>(initialPack ? 2 : 1);
@@ -1051,10 +1051,14 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
   const [importBusy, setImportBusy] = useState(false);
   const [importErr, setImportErr] = useState("");
 
+  const [folderPath, setFolderPath] = useState("");
+  const [packName, setPackName] = useState("my-pack");
+
   const [insp, setInsp] = useState<Record<string, any> | null>(null);
   const [inspBusy, setInspBusy] = useState(false);
   const [inspErr, setInspErr] = useState("");
   const [genBusy, setGenBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const [name, setName] = useState("");
   const [preset, setPreset] = useState("tiny");
@@ -1089,6 +1093,17 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
     setImportBusy(true); setImportErr("");
     try {
       const res = await importHf({ dataset: dataset.trim(), max_rows: maxRows, force: true });
+      goPrepare(res.dataset_pack);
+    } catch (e) { setImportErr(e instanceof Error ? e.message : String(e)); }
+    finally { setImportBusy(false); }
+  };
+
+  const createFromFolder = async () => {
+    if (!folderPath.trim()) { setImportErr("Enter a path to a folder or file of documents."); return; }
+    const name = packName.trim() || "my-pack";
+    setImportBusy(true); setImportErr("");
+    try {
+      const res = await initDatasetPack({ name, corpus_path: folderPath.trim(), out_dir: `packs/${name}`, force: true });
       goPrepare(res.dataset_pack);
     } catch (e) { setImportErr(e instanceof Error ? e.message : String(e)); }
     finally { setImportBusy(false); }
@@ -1130,6 +1145,7 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
   const statTone = (st?: string): Tone => st === "ready" ? "pass" : st === "caution" ? "warn" : "block";
 
   return (
+    <>
     <div className="pc-modal-back" onClick={onClose}>
       <section className="pc-modal pc-new" onClick={(e) => e.stopPropagation()}>
         <header>
@@ -1170,8 +1186,8 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
             <>
           {step === 1 ? (
             <>
-              <div className="pc-source">
-                {([["example", "Use an example"], ["pack", "I have a dataset pack"], ["hf", "Import from Hugging Face"]] as [DataSource, string][]).map(([k, l]) => (
+              <div className="pc-source four">
+                {([["example", "Use an example"], ["folder", "My folder of docs"], ["pack", "I have a pack"], ["hf", "Hugging Face"]] as [DataSource, string][]).map(([k, l]) => (
                   <button key={k} className={`pc-source-opt ${source === k ? "on" : ""}`} onClick={() => setSource(k)}>{l}</button>
                 ))}
               </div>
@@ -1182,6 +1198,18 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
                     <button key={ex} className={`pc-chip ${pack === ex ? "on" : ""}`} onClick={() => setPack(ex)}>{ex.split("/").pop()}</button>
                   ))}
                 </div>
+              ) : null}
+              {source === "folder" ? (
+                <>
+                  <label className="pc-field">Folder or file of documents
+                    <input value={folderPath} onChange={(e) => setFolderPath(e.target.value)} placeholder="path/to/your/docs" />
+                  </label>
+                  <label className="pc-field">Pack name
+                    <input value={packName} onChange={(e) => setPackName(e.target.value)} placeholder="my-pack" />
+                  </label>
+                  <div className="pc-hint">Builds a dataset pack at <code>packs/{packName || "my-pack"}</code> with starter chat/eval you can refine next.</div>
+                  {importErr ? <Banner tone="block" title="Could not create pack" body={importErr} onClose={() => setImportErr("")} /> : null}
+                </>
               ) : null}
               {source === "pack" ? (
                 <label className="pc-field">Dataset pack path
@@ -1204,6 +1232,7 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
           {step === 2 ? (
             <>
               <div className="pc-prep-pack"><span>Pack</span><code>{pack}</code></div>
+              <button className="pc-btn ghost pc-edit-btn" onClick={() => setEditing(true)}><FileText size={14} /> Edit chat &amp; eval</button>
               {inspBusy ? <div className="pc-hint"><Loader2 size={14} className="spin" /> Checking training data…</div> : null}
               {inspErr ? <Banner tone="block" title="Could not inspect" body={inspErr} onClose={() => setInspErr("")} /> : null}
               {insp ? (
@@ -1257,12 +1286,70 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
               {step === 1 ? (
                 source === "hf"
                   ? <button className="pc-btn primary" onClick={runImport} disabled={importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Import & continue</button>
-                  : <button className="pc-btn primary" onClick={() => pack.trim() && goPrepare(pack.trim())} disabled={!pack.trim()}>Next: training data →</button>
+                  : source === "folder"
+                    ? <button className="pc-btn primary" onClick={createFromFolder} disabled={importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Create pack & continue</button>
+                    : <button className="pc-btn primary" onClick={() => pack.trim() && goPrepare(pack.trim())} disabled={!pack.trim()}>Next: training data →</button>
               ) : null}
               {step === 2 ? <button className="pc-btn primary" onClick={() => setStep(3)} disabled={inspBusy}>Next: train →</button> : null}
               {step === 3 ? <button className="pc-btn primary" onClick={launch} disabled={launching}>{launching ? <Loader2 size={15} className="spin" /> : <Gauge size={15} />} Start training</button> : null}
             </>
           )}
+        </footer>
+      </section>
+    </div>
+    {editing ? <PackEditorModal pack={pack} onClose={() => setEditing(false)} onSaved={() => inspectPack(pack)} /> : null}
+    </>
+  );
+}
+
+function PackEditorModal({ pack, onClose, onSaved }: { pack: string; onClose: () => void; onSaved: () => void }) {
+  const [chatText, setChatText] = useState("");
+  const [evalText, setEvalText] = useState("");
+  const [status, setStatus] = useState<Record<string, any> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    setLoading(true); setErr("");
+    loadPackEditor({ dataset_pack: pack })
+      .then((d) => { setChatText(d.chat_text || ""); setEvalText(d.eval_text || ""); setStatus(d); })
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, [pack]);
+  const save = async () => {
+    setSaving(true); setErr("");
+    try { setStatus(await savePackEditor({ dataset_pack: pack, chat_text: chatText, eval_text: evalText })); onSaved(); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setSaving(false); }
+  };
+  return (
+    <div className="pc-modal-back" onClick={onClose}>
+      <section className="pc-modal pc-editor" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <div><span className="pc-eyebrow">Edit training data</span><h2>Chat &amp; eval</h2></div>
+          <button className="pc-btn ghost" onClick={onClose}><X size={15} /></button>
+        </header>
+        <div className="pc-editor-body">
+          {loading ? <div className="pc-hint"><Loader2 size={14} className="spin" /> Loading…</div> : (
+            <div className="pc-grid two">
+              <label className="pc-field">Chat SFT — one JSON object per line
+                <textarea className="pc-code" value={chatText} onChange={(e) => setChatText(e.target.value)} spellCheck={false} />
+              </label>
+              <label className="pc-field">Eval — one JSON object per line
+                <textarea className="pc-code" value={evalText} onChange={(e) => setEvalText(e.target.value)} spellCheck={false} />
+              </label>
+            </div>
+          )}
+          {err ? <Banner tone="block" title="Could not save" body={err} onClose={() => setErr("")} /> : null}
+          {status ? (
+            <div className="pc-hint">
+              Chat: {status.chat_data?.num_examples ?? "--"} examples · Eval: {status.eval_data?.num_items ?? "--"} items
+              {status.saved ? " · saved ✓" : ""}
+            </div>
+          ) : null}
+        </div>
+        <footer className="pc-new-foot">
+          <button className="pc-btn ghost" onClick={onClose}>Close</button>
+          <button className="pc-btn primary" onClick={save} disabled={saving || loading}>{saving ? <Loader2 size={15} className="spin" /> : <Check size={15} />} Save</button>
         </footer>
       </section>
     </div>
