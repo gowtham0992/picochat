@@ -74,8 +74,8 @@ pre { white-space: pre-wrap; word-break: break-word; }
   background: var(--rail); border-right: 1px solid var(--line);
 }
 .pc-brand { display: flex; gap: 11px; align-items: center; padding: 18px 16px; border-bottom: 1px solid var(--line); }
-.pc-logo { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: linear-gradient(150deg, color-mix(in srgb, var(--iris) 30%, transparent), transparent); border: 1px solid var(--line-2); }
-.pc-logo img { width: 24px; height: 24px; object-fit: contain; }
+.pc-logo { width: 32px; height: 32px; display: grid; place-items: center; }
+.pc-logo img { width: 32px; height: 32px; object-fit: contain; display: block; }
 .pc-brand strong { display: block; font-size: 14px; letter-spacing: -0.02em; }
 .pc-brand span { display: block; color: var(--faint); font-size: 11px; font-weight: 500; }
 
