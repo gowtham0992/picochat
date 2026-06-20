@@ -59,6 +59,20 @@ _RUN_JOBS_LOCK = threading.Lock()
 # Background `pico serve` processes, keyed by run name.
 _SERVE_JOBS: dict[str, dict] = {}
 _SERVE_JOBS_LOCK = threading.Lock()
+# Cache of loaded HF inference engines (keyed by model dir) so Playground chat on
+# a fine-tuned model does not reload weights on every message.
+_HF_ENGINES: dict[str, object] = {}
+_HF_ENGINES_LOCK = threading.Lock()
+
+
+def _get_hf_engine(model_dir: str):
+    with _HF_ENGINES_LOCK:
+        engine = _HF_ENGINES.get(model_dir)
+        if engine is None:
+            from picochat.hf_infer import HFGenerator
+            engine = HFGenerator(model_path=model_dir, device="cpu")
+            _HF_ENGINES[model_dir] = engine
+        return engine
 # Server-sent-events log stream cadence. The cap bounds a single connection;
 # the browser's EventSource auto-reconnects for runs longer than that.
 _STREAM_INTERVAL_SECONDS = 1.0
@@ -396,9 +410,8 @@ def generate_run_text(runs_dir: str | Path, payload: dict) -> dict:
     prompt = str(payload.get("prompt", ""))[:4000]
 
     if is_hf:
-        from picochat.hf_infer import HFGenerator
         checkpoint = "hf"
-        result = HFGenerator(model_path=str(hf_model_dir), device="cpu").generate(
+        result = _get_hf_engine(str(hf_model_dir)).generate(
             prompt=prompt,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
