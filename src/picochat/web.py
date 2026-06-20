@@ -1575,6 +1575,99 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     return run_status_plan(job_id, runs_dir)
 
 
+def hf_sft_start_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Fine-tune an existing Hugging Face model on a pack's chat data."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    model = _optional_string(payload.get("model"))
+    if not model:
+        raise ValueError("model is required")
+
+    dataset_pack = _optional_string(payload.get("dataset_pack"))
+    chat_input = _optional_string(payload.get("input"))
+    if dataset_pack:
+        chat_input = load_dataset_pack(dataset_pack).chat_input
+    if not chat_input:
+        raise ValueError("dataset_pack or input is required")
+    if not Path(chat_input).is_file():
+        raise FileNotFoundError(f"missing chat data: {chat_input}")
+
+    run_name = _slug(_optional_string(payload.get("run_name")) or f"hf-sft-{_slug(model)}")
+    out_dir = _safe_child(Path(runs_dir), run_name)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise FileExistsError(f"run output already exists: {out_dir}")
+
+    max_steps = _bounded_int(payload.get("max_steps", 100), 1, 100000)
+    learning_rate = _bounded_float(payload.get("learning_rate", 2e-5), 0.0, 1.0)
+    peft = str(payload.get("peft", "none"))
+    if peft not in {"none", "lora"}:
+        raise ValueError("peft must be none or lora")
+    device = str(payload.get("device", "auto")).strip().lower()
+    if device not in DEVICE_CHOICES:
+        raise ValueError(f"device must be one of {', '.join(DEVICE_CHOICES)}")
+    trust_remote_code = bool(payload.get("trust_remote_code", False))
+    revision = _optional_string(payload.get("revision"))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable, "-m", "picochat.cli", "train", "hf-sft",
+        "--model", model,
+        "--input", chat_input,
+        "--out-dir", str(out_dir),
+        "--max-steps", str(max_steps),
+        "--learning-rate", str(learning_rate),
+        "--device", device,
+        "--peft", peft,
+    ]
+    if revision:
+        command.extend(["--revision", revision])
+    if trust_remote_code:
+        command.append("--trust-remote-code")
+
+    log_path = out_dir / "web_run.log"
+    log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
+    log_file = log_path.open("a", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=Path.cwd(),
+            env=_child_env(device=device),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "id": job_id,
+        "run_name": run_name,
+        "out_dir": str(out_dir),
+        "dataset_pack": dataset_pack,
+        "log_path": str(log_path),
+        "command": _shell_command(*command),
+        "started_at": time.time(),
+        "process": process,
+        "pid": process.pid,
+        "preset": "hf-sft",
+        "min_quality_score": 0,
+        "launch_config": {
+            "kind": "hf-sft",
+            "model": model,
+            "input": chat_input,
+            "max_steps": max_steps,
+            "peft": peft,
+            "device": device,
+        },
+    }
+    with _RUN_JOBS_LOCK:
+        _RUN_JOBS[job_id] = job
+    _write_job_record(out_dir, job)
+    return run_status_plan(job_id, runs_dir)
+
+
 def run_status_plan(job_id: str | None = None, runs_dir: str | Path = "runs") -> dict:
     """Return status and log tail for a background run."""
     runs_root = Path(runs_dir).resolve()
@@ -1997,6 +2090,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(save_pack_editor_plan(self._read_json_body()))
                 elif parsed.path == "/api/run/start":
                     self._send_json(start_run_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/train/hf-sft":
+                    self._send_json(hf_sft_start_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/run/cancel":
                     self._send_json(cancel_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/run/archive":

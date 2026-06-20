@@ -99,6 +99,10 @@ export function generateEvalStarter(payload: Record<string, unknown>): Promise<R
   return jsonRequest("/api/eval/starter", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export function trainHfSft(payload: Record<string, unknown>): Promise<{ job: JobStatus }> {
+  return jsonRequest("/api/train/hf-sft", { method: "POST", body: JSON.stringify(payload) });
+}
+
 export function serveStatus(): Promise<{ servers: Array<Record<string, any>>; server: Record<string, any> | null }> {
   return jsonRequest("/api/serve/status");
 }
