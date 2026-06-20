@@ -317,6 +317,24 @@ input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; accent-color:
 .pc-chip { font-family: var(--mono); font-size: 11.5px; color: var(--muted); padding: 5px 10px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--panel); cursor: pointer; }
 .pc-chip.on { border-color: var(--iris); color: var(--text); }
 .pc-new-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--line); }
+.pc-new-foot .pc-btn.ghost { margin-right: auto; }
+.pc-source { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+.pc-source-opt { padding: 12px 10px; border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--panel); color: var(--muted); font-size: 12.5px; font-weight: 500; cursor: pointer; text-align: left; }
+.pc-source-opt.on { border-color: var(--iris); color: var(--text); background: color-mix(in srgb, var(--iris) 10%, var(--panel)); }
+.pc-prep-pack { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.pc-prep-pack span { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; }
+.pc-prep-pack code { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-prep-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.pc-stat { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); display: grid; gap: 4px; }
+.pc-stat span { color: var(--faint); text-transform: uppercase; letter-spacing: 0.08em; font-size: 9px; font-weight: 700; }
+.pc-stat strong { font-family: var(--mono); font-size: 18px; letter-spacing: -0.02em; }
+.pc-stat.pass strong { color: var(--green); }
+.pc-stat.warn strong { color: var(--amber); }
+.pc-stat.block strong { color: var(--red); }
+.pc-prep-gen { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px; border: 1px dashed var(--line-2); border-radius: var(--radius); margin-bottom: 12px; }
+.pc-prep-gen strong { display: block; font-size: 13.5px; }
+.pc-prep-gen p { margin: 3px 0 0; color: var(--muted); font-size: 12px; max-width: 42ch; }
+.pc-prep-actions { margin: 0; padding-left: 18px; display: grid; gap: 5px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 
 /* ----------------------------------------------------------------- forms */
 .pc-form { display: grid; gap: 12px; }

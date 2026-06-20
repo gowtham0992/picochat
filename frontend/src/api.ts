@@ -87,6 +87,18 @@ export function importHf(payload: Record<string, unknown>): Promise<Record<strin
   return jsonRequest("/api/hf/import", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export function inspectTuning(payload: Record<string, unknown>): Promise<Record<string, any>> {
+  return jsonRequest("/api/tuning/inspect", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function generateSftStarter(payload: Record<string, unknown>): Promise<Record<string, any>> {
+  return jsonRequest("/api/sft/starter", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function generateEvalStarter(payload: Record<string, unknown>): Promise<Record<string, any>> {
+  return jsonRequest("/api/eval/starter", { method: "POST", body: JSON.stringify(payload) });
+}
+
 export function generateText(payload: {
   run: string;
   prompt: string;

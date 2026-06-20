@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, generateText, importHf, listRuns, loadPresets, loadRun, loadStatus, runLogStreamUrl, startRun } from "./api";
+import { archiveRuns, cancelRun, generateEvalStarter, generateSftStarter, generateText, importHf, inspectTuning, listRuns, loadPresets, loadRun, loadStatus, runLogStreamUrl, startRun } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
@@ -844,64 +844,177 @@ function Welcome({ launchSmoke, openNew, setSection }: SectionProps) {
 const PRESET_FALLBACK = ["smoke", "tiny", "small-local", "small", "medium"];
 const EXAMPLE_PACKS = ["examples/tiny_dataset_pack.json", "examples/tinystories_dataset_pack.json"];
 
+type WizStep = 1 | 2 | 3;
+type DataSource = "example" | "pack" | "hf";
+
 function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: string; onClose: () => void; onLaunched: (t: { run?: string; job?: string }) => void }) {
-  const [pack, setPack] = useState(initialPack || EXAMPLE_PACKS[0]);
+  const [step, setStep] = useState<WizStep>(initialPack ? 2 : 1);
+  const [source, setSource] = useState<DataSource>("example");
+  const [pack, setPack] = useState(initialPack || "");
+
+  const [dataset, setDataset] = useState("HuggingFaceTB/smollm-corpus");
+  const [maxRows, setMaxRows] = useState(2000);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importErr, setImportErr] = useState("");
+
+  const [insp, setInsp] = useState<Record<string, any> | null>(null);
+  const [inspBusy, setInspBusy] = useState(false);
+  const [inspErr, setInspErr] = useState("");
+  const [genBusy, setGenBusy] = useState(false);
+
   const [name, setName] = useState("");
   const [preset, setPreset] = useState("tiny");
   const [presets, setPresets] = useState<Record<string, any>>({});
-  const [busy, setBusy] = useState(false);
+  const [launching, setLaunching] = useState(false);
   const [err, setErr] = useState("");
+
   useEffect(() => { loadPresets().then((p) => setPresets(p.presets || {})).catch(() => {}); }, []);
   const keys = Object.keys(presets).length ? Object.keys(presets) : PRESET_FALLBACK;
 
+  const inspectPack = async (p: string) => {
+    setInspBusy(true); setInspErr(""); setInsp(null);
+    try { setInsp(await inspectTuning({ dataset_pack: p })); }
+    catch (e) { setInspErr(e instanceof Error ? e.message : String(e)); }
+    finally { setInspBusy(false); }
+  };
+  const goPrepare = (p: string) => { setPack(p); setStep(2); inspectPack(p); };
+  useEffect(() => { if (initialPack) inspectPack(initialPack); /* eslint-disable-next-line */ }, []);
+
+  const runImport = async () => {
+    if (!dataset.trim()) { setImportErr("Enter a dataset id, e.g. org/name."); return; }
+    setImportBusy(true); setImportErr("");
+    try {
+      const res = await importHf({ dataset: dataset.trim(), max_rows: maxRows, force: true });
+      goPrepare(res.dataset_pack);
+    } catch (e) { setImportErr(e instanceof Error ? e.message : String(e)); }
+    finally { setImportBusy(false); }
+  };
+
+  const generateData = async () => {
+    if (!insp?.chat_input || !insp?.eval_input) return;
+    setGenBusy(true); setInspErr("");
+    try {
+      const chatOut = String(insp.chat_input).replace(/\.jsonl$/, "_generated.jsonl");
+      const evalOut = String(insp.eval_input).replace(/\.jsonl$/, "_generated.jsonl");
+      await generateSftStarter({ dataset_pack: pack, out_path: chatOut, max_items: 48, force: true, promote_to_pack: true });
+      await generateEvalStarter({ dataset_pack: pack, out_path: evalOut, max_items: 24, force: true, promote_to_pack: true });
+      await inspectPack(pack);
+    } catch (e) { setInspErr(e instanceof Error ? e.message : String(e)); }
+    finally { setGenBusy(false); }
+  };
+
   const launch = async () => {
     if (!pack.trim()) { setErr("Choose a dataset pack to train on."); return; }
-    setBusy(true); setErr("");
+    setLaunching(true); setErr("");
     try {
       const started = await startRun({ dataset_pack: pack.trim(), run_name: name.trim() || undefined, preset });
       onLaunched({ job: started.job?.id, run: started.job?.run_name });
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setLaunching(false); }
   };
+
+  const stepLabel = step === 1 ? "Choose your data" : step === 2 ? "Training data" : "Train";
+  const statTone = (st?: string): Tone => st === "ready" ? "pass" : st === "caution" ? "warn" : "block";
 
   return (
     <div className="pc-modal-back" onClick={onClose}>
       <section className="pc-modal pc-new" onClick={(e) => e.stopPropagation()}>
         <header>
-          <div><span className="pc-eyebrow">Train a model</span><h2>New model</h2></div>
+          <div><span className="pc-eyebrow">Create a domain model · step {step} of 3</span><h2>{stepLabel}</h2></div>
           <button className="pc-btn ghost" onClick={onClose}><X size={15} /></button>
         </header>
         <div className="pc-new-body">
-          <label className="pc-field">Dataset pack
-            <input value={pack} onChange={(e) => setPack(e.target.value)} placeholder="path/to/dataset_pack.json" />
-          </label>
-          <div className="pc-new-examples">
-            <span>Examples</span>
-            {EXAMPLE_PACKS.map((ex) => (
-              <button key={ex} className={`pc-chip ${pack === ex ? "on" : ""}`} onClick={() => setPack(ex)}>{ex.split("/").pop()}</button>
-            ))}
-          </div>
-          <div className="pc-grid two">
-            <label className="pc-field">Run name (optional)
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-domain-v1" />
-            </label>
-            <label className="pc-field">Preset
-              <select value={preset} onChange={(e) => setPreset(e.target.value)}>
-                {keys.map((k) => <option key={k} value={k}>{presets[k]?.label || k}</option>)}
-              </select>
-            </label>
-          </div>
-          <div className="pc-hint">{presets[preset]?.description || "Builds tokenizer → base pretraining → SFT → eval, then opens the live training log."}</div>
-          {err ? <Banner tone="block" title="Could not launch" body={err} onClose={() => setErr("")} /> : null}
+          {step === 1 ? (
+            <>
+              <div className="pc-source">
+                {([["example", "Use an example"], ["pack", "I have a dataset pack"], ["hf", "Import from Hugging Face"]] as [DataSource, string][]).map(([k, l]) => (
+                  <button key={k} className={`pc-source-opt ${source === k ? "on" : ""}`} onClick={() => setSource(k)}>{l}</button>
+                ))}
+              </div>
+              {source === "example" ? (
+                <div className="pc-new-examples">
+                  <span>Packs</span>
+                  {EXAMPLE_PACKS.map((ex) => (
+                    <button key={ex} className={`pc-chip ${pack === ex ? "on" : ""}`} onClick={() => setPack(ex)}>{ex.split("/").pop()}</button>
+                  ))}
+                </div>
+              ) : null}
+              {source === "pack" ? (
+                <label className="pc-field">Dataset pack path
+                  <input value={pack} onChange={(e) => setPack(e.target.value)} placeholder="path/to/dataset_pack.json" />
+                </label>
+              ) : null}
+              {source === "hf" ? (
+                <>
+                  <div className="pc-grid two">
+                    <label className="pc-field">Dataset<input value={dataset} onChange={(e) => setDataset(e.target.value)} placeholder="org/dataset" /></label>
+                    <label className="pc-field">Max rows<input type="number" value={maxRows} onChange={(e) => setMaxRows(Math.max(1, Number(e.target.value) || 1000))} /></label>
+                  </div>
+                  <div className="pc-hint">Imports to a local pack with starter chat/eval. This can take a minute.</div>
+                  {importErr ? <Banner tone="block" title="Import failed" body={importErr} onClose={() => setImportErr("")} /> : null}
+                </>
+              ) : null}
+            </>
+          ) : null}
+
+          {step === 2 ? (
+            <>
+              <div className="pc-prep-pack"><span>Pack</span><code>{pack}</code></div>
+              {inspBusy ? <div className="pc-hint"><Loader2 size={14} className="spin" /> Checking training data…</div> : null}
+              {inspErr ? <Banner tone="block" title="Could not inspect" body={inspErr} onClose={() => setInspErr("")} /> : null}
+              {insp ? (
+                <>
+                  <div className="pc-prep-stats">
+                    <Stat label="Readiness" value={insp.status} tone={statTone(insp.status)} />
+                    <Stat label="Chat examples" value={insp.chat_data?.num_examples ?? "--"} tone={statTone(insp.chat_data?.status)} />
+                    <Stat label="Eval items" value={insp.eval_data?.num_items ?? "--"} tone={statTone(insp.eval_data?.status)} />
+                  </div>
+                  {insp.status !== "ready" ? (
+                    <div className="pc-prep-gen">
+                      <div>
+                        <strong>Build starter training data</strong>
+                        <p>Generate chat + eval examples from this pack's text. You can refine them later for a stronger model.</p>
+                      </div>
+                      <button className="pc-btn primary" onClick={generateData} disabled={genBusy}>{genBusy ? <Loader2 size={15} className="spin" /> : <FlaskConical size={15} />} Generate</button>
+                    </div>
+                  ) : null}
+                  {Array.isArray(insp.next_actions) && insp.next_actions.length ? (
+                    <ul className="pc-prep-actions">{insp.next_actions.slice(0, 3).map((a: string, i: number) => <li key={i}>{a}</li>)}</ul>
+                  ) : null}
+                </>
+              ) : null}
+            </>
+          ) : null}
+
+          {step === 3 ? (
+            <>
+              <div className="pc-grid two">
+                <label className="pc-field">Run name (optional)<input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-domain-v1" /></label>
+                <label className="pc-field">Preset<select value={preset} onChange={(e) => setPreset(e.target.value)}>{keys.map((k) => <option key={k} value={k}>{presets[k]?.label || k}</option>)}</select></label>
+              </div>
+              <div className="pc-hint">{presets[preset]?.description || "Builds tokenizer → base pretraining → SFT → eval, then opens the live training log."}</div>
+              {err ? <Banner tone="block" title="Could not launch" body={err} onClose={() => setErr("")} /> : null}
+            </>
+          ) : null}
         </div>
         <footer className="pc-new-foot">
-          <button className="pc-btn ghost" onClick={onClose}>Cancel</button>
-          <button className="pc-btn primary" onClick={launch} disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <Gauge size={15} />} Start training
-          </button>
+          {step > 1
+            ? <button className="pc-btn ghost" onClick={() => setStep((s) => (s - 1) as WizStep)}>Back</button>
+            : <button className="pc-btn ghost" onClick={onClose}>Cancel</button>}
+          {step === 1 ? (
+            source === "hf"
+              ? <button className="pc-btn primary" onClick={runImport} disabled={importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Import & continue</button>
+              : <button className="pc-btn primary" onClick={() => pack.trim() && goPrepare(pack.trim())} disabled={!pack.trim()}>Next: training data →</button>
+          ) : null}
+          {step === 2 ? <button className="pc-btn primary" onClick={() => setStep(3)} disabled={inspBusy}>Next: train →</button> : null}
+          {step === 3 ? <button className="pc-btn primary" onClick={launch} disabled={launching}>{launching ? <Loader2 size={15} className="spin" /> : <Gauge size={15} />} Start training</button> : null}
         </footer>
       </section>
     </div>
   );
+}
+
+function Stat({ label, value, tone }: { label: string; value: React.ReactNode; tone: Tone }) {
+  return <div className={`pc-stat ${tone}`}><span>{label}</span><strong>{value}</strong></div>;
 }
 
 function LogModal({ target, onClose, onCancel }: { target: { run?: string; job?: string }; onClose: () => void; onCancel: (id: string) => Promise<any> }) {
