@@ -1102,6 +1102,18 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
   const [genBusy, setGenBusy] = useState(false);
   const [editing, setEditing] = useState(false);
 
+  const [adv, setAdv] = useState(false);
+  const [advLayers, setAdvLayers] = useState("");
+  const [advHeads, setAdvHeads] = useState("");
+  const [advEmbd, setAdvEmbd] = useState("");
+  const [advCtx, setAdvCtx] = useState("");
+  const [advOptimizer, setAdvOptimizer] = useState("");
+  const [advPrecision, setAdvPrecision] = useState("");
+  const [advLora, setAdvLora] = useState(false);
+  const [advLoraRank, setAdvLoraRank] = useState(8);
+  const [advDpoInput, setAdvDpoInput] = useState("");
+  const [advDpoSteps, setAdvDpoSteps] = useState(50);
+
   const [name, setName] = useState("");
   const [preset, setPreset] = useState("tiny");
   const [presets, setPresets] = useState<Record<string, any>>({});
@@ -1167,8 +1179,18 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
   const launch = async () => {
     if (!pack.trim()) { setErr("Choose a dataset pack to train on."); return; }
     setLaunching(true); setErr("");
+    const num = (s: string) => { const n = Number(s); return s.trim() && Number.isFinite(n) ? n : undefined; };
+    const payload: Record<string, unknown> = { dataset_pack: pack.trim(), run_name: name.trim() || undefined, preset };
+    if (adv) {
+      const set = (k: string, v: unknown) => { if (v !== undefined) payload[k] = v; };
+      set("n_layer", num(advLayers)); set("n_head", num(advHeads)); set("n_embd", num(advEmbd)); set("context_size", num(advCtx));
+      if (advOptimizer) { payload.base_optimizer = advOptimizer; payload.sft_optimizer = advOptimizer; }
+      if (advPrecision) payload.precision = advPrecision;
+      if (advLora) { payload.sft_peft = "lora"; payload.sft_lora_rank = advLoraRank; }
+      if (advDpoInput.trim()) { payload.dpo_input = advDpoInput.trim(); payload.dpo_steps = Math.max(1, advDpoSteps); }
+    }
     try {
-      const started = await startRun({ dataset_pack: pack.trim(), run_name: name.trim() || undefined, preset });
+      const started = await startRun(payload);
       onLaunched({ job: started.job?.id, run: started.job?.run_name });
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setLaunching(false); }
   };
@@ -1308,6 +1330,29 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
                 <label className="pc-field">Preset<select value={preset} onChange={(e) => setPreset(e.target.value)}>{keys.map((k) => <option key={k} value={k}>{presets[k]?.label || k}</option>)}</select></label>
               </div>
               <div className="pc-hint">{presets[preset]?.description || "Builds tokenizer → base pretraining → SFT → eval, then opens the live training log."}</div>
+              <button type="button" className="pc-adv-toggle" onClick={() => setAdv(!adv)}>{adv ? "▾" : "▸"} Advanced (optional)</button>
+              {adv ? (
+                <div className="pc-adv">
+                  <div className="pc-grid two">
+                    <label className="pc-field">Layers<input value={advLayers} onChange={(e) => setAdvLayers(e.target.value)} placeholder="preset" /></label>
+                    <label className="pc-field">Heads<input value={advHeads} onChange={(e) => setAdvHeads(e.target.value)} placeholder="preset" /></label>
+                  </div>
+                  <div className="pc-grid two">
+                    <label className="pc-field">Embedding dim<input value={advEmbd} onChange={(e) => setAdvEmbd(e.target.value)} placeholder="preset" /></label>
+                    <label className="pc-field">Context<input value={advCtx} onChange={(e) => setAdvCtx(e.target.value)} placeholder="preset" /></label>
+                  </div>
+                  <div className="pc-grid two">
+                    <label className="pc-field">Optimizer<select value={advOptimizer} onChange={(e) => setAdvOptimizer(e.target.value)}><option value="">preset</option><option value="adamw">adamw</option><option value="muon">muon</option></select></label>
+                    <label className="pc-field">Precision<select value={advPrecision} onChange={(e) => setAdvPrecision(e.target.value)}><option value="">preset</option><option value="float32">float32</option><option value="bfloat16">bfloat16</option><option value="float16">float16</option></select></label>
+                  </div>
+                  <div className="pc-grid two">
+                    <label className="pc-check">LoRA fine-tune<input type="checkbox" checked={advLora} onChange={(e) => setAdvLora(e.target.checked)} /></label>
+                    {advLora ? <label className="pc-field">LoRA rank<input type="number" value={advLoraRank} onChange={(e) => setAdvLoraRank(Math.max(1, Number(e.target.value) || 8))} /></label> : <span />}
+                  </div>
+                  <label className="pc-field">DPO preferences (optional JSONL)<input value={advDpoInput} onChange={(e) => setAdvDpoInput(e.target.value)} placeholder="path/to/preferences.jsonl" /></label>
+                  {advDpoInput.trim() ? <label className="pc-field">DPO steps<input type="number" value={advDpoSteps} onChange={(e) => setAdvDpoSteps(Math.max(1, Number(e.target.value) || 50))} /></label> : null}
+                </div>
+              ) : null}
               {err ? <Banner tone="block" title="Could not launch" body={err} onClose={() => setErr("")} /> : null}
             </>
           ) : null}
