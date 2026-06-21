@@ -390,6 +390,8 @@ function PlaygroundView({ selectedRun, detail }: SectionProps) {
   const [genError, setGenError] = useState("");
   const threadRef = useRef<HTMLDivElement | null>(null);
   const runName = selectedRun?.name || "";
+  const isHf = (detail as any)?.summary?.kind === "hf-sft";
+  const [deploying, setDeploying] = useState(false);
 
   useEffect(() => { threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" }); }, [messages, sending]);
 
@@ -470,7 +472,64 @@ function PlaygroundView({ selectedRun, detail }: SectionProps) {
         <Panel title="Export">
           <ExportPanel run={runName} />
         </Panel>
+        <Panel title="Deploy">
+          {runName
+            ? <><button className="pc-btn" onClick={() => setDeploying(true)}><Boxes size={15} /> Deploy to production</button>
+              <div className="pc-hint">Get a copy-paste recipe (Docker, vLLM, or llama.cpp) plus the exported model.</div></>
+            : <div className="pc-hint">Select a run to deploy it.</div>}
+        </Panel>
       </aside>
+      {deploying ? <DeployModal run={runName} isHf={isHf} onClose={() => setDeploying(false)} /> : null}
+    </div>
+  );
+}
+
+const DEPLOY_TARGETS: Array<[string, string]> = [["docker", "Docker"], ["vllm", "vLLM"], ["llamacpp", "llama.cpp"]];
+
+function DeployModal({ run, isHf, onClose }: { run: string; isHf: boolean; onClose: () => void }) {
+  const [target, setTarget] = useState("vllm");
+  const [exported, setExported] = useState<string | null>(isHf ? `runs/${run}/final_model` : null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const exportModel = async () => {
+    setBusy(true); setErr("");
+    try { setExported((await exportHf(run)).out_dir); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  const modelPath = exported || `runs/${run}/export-hf`;
+  const needsExport = !isHf && (target === "vllm" || target === "llamacpp") && !exported;
+  const recipes: Record<string, string> = {
+    docker: isHf
+      ? `docker build -t picochat:serve .\ndocker run --rm -p 8000:8000 -v "$(pwd)/runs:/workspace/runs" picochat:serve \\\n  pico serve --hf-model /workspace/runs/${run}/final_model --host 0.0.0.0 --port 8000`
+      : `docker build -t picochat:serve .\ndocker run --rm -p 8000:8000 -v "$(pwd)/runs:/workspace/runs" picochat:serve \\\n  pico serve --checkpoint /workspace/runs/${run}/sft/checkpoint \\\n  --tokenizer /workspace/runs/${run}/tokenizer.json --host 0.0.0.0 --port 8000`,
+    vllm: `pip install vllm\nvllm serve ${modelPath} --served-model-name ${run} --trust-remote-code\n# OpenAI-compatible API at http://localhost:8000/v1`,
+    llamacpp: `# clone llama.cpp, then convert + serve\npython llama.cpp/convert_hf_to_gguf.py ${modelPath} --outfile ${run}.gguf\n./llama.cpp/llama-server -m ${run}.gguf --port 8080`
+  };
+  const notes: Record<string, string> = {
+    docker: "Containerized OpenAI-compatible endpoint. Works for any run, native or fine-tuned.",
+    vllm: "High-throughput production serving. Cleanest for fine-tuned HF base models (Qwen / SmolLM); native Picochat models depend on vLLM supporting the exported architecture.",
+    llamacpp: "CPU / edge serving via GGUF. Best for standard / fine-tuned architectures."
+  };
+  return (
+    <div className="pc-modal-back" onClick={onClose}>
+      <section className="pc-modal pc-new" onClick={(e) => e.stopPropagation()}>
+        <header><div><span className="pc-eyebrow">Deploy to production</span><h2>{run}</h2></div><button className="pc-btn ghost" onClick={onClose}><X size={15} /></button></header>
+        <div className="pc-new-body">
+          <div className="pc-source">
+            {DEPLOY_TARGETS.map(([k, l]) => <button key={k} className={`pc-source-opt ${target === k ? "on" : ""}`} onClick={() => setTarget(k)}>{l}</button>)}
+          </div>
+          <div className="pc-hint">{notes[target]}</div>
+          {needsExport ? (
+            <div className="pc-prep-gen">
+              <div><strong>Export the model first</strong><p>{target === "vllm" ? "vLLM" : "llama.cpp"} needs a Transformers model folder.</p></div>
+              <button className="pc-btn primary" onClick={exportModel} disabled={busy}>{busy ? <Loader2 size={15} className="spin" /> : <Download size={15} />} Export</button>
+            </div>
+          ) : null}
+          {err ? <Banner tone="block" title="Export failed" body={err} onClose={() => setErr("")} /> : null}
+          {exported && (target === "vllm" || target === "llamacpp") ? <div className="pc-hint">Model: <code>{exported}</code></div> : null}
+          <CodeBlock code={recipes[target]} />
+        </div>
+        <footer className="pc-new-foot"><button className="pc-btn ghost" onClick={onClose}>Close</button></footer>
+      </section>
     </div>
   );
 }
