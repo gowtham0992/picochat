@@ -2307,6 +2307,21 @@ def run_presets_plan() -> dict:
     return {"presets": RUN_PRESETS}
 
 
+def leaderboard_plan(runs_dir: str | Path = "runs") -> dict:
+    """Rank completed runs by benchmark eval into a leaderboard."""
+    from picochat.leaderboard import build_benchmark_leaderboard
+    root = Path(runs_dir)
+    if not root.exists():
+        return {"rows": [], "best_run": None}
+    run_dirs = [str(path) for path in sorted(root.iterdir()) if (path / "summary.json").exists()]
+    if not run_dirs:
+        return {"rows": [], "best_run": None}
+    try:
+        return build_benchmark_leaderboard(run_dirs)
+    except (ValueError, KeyError, OSError):
+        return {"rows": [], "best_run": None}
+
+
 def serve_web(config: WebConfig) -> None:
     """Start the blocking local web server."""
     if not _is_loopback_host(config.host) and not config.auth_token:
@@ -2399,6 +2414,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(serve_status_plan(config.runs_dir))
                 elif parsed.path == "/api/remote/status":
                     self._send_json(remote_status_plan())
+                elif parsed.path == "/api/leaderboard":
+                    self._send_json(leaderboard_plan(config.runs_dir))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:

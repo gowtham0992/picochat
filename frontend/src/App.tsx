@@ -26,11 +26,12 @@ import {
   ShieldCheck,
   Sun,
   Terminal,
+  Upload,
   X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, initDatasetPack, inspectTuning, listRuns, loadPackEditor, loadPresets, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
+import { archiveRuns, cancelRun, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, importRun, initDatasetPack, inspectTuning, listRuns, loadLeaderboard, loadPackEditor, loadPresets, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
@@ -328,13 +329,16 @@ function VerdictCard({ detail, tone, setSection }: { detail: RunDetail | null; t
 
 function RunsView(p: SectionProps) {
   const { runs, selectedRun, detail, launchSmoke, openLogs, archiveSelected } = p;
+  const [importing, setImporting] = useState(false);
   return (
     <div className="pc-stack">
+      {importing ? <ImportRunModal onClose={() => setImporting(false)} /> : null}
       <div className="pc-toolbar">
         <div className="pc-toolbar-meta"><strong>{runs.length}</strong> runs in the local bank</div>
         <div className="pc-row">
           <button className="pc-btn" onClick={() => launchSmoke(true)}><ShieldCheck size={15} /> Preflight</button>
           <button className="pc-btn" onClick={() => launchSmoke(false)}><Terminal size={15} /> Smoke run</button>
+          <button className="pc-btn ghost" onClick={() => setImporting(true)}><Upload size={15} /> Import</button>
           <button className="pc-btn ghost" onClick={openLogs}>Logs</button>
           {selectedRun ? <button className="pc-btn ghost danger" onClick={archiveSelected}><Archive size={15} /> Archive</button> : null}
         </div>
@@ -1570,23 +1574,42 @@ function Markdown({ source }: { source: string }) {
 
 /* --------------------------------------------------------------- compare */
 
-function CompareView({ runs }: SectionProps) {
+function CompareView({ runs, selectRun }: SectionProps) {
   const [selected, setSelected] = useState<string[]>([]);
   const [data, setData] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [board, setBoard] = useState<{ rows: Array<Record<string, any>>; best_run: string | null } | null>(null);
   const toggle = (name: string) => setSelected((s) => s.includes(name) ? s.filter((n) => n !== name) : [...s, name]);
+  useEffect(() => { loadLeaderboard().then(setBoard).catch(() => {}); }, []);
   const run = async () => {
     setBusy(true); setErr("");
     try { setData(await compareRuns(selected)); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   const rows = (data?.rows || []) as Array<Record<string, any>>;
+  const boardRows = (board?.rows || []).filter((r) => r.suite === "overall").sort((a, b) => (b.pass_rate ?? 0) - (a.pass_rate ?? 0));
   return (
     <div className="pc-stack">
       <div className="pc-toolbar">
         <div className="pc-toolbar-meta">Pick two or more runs to compare side by side.</div>
         <button className="pc-btn primary" onClick={run} disabled={busy || selected.length < 2}>{busy ? <Loader2 size={15} className="spin" /> : <GitCompare size={15} />} Compare {selected.length || ""}</button>
       </div>
+      {boardRows.length ? (
+        <Panel title="Leaderboard" sub="All runs ranked by visible eval" flush>
+          <div className="pc-lb">
+            <div className="pc-lb-tr head"><span>#</span><span>Run</span><span>Score</span><span>Pass</span><span>Prompt echo</span></div>
+            {boardRows.map((r, i) => (
+              <button key={r.run} className={`pc-lb-tr ${r.run === board?.best_run ? "best" : ""}`} onClick={() => selectRun(r.run)}>
+                <span className="pc-mono">{i + 1}</span>
+                <span className="pc-lb-name">{r.run}{r.run === board?.best_run ? " ★" : ""}</span>
+                <span className="pc-mono">{r.score ?? "--"}</span>
+                <span className="pc-mono">{percent(r.pass_rate)}</span>
+                <span className="pc-mono">{r.prompt_echo_rate != null ? percent(r.prompt_echo_rate) : "--"}</span>
+              </button>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
       <Panel title="Runs" sub="Select runs to compare">
         {runs.length ? (
           <div className="pc-pick-grid">
@@ -1605,6 +1628,40 @@ function CompareView({ runs }: SectionProps) {
           <CompareTable rows={rows} best={data?.best_run} />
         </Panel>
       ) : null}
+    </div>
+  );
+}
+
+function ImportRunModal({ onClose }: { onClose: () => void }) {
+  const [sourcePath, setSourcePath] = useState("");
+  const [runName, setRunName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState("");
+  const go = async () => {
+    if (!sourcePath.trim()) { setErr("Enter the path to a run folder (must contain summary.json)."); return; }
+    setBusy(true); setErr(""); setDone("");
+    try {
+      const res = await importRun({ source_path: sourcePath.trim(), run_name: runName.trim() || undefined });
+      setDone(`Imported as ${res.run_name || "run"} — it will appear in the bank shortly.`);
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <div className="pc-modal-back" onClick={onClose}>
+      <section className="pc-modal pc-new" onClick={(e) => e.stopPropagation()}>
+        <header><div><span className="pc-eyebrow">Import a run</span><h2>Import run</h2></div><button className="pc-btn ghost" onClick={onClose}><X size={15} /></button></header>
+        <div className="pc-new-body">
+          <label className="pc-field">Run folder path<input value={sourcePath} onChange={(e) => setSourcePath(e.target.value)} placeholder="path/to/run-dir (contains summary.json)" /></label>
+          <label className="pc-field">Rename (optional)<input value={runName} onChange={(e) => setRunName(e.target.value)} placeholder="keep original name" /></label>
+          <div className="pc-hint">Copies a completed run into the local bank so it shows up for compare, reports, chat, and serve.</div>
+          {err ? <Banner tone="block" title="Import failed" body={err} onClose={() => setErr("")} /> : null}
+          {done ? <Banner tone="pass" title="Imported" body={done} /> : null}
+        </div>
+        <footer className="pc-new-foot">
+          <button className="pc-btn ghost" onClick={onClose}>Close</button>
+          <button className="pc-btn primary" onClick={go} disabled={busy}>{busy ? <Loader2 size={15} className="spin" /> : <Upload size={15} />} Import</button>
+        </footer>
+      </section>
     </div>
   );
 }

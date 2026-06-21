@@ -393,6 +393,16 @@ input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; accent-color:
 .pc-ctable-row.head > span { font-weight: 600; color: var(--text); font-size: 12px; }
 .pc-ctable-k { color: var(--faint); }
 .pc-ctable-row > span.best { color: var(--green); font-weight: 600; }
+.pc-lb { display: grid; }
+.pc-lb-tr { display: grid; grid-template-columns: 40px minmax(0, 2fr) 0.9fr 0.7fr 0.9fr; align-items: center; gap: 12px; padding: 0 16px; min-height: 42px; text-align: left; width: 100%; border: none; border-bottom: 1px solid var(--line); background: none; color: var(--text); cursor: pointer; }
+.pc-lb-tr:last-child { border-bottom: none; }
+.pc-lb-tr.head { min-height: 36px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; font-weight: 700; cursor: default; }
+.pc-lb-tr > span { font-family: var(--mono); font-size: 12.5px; }
+.pc-lb-tr.head > span { font-family: inherit; }
+.pc-lb-name { font-family: inherit !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.pc-lb-tr:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.pc-lb-tr.best { background: color-mix(in srgb, var(--green) 9%, transparent); }
+.pc-lb-tr.best .pc-lb-name { color: var(--green); }
 
 /* ------------------------------------------------------------- responsive */
 @media (max-width: 1080px) {

@@ -52,6 +52,14 @@ export function compareRuns(names: string[]): Promise<Record<string, any>> {
   return jsonRequest(`/api/compare?${query}`);
 }
 
+export function loadLeaderboard(): Promise<{ rows: Array<Record<string, any>>; best_run: string | null }> {
+  return jsonRequest("/api/leaderboard");
+}
+
+export function importRun(payload: Record<string, unknown>): Promise<Record<string, any>> {
+  return jsonRequest("/api/run/import", { method: "POST", body: JSON.stringify(payload) });
+}
+
 export function loadStatus(job?: string): Promise<{ jobs: JobStatus[]; job: JobStatus | null }> {
   const suffix = job ? `?job=${encodeURIComponent(job)}` : "";
   return jsonRequest(`/api/run/status${suffix}`);
