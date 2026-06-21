@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import hmac
 import importlib.resources
+import ipaddress
 import json
+import mimetypes
 import os
 from pathlib import Path
 import re
+import secrets
 import shlex
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -19,6 +25,7 @@ import time
 import uuid
 from urllib.parse import parse_qs, urlparse
 
+from picochat import __version__
 from picochat.compare import compare_runs
 from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus_sources
 from picochat.dataset_pack import init_dataset_pack, load_dataset_pack, update_dataset_pack_tuning_paths
@@ -49,6 +56,53 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
 _RUN_JOBS: dict[str, dict] = {}
 _RUN_JOBS_LOCK = threading.Lock()
+# Cap on retained in-memory job records. Finished jobs stay discoverable on disk
+# (web_run.log + sidecar), so evicting them from memory loses nothing.
+_MAX_RUN_JOBS = 50
+# Background `pico serve` processes, keyed by run name.
+_SERVE_JOBS: dict[str, dict] = {}
+_SERVE_JOBS_LOCK = threading.Lock()
+# LRU cache of loaded HF inference engines (each holds a model in RAM) so
+# Playground chat on a fine-tuned model does not reload weights every message.
+_HF_ENGINES: dict[str, object] = {}
+_HF_ENGINES_LOCK = threading.Lock()
+_MAX_HF_ENGINES = 2
+
+
+def _register_run_job(job_id: str, job: dict) -> None:
+    """Track a launched job, evicting the oldest *finished* jobs past the cap.
+
+    Running jobs are never evicted; finished ones remain available via disk
+    discovery, so dropping them from memory is safe.
+    """
+    with _RUN_JOBS_LOCK:
+        _RUN_JOBS[job_id] = job
+        overflow = len(_RUN_JOBS) - _MAX_RUN_JOBS
+        if overflow <= 0:
+            return
+        finished = sorted(
+            (j for j in _RUN_JOBS.values()
+             if (proc := j.get("process")) is not None and proc.poll() is not None),
+            key=lambda j: j.get("started_at", 0.0),
+        )
+        for stale in finished[:overflow]:
+            _RUN_JOBS.pop(stale["id"], None)
+
+
+def _get_hf_engine(model_dir: str):
+    with _HF_ENGINES_LOCK:
+        engine = _HF_ENGINES.pop(model_dir, None)
+        if engine is None:
+            from picochat.hf_infer import HFGenerator
+            engine = HFGenerator(model_path=model_dir, device="cpu")
+        _HF_ENGINES[model_dir] = engine  # reinsert as most-recently-used
+        while len(_HF_ENGINES) > _MAX_HF_ENGINES:
+            _HF_ENGINES.pop(next(iter(_HF_ENGINES)))
+        return engine
+# Server-sent-events log stream cadence. The cap bounds a single connection;
+# the browser's EventSource auto-reconnects for runs longer than that.
+_STREAM_INTERVAL_SECONDS = 1.0
+_STREAM_MAX_TICKS = 3600
 CLIMBMIX_DATASET = "karpathy/climbmix-400b-shuffle"
 CLIMBMIX_LARGE_IMPORT_ROWS = 100_000
 CLIMBMIX_LARGE_IMPORT_DOCUMENT_SHARD_ROWS = 1000
@@ -195,6 +249,21 @@ class WebConfig:
     runs_dir: str = "runs"
     host: str = "127.0.0.1"
     port: int = 8765
+    # When set, every /api/* request must present this token (X-Picochat-Token
+    # header or `Authorization: Bearer`). Required automatically for any
+    # non-loopback bind so the code-executing API is never silently exposed.
+    auth_token: str | None = None
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True for localhost-style hosts that are safe to serve without auth."""
+    name = (host or "").strip().lower()
+    if name in {"", "localhost"}:
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
 
 
 def discover_runs(runs_dir: str | Path) -> list[dict]:
@@ -222,7 +291,62 @@ def discover_runs(runs_dir: str | Path) -> list[dict]:
             "truncated_examples": summary["sft"]["truncated_examples"],
             "skipped_long_examples": summary["sft"].get("skipped_long_examples", 0),
         })
+
+    # Fine-tuned Hugging Face runs (output of `train hf-sft`) have no summary.json
+    # but produce a final_model/ + hf_sft_report.json; surface them so they are
+    # selectable for chat and serving.
+    hf_dirs = sorted(
+        path for path in root.iterdir()
+        if path.is_dir() and not (path / "summary.json").exists() and (path / "hf_sft_report.json").exists()
+    )
+    for run_dir in hf_dirs:
+        report = _read_json_if_exists(run_dir / "hf_sft_report.json") or {}
+        rows.append({
+            "name": run_dir.name,
+            "path": str(run_dir),
+            "kind": "hf-sft",
+            "base_model": report.get("model"),
+            "eval_score": "--",
+            "pass_rate": None,
+            "domain_pass_rate": None,
+            "refusal_pass_rate": None,
+            "base_val_loss": None,
+            "sft_val_loss": report.get("best_val_loss"),
+            "num_parameters": report.get("num_parameters"),
+            "context_size": None,
+            "truncated_examples": None,
+            "skipped_long_examples": None,
+        })
     return rows
+
+
+def _hf_run_detail(run_dir: Path) -> dict:
+    """Minimal detail payload for a fine-tuned HF run (no native summary)."""
+    report = _read_json_if_exists(run_dir / "hf_sft_report.json") or {}
+    return {
+        "summary": {
+            "kind": "hf-sft",
+            "config": {"scale": "hf-sft", "base_model": report.get("model")},
+            "hf_sft_report": report,
+        },
+        "corpus_preview": "",
+        "corpus_manifest": None,
+        "corpus_report": "",
+        "tokenizer_detail": None,
+        "base_report": None,
+        "sft_report": None,
+        "eval": None,
+        "eval_reports": [],
+        "preflight": None,
+        "base_sample": "",
+        "sft_sample": "",
+        "reports": {},
+        "artifact_inventory": {"by_path": {}},
+        "run_timeline": [],
+        "handoff_packet": None,
+        "release_repair_plan": None,
+        "run_passport": None,
+    }
 
 
 def load_run_detail(runs_dir: str | Path, run_name: str) -> dict:
@@ -230,6 +354,8 @@ def load_run_detail(runs_dir: str | Path, run_name: str) -> dict:
     run_dir = _safe_child(Path(runs_dir), run_name)
     summary_path = run_dir / "summary.json"
     if not summary_path.exists():
+        if (run_dir / "final_model").exists() or (run_dir / "hf_sft_report.json").exists():
+            return _hf_run_detail(run_dir)
         raise FileNotFoundError(f"missing run summary: {summary_path}")
 
     summary = _read_json(summary_path)
@@ -296,19 +422,10 @@ def generate_run_text(runs_dir: str | Path, payload: dict) -> dict:
     run_name = str(payload.get("run", ""))
     run_dir = _safe_child(Path(runs_dir), run_name)
     summary_path = run_dir / "summary.json"
-    if not summary_path.exists():
+    hf_model_dir = run_dir / "final_model"
+    is_hf = hf_model_dir.exists() and not summary_path.exists()
+    if not is_hf and not summary_path.exists():
         raise FileNotFoundError(f"missing run summary: {summary_path}")
-
-    checkpoint = str(payload.get("checkpoint", "sft")).lower()
-    if checkpoint not in {"base", "sft"}:
-        raise ValueError("checkpoint must be 'base' or 'sft'")
-
-    checkpoint_path = run_dir / checkpoint / "checkpoint"
-    tokenizer_path = run_dir / "tokenizer.json"
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"missing checkpoint: {checkpoint_path}")
-    if not tokenizer_path.exists():
-        raise FileNotFoundError(f"missing tokenizer: {tokenizer_path}")
 
     max_new_tokens = _bounded_int(payload.get("max_new_tokens", 80), 1, 240)
     temperature = _bounded_float(payload.get("temperature", 0.8), 0.0, 2.0)
@@ -318,18 +435,39 @@ def generate_run_text(runs_dir: str | Path, payload: dict) -> dict:
     seed = _bounded_int(payload.get("seed", 42), 0, 9999)
     prompt = str(payload.get("prompt", ""))[:4000]
 
-    result = generate_text_with_trace(GenerateConfig(
-        checkpoint_path=str(checkpoint_path),
-        tokenizer_path=str(tokenizer_path),
-        prompt=prompt,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_k=None if top_k <= 0 else top_k,
-        top_p=top_p,
-        repetition_penalty=repetition_penalty,
-        seed=seed,
-        device="cpu",
-    ))
+    if is_hf:
+        checkpoint = "hf"
+        result = _get_hf_engine(str(hf_model_dir)).generate(
+            prompt=prompt,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=None if top_k <= 0 else top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            seed=seed,
+        )
+    else:
+        checkpoint = str(payload.get("checkpoint", "sft")).lower()
+        if checkpoint not in {"base", "sft"}:
+            raise ValueError("checkpoint must be 'base' or 'sft'")
+        checkpoint_path = run_dir / checkpoint / "checkpoint"
+        tokenizer_path = run_dir / "tokenizer.json"
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"missing checkpoint: {checkpoint_path}")
+        if not tokenizer_path.exists():
+            raise FileNotFoundError(f"missing tokenizer: {tokenizer_path}")
+        result = generate_text_with_trace(GenerateConfig(
+            checkpoint_path=str(checkpoint_path),
+            tokenizer_path=str(tokenizer_path),
+            prompt=prompt,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=None if top_k <= 0 else top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            seed=seed,
+            device="cpu",
+        ))
     return {
         "run": run_name,
         "checkpoint": checkpoint,
@@ -1510,6 +1648,9 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
             stdout=log_file,
             stderr=subprocess.STDOUT,
             text=True,
+            # Own session/process group so the whole tree (incl. DDP workers)
+            # can be signalled on cancel, and so the run survives a server exit.
+            start_new_session=True,
         )
     finally:
         log_file.close()
@@ -1524,6 +1665,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         "command": _shell_command(*command),
         "started_at": time.time(),
         "process": process,
+        "pid": process.pid,
         "preset": preset_name,
         "min_quality_score": min_quality_score,
         "launch_config": launch_config,
@@ -1534,8 +1676,102 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         },
         "launch_preflight": launch_preflight.to_dict(),
     }
-    with _RUN_JOBS_LOCK:
-        _RUN_JOBS[job_id] = job
+    _register_run_job(job_id, job)
+    # Persist a sidecar so the job survives a server restart: status discovery
+    # and cancel can find the pid even after _RUN_JOBS is gone.
+    _write_job_record(out_dir, job)
+    return run_status_plan(job_id, runs_dir)
+
+
+def hf_sft_start_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Fine-tune an existing Hugging Face model on a pack's chat data."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    model = _optional_string(payload.get("model"))
+    if not model:
+        raise ValueError("model is required")
+
+    dataset_pack = _optional_string(payload.get("dataset_pack"))
+    chat_input = _optional_string(payload.get("input"))
+    if dataset_pack:
+        chat_input = load_dataset_pack(dataset_pack).chat_input
+    if not chat_input:
+        raise ValueError("dataset_pack or input is required")
+    if not Path(chat_input).is_file():
+        raise FileNotFoundError(f"missing chat data: {chat_input}")
+
+    run_name = _slug(_optional_string(payload.get("run_name")) or f"hf-sft-{_slug(model)}")
+    out_dir = _safe_child(Path(runs_dir), run_name)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise FileExistsError(f"run output already exists: {out_dir}")
+
+    max_steps = _bounded_int(payload.get("max_steps", 100), 1, 100000)
+    learning_rate = _bounded_float(payload.get("learning_rate", 2e-5), 0.0, 1.0)
+    peft = str(payload.get("peft", "none"))
+    if peft not in {"none", "lora"}:
+        raise ValueError("peft must be none or lora")
+    device = str(payload.get("device", "auto")).strip().lower()
+    if device not in DEVICE_CHOICES:
+        raise ValueError(f"device must be one of {', '.join(DEVICE_CHOICES)}")
+    trust_remote_code = bool(payload.get("trust_remote_code", False))
+    revision = _optional_string(payload.get("revision"))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable, "-m", "picochat.cli", "train", "hf-sft",
+        "--model", model,
+        "--input", chat_input,
+        "--out-dir", str(out_dir),
+        "--max-steps", str(max_steps),
+        "--learning-rate", str(learning_rate),
+        "--device", device,
+        "--peft", peft,
+    ]
+    if revision:
+        command.extend(["--revision", revision])
+    if trust_remote_code:
+        command.append("--trust-remote-code")
+
+    log_path = out_dir / "web_run.log"
+    log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
+    log_file = log_path.open("a", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=Path.cwd(),
+            env=_child_env(device=device),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "id": job_id,
+        "run_name": run_name,
+        "out_dir": str(out_dir),
+        "dataset_pack": dataset_pack,
+        "log_path": str(log_path),
+        "command": _shell_command(*command),
+        "started_at": time.time(),
+        "process": process,
+        "pid": process.pid,
+        "preset": "hf-sft",
+        "min_quality_score": 0,
+        "launch_config": {
+            "kind": "hf-sft",
+            "model": model,
+            "input": chat_input,
+            "max_steps": max_steps,
+            "peft": peft,
+            "device": device,
+        },
+    }
+    _register_run_job(job_id, job)
+    _write_job_record(out_dir, job)
     return run_status_plan(job_id, runs_dir)
 
 
@@ -1601,7 +1837,7 @@ def run_log_plan(
 
 
 def cancel_run_plan(runs_dir: str | Path, payload: dict) -> dict:
-    """Terminate a running web-launched job."""
+    """Terminate a running web-launched job, including any orphaned process tree."""
     if not isinstance(payload, dict):
         raise ValueError("request body must be a JSON object")
     job_id = _optional_string(payload.get("job_id"))
@@ -1609,12 +1845,397 @@ def cancel_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         raise ValueError("job_id is required")
     with _RUN_JOBS_LOCK:
         job = _RUN_JOBS.get(job_id)
-    if job is None:
+    if job is not None:
+        _terminate_job(job)
+        return run_status_plan(job_id, runs_dir)
+
+    # Not in memory (e.g. after a server restart): cancel via the persisted pid.
+    record = _find_job_record(runs_dir, job_id)
+    if record is None:
         raise ValueError(f"unknown active run job: {job_id}")
-    process = job["process"]
-    if process.poll() is None:
-        process.terminate()
-        time.sleep(0.05)
+    pid = record.get("pid")
+    if not _pid_alive(pid):
+        raise ValueError(f"run job is not running: {job_id}")
+    _kill_process_group(pid, signal.SIGTERM)
+    time.sleep(0.05)
+    _write_returncode(Path(record["out_dir"]) / "web_returncode.txt", -int(signal.SIGTERM))
+    return run_status_plan(job_id, runs_dir)
+
+
+def _find_free_port(start: int = 8001, span: int = 200) -> int:
+    for port in range(start, start + span):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def _serve_job_status(job: dict) -> dict:
+    return {
+        "run": job["run"],
+        "host": job["host"],
+        "port": job["port"],
+        "api_key": job.get("api_key"),
+        "pid": job.get("pid"),
+        "model_name": job.get("model_name", "picochat"),
+        "log_path": job.get("log_path"),
+        "state": "running",
+        "uptime_seconds": round(time.time() - job["started_at"], 1),
+    }
+
+
+def serve_status_plan(runs_dir: str | Path = "runs", *, run: str | None = None) -> dict:
+    """List background serving processes, pruning any that have exited."""
+    with _SERVE_JOBS_LOCK:
+        for name, job in list(_SERVE_JOBS.items()):
+            if job["process"].poll() is not None:
+                _SERVE_JOBS.pop(name, None)
+        jobs = list(_SERVE_JOBS.values())
+    servers = [_serve_job_status(job) for job in jobs]
+    selected = next((s for s in servers if s["run"] == run), None) if run else (servers[-1] if servers else None)
+    return {"servers": servers, "server": selected}
+
+
+def serve_start_plan(runs_dir: str | Path, payload: dict, *, host: str = "127.0.0.1") -> dict:
+    """Launch an OpenAI-compatible `pico serve` for a run's SFT checkpoint."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    run_name = _optional_string(payload.get("run"))
+    if not run_name:
+        raise ValueError("run is required")
+    run_dir = _safe_child(Path(runs_dir), run_name)
+    hf_model_dir = run_dir / "final_model"
+    checkpoint = run_dir / "sft" / "checkpoint"
+    tokenizer = run_dir / "tokenizer.json"
+    is_hf = hf_model_dir.exists() and not checkpoint.exists()
+    if not is_hf:
+        if not checkpoint.exists():
+            raise FileNotFoundError(f"missing SFT checkpoint for {run_name}: {checkpoint}")
+        if not tokenizer.exists():
+            raise FileNotFoundError(f"missing tokenizer for {run_name}: {tokenizer}")
+
+    with _SERVE_JOBS_LOCK:
+        existing = _SERVE_JOBS.get(run_name)
+        alive = existing is not None and existing["process"].poll() is None
+    if alive:
+        return serve_status_plan(runs_dir, run=run_name)
+
+    port = _find_free_port()
+    api_key = None if _is_loopback_host(host) else secrets.token_urlsafe(16)
+    serve_args = (
+        ["--hf-model", str(hf_model_dir)] if is_hf
+        else ["--checkpoint", str(checkpoint), "--tokenizer", str(tokenizer)]
+    )
+    command = [
+        sys.executable, "-m", "picochat.cli", "serve",
+        *serve_args,
+        "--host", host,
+        "--port", str(port),
+        "--model-name", run_name,
+    ]
+    if api_key:
+        command.extend(["--api-key", api_key])
+    log_path = run_dir / "web_serve.log"
+    log_file = log_path.open("w", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=Path.cwd(),
+            env=_child_env(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+    job = {
+        "run": run_name,
+        "host": host,
+        "port": port,
+        "api_key": api_key,
+        "pid": process.pid,
+        "process": process,
+        "started_at": time.time(),
+        "log_path": str(log_path),
+        "model_name": run_name,
+    }
+    with _SERVE_JOBS_LOCK:
+        _SERVE_JOBS[run_name] = job
+    return serve_status_plan(runs_dir, run=run_name)
+
+
+def serve_stop_plan(payload: dict) -> dict:
+    """Stop a background serving process for a run."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    run_name = _optional_string(payload.get("run"))
+    if not run_name:
+        raise ValueError("run is required")
+    with _SERVE_JOBS_LOCK:
+        job = _SERVE_JOBS.pop(run_name, None)
+    if job is None:
+        raise ValueError(f"no server running for run: {run_name}")
+    _terminate_job(job)
+    return {"stopped": True, "run": run_name}
+
+
+_MODAL_SCRIPT = Path("scripts/modal_picochat_train.py")
+
+
+def remote_status_plan() -> dict:
+    """Report which remote providers the local machine can drive directly."""
+    return {
+        "modal_available": shutil.which("modal") is not None,
+        "modal_script": _MODAL_SCRIPT.exists(),
+    }
+
+
+def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Launch a Picochat training recipe on Modal as a tracked job."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    if shutil.which("modal") is None:
+        raise ValueError(
+            "the `modal` CLI is not installed or not on PATH. "
+            "Install it with `pip install modal`, then run `modal token new`."
+        )
+    if not _MODAL_SCRIPT.exists():
+        raise FileNotFoundError(f"missing Modal launch script: {_MODAL_SCRIPT}")
+
+    repo_url = _optional_string(payload.get("repo_url")) or "https://github.com/gowtham0992/picochat.git"
+    branch = _optional_string(payload.get("branch")) or "develop"
+    run_name = _slug(_optional_string(payload.get("run_name")) or "picochat-modal-v1")
+    scale = _optional_string(payload.get("scale")) or "h100-100m"
+    gpu = _optional_string(payload.get("gpu")) or "A100"
+    hf_dataset = _optional_string(payload.get("hf_dataset")) or "karpathy/climbmix-400b-shuffle"
+    hf_max_rows = _bounded_int(payload.get("hf_max_rows", 800_000), 1, 100_000_000)
+    secret_name = _optional_string(payload.get("secret_name"))
+
+    out_dir = _safe_child(Path(runs_dir), run_name)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise FileExistsError(f"run output already exists: {out_dir}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    command = [
+        "modal", "run", str(_MODAL_SCRIPT),
+        "--repo-url", repo_url,
+        "--branch", branch,
+        "--run-name", run_name,
+        "--scale", scale,
+        "--gpu", gpu,
+        "--hf-dataset", hf_dataset,
+        "--hf-max-rows", str(hf_max_rows),
+    ]
+    if secret_name:
+        command.extend(["--secret-name", secret_name])
+
+    log_path = out_dir / "web_run.log"
+    log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
+    log_file = log_path.open("a", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=Path.cwd(),
+            env=_child_env(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "id": job_id,
+        "run_name": run_name,
+        "out_dir": str(out_dir),
+        "dataset_pack": None,
+        "log_path": str(log_path),
+        "command": _shell_command(*command),
+        "started_at": time.time(),
+        "process": process,
+        "pid": process.pid,
+        "preset": "modal",
+        "min_quality_score": 0,
+        "launch_config": {
+            "kind": "modal",
+            "gpu": gpu,
+            "scale": scale,
+            "hf_dataset": hf_dataset,
+            "run_name": run_name,
+        },
+    }
+    _register_run_job(job_id, job)
+    _write_job_record(out_dir, job)
+    return run_status_plan(job_id, runs_dir)
+
+
+def remote_modal_pull_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Download a finished Modal run from its volume into local runs/."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    if shutil.which("modal") is None:
+        raise ValueError(
+            "the `modal` CLI is not installed or not on PATH. "
+            "Install it with `pip install modal`, then run `modal token new`."
+        )
+    run_name = _slug(_optional_string(payload.get("run")) or "")
+    if not run_name:
+        raise ValueError("run is required")
+    volume = _optional_string(payload.get("volume")) or "picochat-runs"
+
+    dest_root = Path(runs_dir)
+    landed = _safe_child(dest_root, run_name)
+    if landed.exists() and any(landed.iterdir()):
+        raise FileExistsError(f"run already exists locally: {landed}")
+    dest_root.mkdir(parents=True, exist_ok=True)
+    track_dir = dest_root / ".pulls" / run_name
+    track_dir.mkdir(parents=True, exist_ok=True)
+
+    command = ["modal", "volume", "get", volume, run_name, str(dest_root.resolve())]
+    log_path = track_dir / "web_run.log"
+    log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
+    log_file = log_path.open("a", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=Path.cwd(),
+            env=_child_env(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "id": job_id,
+        "run_name": f"pull-{run_name}",
+        "out_dir": str(track_dir),
+        "dataset_pack": None,
+        "log_path": str(log_path),
+        "command": _shell_command(*command),
+        "started_at": time.time(),
+        "process": process,
+        "pid": process.pid,
+        "preset": "modal-pull",
+        "min_quality_score": 0,
+        "launch_config": {"kind": "modal-pull", "run": run_name, "volume": volume},
+    }
+    _register_run_job(job_id, job)
+    return run_status_plan(job_id, runs_dir)
+
+
+def export_hf_run_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Export a run's SFT checkpoint to a Hugging Face model folder + card."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    run_name = _optional_string(payload.get("run"))
+    if not run_name:
+        raise ValueError("run is required")
+    run_dir = _safe_child(Path(runs_dir), run_name)
+    checkpoint = run_dir / "sft" / "checkpoint"
+    tokenizer = run_dir / "tokenizer.json"
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"missing SFT checkpoint for {run_name}: {checkpoint}")
+    if not tokenizer.exists():
+        raise FileNotFoundError(f"missing tokenizer for {run_name}: {tokenizer}")
+
+    out_dir = run_dir / "export-hf"
+    from picochat.hf_export import HFExportConfig, export_hf_checkpoint
+    report = export_hf_checkpoint(HFExportConfig(
+        checkpoint_path=str(checkpoint),
+        tokenizer_path=str(tokenizer),
+        out_dir=str(out_dir),
+        model_name=run_name,
+        base_model=False,
+    ))
+    return {
+        "run": run_name,
+        "out_dir": report.get("out_dir", str(out_dir)),
+        "manifest": report.get("manifest"),
+        "model_card": report.get("model_card"),
+    }
+
+
+def eval_run_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Re-run the transparent chat eval on a run's SFT checkpoint."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    run_name = _optional_string(payload.get("run"))
+    if not run_name:
+        raise ValueError("run is required")
+    run_dir = _safe_child(Path(runs_dir), run_name)
+    checkpoint = run_dir / "sft" / "checkpoint"
+    tokenizer = run_dir / "tokenizer.json"
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"missing SFT checkpoint for {run_name}: {checkpoint}")
+    if not tokenizer.exists():
+        raise FileNotFoundError(f"missing tokenizer for {run_name}: {tokenizer}")
+
+    eval_input = _optional_string(payload.get("input"))
+    if not eval_input:
+        summary_path = run_dir / "summary.json"
+        if summary_path.exists():
+            pack = _read_json(summary_path).get("config", {}).get("dataset_pack")
+            if pack and Path(pack).exists():
+                eval_input = load_dataset_pack(pack).eval_input
+    if not eval_input or not Path(eval_input).is_file():
+        raise ValueError(
+            "could not resolve an eval set; pass `input`, or keep the run's dataset pack available."
+        )
+
+    out_dir = run_dir / "eval"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable, "-m", "picochat.cli", "eval", "chat",
+        "--input", eval_input,
+        "--checkpoint", str(checkpoint),
+        "--tokenizer", str(tokenizer),
+        "--out-dir", str(out_dir),
+        "--device", "cpu",
+    ]
+    log_path = out_dir / "web_run.log"
+    log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
+    log_file = log_path.open("a", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=Path.cwd(),
+            env=_child_env(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "id": job_id,
+        "run_name": f"eval-{run_name}",
+        "out_dir": str(out_dir),
+        "dataset_pack": None,
+        "log_path": str(log_path),
+        "command": _shell_command(*command),
+        "started_at": time.time(),
+        "process": process,
+        "pid": process.pid,
+        "preset": "eval",
+        "min_quality_score": 0,
+        "launch_config": {"kind": "eval", "run": run_name, "input": eval_input},
+    }
+    _register_run_job(job_id, job)
     return run_status_plan(job_id, runs_dir)
 
 
@@ -1707,12 +2328,37 @@ def run_presets_plan() -> dict:
     return {"presets": RUN_PRESETS}
 
 
+def leaderboard_plan(runs_dir: str | Path = "runs") -> dict:
+    """Rank completed runs by benchmark eval into a leaderboard."""
+    from picochat.leaderboard import build_benchmark_leaderboard
+    root = Path(runs_dir)
+    if not root.exists():
+        return {"rows": [], "best_run": None}
+    run_dirs = [str(path) for path in sorted(root.iterdir()) if (path / "summary.json").exists()]
+    if not run_dirs:
+        return {"rows": [], "best_run": None}
+    try:
+        return build_benchmark_leaderboard(run_dirs)
+    except (ValueError, KeyError, OSError):
+        return {"rows": [], "best_run": None}
+
+
 def serve_web(config: WebConfig) -> None:
     """Start the blocking local web server."""
+    if not _is_loopback_host(config.host) and not config.auth_token:
+        # The API can launch training subprocesses and write files. Never expose
+        # it on a non-loopback interface without a token; mint one and require it.
+        config = replace(config, auth_token=secrets.token_urlsafe(24))
+        print("WARNING: binding to a non-loopback address — requiring an auth token.")
+    # Mark any runs whose subprocess died while the server was down so they do
+    # not linger as "running"; live runs resurface as reconnectable orphans.
+    reconcile_orphan_jobs(config.runs_dir)
     handler = _make_handler(config)
     server = ThreadingHTTPServer((config.host, config.port), handler)
     url = f"http://{config.host}:{config.port}"
     print(f"Picochat web UI: {url}")
+    if config.auth_token:
+        print(f"Auth token required. Open: {url}/?token={config.auth_token}")
     print("Press Ctrl-C to stop.")
     try:
         server.serve_forever()
@@ -1726,32 +2372,26 @@ def _make_handler(config: WebConfig):
     class PicoWebHandler(BaseHTTPRequestHandler):
         def do_HEAD(self) -> None:
             parsed = urlparse(self.path)
-            if parsed.path == "/":
+            content_type = self._content_type_for_route(parsed.path)
+            if content_type:
                 self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.end_headers()
-            elif parsed.path == "/assets/picochat-symbol.svg":
-                self.send_response(200)
-                self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
-                self.end_headers()
-            elif parsed.path == "/assets/picochat-symbol.png":
-                self.send_response(200)
-                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Type", content_type)
                 self.end_headers()
             else:
                 self.send_error(404, "Not found")
 
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path.startswith("/api/") and not self._is_authorized():
+                self._send_json(_unauthorized_payload(), status=401)
+                return
             try:
-                if parsed.path == "/":
-                    self._send_asset("index.html", "text/html; charset=utf-8")
-                elif parsed.path == "/assets/style.css":
-                    self._send_asset("style.css", "text/css; charset=utf-8")
-                elif parsed.path == "/assets/product.css":
-                    self._send_asset("product.css", "text/css; charset=utf-8")
-                elif parsed.path == "/assets/app.js":
-                    self._send_asset("app.js", "application/javascript; charset=utf-8")
+                if parsed.path == "/healthz":
+                    self._send_json(_health_payload())
+                elif parsed.path == "/":
+                    self._send_app_shell()
+                elif parsed.path.startswith("/react/"):
+                    self._send_react_asset(parsed.path)
                 elif parsed.path == "/assets/picochat-symbol.svg":
                     self._send_asset("picochat-symbol.svg", "image/svg+xml; charset=utf-8")
                 elif parsed.path == "/assets/picochat-symbol.png":
@@ -1776,6 +2416,13 @@ def _make_handler(config: WebConfig):
                     query = parse_qs(parsed.query)
                     job_id = query.get("job", [None])[0]
                     self._send_json(run_status_plan(job_id, config.runs_dir))
+                elif parsed.path == "/api/run/log/stream":
+                    query = parse_qs(parsed.query)
+                    self._stream_run_log(
+                        run_name=query.get("run", [None])[0],
+                        job_id=query.get("job", [None])[0],
+                        limit=_bounded_int(query.get("limit", ["50000"])[0], 1_000, 200_000),
+                    )
                 elif parsed.path == "/api/run/log":
                     query = parse_qs(parsed.query)
                     run_name = query.get("run", [None])[0]
@@ -1784,6 +2431,12 @@ def _make_handler(config: WebConfig):
                     self._send_json(run_log_plan(config.runs_dir, run_name=run_name, job_id=job_id, limit=limit))
                 elif parsed.path == "/api/run/presets":
                     self._send_json(run_presets_plan())
+                elif parsed.path == "/api/serve/status":
+                    self._send_json(serve_status_plan(config.runs_dir))
+                elif parsed.path == "/api/remote/status":
+                    self._send_json(remote_status_plan())
+                elif parsed.path == "/api/leaderboard":
+                    self._send_json(leaderboard_plan(config.runs_dir))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -1791,6 +2444,13 @@ def _make_handler(config: WebConfig):
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
+            if not self._origin_ok():
+                self.send_error(403, "Cross-origin request rejected")
+                return
+            if parsed.path.startswith("/api/") and not self._is_authorized():
+                self._send_json(_unauthorized_payload(), status=401)
+                return
+            outcome = "ok"
             try:
                 if parsed.path == "/api/generate":
                     self._send_json(generate_run_text(config.runs_dir, self._read_json_body()))
@@ -1816,26 +2476,115 @@ def _make_handler(config: WebConfig):
                     self._send_json(save_pack_editor_plan(self._read_json_body()))
                 elif parsed.path == "/api/run/start":
                     self._send_json(start_run_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/train/hf-sft":
+                    self._send_json(hf_sft_start_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/export/hf":
+                    self._send_json(export_hf_run_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/eval/run":
+                    self._send_json(eval_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/run/cancel":
                     self._send_json(cancel_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/run/archive":
                     self._send_json(archive_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/run/import":
                     self._send_json(import_run_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/serve/start":
+                    self._send_json(serve_start_plan(config.runs_dir, self._read_json_body(), host=config.host))
+                elif parsed.path == "/api/serve/stop":
+                    self._send_json(serve_stop_plan(self._read_json_body()))
+                elif parsed.path == "/api/remote/modal/start":
+                    self._send_json(remote_modal_start_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/remote/modal/pull":
+                    self._send_json(remote_modal_pull_plan(config.runs_dir, self._read_json_body()))
                 else:
+                    outcome = "not_found"
                     self.send_error(404, "Not found")
             except Exception as exc:
+                outcome = "error"
                 self._send_json(_error_payload(exc), status=400)
+            finally:
+                if parsed.path.startswith("/api/"):
+                    _append_audit(
+                        config.runs_dir,
+                        action=parsed.path,
+                        actor=self.client_address[0] if self.client_address else "?",
+                        outcome=outcome,
+                        params=_safe_audit_params(getattr(self, "_cached_body", None)),
+                    )
 
         def log_message(self, format: str, *args) -> None:
             return
 
+        def _is_authorized(self) -> bool:
+            token = config.auth_token
+            if not token:
+                return True
+            provided = self.headers.get("X-Picochat-Token", "")
+            if not provided:
+                auth = self.headers.get("Authorization", "")
+                if auth.startswith("Bearer "):
+                    provided = auth[len("Bearer "):]
+            if not provided:
+                # EventSource cannot set headers, so allow ?token= for streams.
+                provided = parse_qs(urlparse(self.path).query).get("token", [""])[0]
+            return bool(provided) and hmac.compare_digest(provided, token)
+
+        def _origin_ok(self) -> bool:
+            # Browsers send Origin on state-changing requests; rejecting any
+            # cross-origin Origin blocks CSRF and DNS-rebinding against the
+            # localhost API. Non-browser clients (no Origin) fall back to the
+            # token check.
+            origin = self.headers.get("Origin")
+            if not origin:
+                return True
+            return urlparse(origin).netloc == self.headers.get("Host", "")
+
+        def _content_type_for_route(self, path: str) -> str | None:
+            if path == "/healthz":
+                return "application/json; charset=utf-8"
+            if path == "/":
+                return "text/html; charset=utf-8"
+            if path.startswith("/react/"):
+                asset_name = path.removeprefix("/react/")
+                if not asset_name:
+                    asset_name = "index.html"
+                if _asset_exists("react", *asset_name.split("/")):
+                    return _content_type_for_asset(asset_name)
+                return None
+            if path == "/assets/picochat-symbol.svg":
+                return "image/svg+xml; charset=utf-8"
+            if path == "/assets/picochat-symbol.png":
+                return "image/png"
+            return None
+
+        def _send_app_shell(self) -> None:
+            if _asset_exists("react/index.html"):
+                self._send_asset_path(("react", "index.html"), "text/html; charset=utf-8")
+                return
+            self.send_error(503, "Web UI not built. Run: npm ci && npm run frontend:build")
+
+        def _send_react_asset(self, path: str) -> None:
+            asset_name = path.removeprefix("/react/")
+            if not asset_name:
+                asset_name = "index.html"
+            if ".." in Path(asset_name).parts:
+                self.send_error(404, "Not found")
+                return
+            parts = tuple(part for part in asset_name.split("/") if part)
+            if not parts:
+                parts = ("index.html",)
+            if not _asset_exists("react", *parts):
+                # React owns the /react prefix. Unknown subpaths still load the app
+                # shell so client-side deep links resolve instead of 404ing.
+                self._send_asset_path(("react", "index.html"), "text/html; charset=utf-8")
+                return
+            self._send_asset_path(("react", *parts), _content_type_for_asset(asset_name))
+
         def _send_asset(self, name: str, content_type: str) -> None:
-            data = (
-                importlib.resources.files("picochat.web_assets")
-                .joinpath(name)
-                .read_bytes()
-            )
+            self._send_asset_path((name,), content_type)
+
+        def _send_asset_path(self, parts: tuple[str, ...], content_type: str) -> None:
+            data = _read_asset(*parts)
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
@@ -1856,15 +2605,81 @@ def _make_handler(config: WebConfig):
             except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
                 return
 
+        def _stream_run_log(self, *, run_name, job_id, limit) -> None:
+            """Server-sent-events stream of a run's log/status until it ends."""
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "close")
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return
+            for _ in range(_STREAM_MAX_TICKS):
+                try:
+                    payload = run_log_plan(config.runs_dir, run_name=run_name, job_id=job_id, limit=limit)
+                except Exception as exc:  # unknown job, transient read error, etc.
+                    self._write_sse_event({"error": str(exc), "running": False, "state": "unknown"})
+                    return
+                if not self._write_sse_event(payload):
+                    return  # client disconnected
+                if not payload.get("running"):
+                    return  # terminal state; client closes the EventSource
+                time.sleep(_STREAM_INTERVAL_SECONDS)
+
+        def _write_sse_event(self, payload: dict) -> bool:
+            try:
+                self.wfile.write(b"data: ")
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+                self.wfile.write(b"\n\n")
+                self.wfile.flush()
+                return True
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return False
+
         def _read_json_body(self) -> dict:
+            cached = getattr(self, "_cached_body", None)
+            if cached is not None:
+                return cached
             length = int(self.headers.get("Content-Length", "0") or 0)
             raw = self.rfile.read(length) if length else b"{}"
             payload = json.loads(raw.decode("utf-8") or "{}")
             if not isinstance(payload, dict):
                 raise ValueError("request body must be a JSON object")
+            self._cached_body = payload
             return payload
 
     return PicoWebHandler
+
+
+def _asset_exists(*parts: str) -> bool:
+    try:
+        path = importlib.resources.files("picochat.web_assets")
+        for part in parts:
+            path = path.joinpath(part)
+        return path.is_file()
+    except (FileNotFoundError, ModuleNotFoundError):
+        return False
+
+
+def _read_asset(*parts: str) -> bytes:
+    path = importlib.resources.files("picochat.web_assets")
+    for part in parts:
+        path = path.joinpath(part)
+    return path.read_bytes()
+
+
+def _content_type_for_asset(name: str) -> str:
+    if name.endswith(".js"):
+        return "application/javascript; charset=utf-8"
+    if name.endswith(".css"):
+        return "text/css; charset=utf-8"
+    if name.endswith(".html"):
+        return "text/html; charset=utf-8"
+    if name.endswith(".svg"):
+        return "image/svg+xml; charset=utf-8"
+    content_type, _ = mimetypes.guess_type(name)
+    return content_type or "application/octet-stream"
 
 
 def _safe_child(root: Path, name: str) -> Path:
@@ -2003,6 +2818,54 @@ def _error_payload(error: Exception) -> dict:
             "available_splits": error.available_splits,
         })
     return payload
+
+
+def _unauthorized_payload() -> dict:
+    return {
+        "error": "unauthorized",
+        "error_type": "Unauthorized",
+        "message": "Missing or invalid auth token. Open the URL printed by `pico web` (it includes ?token=...).",
+    }
+
+
+def _health_payload() -> dict:
+    with _RUN_JOBS_LOCK:
+        active = sum(
+            1 for job in _RUN_JOBS.values()
+            if (proc := job.get("process")) is not None and proc.poll() is None
+        )
+    return {"status": "ok", "version": __version__, "active_jobs": active}
+
+
+# Audit log: append-only record of who triggered which state-changing action.
+# Whitelisted keys only — never persist tokens, HF credentials, or free text.
+_AUDIT_PARAM_KEYS = (
+    "run", "run_name", "run_names", "job_id", "dataset_pack",
+    "checkpoint", "out_dir", "preset", "source_path",
+)
+
+
+def _safe_audit_params(body) -> dict:
+    if not isinstance(body, dict):
+        return {}
+    return {key: body[key] for key in _AUDIT_PARAM_KEYS if key in body}
+
+
+def _append_audit(runs_dir: str | Path, *, action: str, actor: str, outcome: str, params: dict) -> None:
+    try:
+        audit_dir = Path(runs_dir) / ".audit"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "actor": actor,
+            "action": action,
+            "outcome": outcome,
+            "params": params,
+        }
+        with (audit_dir / "audit.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record) + "\n")
+    except OSError:
+        pass
 
 
 def _combined_tuning_status(chat_status: str, eval_status: str) -> str:
@@ -2210,35 +3073,47 @@ def _discover_run_jobs(runs_dir: str | Path, limit: int = 20) -> list[dict]:
         summary_path = run_dir / "summary.json"
         returncode_path = run_dir / "web_returncode.txt"
         returncode = _read_returncode(returncode_path)
+        summary_exists = summary_path.exists()
+        record = _read_job_record(run_dir)
+        pid = record.get("pid") if record else None
+        unfinished = returncode is None and not summary_exists
+        alive = bool(record) and unfinished and _pid_alive(pid)
         log_tail = _read_log_tail(log_path)
-        state = (
-            "succeeded" if summary_path.exists()
-            else "failed" if returncode not in (None, 0)
-            else "stopped"
-        )
-        updated_at = max(log_path.stat().st_mtime, summary_path.stat().st_mtime if summary_path.exists() else 0)
+        if summary_exists:
+            state = "succeeded"
+        elif returncode not in (None, 0):
+            state = "failed"
+        elif alive:
+            state = "running"
+        elif record and unfinished:
+            state = "interrupted"
+        else:
+            state = "stopped"
+        updated_at = max(log_path.stat().st_mtime, summary_path.stat().st_mtime if summary_exists else 0)
+        started_at = record.get("started_at") if record else None
         jobs.append({
-            "id": f"run-{_slug(run_dir.name)}",
+            "id": record["id"] if record and record.get("id") else f"run-{_slug(run_dir.name)}",
             "run_name": run_dir.name,
             "out_dir": str(run_dir),
-            "dataset_pack": _dataset_pack_from_summary(summary_path),
+            "dataset_pack": (record.get("dataset_pack") if record else None) or _dataset_pack_from_summary(summary_path),
             "log_path": str(log_path),
-            "command": _command_from_log(log_path),
-            "pid": None,
+            "command": (record.get("command") if record else None) or _command_from_log(log_path),
+            "pid": pid if alive else None,
             "state": state,
             "returncode": returncode,
-            "elapsed_seconds": None,
-            "summary_exists": summary_path.exists(),
+            "elapsed_seconds": round(time.time() - started_at, 1) if (alive and started_at) else None,
+            "summary_exists": summary_exists,
             "log_tail": log_tail,
-            "progress": _parse_run_progress(log_tail, state=state, summary_exists=summary_path.exists()),
-            "can_cancel": False,
-            "source": "disk",
+            "progress": _parse_run_progress(log_tail, state=state, summary_exists=summary_exists),
+            "can_cancel": alive,
+            "source": "orphan" if alive else "disk",
             "updated_at": updated_at,
-            "preset": None,
-            "min_quality_score": None,
-            "launch_readiness": None,
-            "launch_tuning": None,
-            "launch_preflight": _preflight_from_run_dir(run_dir),
+            "preset": record.get("preset") if record else None,
+            "min_quality_score": record.get("min_quality_score") if record else None,
+            "launch_config": record.get("launch_config") if record else None,
+            "launch_readiness": record.get("launch_readiness") if record else None,
+            "launch_tuning": record.get("launch_tuning") if record else None,
+            "launch_preflight": (record.get("launch_preflight") if record else None) or _preflight_from_run_dir(run_dir),
         })
     return sorted(jobs, key=lambda item: item["updated_at"])[-limit:]
 
@@ -2271,6 +3146,97 @@ def _write_returncode(path: Path, returncode: int) -> None:
         path.write_text(f"{returncode}\n", encoding="utf-8")
     except OSError:
         pass
+
+
+_JOB_RECORD_NAME = "web_job.json"
+_JOB_RECORD_FIELDS = (
+    "id", "run_name", "out_dir", "dataset_pack", "log_path", "command",
+    "started_at", "preset", "min_quality_score", "launch_config",
+    "launch_readiness", "launch_tuning", "launch_preflight",
+)
+
+
+def _write_job_record(out_dir: str | Path, job: dict) -> None:
+    record = {field: job.get(field) for field in _JOB_RECORD_FIELDS}
+    record["pid"] = job.get("pid")
+    try:
+        (Path(out_dir) / _JOB_RECORD_NAME).write_text(json.dumps(record), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _read_job_record(run_dir: Path) -> dict | None:
+    path = Path(run_dir) / _JOB_RECORD_NAME
+    if not path.exists():
+        return None
+    try:
+        return _read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _find_job_record(runs_dir: str | Path, job_id: str) -> dict | None:
+    root = Path(runs_dir)
+    if not root.exists():
+        return None
+    for run_dir in root.iterdir():
+        if not run_dir.is_dir():
+            continue
+        record = _read_job_record(run_dir)
+        if record and (record.get("id") == job_id or record.get("run_name") == job_id):
+            return record
+    return None
+
+
+def _pid_alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True
+    return True
+
+
+def _kill_process_group(pid: int | None, sig: int) -> None:
+    """Best-effort signal to the child's whole process group (DDP-safe)."""
+    if not pid:
+        return
+    try:
+        os.killpg(os.getpgid(int(pid)), sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
+def _terminate_job(job: dict) -> None:
+    process = job.get("process")
+    if process is not None and process.poll() is None:
+        process.terminate()
+        time.sleep(0.05)
+    _kill_process_group(job.get("pid"), signal.SIGTERM)
+
+
+def reconcile_orphan_jobs(runs_dir: str | Path = "runs") -> None:
+    """At startup, mark sidecar jobs whose process died as interrupted.
+
+    Safe to call only when no jobs are tracked in memory (e.g. fresh process
+    start): live runs keep their sidecar and resurface as reconnectable orphans.
+    """
+    root = Path(runs_dir)
+    if not root.exists():
+        return
+    for run_dir in root.iterdir():
+        if not run_dir.is_dir():
+            continue
+        record = _read_job_record(run_dir)
+        if not record:
+            continue
+        if (run_dir / "web_returncode.txt").exists() or (run_dir / "summary.json").exists():
+            continue
+        if not _pid_alive(record.get("pid")):
+            _write_returncode(run_dir / "web_returncode.txt", -1)
 
 
 def _dataset_pack_from_summary(summary_path: Path) -> str | None:

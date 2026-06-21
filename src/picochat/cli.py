@@ -1426,8 +1426,9 @@ def build_parser() -> argparse.ArgumentParser:
         "serve",
         help="Serve a checkpoint through a local OpenAI-compatible API.",
     )
-    serve_parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
-    serve_parser.add_argument("--tokenizer", required=True, help="Path to tokenizer JSON.")
+    serve_parser.add_argument("--checkpoint", default=None, help="Native Picochat checkpoint directory.")
+    serve_parser.add_argument("--tokenizer", default=None, help="Path to tokenizer JSON (use with --checkpoint).")
+    serve_parser.add_argument("--hf-model", default=None, help="Fine-tuned Hugging Face model directory to serve instead.")
     serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host. Defaults to local-only.")
     serve_parser.add_argument("--port", type=int, default=8000)
     serve_parser.add_argument("--model-name", default="picochat")
@@ -2051,6 +2052,12 @@ def build_parser() -> argparse.ArgumentParser:
     web_parser.add_argument("--runs-dir", default="runs", help="Directory containing run folders.")
     web_parser.add_argument("--host", default="127.0.0.1")
     web_parser.add_argument("--port", type=int, default=8765)
+    web_parser.add_argument(
+        "--auth-token",
+        default=os.environ.get("PICOCHAT_AUTH_TOKEN") or None,
+        help="Require this token on /api/* (env: PICOCHAT_AUTH_TOKEN). "
+             "Auto-generated when binding a non-loopback host without one.",
+    )
     return parser
 
 
@@ -3218,9 +3225,12 @@ def run_serve(args: argparse.Namespace) -> int:
         api_key = os.environ.get(args.api_key_env)
         if not api_key:
             raise ValueError(f"environment variable {args.api_key_env} is not set")
+    if not args.hf_model and not (args.checkpoint and args.tokenizer):
+        raise ValueError("provide --hf-model, or both --checkpoint and --tokenizer")
     serve_model(ServeConfig(
-        checkpoint_path=args.checkpoint,
-        tokenizer_path=args.tokenizer,
+        checkpoint_path=args.checkpoint or "",
+        tokenizer_path=args.tokenizer or "",
+        hf_model=args.hf_model,
         host=args.host,
         port=args.port,
         model_name=args.model_name,
@@ -3651,6 +3661,7 @@ def run_web(args: argparse.Namespace) -> int:
         runs_dir=args.runs_dir,
         host=args.host,
         port=args.port,
+        auth_token=args.auth_token,
     ))
     return 0
 

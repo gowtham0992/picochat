@@ -1,66 +1,50 @@
 ---
 layout: default
-title: Screenshot Capture Guide
+title: Screenshots
 ---
 
-# Screenshot Capture Guide
+# Screenshots
 
-Use real screenshots for public posts and outreach. The SVGs in `docs/assets/`
-are product previews, not evidence of a completed 1B run.
+Current dashboard screenshots (real renders of the React workbench, captured
+against a live `picochat web` server):
 
-## Local Workbench
+| File | View |
+| --- | --- |
+| `onboarding.png` | First-run "Get started" screen |
+| `dashboard-overview.png` | Run overview: release gate, KPIs, loss, architecture |
+| `leaderboard.png` | Leaderboard + side-by-side run compare |
+| `playground.png` | Chat playground with serve + export panels |
+| `cloud.png` | Cloud training (Modal / Colab / Lambda) |
+| `evaluation.png` | Eval scoreboard with report links |
+| `dataset.png` | Dataset import and pack tools |
 
-Start the web UI:
+## Recapturing
+
+The screenshots are generated headlessly so they stay current with the UI.
+Start a server with the runs you want to feature:
 
 ```bash
 picochat web --runs-dir runs --port 8765
 ```
 
-Open:
+Each dashboard section is reachable by URL hash (`#overview`, `#compare`,
+`#playground`, `#cloud`, …), so a headless browser can capture each one:
 
-```text
-http://127.0.0.1:8765
+```bash
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+"$CHROME" --headless=new --hide-scrollbars --window-size=1440,940 \
+  --virtual-time-budget=12000 \
+  --screenshot=docs/screenshots/leaderboard.png \
+  "http://127.0.0.1:8765/#compare"
 ```
 
-Recommended captures:
+For the first-run screen, point at an empty runs directory
+(`--runs-dir /tmp/empty`) and capture `#overview`.
 
-1. Home page
-2. Workbench with a selected run
-3. Release Readiness panel
-4. Training Dash loss curves
-5. Eval Scoreboard
-6. External Train command generator
-7. Preflight job output card
+## Rules
 
-Save final screenshots under:
-
-```text
-docs/screenshots/
-```
-
-Current public screenshots:
-
-```text
-workbench-release-readiness.jpg
-release-readiness-panel.jpg
-training-dash-loss-curves.jpg
-scale-up-commands.jpg
-```
-
-Additional useful screenshots before a public launch:
-
-```text
-home.jpg
-eval-scoreboard.jpg
-preflight-checklist.jpg
-```
-
-## Screenshot Rules
-
-- Do not show API keys, SSH hostnames, private paths, or paid provider account
-  details.
-- Do not show a run as approved unless the actual gate says approved.
-- Prefer a real completed tiny/pilot run over a fake demo state.
-- If a screenshot is from a dry run or pilot, label it that way in captions.
-- Keep failure states if they teach something. Picochat is about honest gates,
-  not perfect-looking dashboards.
+- Do not show API keys, tokens, SSH hostnames, or private paths.
+- Do not show a run as approved unless the gate actually says approved.
+- Prefer real completed runs over a faked demo state; keep honest failure
+  states if they teach something — Picochat is about honest gates, not
+  perfect-looking dashboards.
