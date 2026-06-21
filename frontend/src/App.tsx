@@ -9,6 +9,7 @@ import {
   Copy,
   Cpu,
   Database,
+  Download,
   FileText,
   FlaskConical,
   Gauge,
@@ -29,7 +30,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, compareRuns, generateEvalStarter, generateSftStarter, generateText, importHf, initDatasetPack, inspectTuning, listRuns, loadPackEditor, loadPresets, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
+import { archiveRuns, cancelRun, compareRuns, evalRun, exportHf, generateEvalStarter, generateSftStarter, generateText, importHf, initDatasetPack, inspectTuning, listRuns, loadPackEditor, loadPresets, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
@@ -457,7 +458,36 @@ function PlaygroundView({ selectedRun, detail }: SectionProps) {
         <Panel title="Share / API access">
           <ServePanel run={runName} />
         </Panel>
+        <Panel title="Export">
+          <ExportPanel run={runName} />
+        </Panel>
       </aside>
+    </div>
+  );
+}
+
+function ExportPanel({ run }: { run: string }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [result, setResult] = useState<{ out_dir: string } | null>(null);
+  const go = async () => {
+    setBusy(true); setErr("");
+    try { setResult(await exportHf(run)); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  if (!run) return <div className="pc-hint">Select a run to export it.</div>;
+  return (
+    <div className="pc-serve">
+      {result ? (
+        <div className="pc-import-result">
+          <div><strong>Exported to Hugging Face format.</strong><code>{result.out_dir}</code></div>
+        </div>
+      ) : (
+        <>
+          <button className="pc-btn" onClick={go} disabled={busy}>{busy ? <Loader2 size={15} className="spin" /> : <Download size={15} />} Export to Hugging Face</button>
+          <div className="pc-hint">Converts this run to a transformers model + model card you can load or upload anywhere.</div>
+        </>
+      )}
+      {err ? <Banner tone="block" title="Export failed" body={err} onClose={() => setErr("")} /> : null}
     </div>
   );
 }
@@ -564,15 +594,27 @@ function TrainingView({ detail, selectedRun, openLogs, openReport }: SectionProp
 
 /* ----------------------------------------------------------------- eval */
 
-function EvalView({ detail, selectedRun, openReport }: SectionProps) {
+function EvalView({ detail, selectedRun, openReport, openLogsFor }: SectionProps) {
   const s = (detail as any)?.summary || {};
   const ev = s.eval || {};
   const score = parseEvalScore(selectedRun?.eval_score);
   const cats: Record<string, any> = ev.category_breakdown || {};
   const catRows = Object.entries(cats).slice(0, 8);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const reEval = async () => {
+    if (!selectedRun?.name) return;
+    setBusy(true); setErr("");
+    try { const r = await evalRun(selectedRun.name); openLogsFor({ job: r.job?.id, run: r.job?.run_name }); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
   return (
     <div className="pc-stack">
-      <ReportLinks reports={detail?.reports} openReport={openReport} only={["eval", "honesty"]} />
+      <div className="pc-row">
+        <ReportLinks reports={detail?.reports} openReport={openReport} only={["eval", "honesty"]} />
+        {selectedRun ? <button className="pc-btn ghost" onClick={reEval} disabled={busy}>{busy ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Re-run eval</button> : null}
+      </div>
+      {err ? <Banner tone="block" title="Could not start eval" body={err} onClose={() => setErr("")} /> : null}
       <div className="pc-kpis four">
         <Kpi label="Overall" value={percent(selectedRun?.pass_rate)} sub={selectedRun?.eval_score || "--"} tone={runTone(selectedRun)} />
         <Kpi label="Domain" value={percent(ev.domain_pass_rate)} sub="answerable" />

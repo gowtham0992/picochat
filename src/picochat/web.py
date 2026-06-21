@@ -2113,6 +2113,111 @@ def remote_modal_pull_plan(runs_dir: str | Path, payload: dict) -> dict:
     return run_status_plan(job_id, runs_dir)
 
 
+def export_hf_run_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Export a run's SFT checkpoint to a Hugging Face model folder + card."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    run_name = _optional_string(payload.get("run"))
+    if not run_name:
+        raise ValueError("run is required")
+    run_dir = _safe_child(Path(runs_dir), run_name)
+    checkpoint = run_dir / "sft" / "checkpoint"
+    tokenizer = run_dir / "tokenizer.json"
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"missing SFT checkpoint for {run_name}: {checkpoint}")
+    if not tokenizer.exists():
+        raise FileNotFoundError(f"missing tokenizer for {run_name}: {tokenizer}")
+
+    out_dir = run_dir / "export-hf"
+    from picochat.hf_export import HFExportConfig, export_hf_checkpoint
+    report = export_hf_checkpoint(HFExportConfig(
+        checkpoint_path=str(checkpoint),
+        tokenizer_path=str(tokenizer),
+        out_dir=str(out_dir),
+        model_name=run_name,
+        base_model=False,
+    ))
+    return {
+        "run": run_name,
+        "out_dir": report.get("out_dir", str(out_dir)),
+        "manifest": report.get("manifest"),
+        "model_card": report.get("model_card"),
+    }
+
+
+def eval_run_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """Re-run the transparent chat eval on a run's SFT checkpoint."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    run_name = _optional_string(payload.get("run"))
+    if not run_name:
+        raise ValueError("run is required")
+    run_dir = _safe_child(Path(runs_dir), run_name)
+    checkpoint = run_dir / "sft" / "checkpoint"
+    tokenizer = run_dir / "tokenizer.json"
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"missing SFT checkpoint for {run_name}: {checkpoint}")
+    if not tokenizer.exists():
+        raise FileNotFoundError(f"missing tokenizer for {run_name}: {tokenizer}")
+
+    eval_input = _optional_string(payload.get("input"))
+    if not eval_input:
+        summary_path = run_dir / "summary.json"
+        if summary_path.exists():
+            pack = _read_json(summary_path).get("config", {}).get("dataset_pack")
+            if pack and Path(pack).exists():
+                eval_input = load_dataset_pack(pack).eval_input
+    if not eval_input or not Path(eval_input).is_file():
+        raise ValueError(
+            "could not resolve an eval set; pass `input`, or keep the run's dataset pack available."
+        )
+
+    out_dir = run_dir / "eval"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable, "-m", "picochat.cli", "eval", "chat",
+        "--input", eval_input,
+        "--checkpoint", str(checkpoint),
+        "--tokenizer", str(tokenizer),
+        "--out-dir", str(out_dir),
+        "--device", "cpu",
+    ]
+    log_path = out_dir / "web_run.log"
+    log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
+    log_file = log_path.open("a", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=Path.cwd(),
+            env=_child_env(),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "id": job_id,
+        "run_name": f"eval-{run_name}",
+        "out_dir": str(out_dir),
+        "dataset_pack": None,
+        "log_path": str(log_path),
+        "command": _shell_command(*command),
+        "started_at": time.time(),
+        "process": process,
+        "pid": process.pid,
+        "preset": "eval",
+        "min_quality_score": 0,
+        "launch_config": {"kind": "eval", "run": run_name, "input": eval_input},
+    }
+    with _RUN_JOBS_LOCK:
+        _RUN_JOBS[job_id] = job
+    return run_status_plan(job_id, runs_dir)
+
+
 def archive_run_plan(runs_dir: str | Path, payload: dict) -> dict:
     """Move a completed run out of the active run bank without deleting it."""
     if not isinstance(payload, dict):
@@ -2335,6 +2440,10 @@ def _make_handler(config: WebConfig):
                     self._send_json(start_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/train/hf-sft":
                     self._send_json(hf_sft_start_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/export/hf":
+                    self._send_json(export_hf_run_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/eval/run":
+                    self._send_json(eval_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/run/cancel":
                     self._send_json(cancel_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/run/archive":

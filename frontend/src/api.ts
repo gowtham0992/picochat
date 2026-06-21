@@ -124,6 +124,14 @@ export function trainHfSft(payload: Record<string, unknown>): Promise<{ job: Job
   return jsonRequest("/api/train/hf-sft", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export function exportHf(run: string): Promise<{ run: string; out_dir: string; model_card?: string }> {
+  return jsonRequest("/api/export/hf", { method: "POST", body: JSON.stringify({ run }) });
+}
+
+export function evalRun(run: string): Promise<{ job: JobStatus }> {
+  return jsonRequest("/api/eval/run", { method: "POST", body: JSON.stringify({ run }) });
+}
+
 export function serveStatus(): Promise<{ servers: Array<Record<string, any>>; server: Record<string, any> | null }> {
   return jsonRequest("/api/serve/status");
 }
