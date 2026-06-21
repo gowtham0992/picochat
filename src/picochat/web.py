@@ -56,22 +56,48 @@ from picochat.tuning_data import inspect_chat_eval_data, inspect_chat_sft_data
 
 _RUN_JOBS: dict[str, dict] = {}
 _RUN_JOBS_LOCK = threading.Lock()
+# Cap on retained in-memory job records. Finished jobs stay discoverable on disk
+# (web_run.log + sidecar), so evicting them from memory loses nothing.
+_MAX_RUN_JOBS = 50
 # Background `pico serve` processes, keyed by run name.
 _SERVE_JOBS: dict[str, dict] = {}
 _SERVE_JOBS_LOCK = threading.Lock()
-# Cache of loaded HF inference engines (keyed by model dir) so Playground chat on
-# a fine-tuned model does not reload weights on every message.
+# LRU cache of loaded HF inference engines (each holds a model in RAM) so
+# Playground chat on a fine-tuned model does not reload weights every message.
 _HF_ENGINES: dict[str, object] = {}
 _HF_ENGINES_LOCK = threading.Lock()
+_MAX_HF_ENGINES = 2
+
+
+def _register_run_job(job_id: str, job: dict) -> None:
+    """Track a launched job, evicting the oldest *finished* jobs past the cap.
+
+    Running jobs are never evicted; finished ones remain available via disk
+    discovery, so dropping them from memory is safe.
+    """
+    with _RUN_JOBS_LOCK:
+        _RUN_JOBS[job_id] = job
+        overflow = len(_RUN_JOBS) - _MAX_RUN_JOBS
+        if overflow <= 0:
+            return
+        finished = sorted(
+            (j for j in _RUN_JOBS.values()
+             if (proc := j.get("process")) is not None and proc.poll() is not None),
+            key=lambda j: j.get("started_at", 0.0),
+        )
+        for stale in finished[:overflow]:
+            _RUN_JOBS.pop(stale["id"], None)
 
 
 def _get_hf_engine(model_dir: str):
     with _HF_ENGINES_LOCK:
-        engine = _HF_ENGINES.get(model_dir)
+        engine = _HF_ENGINES.pop(model_dir, None)
         if engine is None:
             from picochat.hf_infer import HFGenerator
             engine = HFGenerator(model_path=model_dir, device="cpu")
-            _HF_ENGINES[model_dir] = engine
+        _HF_ENGINES[model_dir] = engine  # reinsert as most-recently-used
+        while len(_HF_ENGINES) > _MAX_HF_ENGINES:
+            _HF_ENGINES.pop(next(iter(_HF_ENGINES)))
         return engine
 # Server-sent-events log stream cadence. The cap bounds a single connection;
 # the browser's EventSource auto-reconnects for runs longer than that.
@@ -1650,8 +1676,7 @@ def start_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         },
         "launch_preflight": launch_preflight.to_dict(),
     }
-    with _RUN_JOBS_LOCK:
-        _RUN_JOBS[job_id] = job
+    _register_run_job(job_id, job)
     # Persist a sidecar so the job survives a server restart: status discovery
     # and cancel can find the pid even after _RUN_JOBS is gone.
     _write_job_record(out_dir, job)
@@ -1745,8 +1770,7 @@ def hf_sft_start_plan(runs_dir: str | Path, payload: dict) -> dict:
             "device": device,
         },
     }
-    with _RUN_JOBS_LOCK:
-        _RUN_JOBS[job_id] = job
+    _register_run_job(job_id, job)
     _write_job_record(out_dir, job)
     return run_status_plan(job_id, runs_dir)
 
@@ -2048,8 +2072,7 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
             "run_name": run_name,
         },
     }
-    with _RUN_JOBS_LOCK:
-        _RUN_JOBS[job_id] = job
+    _register_run_job(job_id, job)
     _write_job_record(out_dir, job)
     return run_status_plan(job_id, runs_dir)
 
@@ -2108,8 +2131,7 @@ def remote_modal_pull_plan(runs_dir: str | Path, payload: dict) -> dict:
         "min_quality_score": 0,
         "launch_config": {"kind": "modal-pull", "run": run_name, "volume": volume},
     }
-    with _RUN_JOBS_LOCK:
-        _RUN_JOBS[job_id] = job
+    _register_run_job(job_id, job)
     return run_status_plan(job_id, runs_dir)
 
 
@@ -2213,8 +2235,7 @@ def eval_run_plan(runs_dir: str | Path, payload: dict) -> dict:
         "min_quality_score": 0,
         "launch_config": {"kind": "eval", "run": run_name, "input": eval_input},
     }
-    with _RUN_JOBS_LOCK:
-        _RUN_JOBS[job_id] = job
+    _register_run_job(job_id, job)
     return run_status_plan(job_id, runs_dir)
 
 
