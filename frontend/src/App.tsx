@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, importRun, initDatasetPack, inspectTuning, listRuns, loadLeaderboard, loadPackEditor, loadPresets, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
+import { archiveRuns, benchmarkPack, cancelRun, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, importRun, initDatasetPack, inspectTuning, listRuns, loadLeaderboard, loadPackEditor, loadPresets, loadRegistry, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, scalePlan, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
@@ -679,6 +679,7 @@ function ReleaseView({ detail, tone, openReport }: SectionProps) {
         body={tone === "pass" ? "Every checked gate is satisfied. This run can move to handoff." : "Resolve the failing checks below before publishing or handing off this model."}
       />
       <ReportLinks reports={detail?.reports} openReport={openReport} only={["honesty", "summary"]} />
+      <RegistryPanel />
       <Panel title="Gate checks" flush>
         <div className="pc-checks">
           {reasons.map((r, i) => (
@@ -822,6 +823,7 @@ function RemoteView({ openLogsFor }: SectionProps) {
 
   return (
     <div className="pc-stack">
+      <ScalePlanner />
       <div className="pc-toolbar">
         <div className="pc-toolbar-meta"><strong>Cloud training</strong> — train on remote GPUs with this dashboard as the control plane.</div>
         <Segmented value={provider} options={["modal", "colab", "lambda"]} onChange={(v) => setProvider(v as "modal" | "colab" | "lambda")} />
@@ -1109,6 +1111,7 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
   const [inspBusy, setInspBusy] = useState(false);
   const [inspErr, setInspErr] = useState("");
   const [genBusy, setGenBusy] = useState(false);
+  const [benchBusy, setBenchBusy] = useState(false);
   const [editing, setEditing] = useState(false);
 
   const [adv, setAdv] = useState(false);
@@ -1185,6 +1188,15 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
       await inspectPack(pack);
     } catch (e) { setInspErr(e instanceof Error ? e.message : String(e)); }
     finally { setGenBusy(false); }
+  };
+
+  const buildBenchmark = async () => {
+    setBenchBusy(true); setInspErr("");
+    try {
+      await benchmarkPack({ dataset_pack: pack, source: "offline", profile: "full", promote_to_pack: true, force: true });
+      await inspectPack(pack);
+    } catch (e) { setInspErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBenchBusy(false); }
   };
 
   const genPreferences = async () => {
@@ -1338,6 +1350,13 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
                       <button className="pc-btn primary" onClick={generateData} disabled={genBusy}>{genBusy ? <Loader2 size={15} className="spin" /> : <FlaskConical size={15} />} Generate</button>
                     </div>
                   ) : null}
+                  <div className="pc-prep-gen">
+                    <div>
+                      <strong>Build a benchmark eval set</strong>
+                      <p>Generate a curated, contamination-checked SFT + eval curriculum across skills for a more trustworthy score.</p>
+                    </div>
+                    <button className="pc-btn" onClick={buildBenchmark} disabled={benchBusy}>{benchBusy ? <Loader2 size={15} className="spin" /> : <BarChart3 size={15} />} Build benchmark</button>
+                  </div>
                   {Array.isArray(insp.next_actions) && insp.next_actions.length ? (
                     <ul className="pc-prep-actions">{insp.next_actions.slice(0, 3).map((a: string, i: number) => <li key={i}>{a}</li>)}</ul>
                   ) : null}
@@ -1578,6 +1597,54 @@ function Markdown({ source }: { source: string }) {
 }
 
 /* --------------------------------------------------------------- compare */
+
+function ScalePlanner() {
+  const [target, setTarget] = useState("100m");
+  const [tokens, setTokens] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [plan, setPlan] = useState<Record<string, any> | null>(null);
+  const run = async () => {
+    setBusy(true); setErr("");
+    try { setPlan(await scalePlan({ target_params: target, dataset_tokens: tokens || undefined })); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Panel title="Scale planner" sub="Recommended architecture & token budget for a target size">
+      <div className="pc-grid two">
+        <label className="pc-field">Target parameters<input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="e.g. 100m, 1b" /></label>
+        <label className="pc-field">Dataset tokens (optional)<input value={tokens} onChange={(e) => setTokens(e.target.value)} placeholder="e.g. 2b" /></label>
+      </div>
+      <button className="pc-btn primary" onClick={run} disabled={busy}>{busy ? <Loader2 size={15} className="spin" /> : <Gauge size={15} />} Plan</button>
+      {err ? <Banner tone="block" title="Could not plan" body={err} onClose={() => setErr("")} /> : null}
+      {plan ? <div className="pc-plan"><Markdown source={plan.markdown || ""} /></div> : null}
+    </Panel>
+  );
+}
+
+function RegistryPanel() {
+  const [entries, setEntries] = useState<Array<Record<string, any>>>([]);
+  useEffect(() => { loadRegistry().then((r) => setEntries(r.entries || [])).catch(() => {}); }, []);
+  if (!entries.length) return null;
+  const cols = "minmax(0, 2fr) 0.8fr 0.7fr 0.9fr 0.9fr";
+  const cls = (s?: string) => /ready|pass|approv/i.test(s || "") ? "ok" : /block|fail/i.test(s || "") ? "bad" : "warn";
+  return (
+    <Panel title="Model registry" sub="Release status across every run" flush>
+      <div className="pc-lb">
+        <div className="pc-lb-tr head" style={{ gridTemplateColumns: cols }}><span>Run</span><span>Status</span><span>Eval</span><span>Honesty</span><span>Preflight</span></div>
+        {entries.map((e) => (
+          <div className="pc-lb-tr" style={{ gridTemplateColumns: cols }} key={e.run}>
+            <span className="pc-lb-name">{e.run}</span>
+            <span className={cls(e.status)}>{e.status ?? "--"}</span>
+            <span>{e.eval_pass_rate != null ? percent(e.eval_pass_rate) : "--"}</span>
+            <span className={cls(e.honesty_status)}>{e.honesty_status ?? "--"}</span>
+            <span>{e.preflight_status ?? "--"}</span>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
 
 function CompareView({ runs, selectRun }: SectionProps) {
   const [selected, setSelected] = useState<string[]>([]);

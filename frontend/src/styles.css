@@ -403,6 +403,11 @@ input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; accent-color:
 button.pc-lb-tr:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
 .pc-lb-tr.best { background: color-mix(in srgb, var(--green) 9%, transparent); }
 .pc-lb-tr.best .pc-lb-name { color: var(--green); }
+.pc-lb span.ok { color: var(--green); }
+.pc-lb span.bad { color: var(--red); }
+.pc-lb span.warn { color: var(--amber); }
+.pc-plan { max-height: 360px; overflow: auto; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.pc-plan .pc-md { font-size: 12.5px; }
 
 /* ------------------------------------------------------------- responsive */
 @media (max-width: 1080px) {

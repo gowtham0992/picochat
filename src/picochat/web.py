@@ -2343,6 +2343,38 @@ def leaderboard_plan(runs_dir: str | Path = "runs") -> dict:
         return {"rows": [], "best_run": None}
 
 
+def scale_plan_plan(payload: dict) -> dict:
+    """Plan a training recipe (architecture + token budget) for a target size."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    from picochat.scale_planner import parse_count, plan_scale, render_scale_plan_markdown
+    target = parse_count(_optional_string(payload.get("target_params")) or "100m")
+    tokens_raw = _optional_string(payload.get("dataset_tokens"))
+    dataset_tokens = parse_count(tokens_raw) if tokens_raw else None
+    world_size = _bounded_int(payload.get("world_size", 1), 1, 128)
+    plan = plan_scale(target_parameters=target, dataset_tokens=dataset_tokens, world_size=world_size)
+    return {
+        "markdown": render_scale_plan_markdown(plan),
+        "estimated_parameters": plan.estimated_parameters,
+        "n_layer": plan.n_layer,
+        "n_embd": plan.n_embd,
+        "n_head": plan.n_head,
+        "context_size": plan.context_size,
+    }
+
+
+def registry_plan(runs_dir: str | Path = "runs") -> dict:
+    """Build a model registry (release status of every run) from summaries."""
+    from picochat.registry import build_model_registry, discover_run_dirs
+    run_dirs = discover_run_dirs(runs_dir)
+    if not run_dirs:
+        return {"entries": []}
+    try:
+        return build_model_registry(run_dirs)
+    except (ValueError, KeyError, OSError):
+        return {"entries": []}
+
+
 def serve_web(config: WebConfig) -> None:
     """Start the blocking local web server."""
     if not _is_loopback_host(config.host) and not config.auth_token:
@@ -2437,6 +2469,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(remote_status_plan())
                 elif parsed.path == "/api/leaderboard":
                     self._send_json(leaderboard_plan(config.runs_dir))
+                elif parsed.path == "/api/registry":
+                    self._send_json(registry_plan(config.runs_dir))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -2482,6 +2516,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(export_hf_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/eval/run":
                     self._send_json(eval_run_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/scale/plan":
+                    self._send_json(scale_plan_plan(self._read_json_body()))
                 elif parsed.path == "/api/run/cancel":
                     self._send_json(cancel_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/run/archive":

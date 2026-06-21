@@ -60,6 +60,18 @@ export function importRun(payload: Record<string, unknown>): Promise<Record<stri
   return jsonRequest("/api/run/import", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export function loadRegistry(): Promise<{ entries: Array<Record<string, any>> }> {
+  return jsonRequest("/api/registry");
+}
+
+export function scalePlan(payload: Record<string, unknown>): Promise<Record<string, any>> {
+  return jsonRequest("/api/scale/plan", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function benchmarkPack(payload: Record<string, unknown>): Promise<Record<string, any>> {
+  return jsonRequest("/api/tuning/benchmark-pack", { method: "POST", body: JSON.stringify(payload) });
+}
+
 export function loadStatus(job?: string): Promise<{ jobs: JobStatus[]; job: JobStatus | null }> {
   const suffix = job ? `?job=${encodeURIComponent(job)}` : "";
   return jsonRequest(`/api/run/status${suffix}`);
