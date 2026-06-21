@@ -108,6 +108,10 @@ export function loadPackEditor(payload: Record<string, unknown>): Promise<Record
   return jsonRequest("/api/pack/editor/load", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export function generatePreferences(payload: Record<string, unknown>): Promise<Record<string, any>> {
+  return jsonRequest("/api/preference/starter", { method: "POST", body: JSON.stringify(payload) });
+}
+
 export function savePackEditor(payload: Record<string, unknown>): Promise<Record<string, any>> {
   return jsonRequest("/api/pack/editor/save", { method: "POST", body: JSON.stringify(payload) });
 }

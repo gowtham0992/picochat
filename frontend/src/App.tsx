@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, compareRuns, evalRun, exportHf, generateEvalStarter, generateSftStarter, generateText, importHf, initDatasetPack, inspectTuning, listRuns, loadPackEditor, loadPresets, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
+import { archiveRuns, cancelRun, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, initDatasetPack, inspectTuning, listRuns, loadPackEditor, loadPresets, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
@@ -1113,6 +1113,8 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
   const [advLoraRank, setAdvLoraRank] = useState(8);
   const [advDpoInput, setAdvDpoInput] = useState("");
   const [advDpoSteps, setAdvDpoSteps] = useState(50);
+  const [prefBusy, setPrefBusy] = useState(false);
+  const [prefMsg, setPrefMsg] = useState("");
 
   const [name, setName] = useState("");
   const [preset, setPreset] = useState("tiny");
@@ -1174,6 +1176,18 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
       await inspectPack(pack);
     } catch (e) { setInspErr(e instanceof Error ? e.message : String(e)); }
     finally { setGenBusy(false); }
+  };
+
+  const genPreferences = async () => {
+    const chatIn = insp?.chat_input;
+    if (!chatIn) { setErr("Open the 'Training data' step first so the chat file is known."); return; }
+    setPrefBusy(true); setErr(""); setPrefMsg("");
+    try {
+      const out = String(chatIn).replace(/\.jsonl$/, "_preferences.jsonl");
+      const res = await generatePreferences({ input_path: chatIn, out_path: out, force: true });
+      setAdvDpoInput(res.output_path || out);
+      setPrefMsg(`Generated ${res.num_examples ?? "?"} pairs (synthetic — for DPO plumbing; review before release).`);
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setPrefBusy(false); }
   };
 
   const launch = async () => {
@@ -1350,6 +1364,10 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
                     {advLora ? <label className="pc-field">LoRA rank<input type="number" value={advLoraRank} onChange={(e) => setAdvLoraRank(Math.max(1, Number(e.target.value) || 8))} /></label> : <span />}
                   </div>
                   <label className="pc-field">DPO preferences (optional JSONL)<input value={advDpoInput} onChange={(e) => setAdvDpoInput(e.target.value)} placeholder="path/to/preferences.jsonl" /></label>
+                  <div className="pc-row">
+                    <button type="button" className="pc-btn ghost" onClick={genPreferences} disabled={prefBusy}>{prefBusy ? <Loader2 size={14} className="spin" /> : <FlaskConical size={14} />} Generate from chat data</button>
+                    {prefMsg ? <span className="pc-hint">{prefMsg}</span> : null}
+                  </div>
                   {advDpoInput.trim() ? <label className="pc-field">DPO steps<input type="number" value={advDpoSteps} onChange={(e) => setAdvDpoSteps(Math.max(1, Number(e.target.value) || 50))} /></label> : null}
                 </div>
               ) : null}
