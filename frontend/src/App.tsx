@@ -113,6 +113,11 @@ export default function App() {
   };
 
   useEffect(() => { refresh(false); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    const fromHash = window.location.hash.replace("#", "");
+    if (fromHash && NAV.some((n) => n.id === fromHash)) setSection(fromHash as SectionId);
+  }, []);
+  useEffect(() => { if (window.location.hash.replace("#", "") !== section) window.location.hash = section; }, [section]);
   useEffect(() => { if (selectedRunName) loadRun(selectedRunName).then(setDetail).catch((e) => setError(e.message)); }, [selectedRunName]);
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme;
