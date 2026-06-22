@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
+import shutil
 from typing import Any
 
 
@@ -217,6 +218,43 @@ def update_dataset_pack_tuning_paths(
 
     pack_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return load_dataset_pack(pack_path)
+
+
+def clone_dataset_pack(path: str | Path, target_dir: str | Path) -> str:
+    """Copy a dataset pack's chat/eval files into a writable directory.
+
+    Used to make a working copy of a read-only bundled example so generation
+    never mutates the shipped files. The corpus (which is never rewritten by
+    data generation) is referenced in place via an absolute path, so only the
+    chat/eval JSONL files are duplicated.
+
+    Returns the path to the new ``dataset_pack.json``.
+    """
+    pack = load_dataset_pack(path)
+    out_dir = Path(target_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    chat_src = _existing_file(pack.chat_input, "chat")
+    eval_src = _existing_file(pack.eval_input, "eval")
+    chat_dst = out_dir / chat_src.name
+    eval_dst = out_dir / eval_src.name
+    shutil.copyfile(chat_src, chat_dst)
+    shutil.copyfile(eval_src, eval_dst)
+
+    payload: dict[str, Any] = {
+        "name": pack.name,
+        "description": pack.description,
+        "chat": chat_dst.name,
+        "eval": eval_dst.name,
+    }
+    if pack.corpus_recipe:
+        payload["corpus"] = {"recipe": str(Path(pack.corpus_recipe).resolve())}
+    elif pack.corpus_input:
+        payload["corpus"] = {"input": str(Path(pack.corpus_input).resolve())}
+
+    new_pack = out_dir / "dataset_pack.json"
+    new_pack.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return str(new_pack)
 
 
 def _parse_corpus(value: Any, pack_path: Path) -> tuple[str | None, str | None]:
