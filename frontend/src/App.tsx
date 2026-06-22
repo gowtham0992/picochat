@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, benchmarkPack, cancelRun, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, importRun, initDatasetPack, inspectTuning, listRuns, loadLeaderboard, loadPackEditor, loadPresets, loadRegistry, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, scalePlan, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
+import { archiveRuns, benchmarkPack, cancelRun, clonePack, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, importRun, initDatasetPack, inspectTuning, listRuns, loadLeaderboard, loadPackEditor, loadPresets, loadRegistry, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, scalePlan, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
@@ -447,7 +447,7 @@ function PlaygroundView({ selectedRun, detail }: SectionProps) {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           />
-          <button className="pc-btn primary" onClick={send} disabled={!input.trim() || !runName || sending}>
+          <button className="pc-btn primary" onClick={send} disabled={!input.trim() || !runName || sending} aria-label="Send message" title="Send message">
             {sending ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
           </button>
         </div>
@@ -1213,6 +1213,17 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
     finally { setInspBusy(false); }
   };
   const goPrepare = (p: string) => { setPack(p); setStep(2); inspectPack(p); };
+  // Bundled example packs are read-only, so clone to a writable workspace before
+  // entering the prepare step (where Generate/benchmark/preferences write files).
+  const goPrepareExample = async (p: string) => {
+    if (!p.trim()) return;
+    setImportBusy(true); setImportErr("");
+    try {
+      const res = await clonePack(p.trim());
+      goPrepare(res.dataset_pack);
+    } catch (e) { setImportErr(e instanceof Error ? e.message : String(e)); }
+    finally { setImportBusy(false); }
+  };
   useEffect(() => { if (initialPack) inspectPack(initialPack); /* eslint-disable-next-line */ }, []);
 
   const runImport = async () => {
@@ -1480,7 +1491,10 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
                   ? <button className="pc-btn primary" onClick={runImport} disabled={importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Import & continue</button>
                   : source === "folder"
                     ? <button className="pc-btn primary" onClick={createFromFolder} disabled={importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Create pack & continue</button>
-                    : <button className="pc-btn primary" onClick={() => pack.trim() && goPrepare(pack.trim())} disabled={!pack.trim()}>Next: training data →</button>
+                    : <>
+                        {!pack.trim() ? <span className="pc-foot-hint">Select a pack to continue</span> : null}
+                        <button className="pc-btn primary" onClick={() => goPrepareExample(pack)} disabled={!pack.trim() || importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : null} Next: training data →</button>
+                      </>
               ) : null}
               {step === 2 ? <button className="pc-btn primary" onClick={() => setStep(3)} disabled={inspBusy}>Next: train →</button> : null}
               {step === 3 ? <button className="pc-btn primary" onClick={launch} disabled={launching}>{launching ? <Loader2 size={15} className="spin" /> : <Gauge size={15} />} Start training</button> : null}
