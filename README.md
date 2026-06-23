@@ -25,7 +25,7 @@
   <a href="https://github.com/gowtham0992/picochat/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/gowtham0992/picochat?style=social"></a>
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-151515.svg">
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-234c91.svg">
-  <img alt="Local + cloud" src="https://img.shields.io/badge/local%20%2B%20cloud-Modal%2FColab%2FLambda-6366f1.svg">
+  <img alt="Local + cloud" src="https://img.shields.io/badge/local%20%2B%20cloud-Modal%2FColab%2FLambda-3b6fe0.svg">
   <img alt="H100/H200 ready" src="https://img.shields.io/badge/H100%2FH200-ready-2f7d32.svg">
 </p>
 
