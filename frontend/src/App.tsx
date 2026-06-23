@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, cancelRun, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, importRun, initDatasetPack, inspectTuning, listRuns, loadLeaderboard, loadPackEditor, loadPresets, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
+import { archiveRuns, benchmarkPack, cancelRun, clonePack, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, importRun, initDatasetPack, inspectTuning, listRuns, loadLeaderboard, loadPackEditor, loadPresets, loadRegistry, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, scalePlan, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
 
@@ -390,6 +390,8 @@ function PlaygroundView({ selectedRun, detail }: SectionProps) {
   const [genError, setGenError] = useState("");
   const threadRef = useRef<HTMLDivElement | null>(null);
   const runName = selectedRun?.name || "";
+  const isHf = (detail as any)?.summary?.kind === "hf-sft";
+  const [deploying, setDeploying] = useState(false);
 
   useEffect(() => { threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: "smooth" }); }, [messages, sending]);
 
@@ -445,7 +447,7 @@ function PlaygroundView({ selectedRun, detail }: SectionProps) {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           />
-          <button className="pc-btn primary" onClick={send} disabled={!input.trim() || !runName || sending}>
+          <button className="pc-btn primary" onClick={send} disabled={!input.trim() || !runName || sending} aria-label="Send message" title="Send message">
             {sending ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
           </button>
         </div>
@@ -470,7 +472,64 @@ function PlaygroundView({ selectedRun, detail }: SectionProps) {
         <Panel title="Export">
           <ExportPanel run={runName} />
         </Panel>
+        <Panel title="Deploy">
+          {runName
+            ? <><button className="pc-btn" onClick={() => setDeploying(true)}><Boxes size={15} /> Deploy to production</button>
+              <div className="pc-hint">Get a copy-paste recipe (Docker, vLLM, or llama.cpp) plus the exported model.</div></>
+            : <div className="pc-hint">Select a run to deploy it.</div>}
+        </Panel>
       </aside>
+      {deploying ? <DeployModal run={runName} isHf={isHf} onClose={() => setDeploying(false)} /> : null}
+    </div>
+  );
+}
+
+const DEPLOY_TARGETS: Array<[string, string]> = [["docker", "Docker"], ["vllm", "vLLM"], ["llamacpp", "llama.cpp"]];
+
+function DeployModal({ run, isHf, onClose }: { run: string; isHf: boolean; onClose: () => void }) {
+  const [target, setTarget] = useState("vllm");
+  const [exported, setExported] = useState<string | null>(isHf ? `runs/${run}/final_model` : null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const exportModel = async () => {
+    setBusy(true); setErr("");
+    try { setExported((await exportHf(run)).out_dir); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  const modelPath = exported || `runs/${run}/export-hf`;
+  const needsExport = !isHf && (target === "vllm" || target === "llamacpp") && !exported;
+  const recipes: Record<string, string> = {
+    docker: isHf
+      ? `docker build -t picochat:serve .\ndocker run --rm -p 8000:8000 -v "$(pwd)/runs:/workspace/runs" picochat:serve \\\n  pico serve --hf-model /workspace/runs/${run}/final_model --host 0.0.0.0 --port 8000`
+      : `docker build -t picochat:serve .\ndocker run --rm -p 8000:8000 -v "$(pwd)/runs:/workspace/runs" picochat:serve \\\n  pico serve --checkpoint /workspace/runs/${run}/sft/checkpoint \\\n  --tokenizer /workspace/runs/${run}/tokenizer.json --host 0.0.0.0 --port 8000`,
+    vllm: `pip install vllm\nvllm serve ${modelPath} --served-model-name ${run} --trust-remote-code\n# OpenAI-compatible API at http://localhost:8000/v1`,
+    llamacpp: `# clone llama.cpp, then convert + serve\npython llama.cpp/convert_hf_to_gguf.py ${modelPath} --outfile ${run}.gguf\n./llama.cpp/llama-server -m ${run}.gguf --port 8080`
+  };
+  const notes: Record<string, string> = {
+    docker: "Containerized OpenAI-compatible endpoint. Works for any run, native or fine-tuned.",
+    vllm: "High-throughput production serving. Cleanest for fine-tuned HF base models (Qwen / SmolLM); native Picochat models depend on vLLM supporting the exported architecture.",
+    llamacpp: "CPU / edge serving via GGUF. Best for standard / fine-tuned architectures."
+  };
+  return (
+    <div className="pc-modal-back" onClick={onClose}>
+      <section className="pc-modal pc-new" onClick={(e) => e.stopPropagation()}>
+        <header><div><span className="pc-eyebrow">Deploy to production</span><h2>{run}</h2></div><button className="pc-btn ghost" onClick={onClose}><X size={15} /></button></header>
+        <div className="pc-new-body">
+          <div className="pc-source">
+            {DEPLOY_TARGETS.map(([k, l]) => <button key={k} className={`pc-source-opt ${target === k ? "on" : ""}`} onClick={() => setTarget(k)}>{l}</button>)}
+          </div>
+          <div className="pc-hint">{notes[target]}</div>
+          {needsExport ? (
+            <div className="pc-prep-gen">
+              <div><strong>Export the model first</strong><p>{target === "vllm" ? "vLLM" : "llama.cpp"} needs a Transformers model folder.</p></div>
+              <button className="pc-btn primary" onClick={exportModel} disabled={busy}>{busy ? <Loader2 size={15} className="spin" /> : <Download size={15} />} Export</button>
+            </div>
+          ) : null}
+          {err ? <Banner tone="block" title="Export failed" body={err} onClose={() => setErr("")} /> : null}
+          {exported && (target === "vllm" || target === "llamacpp") ? <div className="pc-hint">Model: <code>{exported}</code></div> : null}
+          <CodeBlock code={recipes[target]} />
+        </div>
+        <footer className="pc-new-foot"><button className="pc-btn ghost" onClick={onClose}>Close</button></footer>
+      </section>
     </div>
   );
 }
@@ -679,6 +738,7 @@ function ReleaseView({ detail, tone, openReport }: SectionProps) {
         body={tone === "pass" ? "Every checked gate is satisfied. This run can move to handoff." : "Resolve the failing checks below before publishing or handing off this model."}
       />
       <ReportLinks reports={detail?.reports} openReport={openReport} only={["honesty", "summary"]} />
+      <RegistryPanel />
       <Panel title="Gate checks" flush>
         <div className="pc-checks">
           {reasons.map((r, i) => (
@@ -822,6 +882,7 @@ function RemoteView({ openLogsFor }: SectionProps) {
 
   return (
     <div className="pc-stack">
+      <ScalePlanner />
       <div className="pc-toolbar">
         <div className="pc-toolbar-meta"><strong>Cloud training</strong> — train on remote GPUs with this dashboard as the control plane.</div>
         <Segmented value={provider} options={["modal", "colab", "lambda"]} onChange={(v) => setProvider(v as "modal" | "colab" | "lambda")} />
@@ -1109,6 +1170,7 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
   const [inspBusy, setInspBusy] = useState(false);
   const [inspErr, setInspErr] = useState("");
   const [genBusy, setGenBusy] = useState(false);
+  const [benchBusy, setBenchBusy] = useState(false);
   const [editing, setEditing] = useState(false);
 
   const [adv, setAdv] = useState(false);
@@ -1151,6 +1213,17 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
     finally { setInspBusy(false); }
   };
   const goPrepare = (p: string) => { setPack(p); setStep(2); inspectPack(p); };
+  // Bundled example packs are read-only, so clone to a writable workspace before
+  // entering the prepare step (where Generate/benchmark/preferences write files).
+  const goPrepareExample = async (p: string) => {
+    if (!p.trim()) return;
+    setImportBusy(true); setImportErr("");
+    try {
+      const res = await clonePack(p.trim());
+      goPrepare(res.dataset_pack);
+    } catch (e) { setImportErr(e instanceof Error ? e.message : String(e)); }
+    finally { setImportBusy(false); }
+  };
   useEffect(() => { if (initialPack) inspectPack(initialPack); /* eslint-disable-next-line */ }, []);
 
   const runImport = async () => {
@@ -1185,6 +1258,15 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
       await inspectPack(pack);
     } catch (e) { setInspErr(e instanceof Error ? e.message : String(e)); }
     finally { setGenBusy(false); }
+  };
+
+  const buildBenchmark = async () => {
+    setBenchBusy(true); setInspErr("");
+    try {
+      await benchmarkPack({ dataset_pack: pack, source: "offline", profile: "full", promote_to_pack: true, force: true });
+      await inspectPack(pack);
+    } catch (e) { setInspErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBenchBusy(false); }
   };
 
   const genPreferences = async () => {
@@ -1338,6 +1420,13 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
                       <button className="pc-btn primary" onClick={generateData} disabled={genBusy}>{genBusy ? <Loader2 size={15} className="spin" /> : <FlaskConical size={15} />} Generate</button>
                     </div>
                   ) : null}
+                  <div className="pc-prep-gen">
+                    <div>
+                      <strong>Build a benchmark eval set</strong>
+                      <p>Generate a curated, contamination-checked SFT + eval curriculum across skills for a more trustworthy score.</p>
+                    </div>
+                    <button className="pc-btn" onClick={buildBenchmark} disabled={benchBusy}>{benchBusy ? <Loader2 size={15} className="spin" /> : <BarChart3 size={15} />} Build benchmark</button>
+                  </div>
                   {Array.isArray(insp.next_actions) && insp.next_actions.length ? (
                     <ul className="pc-prep-actions">{insp.next_actions.slice(0, 3).map((a: string, i: number) => <li key={i}>{a}</li>)}</ul>
                   ) : null}
@@ -1402,7 +1491,10 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
                   ? <button className="pc-btn primary" onClick={runImport} disabled={importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Import & continue</button>
                   : source === "folder"
                     ? <button className="pc-btn primary" onClick={createFromFolder} disabled={importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Create pack & continue</button>
-                    : <button className="pc-btn primary" onClick={() => pack.trim() && goPrepare(pack.trim())} disabled={!pack.trim()}>Next: training data →</button>
+                    : <>
+                        {!pack.trim() ? <span className="pc-foot-hint">Select a pack to continue</span> : null}
+                        <button className="pc-btn primary" onClick={() => goPrepareExample(pack)} disabled={!pack.trim() || importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : null} Next: training data →</button>
+                      </>
               ) : null}
               {step === 2 ? <button className="pc-btn primary" onClick={() => setStep(3)} disabled={inspBusy}>Next: train →</button> : null}
               {step === 3 ? <button className="pc-btn primary" onClick={launch} disabled={launching}>{launching ? <Loader2 size={15} className="spin" /> : <Gauge size={15} />} Start training</button> : null}
@@ -1578,6 +1670,54 @@ function Markdown({ source }: { source: string }) {
 }
 
 /* --------------------------------------------------------------- compare */
+
+function ScalePlanner() {
+  const [target, setTarget] = useState("100m");
+  const [tokens, setTokens] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [plan, setPlan] = useState<Record<string, any> | null>(null);
+  const run = async () => {
+    setBusy(true); setErr("");
+    try { setPlan(await scalePlan({ target_params: target, dataset_tokens: tokens || undefined })); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Panel title="Scale planner" sub="Recommended architecture & token budget for a target size">
+      <div className="pc-grid two">
+        <label className="pc-field">Target parameters<input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="e.g. 100m, 1b" /></label>
+        <label className="pc-field">Dataset tokens (optional)<input value={tokens} onChange={(e) => setTokens(e.target.value)} placeholder="e.g. 2b" /></label>
+      </div>
+      <button className="pc-btn primary" onClick={run} disabled={busy}>{busy ? <Loader2 size={15} className="spin" /> : <Gauge size={15} />} Plan</button>
+      {err ? <Banner tone="block" title="Could not plan" body={err} onClose={() => setErr("")} /> : null}
+      {plan ? <div className="pc-plan"><Markdown source={plan.markdown || ""} /></div> : null}
+    </Panel>
+  );
+}
+
+function RegistryPanel() {
+  const [entries, setEntries] = useState<Array<Record<string, any>>>([]);
+  useEffect(() => { loadRegistry().then((r) => setEntries(r.entries || [])).catch(() => {}); }, []);
+  if (!entries.length) return null;
+  const cols = "minmax(0, 2fr) 0.8fr 0.7fr 0.9fr 0.9fr";
+  const cls = (s?: string) => /ready|pass|approv/i.test(s || "") ? "ok" : /block|fail/i.test(s || "") ? "bad" : "warn";
+  return (
+    <Panel title="Model registry" sub="Release status across every run" flush>
+      <div className="pc-lb">
+        <div className="pc-lb-tr head" style={{ gridTemplateColumns: cols }}><span>Run</span><span>Status</span><span>Eval</span><span>Honesty</span><span>Preflight</span></div>
+        {entries.map((e) => (
+          <div className="pc-lb-tr" style={{ gridTemplateColumns: cols }} key={e.run}>
+            <span className="pc-lb-name">{e.run}</span>
+            <span className={cls(e.status)}>{e.status ?? "--"}</span>
+            <span>{e.eval_pass_rate != null ? percent(e.eval_pass_rate) : "--"}</span>
+            <span className={cls(e.honesty_status)}>{e.honesty_status ?? "--"}</span>
+            <span>{e.preflight_status ?? "--"}</span>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
 
 function CompareView({ runs, selectRun }: SectionProps) {
   const [selected, setSelected] = useState<string[]>([]);

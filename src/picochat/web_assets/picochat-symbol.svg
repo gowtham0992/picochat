@@ -1,7 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
   <title id="title">Picochat symbol</title>
-  <desc id="desc">An indigo rounded tile with a white "p" monogram.</desc>
-  <rect x="2" y="2" width="92" height="92" rx="24" fill="#6366f1"/>
-  <rect x="33" y="30" width="9" height="46" rx="4.5" fill="#ffffff"/>
-  <circle cx="51" cy="43" r="13.5" fill="none" stroke="#ffffff" stroke-width="9"/>
+  <desc id="desc">A faceted cobalt-blue tile with a white speech bubble and three dots.</desc>
+  <polygon points="48,48 23,3 73,3" fill="#4a7bef"/>
+  <polygon points="48,48 73,3 93,23" fill="#2348ad"/>
+  <polygon points="48,48 93,23 93,73" fill="#3f72e6"/>
+  <polygon points="48,48 93,73 73,93" fill="#28509f"/>
+  <polygon points="48,48 73,93 23,93" fill="#4a7bef"/>
+  <polygon points="48,48 23,93 3,73" fill="#2348ad"/>
+  <polygon points="48,48 3,73 3,23" fill="#3f72e6"/>
+  <polygon points="48,48 3,23 23,3" fill="#28509f"/>
+  <polygon points="23,3 73,3 93,23 93,73 73,93 23,93 3,73 3,23" fill="none" stroke="#1b3576" stroke-width="1"/>
+  <polygon points="31,57 25,77 46,57" fill="#ffffff"/>
+  <rect x="19" y="25" width="58" height="34" rx="11" fill="#ffffff"/>
+  <circle cx="34" cy="42" r="4.4" fill="#2f5fd4"/>
+  <circle cx="48" cy="42" r="4.4" fill="#2f5fd4"/>
+  <circle cx="62" cy="42" r="4.4" fill="#2f5fd4"/>
 </svg>

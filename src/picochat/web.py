@@ -28,7 +28,12 @@ from urllib.parse import parse_qs, urlparse
 from picochat import __version__
 from picochat.compare import compare_runs
 from picochat.data import DEFAULT_CHAT_INPUT, DEFAULT_EVAL_INPUT, preview_corpus_sources
-from picochat.dataset_pack import init_dataset_pack, load_dataset_pack, update_dataset_pack_tuning_paths
+from picochat.dataset_pack import (
+    clone_dataset_pack,
+    init_dataset_pack,
+    load_dataset_pack,
+    update_dataset_pack_tuning_paths,
+)
 from picochat.device import DEVICE_CHOICES
 from picochat.eval_starter import generate_eval_starter
 from picochat.benchmark_pack import (
@@ -758,6 +763,9 @@ def sft_starter_plan(payload: dict) -> dict:
     promote_to_pack = payload.get("promote_to_pack", False)
     if not isinstance(promote_to_pack, bool):
         raise ValueError("promote_to_pack must be true or false")
+    _reject_bundled_example(out_path, what="Generating chat SFT data")
+    if promote_to_pack:
+        _reject_bundled_example(dataset_pack, what="Promoting chat data into the pack")
 
     report = generate_sft_starter(
         input_path=input_path,
@@ -818,6 +826,9 @@ def eval_starter_plan(payload: dict) -> dict:
     promote_to_pack = payload.get("promote_to_pack", False)
     if not isinstance(promote_to_pack, bool):
         raise ValueError("promote_to_pack must be true or false")
+    _reject_bundled_example(out_path, what="Generating eval data")
+    if promote_to_pack:
+        _reject_bundled_example(dataset_pack, what="Promoting eval data into the pack")
 
     report = generate_eval_starter(
         input_path=input_path,
@@ -885,6 +896,12 @@ def benchmark_tuning_pack_plan(payload: dict) -> dict:
     promote_to_pack = payload.get("promote_to_pack", True)
     if not isinstance(promote_to_pack, bool):
         raise ValueError("promote_to_pack must be true or false")
+    # Benchmark always writes its chat/eval pair next to the pack (or to the
+    # given out paths) and re-points the pack, so the pack itself is off-limits
+    # when it is a shipped example.
+    _reject_bundled_example(chat_out, what="Building a benchmark pack")
+    _reject_bundled_example(eval_out, what="Building a benchmark pack")
+    _reject_bundled_example(dataset_pack, what="Building a benchmark pack")
 
     report = generate_benchmark_tuning_pack(
         dataset_pack=dataset_pack,
@@ -954,6 +971,7 @@ def preference_starter_plan(payload: dict) -> dict:
     force = payload.get("force", False)
     if not isinstance(force, bool):
         raise ValueError("force must be true or false")
+    _reject_bundled_example(out_path, what="Generating preference pairs")
 
     report = generate_preference_starter(PreferenceStarterConfig(
         input_path=input_path,
@@ -2343,6 +2361,38 @@ def leaderboard_plan(runs_dir: str | Path = "runs") -> dict:
         return {"rows": [], "best_run": None}
 
 
+def scale_plan_plan(payload: dict) -> dict:
+    """Plan a training recipe (architecture + token budget) for a target size."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    from picochat.scale_planner import parse_count, plan_scale, render_scale_plan_markdown
+    target = parse_count(_optional_string(payload.get("target_params")) or "100m")
+    tokens_raw = _optional_string(payload.get("dataset_tokens"))
+    dataset_tokens = parse_count(tokens_raw) if tokens_raw else None
+    world_size = _bounded_int(payload.get("world_size", 1), 1, 128)
+    plan = plan_scale(target_parameters=target, dataset_tokens=dataset_tokens, world_size=world_size)
+    return {
+        "markdown": render_scale_plan_markdown(plan),
+        "estimated_parameters": plan.estimated_parameters,
+        "n_layer": plan.n_layer,
+        "n_embd": plan.n_embd,
+        "n_head": plan.n_head,
+        "context_size": plan.context_size,
+    }
+
+
+def registry_plan(runs_dir: str | Path = "runs") -> dict:
+    """Build a model registry (release status of every run) from summaries."""
+    from picochat.registry import build_model_registry, discover_run_dirs
+    run_dirs = discover_run_dirs(runs_dir)
+    if not run_dirs:
+        return {"entries": []}
+    try:
+        return build_model_registry(run_dirs)
+    except (ValueError, KeyError, OSError):
+        return {"entries": []}
+
+
 def serve_web(config: WebConfig) -> None:
     """Start the blocking local web server."""
     if not _is_loopback_host(config.host) and not config.auth_token:
@@ -2437,6 +2487,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(remote_status_plan())
                 elif parsed.path == "/api/leaderboard":
                     self._send_json(leaderboard_plan(config.runs_dir))
+                elif parsed.path == "/api/registry":
+                    self._send_json(registry_plan(config.runs_dir))
                 else:
                     self.send_error(404, "Not found")
             except Exception as exc:
@@ -2458,6 +2510,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(preview_corpus_plan(self._read_json_body()))
                 elif parsed.path == "/api/dataset-pack/init":
                     self._send_json(init_dataset_pack_plan(self._read_json_body()))
+                elif parsed.path == "/api/pack/clone":
+                    self._send_json(clone_example_pack_plan(self._read_json_body()))
                 elif parsed.path == "/api/hf/import":
                     self._send_json(hf_import_plan(self._read_json_body(), config.runs_dir))
                 elif parsed.path == "/api/tuning/inspect":
@@ -2482,6 +2536,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(export_hf_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/eval/run":
                     self._send_json(eval_run_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/scale/plan":
+                    self._send_json(scale_plan_plan(self._read_json_body()))
                 elif parsed.path == "/api/run/cancel":
                     self._send_json(cancel_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/run/archive":
@@ -2778,6 +2834,58 @@ def _optional_string(value: object) -> str | None:
 
 def _shell_command(*parts: str) -> str:
     return " ".join(shlex.quote(part) for part in parts)
+
+
+# Directory holding the read-only example packs that ship with Picochat. Data
+# generation must never write into here, so the dashboard clones these to a
+# writable workspace before generating chat/eval/benchmark/preference files.
+_BUNDLED_EXAMPLES_DIR = (Path(__file__).resolve().parents[2] / "examples")
+
+
+def _is_bundled_example_path(path: str | None) -> bool:
+    """True when ``path`` resolves inside the shipped, read-only examples dir."""
+    if not path:
+        return False
+    try:
+        resolved = Path(path).resolve(strict=False)
+        resolved.relative_to(_BUNDLED_EXAMPLES_DIR.resolve(strict=False))
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _reject_bundled_example(path: str | None, *, what: str) -> None:
+    """Guard mutating data-generation against the shipped example files."""
+    if _is_bundled_example_path(path):
+        raise ValueError(
+            f"{what} would write into the read-only example pack ({path}). "
+            "Make a working copy first (the dashboard does this automatically when "
+            "you pick an example) and generate into that instead."
+        )
+
+
+def clone_example_pack_plan(payload: dict) -> dict:
+    """Clone a (read-only) example pack into a writable workspace.
+
+    Idempotent for already-writable packs: those are returned unchanged so the
+    caller can invoke this unconditionally before entering the prepare flow.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    dataset_pack = _optional_string(payload.get("dataset_pack"))
+    if not dataset_pack:
+        raise ValueError("dataset_pack is required")
+    if not _is_bundled_example_path(dataset_pack):
+        return {"dataset_pack": dataset_pack, "cloned": False}
+
+    stem = Path(dataset_pack).stem
+    target = Path("packs") / f"{stem}-copy"
+    suffix = 2
+    while target.exists():
+        target = Path("packs") / f"{stem}-copy-{suffix}"
+        suffix += 1
+    new_pack = clone_dataset_pack(dataset_pack, target)
+    return {"dataset_pack": new_pack, "cloned": True, "source": dataset_pack}
 
 
 def _normalize_hf_dataset_id(value: str) -> str:

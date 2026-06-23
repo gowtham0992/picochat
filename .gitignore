@@ -39,6 +39,7 @@ checkpoints/
 
 # Local scratch dataset packs
 my_pack/
+packs/
 
 # Logs and temporary output
 *.log
