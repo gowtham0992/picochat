@@ -13,8 +13,8 @@
 
 <p align="center">
   <a href="https://gowtham0992.github.io/picochat/">Product Page</a> ·
-  <a href="https://gowtham0992.github.io/picochat/pipeline_guide.html">Pipeline Guide</a> ·
-  <a href="https://gowtham0992.github.io/picochat/contamination_and_honesty.html">Honesty Checks</a> ·
+  <a href="https://gowtham0992.github.io/picochat/training_paths.html">Pipeline Guide</a> ·
+  <a href="https://gowtham0992.github.io/picochat/model_evidence.html">Honesty Checks</a> ·
   <a href="https://gowtham0992.github.io/picochat/release_gates.html">Release Gates</a> ·
   <a href="https://gowtham0992.github.io/picochat/deployment.html">Deploy</a> ·
   <a href="https://gowtham0992.github.io/picochat/h100_100m_runbook.html">100M Runbook</a> ·
@@ -178,10 +178,10 @@ setup → sanity → import → release-skills pack → preflight → DDP dry ru
 ## Documentation
 
 - [Product page](https://gowtham0992.github.io/picochat/)
-- [Pipeline guide](https://gowtham0992.github.io/picochat/pipeline_guide.html)
+- [Pipeline guide](https://gowtham0992.github.io/picochat/training_paths.html)
 - [Architecture](https://gowtham0992.github.io/picochat/architecture.html)
 - [Release gates](https://gowtham0992.github.io/picochat/release_gates.html)
-- [Contamination and honesty](https://gowtham0992.github.io/picochat/contamination_and_honesty.html)
+- [Contamination and honesty](https://gowtham0992.github.io/picochat/model_evidence.html)
 - [Benchmark protocol](https://gowtham0992.github.io/picochat/benchmark_protocol.html)
 - [Deployment](https://gowtham0992.github.io/picochat/deployment.html)
 - [100M runbook](https://gowtham0992.github.io/picochat/h100_100m_runbook.html) · [1B runbook](https://gowtham0992.github.io/picochat/h200_1b_runbook.html)
