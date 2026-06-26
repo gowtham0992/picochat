@@ -146,6 +146,16 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .pc-overview-id strong { font-size: 20px; letter-spacing: -0.02em; }
 .pc-overview-id > span:last-child { color: var(--faint); font-family: var(--mono); font-size: 12px; }
 .pc-eyebrow { color: var(--faint); text-transform: uppercase; letter-spacing: 0.16em; font-size: 10px; font-weight: 700; }
+.pc-eyebrow-rule { display: inline-flex; align-items: center; gap: 10px; font-family: var(--mono); color: var(--muted); letter-spacing: 0.14em; }
+.pc-eyebrow-rule::before { content: ""; width: 24px; height: 1px; background: var(--iris); }
+
+/* Editorial section headers — numbered, mono, hairline rule (borrowed from the site). */
+.pc-editorial { gap: 20px; }
+.pc-sec-head { display: flex; align-items: center; gap: 12px; margin: 6px 2px -2px; }
+.pc-sec-num { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--iris); letter-spacing: 0.04em; }
+.pc-sec-label { font-family: var(--mono); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.2em; color: var(--muted); white-space: nowrap; }
+.pc-sec-rule { flex: 1; height: 1px; background: var(--line); }
+.pc-sec-head .pc-link { flex: none; }
 
 .pc-verdict { display: grid; gap: 10px; padding: 16px; text-align: left; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); cursor: pointer; box-shadow: var(--shadow-card); transition: border-color 0.22s var(--ease), transform 0.22s var(--ease), box-shadow 0.22s var(--ease); }
 .pc-verdict:hover { transform: translateY(-2px); box-shadow: var(--shadow); }

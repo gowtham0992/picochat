@@ -261,6 +261,17 @@ function modelConfig(detail: RunDetail | null, run: RunSummary | null): ModelCon
   };
 }
 
+function SecHead({ n, label, action }: { n: string; label: string; action?: React.ReactNode }) {
+  return (
+    <div className="pc-sec-head">
+      <span className="pc-sec-num">{n}</span>
+      <span className="pc-sec-label">{label}</span>
+      <i className="pc-sec-rule" />
+      {action}
+    </div>
+  );
+}
+
 function OverviewView(p: SectionProps) {
   const { detail, selectedRun, tone, setSection } = p;
   const s = (detail as any)?.summary || {};
@@ -269,16 +280,17 @@ function OverviewView(p: SectionProps) {
   const tps = s.sft?.throughput?.tokens_per_second ?? s.base?.throughput?.tokens_per_second;
 
   return (
-    <div className="pc-stack">
+    <div className="pc-stack pc-editorial">
       <section className="pc-overview-top">
         <div className="pc-overview-id">
-          <span className="pc-eyebrow">{s.config?.scale || "model"}</span>
+          <span className="pc-eyebrow pc-eyebrow-rule">Overview · {s.config?.scale || "model"}</span>
           <strong>{selectedRun?.name || "No run selected"}</strong>
           <span>{compactNumber(cfg.params)} parameters · {cfg.n_layer} blocks · {cfg.n_head} heads · d{cfg.n_embd || "--"}</span>
         </div>
         <button className="pc-btn" onClick={() => setSection("playground")}><MessageSquare size={15} /> Open playground</button>
       </section>
 
+      <SecHead n="01" label="Release readiness" />
       <div className="pc-grid two">
         <VerdictCard detail={detail} tone={tone} setSection={setSection} />
         <div className="pc-kpis">
@@ -289,6 +301,7 @@ function OverviewView(p: SectionProps) {
         </div>
       </div>
 
+      <SecHead n="02" label="Training & architecture" />
       <div className="pc-grid two">
         <Panel title="Training loss" sub="base → SFT" >
           <LossChart points={lossPoints(detail)} />
@@ -304,7 +317,8 @@ function OverviewView(p: SectionProps) {
         </Panel>
       </div>
 
-      <Panel title="Recent runs" action={<button className="pc-link" onClick={() => setSection("runs")}>All runs →</button>}>
+      <SecHead n="03" label="Recent runs" action={<button className="pc-link" onClick={() => setSection("runs")}>All runs →</button>} />
+      <Panel flush>
         <RunTable runs={p.runs.slice(-6).reverse()} selected={selectedRun?.name} onSelect={p.selectRun} />
       </Panel>
     </div>
@@ -627,17 +641,20 @@ function TrainingView({ detail, selectedRun, openLogs, openReport }: SectionProp
   const s = (detail as any)?.summary || {};
   const tps = s.sft?.throughput?.tokens_per_second ?? s.base?.throughput?.tokens_per_second;
   return (
-    <div className="pc-stack">
+    <div className="pc-stack pc-editorial">
       <ReportLinks reports={detail?.reports} openReport={openReport} only={["base", "sft"]} />
+      <SecHead n="01" label="Metrics" />
       <div className="pc-kpis four">
         <Kpi label="Base val loss" value={fixed(s.base?.final_val_loss ?? selectedRun?.base_val_loss, 3)} sub="final" />
         <Kpi label="SFT val loss" value={fixed(s.sft?.final_val_loss ?? selectedRun?.sft_val_loss, 3)} sub="final" />
         <Kpi label="Val BPB" value={fixed(s.sft?.final_val_bpb ?? s.base?.final_val_bpb, 3)} sub="bits/byte" />
         <Kpi label="Throughput" value={tps ? compactNumber(tps) : "--"} sub="tokens/s" />
       </div>
-      <Panel title="Loss curve" action={<button className="pc-link" onClick={openLogs}>Live log →</button>}>
+      <SecHead n="02" label="Training" action={<button className="pc-link" onClick={openLogs}>Live log →</button>} />
+      <Panel flush>
         <LossChart points={lossPoints(detail)} />
       </Panel>
+      <SecHead n="03" label="Configuration" />
       <div className="pc-grid two">
         <Spec title="Hyperparameters" rows={{
           "Base LR": s.config?.base_learning_rate ?? "--",
@@ -677,18 +694,20 @@ function EvalView({ detail, selectedRun, openReport, openLogsFor }: SectionProps
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
   return (
-    <div className="pc-stack">
+    <div className="pc-stack pc-editorial">
       <div className="pc-row">
         <ReportLinks reports={detail?.reports} openReport={openReport} only={["eval", "honesty"]} />
         {selectedRun ? <button className="pc-btn ghost" onClick={reEval} disabled={busy}>{busy ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />} Re-run eval</button> : null}
       </div>
       {err ? <Banner tone="block" title="Could not start eval" body={err} onClose={() => setErr("")} /> : null}
+      <SecHead n="01" label="Scores" />
       <div className="pc-kpis four">
         <Kpi label="Overall" value={percent(selectedRun?.pass_rate)} sub={selectedRun?.eval_score || "--"} tone={runTone(selectedRun)} />
         <Kpi label="Domain" value={percent(ev.domain_pass_rate)} sub="answerable" />
         <Kpi label="Refusal" value={percent(ev.refusal_pass_rate)} sub="should refuse" />
         <Kpi label="Prompt echo" value={percent(ev.prompt_echo_rate || 0)} sub="keep low" tone={(ev.prompt_echo_rate || 0) > 0.1 ? "warn" : "pass"} />
       </div>
+      <SecHead n="02" label="Evidence" />
       {catRows.length ? (
         <Panel title="By category">
           <div className="pc-bars">
@@ -731,15 +750,17 @@ function EvalView({ detail, selectedRun, openReport, openLogsFor }: SectionProps
 function ReleaseView({ detail, tone, openReport }: SectionProps) {
   const reasons = gateReasons(detail);
   return (
-    <div className="pc-stack">
+    <div className="pc-stack pc-editorial">
       <Banner
         tone={tone}
         title={tone === "pass" ? "Release gate passed" : tone === "block" ? "Release gate blocked" : tone === "neutral" ? "No release evidence yet" : "Release gate needs review"}
         body={tone === "pass" ? "Every checked gate is satisfied. This run can move to handoff." : "Resolve the failing checks below before publishing or handing off this model."}
       />
       <ReportLinks reports={detail?.reports} openReport={openReport} only={["honesty", "summary"]} />
+      <SecHead n="01" label="Registry" />
       <RegistryPanel />
-      <Panel title="Gate checks" flush>
+      <SecHead n="02" label="Gate checks" />
+      <Panel flush>
         <div className="pc-checks">
           {reasons.map((r, i) => (
             <div className={`pc-check ${r.tone}`} key={i}>
@@ -761,12 +782,14 @@ function DatasetView({ detail, settings, openNew }: SectionProps) {
   const corpus = s.corpus || {};
   const preview = (detail as any)?.corpus_preview || "";
   return (
-    <div className="pc-stack">
+    <div className="pc-stack pc-editorial">
+      <SecHead n="01" label="Import" />
       <Panel title="Import a Hugging Face dataset" sub="Turn a public dataset into a local pack you can train on">
         <HfImport defaultDataset={settings.defaultDataset} token={settings.hfToken} openNew={openNew} />
       </Panel>
       {s.corpus || s.tokenizer ? (
         <>
+          <SecHead n="02" label="Corpus" />
           <div className="pc-kpis four">
             <Kpi label="Documents" value={corpus.num_documents != null ? compactNumber(corpus.num_documents) : "--"} sub="in corpus" />
             <Kpi label="Characters" value={corpus.num_characters != null ? compactNumber(corpus.num_characters) : "--"} sub="total" />
@@ -782,9 +805,12 @@ function DatasetView({ detail, settings, openNew }: SectionProps) {
         </>
       ) : null}
       {preview ? (
-        <Panel title="Corpus preview">
-          <pre className="pc-pre">{String(preview).slice(0, 1600)}</pre>
-        </Panel>
+        <>
+          <SecHead n="03" label="Preview" />
+          <Panel title="Corpus preview">
+            <pre className="pc-pre">{String(preview).slice(0, 1600)}</pre>
+          </Panel>
+        </>
       ) : null}
     </div>
   );
@@ -881,12 +907,11 @@ function RemoteView({ openLogsFor }: SectionProps) {
   const lambdaSnippet = `# On a fresh Lambda GPU instance (cloud.lambda.ai):\ngit clone -b ${branch} ${REMOTE_REPO} && cd picochat\npip install -e ".[hf]"\npicochat data hf-import --dataset ${hfDataset} --pack-out my_pack --max-rows ${Math.min(hfMaxRows, 100000)}\npicochat run ${scale} --dataset-pack my_pack/dataset_pack.json --device cuda --out-dir runs/${runName}`;
 
   return (
-    <div className="pc-stack">
+    <div className="pc-stack pc-editorial">
+      <SecHead n="01" label="Plan" />
       <ScalePlanner />
-      <div className="pc-toolbar">
-        <div className="pc-toolbar-meta"><strong>Cloud training</strong> — train on remote GPUs with this dashboard as the control plane.</div>
-        <Segmented value={provider} options={["modal", "colab", "lambda"]} onChange={(v) => setProvider(v as "modal" | "colab" | "lambda")} />
-      </div>
+      <SecHead n="02" label="Cloud training" action={<Segmented value={provider} options={["modal", "colab", "lambda"]} onChange={(v) => setProvider(v as "modal" | "colab" | "lambda")} />} />
+      <div className="pc-toolbar-meta" style={{ marginTop: -6 }}>Train on remote GPUs with this dashboard as the control plane.</div>
 
       <div className="pc-grid two">
         <Panel title="Recipe" sub="Shared across providers">
@@ -1734,12 +1759,14 @@ function CompareView({ runs, selectRun }: SectionProps) {
   const rows = (data?.rows || []) as Array<Record<string, any>>;
   const boardRows = (board?.rows || []).filter((r) => r.suite === "overall").sort((a, b) => (b.pass_rate ?? 0) - (a.pass_rate ?? 0));
   return (
-    <div className="pc-stack">
+    <div className="pc-stack pc-editorial">
       <div className="pc-toolbar">
         <div className="pc-toolbar-meta">Pick two or more runs to compare side by side.</div>
         <button className="pc-btn primary" onClick={run} disabled={busy || selected.length < 2}>{busy ? <Loader2 size={15} className="spin" /> : <GitCompare size={15} />} Compare {selected.length || ""}</button>
       </div>
       {boardRows.length ? (
+        <>
+        <SecHead n="01" label="Rankings" />
         <Panel title="Leaderboard" sub="All runs ranked by visible eval" flush>
           <div className="pc-lb">
             <div className="pc-lb-tr head"><span>#</span><span>Run</span><span>Score</span><span>Pass</span><span>Prompt echo</span></div>
@@ -1754,7 +1781,9 @@ function CompareView({ runs, selectRun }: SectionProps) {
             ))}
           </div>
         </Panel>
+        </>
       ) : null}
+      <SecHead n="02" label="Select runs" />
       <Panel title="Runs" sub="Select runs to compare">
         {runs.length ? (
           <div className="pc-pick-grid">
@@ -1769,9 +1798,12 @@ function CompareView({ runs, selectRun }: SectionProps) {
       </Panel>
       {err ? <Banner tone="block" title="Compare failed" body={err} onClose={() => setErr("")} /> : null}
       {rows.length ? (
-        <Panel title="Comparison" sub={data?.best_run ? `Best eval: ${data.best_run}` : undefined}>
-          <CompareTable rows={rows} best={data?.best_run} />
-        </Panel>
+        <>
+          <SecHead n="03" label="Results" />
+          <Panel title="Comparison" sub={data?.best_run ? `Best eval: ${data.best_run}` : undefined}>
+            <CompareTable rows={rows} best={data?.best_run} />
+          </Panel>
+        </>
       ) : null}
     </div>
   );
