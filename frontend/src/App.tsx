@@ -31,9 +31,9 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, benchmarkPack, cancelRun, clonePack, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, importRun, initDatasetPack, inspectTuning, listRuns, loadLeaderboard, loadPackEditor, loadPresets, loadRegistry, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, scalePlan, serveStart, serveStatus, serveStop, startRun, trainHfSft } from "./api";
+import { archiveRuns, benchmarkPack, cancelRun, clonePack, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, importRun, initDatasetPack, inspectTuning, listRuns, loadLeaderboard, loadPackEditor, loadPresets, loadRegistry, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, scalePlan, serveStart, serveStatus, serveStop, startRun, trainHfDpo, trainHfSft } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
-import { compactNumber, fixed, latestRun, lossPoints, parseEvalScore, percent, releaseTone, runTone, statusLabel } from "./utils";
+import { compactNumber, fixed, latestRun, lossPoints, metricSeries, parseEvalScore, percent, releaseTone, runTone, statusLabel, throughputSeries } from "./utils";
 
 type SectionId = "overview" | "runs" | "compare" | "playground" | "training" | "eval" | "release" | "dataset" | "cloud" | "settings";
 
@@ -394,7 +394,7 @@ function RunsView(p: SectionProps) {
 
 type ChatMsg = { role: "user" | "assistant"; content: string; meta?: string };
 
-function PlaygroundView({ selectedRun, detail }: SectionProps) {
+function PlaygroundView({ selectedRun, detail, openLogsFor }: SectionProps) {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [checkpoint, setCheckpoint] = useState<"base" | "sft">("sft");
@@ -429,7 +429,7 @@ function PlaygroundView({ selectedRun, detail }: SectionProps) {
     <div className="pc-play">
       <div className="pc-play-main">
         <div className="pc-play-head">
-          <div><strong>{runName || "No run selected"}</strong><span>Native PyTorch inference · CPU</span></div>
+          <div><strong>{runName || "No run selected"}</strong><span>{isHf ? "Hugging Face inference · base vs fine-tuned" : "Native PyTorch inference · CPU"}</span></div>
           <Segmented value={checkpoint} options={["base", "sft"]} onChange={(v) => setCheckpoint(v as "base" | "sft")} />
         </div>
         <div className="pc-thread" ref={threadRef}>
@@ -470,7 +470,9 @@ function PlaygroundView({ selectedRun, detail }: SectionProps) {
         <Panel title="Sampling">
           <Slider label="Temperature" value={temperature} min={0} max={2} step={0.05} onChange={setTemperature} />
           <Slider label="Max new tokens" value={maxTokens} min={8} max={240} step={8} onChange={(v) => setMaxTokens(Math.round(v))} fmt={(v) => String(Math.round(v))} />
-          <div className="pc-hint">Checkpoint: <code>{checkpoint}</code>. The <code>sft</code> checkpoint is chat-tuned; <code>base</code> is raw pretraining.</div>
+          <div className="pc-hint">{isHf
+            ? <>Toggle <code>base</code> = the original model before fine-tuning, <code>sft</code> = your fine-tuned version — same prompt, side by side.</>
+            : <>Checkpoint: <code>{checkpoint}</code>. The <code>sft</code> checkpoint is chat-tuned; <code>base</code> is raw pretraining.</>}</div>
         </Panel>
         <Panel title="Model">
           <Spec rows={{
@@ -480,17 +482,15 @@ function PlaygroundView({ selectedRun, detail }: SectionProps) {
             Context: (detail as any)?.summary?.config?.context_size || selectedRun?.context_size || "--"
           }} />
         </Panel>
-        <Panel title="Share / API access">
-          <ServePanel run={runName} />
-        </Panel>
-        <Panel title="Export">
-          <ExportPanel run={runName} />
-        </Panel>
-        <Panel title="Deploy">
-          {runName
-            ? <><button className="pc-btn" onClick={() => setDeploying(true)}><Boxes size={15} /> Deploy to production</button>
-              <div className="pc-hint">Get a copy-paste recipe (Docker, vLLM, or llama.cpp) plus the exported model.</div></>
-            : <div className="pc-hint">Select a run to deploy it.</div>}
+        <Panel title="Ship this model">
+          {runName ? (
+            <div className="pc-ship">
+              <ServePanel run={runName} />
+              {isHf ? <DpoAlign run={runName} detail={detail} openLogsFor={openLogsFor} /> : null}
+              <ExportPanel run={runName} />
+              <button className="pc-btn" onClick={() => setDeploying(true)}><Boxes size={15} /> Deploy to production</button>
+            </div>
+          ) : <div className="pc-hint">Select a run to serve, export, or deploy it.</div>}
         </Panel>
       </aside>
       {deploying ? <DeployModal run={runName} isHf={isHf} onClose={() => setDeploying(false)} /> : null}
@@ -548,6 +548,28 @@ function DeployModal({ run, isHf, onClose }: { run: string; isHf: boolean; onClo
   );
 }
 
+function DpoAlign({ run, detail, openLogsFor }: { run: string; detail: RunDetail | null; openLogsFor: (a: { job?: string; run?: string }) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const chatInput = (detail as any)?.summary?.hf_sft_report?.input;
+  const go = async () => {
+    if (!chatInput) { setErr("This run has no recorded chat data to derive preferences from."); return; }
+    setBusy(true); setErr("");
+    try {
+      const prefsOut = String(chatInput).replace(/\.jsonl$/, "_prefs.jsonl");
+      await generatePreferences({ input_path: chatInput, out_path: prefsOut, force: true });
+      const started = await trainHfDpo({ run, preference_input: prefsOut, device: "auto", max_steps: 60 });
+      openLogsFor({ job: started.job?.id, run: started.job?.run_name });
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  };
+  return (
+    <>
+      <button className="pc-btn" onClick={go} disabled={busy} title="Generate preference pairs and DPO-align this model">{busy ? <Loader2 size={15} className="spin" /> : <FlaskConical size={15} />} Align with DPO</button>
+      {err ? <Banner tone="block" title="DPO failed" body={err} onClose={() => setErr("")} /> : null}
+    </>
+  );
+}
+
 function ExportPanel({ run }: { run: string }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -566,7 +588,6 @@ function ExportPanel({ run }: { run: string }) {
       ) : (
         <>
           <button className="pc-btn" onClick={go} disabled={busy}>{busy ? <Loader2 size={15} className="spin" /> : <Download size={15} />} Export to Hugging Face</button>
-          <div className="pc-hint">Converts this run to a transformers model + model card you can load or upload anywhere.</div>
         </>
       )}
       {err ? <Banner tone="block" title="Export failed" body={err} onClose={() => setErr("")} /> : null}
@@ -627,7 +648,6 @@ function ServePanel({ run }: { run: string }) {
       ) : (
         <>
           <button className="pc-btn primary" onClick={start} disabled={busy}>{busy ? <Loader2 size={15} className="spin" /> : <Send size={15} />} Serve for your team</button>
-          <div className="pc-hint">Starts an OpenAI-compatible endpoint your team can call from code.</div>
         </>
       )}
       {err ? <Banner tone="block" title="Serve failed" body={err} onClose={() => setErr("")} /> : null}
@@ -640,39 +660,70 @@ function ServePanel({ run }: { run: string }) {
 function TrainingView({ detail, selectedRun, openLogs, openReport }: SectionProps) {
   const s = (detail as any)?.summary || {};
   const tps = s.sft?.throughput?.tokens_per_second ?? s.base?.throughput?.tokens_per_second;
+  const hr = s.hf_sft_report;
+  const isHf = s.kind === "hf-sft";
   return (
     <div className="pc-stack pc-editorial">
       <ReportLinks reports={detail?.reports} openReport={openReport} only={["base", "sft"]} />
       <SecHead n="01" label="Metrics" />
-      <div className="pc-kpis four">
-        <Kpi label="Base val loss" value={fixed(s.base?.final_val_loss ?? selectedRun?.base_val_loss, 3)} sub="final" />
-        <Kpi label="SFT val loss" value={fixed(s.sft?.final_val_loss ?? selectedRun?.sft_val_loss, 3)} sub="final" />
-        <Kpi label="Val BPB" value={fixed(s.sft?.final_val_bpb ?? s.base?.final_val_bpb, 3)} sub="bits/byte" />
-        <Kpi label="Throughput" value={tps ? compactNumber(tps) : "--"} sub="tokens/s" />
-      </div>
+      {isHf && hr ? (
+        <div className="pc-kpis four">
+          <Kpi label="Best val loss" value={fixed(hr.best_val_loss, 3)} sub="lower is better" />
+          <Kpi label="Final train loss" value={fixed(hr.final_train_loss, 3)} sub="final step" />
+          <Kpi label="Train / val rows" value={`${hr.train_examples ?? "--"} / ${hr.val_examples ?? "--"}`} sub="examples" />
+          <Kpi label="Method" value={hr.peft?.mode === "lora" ? "LoRA" : "full"} sub="fine-tune" />
+        </div>
+      ) : (
+        <div className="pc-kpis four">
+          <Kpi label="Base val loss" value={fixed(s.base?.final_val_loss ?? selectedRun?.base_val_loss, 3)} sub="final" />
+          <Kpi label="SFT val loss" value={fixed(s.sft?.final_val_loss ?? selectedRun?.sft_val_loss, 3)} sub="final" />
+          <Kpi label="Val BPB" value={fixed(s.sft?.final_val_bpb ?? s.base?.final_val_bpb, 3)} sub="bits/byte" />
+          <Kpi label="Throughput" value={tps ? compactNumber(tps) : "--"} sub="tokens/s" />
+        </div>
+      )}
       <SecHead n="02" label="Training" action={<button className="pc-link" onClick={openLogs}>Live log →</button>} />
       <Panel flush>
         <LossChart points={lossPoints(detail)} />
       </Panel>
+      <TrainingMetrics detail={detail} />
       <SecHead n="03" label="Configuration" />
-      <div className="pc-grid two">
-        <Spec title="Hyperparameters" rows={{
-          "Base LR": s.config?.base_learning_rate ?? "--",
-          "SFT LR": s.config?.sft_learning_rate ?? "--",
-          "Base steps": s.config?.base_steps ?? "--",
-          "SFT steps": s.config?.sft_steps ?? "--",
-          "Batch (base/sft)": `${s.config?.base_batch_size ?? "--"} / ${s.config?.sft_batch_size ?? "--"}`,
-          "Stop reason": s.base?.stop_reason || "--"
-        }} />
-        <Spec title="Hardware & runtime" rows={{
-          Device: s.config?.device || "--",
-          Precision: s.config?.precision || "--",
-          "torch.compile": s.config?.torch_compile ? "on" : "off",
-          "Grad checkpointing": s.config?.gradient_checkpointing ? "on" : "off",
-          DDP: s.config?.ddp ? "on" : "off",
-          "Packing efficiency": s.sft?.packing_efficiency != null ? percent(s.sft.packing_efficiency) : "--"
-        }} />
-      </div>
+      {isHf && hr ? (
+        <div className="pc-grid two">
+          <Spec title="Fine-tune setup" rows={{
+            "Base model": hr.model || s.config?.base_model || "--",
+            Method: hr.peft?.mode === "lora" ? `LoRA · rank ${hr.peft.rank}` : "full fine-tune",
+            "Examples (total)": hr.num_examples ?? "--",
+            "Train / val": `${hr.train_examples ?? "--"} / ${hr.val_examples ?? "--"}`,
+            "Tokenized train seqs": hr.tokenized_train_sequences ?? "--"
+          }} />
+          <Spec title="Runtime" rows={{
+            Device: hr.precision_runtime?.device_type ?? "--",
+            Precision: hr.precision_runtime?.dtype_name ?? hr.precision_runtime?.requested ?? "--",
+            "Grad scaler": hr.precision_runtime?.grad_scaler ? "on" : "off",
+            "torch.compile": hr.compile ? "on" : "off",
+            "Grad checkpointing": hr.gradient_checkpointing ? "on" : "off"
+          }} />
+        </div>
+      ) : (
+        <div className="pc-grid two">
+          <Spec title="Hyperparameters" rows={{
+            "Base LR": s.config?.base_learning_rate ?? "--",
+            "SFT LR": s.config?.sft_learning_rate ?? "--",
+            "Base steps": s.config?.base_steps ?? "--",
+            "SFT steps": s.config?.sft_steps ?? "--",
+            "Batch (base/sft)": `${s.config?.base_batch_size ?? "--"} / ${s.config?.sft_batch_size ?? "--"}`,
+            "Stop reason": s.base?.stop_reason || "--"
+          }} />
+          <Spec title="Hardware & runtime" rows={{
+            Device: s.config?.device || "--",
+            Precision: s.config?.precision || "--",
+            "torch.compile": s.config?.torch_compile ? "on" : "off",
+            "Grad checkpointing": s.config?.gradient_checkpointing ? "on" : "off",
+            DDP: s.config?.ddp ? "on" : "off",
+            "Packing efficiency": s.sft?.packing_efficiency != null ? percent(s.sft.packing_efficiency) : "--"
+          }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1108,6 +1159,42 @@ function LossChart({ points }: { points: Array<{ step: number; train?: number; v
   );
 }
 
+function MiniChart({ points, label, color, fmt }: { points: Array<{ step: number; value: number }>; label: string; color?: string; fmt?: (v: number) => string }) {
+  const W = 460, H = 150;
+  const fmtv = fmt || ((v: number) => (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(3)));
+  if (points.length < 2) {
+    return <div className="pc-metric"><div className="pc-metric-head"><span className="pc-metric-label">{label}</span></div><div className="pc-metric-empty">not captured</div></div>;
+  }
+  const vals = points.map((p) => p.value);
+  const min = Math.min(...vals), max = Math.max(...vals), span = (max - min) || Math.abs(max) || 1;
+  const x = (i: number) => 10 + (i / (points.length - 1)) * (W - 20);
+  const y = (v: number) => H - 24 - ((v - min) / span) * (H - 44);
+  const d = points.map((p, i) => `${i ? "L" : "M"} ${x(i).toFixed(1)} ${y(p.value).toFixed(1)}`).join(" ");
+  return (
+    <div className="pc-metric">
+      <div className="pc-metric-head"><span className="pc-metric-label">{label}</span><span className="pc-metric-val">{fmtv(vals[vals.length - 1])}</span></div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="pc-metric-svg" role="img" aria-label={label} preserveAspectRatio="none">
+        <line x1="10" x2={W - 10} y1={H - 24} y2={H - 24} className="pc-metric-axis" />
+        <path d={d} fill="none" stroke={color || "var(--iris)"} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      </svg>
+    </div>
+  );
+}
+
+function TrainingMetrics({ detail }: { detail: RunDetail | null }) {
+  const lr = metricSeries(detail, "lr");
+  const grad = metricSeries(detail, "grad_norm");
+  const tput = throughputSeries(detail);
+  if (!lr.length && !grad.length && !tput.length) return null;
+  return (
+    <div className="pc-metric-grid">
+      <MiniChart points={lr} label="Learning rate" color="var(--blue)" fmt={(v) => v.toExponential(1)} />
+      <MiniChart points={grad} label="Gradient norm" color="var(--amber)" fmt={(v) => v.toFixed(2)} />
+      <MiniChart points={tput} label="Throughput · steps/s" color="var(--green)" fmt={(v) => v.toFixed(2)} />
+    </div>
+  );
+}
+
 function Segmented({ value, options, onChange }: { value: string; options: string[]; onChange: (v: string) => void }) {
   return <div className="pc-seg">{options.map((o) => <button key={o} className={value === o ? "on" : ""} onClick={() => onChange(o)}>{o}</button>)}</div>;
 }
@@ -1224,6 +1311,7 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
   const [ftName, setFtName] = useState("");
   const [ftSteps, setFtSteps] = useState(100);
   const [ftLora, setFtLora] = useState(true);
+  const [ftQuantize, setFtQuantize] = useState(false);
   const [ftDevice, setFtDevice] = useState("auto");
   const [ftBusy, setFtBusy] = useState(false);
   const [ftErr, setFtErr] = useState("");
@@ -1327,15 +1415,15 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
 
   const launchFinetune = async () => {
     if (!baseModel.trim()) { setFtErr("Enter a base model id, e.g. org/name."); return; }
-    if (!ftPack.trim()) { setFtErr("Choose a dataset pack with chat data."); return; }
+    if (!pack.trim()) { setFtErr("Prepare some training data first (step 1-2)."); return; }
     setFtBusy(true); setFtErr("");
     try {
-      const started = await trainHfSft({ model: baseModel.trim(), dataset_pack: ftPack.trim(), run_name: ftName.trim() || undefined, max_steps: ftSteps, peft: ftLora ? "lora" : "none", device: ftDevice });
+      const started = await trainHfSft({ model: baseModel.trim(), dataset_pack: pack.trim(), run_name: ftName.trim() || undefined, max_steps: ftSteps, peft: ftLora ? "lora" : "none", quantize: ftQuantize ? "4bit" : "none", device: ftDevice });
       onLaunched({ job: started.job?.id, run: started.job?.run_name });
     } catch (e) { setFtErr(e instanceof Error ? e.message : String(e)); } finally { setFtBusy(false); }
   };
 
-  const stepLabel = step === 1 ? "Choose your data" : step === 2 ? "Training data" : "Train";
+  const stepLabel = step === 1 ? "Choose your data" : step === 2 ? "Training data" : (mode === "finetune" ? "Fine-tune" : "Train");
   const statTone = (st?: string): Tone => st === "ready" ? "pass" : st === "caution" ? "warn" : "block";
 
   return (
@@ -1343,41 +1431,19 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
     <div className="pc-modal-back" onClick={onClose}>
       <section className="pc-modal pc-new" onClick={(e) => e.stopPropagation()}>
         <header>
-          <div><span className="pc-eyebrow">{mode === "finetune" ? "Fine-tune an existing model" : `Create a domain model · step ${step} of 3`}</span><h2>{mode === "finetune" ? "Fine-tune" : stepLabel}</h2></div>
+          <div><span className="pc-eyebrow">{mode === "finetune" ? `Fine-tune a model · step ${step} of 3` : `Create a domain model · step ${step} of 3`}</span><h2>{stepLabel}</h2></div>
           <button className="pc-btn ghost" onClick={onClose}><X size={15} /></button>
         </header>
         <div className="pc-new-body">
-          {(step === 1 || mode === "finetune") ? (
+          {step === 1 ? (
             <div className="pc-mode">
               <button className={`pc-source-opt ${mode === "scratch" ? "on" : ""}`} onClick={() => setMode("scratch")}>Train from scratch</button>
               <button className={`pc-source-opt ${mode === "finetune" ? "on" : ""}`} onClick={() => setMode("finetune")}>Fine-tune existing model</button>
             </div>
           ) : null}
-          {mode === "finetune" ? (
-            <>
-              <label className="pc-field">Base model
-                <input value={baseModel} onChange={(e) => setBaseModel(e.target.value)} placeholder="HuggingFaceTB/SmolLM2-135M-Instruct" />
-              </label>
-              <label className="pc-field">Training data (dataset pack)
-                <input value={ftPack} onChange={(e) => setFtPack(e.target.value)} placeholder="path/to/dataset_pack.json" />
-              </label>
-              <div className="pc-new-examples">
-                <span>Packs</span>
-                {EXAMPLE_PACKS.map((ex) => <button key={ex} className={`pc-chip ${ftPack === ex ? "on" : ""}`} onClick={() => setFtPack(ex)}>{ex.split("/").pop()}</button>)}
-              </div>
-              <div className="pc-grid two">
-                <label className="pc-field">Run name (optional)<input value={ftName} onChange={(e) => setFtName(e.target.value)} placeholder="my-domain-ft-v1" /></label>
-                <label className="pc-field">Max steps<input type="number" value={ftSteps} onChange={(e) => setFtSteps(Math.max(1, Number(e.target.value) || 100))} /></label>
-              </div>
-              <div className="pc-grid two">
-                <label className="pc-field">Device<select value={ftDevice} onChange={(e) => setFtDevice(e.target.value)}>{["auto", "cpu", "cuda", "mps"].map((d) => <option key={d} value={d}>{d}</option>)}</select></label>
-                <label className="pc-check">LoRA adapter (faster, lighter)<input type="checkbox" checked={ftLora} onChange={(e) => setFtLora(e.target.checked)} /></label>
-              </div>
-              <div className="pc-hint">Downloads the base model and fine-tunes it on the pack's chat data. Needs the <code>hf</code> extras installed; watch the live log for progress.</div>
-              {ftErr ? <Banner tone="block" title="Could not start" body={ftErr} onClose={() => setFtErr("")} /> : null}
-            </>
-          ) : (
-            <>
+          {mode === "finetune" && step === 1 ? (
+            <div className="pc-hint" style={{ marginTop: -2, marginBottom: 8 }}>Pick where your training data comes from — Picochat turns it into the chat examples your model learns from. You'll choose the base model to fine-tune on the last step.</div>
+          ) : null}
           {step === 1 ? (
             <>
               <div className="pc-source four">
@@ -1460,7 +1526,7 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
             </>
           ) : null}
 
-          {step === 3 ? (
+          {step === 3 && mode === "scratch" ? (
             <>
               <div className="pc-grid two">
                 <label className="pc-field">Run name (optional)<input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-domain-v1" /></label>
@@ -1497,34 +1563,43 @@ function NewRunModal({ initialPack, onClose, onLaunched }: { initialPack?: strin
               {err ? <Banner tone="block" title="Could not launch" body={err} onClose={() => setErr("")} /> : null}
             </>
           ) : null}
+          {step === 3 && mode === "finetune" ? (
+            <>
+              <label className="pc-field">Base model to fine-tune
+                <input value={baseModel} onChange={(e) => setBaseModel(e.target.value)} placeholder="HuggingFaceTB/SmolLM2-135M-Instruct" />
+              </label>
+              <div className="pc-hint" style={{ marginTop: -4 }}>A standard Hugging Face causal LM (e.g. SmolLM, Qwen, Llama). Small models fine-tune fastest; multi-billion-parameter or custom-architecture models may be slow or unsupported here.</div>
+              <div className="pc-grid two">
+                <label className="pc-field">Run name (optional)<input value={ftName} onChange={(e) => setFtName(e.target.value)} placeholder="my-domain-ft-v1" /></label>
+                <label className="pc-field">Max steps<input type="number" value={ftSteps} onChange={(e) => setFtSteps(Math.max(1, Number(e.target.value) || 100))} /></label>
+              </div>
+              <div className="pc-grid two">
+                <label className="pc-field">Device<select value={ftDevice} onChange={(e) => setFtDevice(e.target.value)}>{["auto", "cpu", "cuda", "mps"].map((d) => <option key={d} value={d}>{d}</option>)}</select></label>
+                <label className="pc-check">LoRA adapter (faster, lighter)<input type="checkbox" checked={ftLora} onChange={(e) => { setFtLora(e.target.checked); if (!e.target.checked) setFtQuantize(false); }} /></label>
+              </div>
+              <label className="pc-check">4-bit QLoRA — fit a big base on one GPU (needs CUDA + LoRA)<input type="checkbox" checked={ftQuantize} disabled={!ftLora} onChange={(e) => setFtQuantize(e.target.checked)} /></label>
+              <div className="pc-hint">Fine-tunes the base model on the chat examples you prepared. Needs the <code>hf</code> extras installed; watch the live log for progress.{ftQuantize ? " QLoRA runs on a CUDA GPU (e.g. Modal), not locally." : ""}</div>
+              {ftErr ? <Banner tone="block" title="Could not start" body={ftErr} onClose={() => setFtErr("")} /> : null}
             </>
-          )}
+          ) : null}
         </div>
         <footer className="pc-new-foot">
-          {mode === "finetune" ? (
-            <>
-              <button className="pc-btn ghost" onClick={onClose}>Cancel</button>
-              <button className="pc-btn primary" onClick={launchFinetune} disabled={ftBusy}>{ftBusy ? <Loader2 size={15} className="spin" /> : <Gauge size={15} />} Start fine-tuning</button>
-            </>
-          ) : (
-            <>
-              {step > 1
-                ? <button className="pc-btn ghost" onClick={() => setStep((s) => (s - 1) as WizStep)}>Back</button>
-                : <button className="pc-btn ghost" onClick={onClose}>Cancel</button>}
-              {step === 1 ? (
-                source === "hf"
-                  ? <button className="pc-btn primary" onClick={runImport} disabled={importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Import & continue</button>
-                  : source === "folder"
-                    ? <button className="pc-btn primary" onClick={createFromFolder} disabled={importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Create pack & continue</button>
-                    : <>
-                        {!pack.trim() ? <span className="pc-foot-hint">Select a pack to continue</span> : null}
-                        <button className="pc-btn primary" onClick={() => goPrepareExample(pack)} disabled={!pack.trim() || importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : null} Next: training data →</button>
-                      </>
-              ) : null}
-              {step === 2 ? <button className="pc-btn primary" onClick={() => setStep(3)} disabled={inspBusy}>Next: train →</button> : null}
-              {step === 3 ? <button className="pc-btn primary" onClick={launch} disabled={launching}>{launching ? <Loader2 size={15} className="spin" /> : <Gauge size={15} />} Start training</button> : null}
-            </>
-          )}
+          {step > 1
+            ? <button className="pc-btn ghost" onClick={() => setStep((s) => (s - 1) as WizStep)}>Back</button>
+            : <button className="pc-btn ghost" onClick={onClose}>Cancel</button>}
+          {step === 1 ? (
+            source === "hf"
+              ? <button className="pc-btn primary" onClick={runImport} disabled={importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Import & continue</button>
+              : source === "folder"
+                ? <button className="pc-btn primary" onClick={createFromFolder} disabled={importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : <Database size={15} />} Create pack & continue</button>
+                : <>
+                    {!pack.trim() ? <span className="pc-foot-hint">Select a pack to continue</span> : null}
+                    <button className="pc-btn primary" onClick={() => goPrepareExample(pack)} disabled={!pack.trim() || importBusy}>{importBusy ? <Loader2 size={15} className="spin" /> : null} Next: training data →</button>
+                  </>
+          ) : null}
+          {step === 2 ? <button className="pc-btn primary" onClick={() => setStep(3)} disabled={inspBusy}>Next: {mode === "finetune" ? "fine-tune" : "train"} →</button> : null}
+          {step === 3 && mode === "scratch" ? <button className="pc-btn primary" onClick={launch} disabled={launching}>{launching ? <Loader2 size={15} className="spin" /> : <Gauge size={15} />} Start training</button> : null}
+          {step === 3 && mode === "finetune" ? <button className="pc-btn primary" onClick={launchFinetune} disabled={ftBusy}>{ftBusy ? <Loader2 size={15} className="spin" /> : <Gauge size={15} />} Start fine-tuning</button> : null}
         </footer>
       </section>
     </div>

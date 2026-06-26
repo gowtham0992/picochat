@@ -241,6 +241,17 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .pc-loss text:first-of-type { fill: var(--iris); } .pc-loss .vl { fill: var(--amber); }
 .pc-empty { min-height: 160px; display: grid; place-items: center; color: var(--muted); font-size: 12.5px; text-align: center; padding: 20px; }
 
+/* Training metrics — small multiples (LR, grad norm, throughput). */
+.pc-metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.pc-metric { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); padding: 13px 14px; box-shadow: var(--shadow-card); }
+.pc-metric-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.pc-metric-label { color: var(--faint); text-transform: uppercase; letter-spacing: 0.1em; font-size: 9.5px; font-weight: 700; }
+.pc-metric-val { font-family: var(--mono); font-size: 13px; color: var(--text); }
+.pc-metric-svg { width: 100%; height: 90px; display: block; }
+.pc-metric-svg .pc-metric-axis { stroke: var(--line); stroke-width: 1; }
+.pc-metric-empty { height: 90px; display: grid; place-items: center; color: var(--faint); font-size: 11.5px; font-family: var(--mono); }
+@media (max-width: 900px) { .pc-metric-grid { grid-template-columns: 1fr; } }
+
 /* -------------------------------------------------------------------- bars */
 .pc-bars { display: grid; gap: 11px; }
 .pc-bar-row { display: grid; grid-template-columns: minmax(90px, 0.7fr) minmax(0, 2fr) auto; align-items: center; gap: 12px; }
@@ -259,7 +270,7 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .pc-check span { display: block; color: var(--muted); font-size: 12px; }
 
 /* -------------------------------------------------------------- playground */
-.pc-play { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; height: calc(100vh - 54px - 44px); }
+.pc-play { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; height: calc(100vh - 54px - 44px); min-height: 0; overflow: hidden; }
 .pc-play-main { display: grid; grid-template-rows: auto 1fr auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); overflow: hidden; min-height: 0; }
 .pc-play-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
 .pc-play-head strong { display: block; font-family: var(--mono); font-size: 13px; }
@@ -287,7 +298,9 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .pc-composer textarea { flex: 1; resize: none; min-height: 44px; max-height: 160px; padding: 11px 13px; border: 1px solid var(--line-2); border-radius: 13px; background: var(--bg-2); color: var(--text); line-height: 1.5; transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease); }
 .pc-composer textarea:focus { outline: none; border-color: var(--iris); box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--iris) 20%, transparent); }
 .pc-composer .pc-btn { height: 44px; width: 44px; padding: 0; }
-.pc-play-side { display: grid; gap: 14px; align-content: start; }
+.pc-play-side { display: grid; gap: 12px; align-content: start; overflow-y: auto; min-height: 0; padding-right: 4px; }
+.pc-ship { display: grid; gap: 9px; }
+.pc-ship .pc-btn { width: 100%; }
 .pc-hint { color: var(--muted); font-size: 11.5px; line-height: 1.5; margin-top: 10px; }
 .pc-hint code, .pc-msg-body code { font-family: var(--mono); font-size: 0.92em; padding: 1px 5px; border-radius: 5px; background: color-mix(in srgb, var(--text) 8%, transparent); }
 

@@ -56,8 +56,42 @@ export function parseEvalScore(score?: string): { passed: number; total: number 
   return { passed: Number.isFinite(passed) ? passed : 0, total: Number.isFinite(total) ? total : 0 };
 }
 
+// Raw per-step training rows from whichever report logged them (native base/sft
+// or an HF fine-tune). Used by the metrics panel to chart any captured field.
+export function trainingHistory(detail?: RunDetail | null): Array<Record<string, number>> {
+  const reports = [detail?.base_report, detail?.sft_report, (detail as any)?.summary?.hf_sft_report].filter(Boolean) as Array<Record<string, any>>;
+  const rows: Array<Record<string, number>> = [];
+  for (const report of reports) {
+    const history = report.history || report.steps || report.losses || [];
+    if (Array.isArray(history)) for (const row of history) if (row && typeof row === "object") rows.push(row);
+  }
+  return rows;
+}
+
+// A single named metric as {step, value} points, skipping non-finite values.
+export function metricSeries(detail: RunDetail | null | undefined, key: string): Array<{ step: number; value: number }> {
+  const out: Array<{ step: number; value: number }> = [];
+  trainingHistory(detail).forEach((row, i) => {
+    const v = Number(row[key]);
+    if (Number.isFinite(v)) out.push({ step: Number(row.step ?? i + 1), value: v });
+  });
+  return out;
+}
+
+// Steps-per-second between consecutive log points, derived from elapsed_sec.
+export function throughputSeries(detail?: RunDetail | null): Array<{ step: number; value: number }> {
+  const h = trainingHistory(detail).filter((r) => Number.isFinite(Number(r.elapsed_sec)));
+  const out: Array<{ step: number; value: number }> = [];
+  for (let i = 1; i < h.length; i++) {
+    const ds = Number(h[i].step) - Number(h[i - 1].step);
+    const dt = Number(h[i].elapsed_sec) - Number(h[i - 1].elapsed_sec);
+    if (dt > 0 && ds > 0) out.push({ step: Number(h[i].step), value: ds / dt });
+  }
+  return out;
+}
+
 export function lossPoints(detail?: RunDetail | null): Array<{ step: number; train?: number; val?: number }> {
-  const reports = [detail?.base_report, detail?.sft_report].filter(Boolean) as Array<Record<string, any>>;
+  const reports = [detail?.base_report, detail?.sft_report, (detail as any)?.summary?.hf_sft_report].filter(Boolean) as Array<Record<string, any>>;
   const rows: Array<{ step: number; train?: number; val?: number }> = [];
   for (const report of reports) {
     const history = report.history || report.steps || report.losses || [];
