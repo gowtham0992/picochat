@@ -7,6 +7,9 @@ Requires the `hf` extra (transformers); import this module lazily.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 
@@ -16,13 +19,24 @@ from picochat.device import resolve_device
 class HFGenerator:
     """Checkpoint-backed generator for a saved Hugging Face causal LM."""
 
-    def __init__(self, *, model_path: str, device: str = "cpu") -> None:
+    def __init__(self, *, model_path: str, device: str = "cpu", base_only: bool = False) -> None:
         self.model_path = model_path
         self.device = resolve_device(device)
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(model_path)
+        # A LoRA fine-tune saves only the adapter; loading model_path auto-applies
+        # base+adapter. base_only loads the untouched base model instead, so the
+        # Playground's base/sft toggle becomes a real before/after-fine-tuning
+        # comparison rather than serving the same weights for both.
+        load_path = model_path
+        if base_only:
+            adapter_cfg = Path(model_path) / "adapter_config.json"
+            if adapter_cfg.exists():
+                base_name = json.loads(adapter_cfg.read_text(encoding="utf-8")).get("base_model_name_or_path")
+                if base_name:
+                    load_path = base_name
+        self.model = AutoModelForCausalLM.from_pretrained(load_path)
         self.model.to(self.device)
         self.model.eval()
 
@@ -40,7 +54,21 @@ class HFGenerator:
         use_kv_cache: bool = True,
     ) -> dict:
         set_seed(seed)
-        encoded = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        # Match training: hf_sft formats rows with the model's chat template, so
+        # inference must apply it too — otherwise an instruct model is fed a raw
+        # string it was never tuned on and answers worse (or ignores its system
+        # role). Fall back to the raw prompt for base models with no template.
+        text_input = prompt
+        if getattr(self.tokenizer, "chat_template", None):
+            try:
+                text_input = self.tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                text_input = prompt
+        encoded = self.tokenizer(text_input, return_tensors="pt").to(self.device)
         prompt_len = int(encoded["input_ids"].shape[1])
         do_sample = temperature is not None and temperature > 0
 

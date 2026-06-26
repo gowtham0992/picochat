@@ -55,6 +55,7 @@ class HFSFTConfig:
     lora_dropout: float = 0.0
     lora_target_modules: str = "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj"
     trust_remote_code: bool = False
+    quantize: str = "none"  # "none" or "4bit" — QLoRA (requires CUDA + bitsandbytes)
     revision: str | None = None
     done_file: str | None = "done.txt"
     progress_file: str | None = None
@@ -294,6 +295,28 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
     }
     if precision_runtime.dtype is not None and device.type in {"cuda", "mps"}:
         model_kwargs["torch_dtype"] = precision_runtime.dtype
+    quantized = config.quantize == "4bit"
+    if quantized:
+        # QLoRA: load the base in 4-bit (NF4) and train a LoRA adapter on top, so a
+        # multi-billion-parameter base fits on a single modest GPU. bitsandbytes is
+        # CUDA-only, so this path only runs on a GPU host (e.g. Modal), not on CPU/MPS.
+        if device.type != "cuda":
+            raise RuntimeError("QLoRA (--quantize 4bit) requires a CUDA GPU; run with --device cuda on a GPU host such as Modal.")
+        if config.peft != "lora":
+            raise RuntimeError("QLoRA requires --peft lora (4-bit base + LoRA adapter).")
+        try:
+            from transformers import BitsAndBytesConfig
+        except Exception as error:  # pragma: no cover - import guard
+            raise RuntimeError("QLoRA needs bitsandbytes installed: pip install bitsandbytes") from error
+        compute_dtype = precision_runtime.dtype or torch.bfloat16
+        model_kwargs.pop("torch_dtype", None)  # dtype is governed by the quant config
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=compute_dtype,
+        )
+        model_kwargs["device_map"] = {"": device.index or 0}
     model = AutoModelForCausalLM.from_pretrained(config.model, **model_kwargs)
     if hasattr(model.config, "use_cache"):
         model.config.use_cache = False
@@ -301,8 +324,12 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
         if not hasattr(model, "gradient_checkpointing_enable"):
             raise RuntimeError("this HF model does not expose gradient_checkpointing_enable()")
         model.gradient_checkpointing_enable()
+    if quantized:
+        from peft import prepare_model_for_kbit_training
+        model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=config.gradient_checkpointing)
     model, peft_metadata = apply_hf_peft(model, config)
-    model.to(device)
+    if not quantized:
+        model.to(device)  # a 4-bit model is already placed on the GPU by device_map
     train_model, compile_metadata = maybe_compile_model(
         model,
         enabled=config.torch_compile,
@@ -363,6 +390,13 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
         )
         for group in optimizer.param_groups:
             group["lr"] = lr
+        # Capture the gradient norm for the training graphs (unscale first so the
+        # AMP-scaled gradients read their true magnitude). This measures, it does
+        # not clip — training behavior is unchanged.
+        scaler.unscale_(optimizer)
+        grad_norm = float(torch.sqrt(sum(
+            (p.grad.detach().float() ** 2).sum() for p in trainable_parameters if p.grad is not None
+        )).cpu()) if trainable_parameters else 0.0
         scaler.step(optimizer)
         scaler.update()
 
@@ -378,6 +412,7 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
                 "train_loss": total_loss,
                 "val_loss": val_loss if val_loss is not None else math.nan,
                 "lr": lr,
+                "grad_norm": grad_norm,
                 "elapsed_sec": time.time() - start,
             }
             losses.append(row)
@@ -412,6 +447,7 @@ def train_hf_sft(config: HFSFTConfig) -> dict[str, Any]:
         "compile": compile_metadata,
         "gradient_checkpointing": config.gradient_checkpointing,
         "peft": peft_metadata,
+        "quantize": config.quantize,
     }
     (out_dir / "hf_sft_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     (out_dir / "report.md").write_text(_hf_sft_markdown(report), encoding="utf-8")

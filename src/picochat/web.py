@@ -94,13 +94,16 @@ def _register_run_job(job_id: str, job: dict) -> None:
             _RUN_JOBS.pop(stale["id"], None)
 
 
-def _get_hf_engine(model_dir: str):
+def _get_hf_engine(model_dir: str, base_only: bool = False):
+    # Cache base and fine-tuned engines separately so the Playground's base/sft
+    # toggle compares the stock model against the adapter without reloading.
+    cache_key = f"{model_dir}::{'base' if base_only else 'sft'}"
     with _HF_ENGINES_LOCK:
-        engine = _HF_ENGINES.pop(model_dir, None)
+        engine = _HF_ENGINES.pop(cache_key, None)
         if engine is None:
             from picochat.hf_infer import HFGenerator
-            engine = HFGenerator(model_path=model_dir, device="cpu")
-        _HF_ENGINES[model_dir] = engine  # reinsert as most-recently-used
+            engine = HFGenerator(model_path=model_dir, device="cpu", base_only=base_only)
+        _HF_ENGINES[cache_key] = engine  # reinsert as most-recently-used
         while len(_HF_ENGINES) > _MAX_HF_ENGINES:
             _HF_ENGINES.pop(next(iter(_HF_ENGINES)))
         return engine
@@ -441,8 +444,10 @@ def generate_run_text(runs_dir: str | Path, payload: dict) -> dict:
     prompt = str(payload.get("prompt", ""))[:4000]
 
     if is_hf:
-        checkpoint = "hf"
-        result = _get_hf_engine(str(hf_model_dir)).generate(
+        checkpoint = str(payload.get("checkpoint", "sft")).lower()
+        if checkpoint not in {"base", "sft"}:
+            checkpoint = "sft"
+        result = _get_hf_engine(str(hf_model_dir), base_only=(checkpoint == "base")).generate(
             prompt=prompt,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
@@ -1728,6 +1733,11 @@ def hf_sft_start_plan(runs_dir: str | Path, payload: dict) -> dict:
     peft = str(payload.get("peft", "none"))
     if peft not in {"none", "lora"}:
         raise ValueError("peft must be none or lora")
+    quantize = str(payload.get("quantize", "none"))
+    if quantize not in {"none", "4bit"}:
+        raise ValueError("quantize must be none or 4bit")
+    if quantize == "4bit" and peft != "lora":
+        raise ValueError("QLoRA (4-bit) requires LoRA — enable the LoRA adapter option.")
     device = str(payload.get("device", "auto")).strip().lower()
     if device not in DEVICE_CHOICES:
         raise ValueError(f"device must be one of {', '.join(DEVICE_CHOICES)}")
@@ -1744,6 +1754,7 @@ def hf_sft_start_plan(runs_dir: str | Path, payload: dict) -> dict:
         "--learning-rate", str(learning_rate),
         "--device", device,
         "--peft", peft,
+        "--quantize", quantize,
     ]
     if revision:
         command.extend(["--revision", revision])
@@ -1787,6 +1798,64 @@ def hf_sft_start_plan(runs_dir: str | Path, payload: dict) -> dict:
             "peft": peft,
             "device": device,
         },
+    }
+    _register_run_job(job_id, job)
+    _write_job_record(out_dir, job)
+    return run_status_plan(job_id, runs_dir)
+
+
+def hf_dpo_start_plan(runs_dir: str | Path, payload: dict) -> dict:
+    """DPO-align a fine-tuned HF run from the dashboard (second stage after hf-sft)."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    src_run = _optional_string(payload.get("run")) or _optional_string(payload.get("model"))
+    if not src_run:
+        raise ValueError("run is required (the fine-tuned run to align)")
+    preference_input = _optional_string(payload.get("preference_input"))
+    if not preference_input:
+        raise ValueError("preference_input is required (a JSONL with user/chosen/rejected rows)")
+    _reject_bundled_example(preference_input, what="DPO")
+    src_model_dir = Path(runs_dir) / src_run / "final_model"
+    if not src_model_dir.exists():
+        raise FileNotFoundError(f"no fine-tuned model at {src_model_dir}; run a fine-tune first")
+    run_name = _slug(_optional_string(payload.get("run_name")) or f"{src_run}-dpo")
+    out_dir = Path(runs_dir) / run_name
+    max_steps = _bounded_int(payload.get("max_steps", 50), 1, 100000)
+    beta = _bounded_float(payload.get("beta", 0.1), 0.01, 1.0)
+    learning_rate = _bounded_float(payload.get("learning_rate", 5e-6), 1e-7, 1e-3)
+    device = str(payload.get("device", "auto")).strip().lower()
+    if device not in DEVICE_CHOICES:
+        raise ValueError(f"device must be one of {', '.join(DEVICE_CHOICES)}")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable, "-m", "picochat.cli", "train", "hf-dpo",
+        "--model", str(src_model_dir),
+        "--input", preference_input,
+        "--out-dir", str(out_dir),
+        "--max-steps", str(max_steps),
+        "--beta", str(beta),
+        "--learning-rate", str(learning_rate),
+        "--device", device,
+    ]
+    log_path = out_dir / "web_run.log"
+    log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
+    log_file = log_path.open("a", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command, cwd=Path.cwd(), env=_child_env(device=device),
+            stdout=log_file, stderr=subprocess.STDOUT, text=True, start_new_session=True,
+        )
+    finally:
+        log_file.close()
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "id": job_id, "run_name": run_name, "out_dir": str(out_dir),
+        "log_path": str(log_path), "command": _shell_command(*command),
+        "started_at": time.time(), "process": process, "pid": process.pid,
+        "preset": "hf-dpo", "min_quality_score": 0,
+        "launch_config": {"kind": "hf-dpo", "model": str(src_model_dir), "input": preference_input, "max_steps": max_steps, "beta": beta, "device": device},
     }
     _register_run_job(job_id, job)
     _write_job_record(out_dir, job)
@@ -2532,6 +2601,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(start_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/train/hf-sft":
                     self._send_json(hf_sft_start_plan(config.runs_dir, self._read_json_body()))
+                elif parsed.path == "/api/train/hf-dpo":
+                    self._send_json(hf_dpo_start_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/export/hf":
                     self._send_json(export_hf_run_plan(config.runs_dir, self._read_json_body()))
                 elif parsed.path == "/api/eval/run":

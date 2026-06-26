@@ -31,21 +31,24 @@ def test_hf_engine_cache_is_bounded_lru(monkeypatch):
     monkeypatch.setattr(web, "_MAX_HF_ENGINES", 2)
 
     class Stub:
-        def __init__(self, *, model_path, device="cpu"):
+        def __init__(self, *, model_path, device="cpu", base_only=False):
             self.model_path = model_path
+            self.base_only = base_only
 
     monkeypatch.setattr("picochat.hf_infer.HFGenerator", Stub)
 
+    # Cache keys carry the base/sft variant so the Playground toggle can compare
+    # the stock base against the fine-tuned adapter without reloading.
     web._get_hf_engine("dir/a")
     web._get_hf_engine("dir/b")
-    assert set(web._HF_ENGINES) == {"dir/a", "dir/b"}
+    assert set(web._HF_ENGINES) == {"dir/a::sft", "dir/b::sft"}
 
     web._get_hf_engine("dir/c")               # evicts least-recently-used (a)
-    assert set(web._HF_ENGINES) == {"dir/b", "dir/c"}
+    assert set(web._HF_ENGINES) == {"dir/b::sft", "dir/c::sft"}
 
     web._get_hf_engine("dir/b")               # touch b -> most-recently-used
     web._get_hf_engine("dir/d")               # evicts c, not b
-    assert set(web._HF_ENGINES) == {"dir/b", "dir/d"}
+    assert set(web._HF_ENGINES) == {"dir/b::sft", "dir/d::sft"}
 
     # cache hit returns the same instance without reloading
     first = web._get_hf_engine("dir/b")

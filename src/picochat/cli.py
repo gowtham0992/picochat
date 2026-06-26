@@ -1102,6 +1102,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_hf_sft_parser.add_argument("--torch-compile-mode", choices=COMPILE_MODES, default="default")
     train_hf_sft_parser.add_argument("--gradient-checkpointing", action="store_true")
     train_hf_sft_parser.add_argument("--peft", choices=("none", "lora"), default="none")
+    train_hf_sft_parser.add_argument("--quantize", choices=("none", "4bit"), default="none", help="4bit = QLoRA (4-bit base + LoRA); requires CUDA + bitsandbytes.")
     train_hf_sft_parser.add_argument("--lora-rank", type=int, default=16)
     train_hf_sft_parser.add_argument("--lora-alpha", type=float, default=32.0)
     train_hf_sft_parser.add_argument("--lora-dropout", type=float, default=0.0)
@@ -1121,6 +1122,24 @@ def build_parser() -> argparse.ArgumentParser:
         default="done.txt",
         help="Write this sentinel file under --out-dir when training finishes. Empty string disables it.",
     )
+
+    train_hf_dpo_parser = train_subparsers.add_parser(
+        "hf-dpo",
+        help="DPO-align a fine-tuned HF model (the output of train hf-sft) with preference JSONL.",
+    )
+    train_hf_dpo_parser.add_argument("--model", required=True, help="HF SFT run's final_model dir (or a full model).")
+    train_hf_dpo_parser.add_argument("--input", required=True, help="Preference JSONL with user/chosen/rejected fields.")
+    train_hf_dpo_parser.add_argument("--out-dir", required=True, help="Output directory for final_model and reports.")
+    train_hf_dpo_parser.add_argument("--max-steps", type=int, default=50)
+    train_hf_dpo_parser.add_argument("--learning-rate", type=float, default=5e-6)
+    train_hf_dpo_parser.add_argument("--beta", type=float, default=0.1, help="DPO beta (KL strength toward the reference).")
+    train_hf_dpo_parser.add_argument("--max-length", type=int, default=1024)
+    train_hf_dpo_parser.add_argument("--lora-rank", type=int, default=16)
+    train_hf_dpo_parser.add_argument("--lora-alpha", type=float, default=32.0)
+    train_hf_dpo_parser.add_argument("--lora-dropout", type=float, default=0.0)
+    train_hf_dpo_parser.add_argument("--device", choices=DEVICE_CHOICES, default="auto")
+    train_hf_dpo_parser.add_argument("--seed", type=int, default=42)
+    train_hf_dpo_parser.add_argument("--log-every", type=int, default=10)
 
     train_dpo_parser = train_subparsers.add_parser(
         "dpo",
@@ -2918,6 +2937,30 @@ def run_train_sft(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_train_hf_dpo(args: argparse.Namespace) -> int:
+    from picochat.hf_dpo import HFDPOConfig, train_hf_dpo
+
+    report = train_hf_dpo(HFDPOConfig(
+        model=args.model,
+        input_path=args.input,
+        out_dir=args.out_dir,
+        max_steps=args.max_steps,
+        learning_rate=args.learning_rate,
+        beta=args.beta,
+        max_length=args.max_length,
+        lora_rank=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        device=args.device,
+        seed=args.seed,
+        log_every=args.log_every,
+    ))
+    print(f"saved DPO model: {Path(args.out_dir) / 'final_model'}")
+    print(f"preference pairs: {report['num_pairs']} | final loss: {report['final_loss']}")
+    print(f"report: {Path(args.out_dir) / 'report.md'}")
+    return 0
+
+
 def run_train_hf_sft(args: argparse.Namespace) -> int:
     report = train_hf_sft(HFSFTConfig(
         model=args.model,
@@ -2948,6 +2991,7 @@ def run_train_hf_sft(args: argparse.Namespace) -> int:
         lora_dropout=args.lora_dropout,
         lora_target_modules=args.lora_target_modules,
         trust_remote_code=args.trust_remote_code,
+        quantize=args.quantize,
         revision=args.revision,
         done_file=args.done_file or None,
     ))
@@ -3752,6 +3796,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "train" and args.train_command == "hf-sft":
         return run_train_hf_sft(args)
+
+    if args.command == "train" and args.train_command == "hf-dpo":
+        return run_train_hf_dpo(args)
 
     if args.command == "train" and args.train_command == "dpo":
         return run_train_dpo(args)

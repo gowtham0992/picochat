@@ -28,6 +28,12 @@ hf = [
     "safetensors>=0.4",
     "transformers>=4.40",
 ]
+qlora = [
+    "bitsandbytes>=0.43",
+]
+dpo = [
+    "trl>=0.12",
+]
 monitor = [
     "tensorboard>=2.14",
 ]
