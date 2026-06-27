@@ -2171,7 +2171,11 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
     hf_dataset = _optional_string(payload.get("hf_dataset")) or "karpathy/climbmix-400b-shuffle"
     hf_max_rows = _bounded_int(payload.get("hf_max_rows", 800_000), 1, 100_000_000)
     hf_model = _optional_string(payload.get("hf_model")) or "HuggingFaceTB/SmolLM3-3B"
-    hf_sft_steps = _bounded_int(payload.get("hf_sft_steps", 800), 1, 100_000)
+    hf_sft_steps = _bounded_int(payload.get("hf_sft_steps", 3000), 1, 100_000)
+    hf_batch_size = _bounded_int(payload.get("hf_batch_size", 1), 1, 1024)
+    hf_grad_accum_steps = _bounded_int(payload.get("hf_grad_accum_steps", 4), 1, 4096)
+    hf_eval_batches = _bounded_int(payload.get("hf_eval_batches", 20), 1, 100_000)
+    hf_log_every = _bounded_int(payload.get("hf_log_every", 25), 1, 100_000)
     hf_learning_rate = _bounded_float(payload.get("hf_learning_rate", 2e-5), 0.0, 1.0)
     hf_max_length = _bounded_int(payload.get("hf_max_length", 1024), 128, 32768)
     hf_lora_rank = _bounded_int(payload.get("hf_lora_rank", 16), 1, 1024)
@@ -2183,6 +2187,7 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
     run_dpo = bool(payload.get("run_dpo", False))
     dpo_steps = _bounded_int(payload.get("dpo_steps", 100), 1, 100_000)
     dpo_beta = _bounded_float(payload.get("dpo_beta", 0.1), 0.0, 10.0)
+    timeout_hours = _bounded_int(payload.get("timeout_hours", 12), 1, 168)
     secret_name = _optional_string(payload.get("secret_name"))
 
     out_dir = _safe_child(Path(runs_dir), run_name)
@@ -2207,6 +2212,10 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
         command.extend([
             "--hf-model", hf_model,
             "--hf-sft-steps", str(hf_sft_steps),
+            "--hf-batch-size", str(hf_batch_size),
+            "--hf-grad-accum-steps", str(hf_grad_accum_steps),
+            "--hf-eval-batches", str(hf_eval_batches),
+            "--hf-log-every", str(hf_log_every),
             "--hf-learning-rate", str(hf_learning_rate),
             "--hf-max-length", str(hf_max_length),
             "--hf-lora-rank", str(hf_lora_rank),
@@ -2219,6 +2228,7 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
             command.extend(["--run-dpo", "--dpo-steps", str(dpo_steps), "--dpo-beta", str(dpo_beta)])
     if secret_name:
         command.extend(["--secret-name", secret_name])
+    command.extend(["--timeout-hours", str(timeout_hours)])
 
     log_path = out_dir / "web_run.log"
     log_path.write_text(f"$ {_shell_command(*command)}\n\n", encoding="utf-8")
@@ -2257,6 +2267,10 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
             "dataset_pack": dataset_pack,
             "hf_dataset": hf_dataset,
             "hf_model": hf_model if mode == "hf-sft" else None,
+            "hf_sft_steps": hf_sft_steps if mode == "hf-sft" else None,
+            "hf_batch_size": hf_batch_size if mode == "hf-sft" else None,
+            "hf_grad_accum_steps": hf_grad_accum_steps if mode == "hf-sft" else None,
+            "timeout_hours": timeout_hours,
             "run_name": run_name,
         },
     }

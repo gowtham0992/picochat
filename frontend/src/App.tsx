@@ -58,6 +58,11 @@ const DEFAULT_SETTINGS = {
   defaultDataset: "HuggingFaceTB/smollm-corpus"
 };
 type SettingsState = typeof DEFAULT_SETTINGS;
+type CloudSeed = {
+  datasetPack?: string;
+  preferenceInput?: string;
+  runName?: string;
+};
 
 function readSettings(): SettingsState {
   try {
@@ -79,6 +84,7 @@ export default function App() {
   const [settings, setSettings] = useState<SettingsState>(() => readSettings());
   const [logTarget, setLogTarget] = useState<{ run?: string; job?: string } | null>(null);
   const [newRun, setNewRun] = useState<{ pack?: string } | null>(null);
+  const [cloudSeed, setCloudSeed] = useState<CloudSeed | null>(null);
   const [reportTarget, setReportTarget] = useState<{ run: string; report: string } | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const lastRefresh = useRef<Date | null>(null);
@@ -160,6 +166,8 @@ export default function App() {
     openLogs: () => selectedRun && setLogTarget({ run: selectedRun.name, job: activeJob?.id }),
     openLogsFor: (t) => setLogTarget(t),
     openNew: (pack?: string) => setNewRun({ pack }),
+    openCloud: (seed?: CloudSeed) => { setCloudSeed(seed || null); setSection("cloud"); },
+    cloudSeed,
     openReport: (report: string) => selectedRun && setReportTarget({ run: selectedRun.name, report }),
     setSection
   };
@@ -229,6 +237,8 @@ type SectionProps = {
   openLogs: () => void;
   openLogsFor: (t: { run?: string; job?: string }) => void;
   openNew: (pack?: string) => void;
+  openCloud: (seed?: CloudSeed) => void;
+  cloudSeed: CloudSeed | null;
   openReport: (report: string) => void;
   setSection: (s: SectionId) => void;
 };
@@ -828,7 +838,7 @@ function ReleaseView({ detail, tone, openReport }: SectionProps) {
 
 /* --------------------------------------------------------------- dataset */
 
-function DatasetView({ detail, settings, openNew }: SectionProps) {
+function DatasetView({ detail, settings, openNew, openCloud }: SectionProps) {
   const s = (detail as any)?.summary || {};
   const corpus = s.corpus || {};
   const preview = (detail as any)?.corpus_preview || "";
@@ -839,7 +849,7 @@ function DatasetView({ detail, settings, openNew }: SectionProps) {
         <HfImport defaultDataset={settings.defaultDataset} token={settings.hfToken} openNew={openNew} />
       </Panel>
       <Panel title="Build Security Analyst pack" sub="Blend defensive seed rows with Trendyol cybersecurity instructions, held-out eval, and DPO preferences">
-        <SecurityPackBuilder openNew={openNew} />
+        <SecurityPackBuilder openCloud={openCloud} />
       </Panel>
       {s.corpus || s.tokenizer ? (
         <>
@@ -870,12 +880,12 @@ function DatasetView({ detail, settings, openNew }: SectionProps) {
   );
 }
 
-function SecurityPackBuilder({ openNew }: { openNew: (pack?: string) => void }) {
+function SecurityPackBuilder({ openCloud }: { openCloud: (seed?: CloudSeed) => void }) {
   const [outDir, setOutDir] = useState("runs/security-analyst-pack-v1");
   const [source, setSource] = useState<"trendyol" | "seed">("trendyol");
   const [maxRows, setMaxRows] = useState(10000);
   const [evalRows, setEvalRows] = useState(500);
-  const [preferenceRows, setPreferenceRows] = useState(64);
+  const [preferenceRows, setPreferenceRows] = useState(128);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [result, setResult] = useState<Record<string, any> | null>(null);
@@ -919,7 +929,7 @@ function SecurityPackBuilder({ openNew }: { openNew: (pack?: string) => void }) 
           <input type="number" value={evalRows} onChange={(e) => setEvalRows(Math.max(1, Number(e.target.value) || 500))} />
         </label>
         <label className="pc-field">DPO preference rows
-          <input type="number" value={preferenceRows} onChange={(e) => setPreferenceRows(Math.max(0, Number(e.target.value) || 64))} />
+          <input type="number" value={preferenceRows} onChange={(e) => setPreferenceRows(Math.max(0, Number(e.target.value) || 128))} />
         </label>
       </div>
       <div className="pc-row">
@@ -934,8 +944,18 @@ function SecurityPackBuilder({ openNew }: { openNew: (pack?: string) => void }) 
           <div>
             <strong>{compactNumber(result.chat_rows)} SFT rows · {compactNumber(result.eval_rows)} eval rows · {compactNumber(result.preference_rows)} preferences</strong>
             <code>{result.dataset_pack}</code>
+            <span className="pc-hint">Next step: launch the production 3B QLoRA Modal recipe. Tiny smoke runs stay optional.</span>
           </div>
-          <button className="pc-btn primary" onClick={() => openNew(result.dataset_pack)}>Train on this pack →</button>
+          <button
+            className="pc-btn primary"
+            onClick={() => openCloud({
+              datasetPack: result.dataset_pack,
+              preferenceInput: String(result.dataset_pack || "").replace(/dataset_pack\.json$/, "preferences.jsonl"),
+              runName: "security-smollm3-3b-qlora-v1"
+            })}
+          >
+            Train production model on Modal →
+          </button>
         </div>
       ) : null}
     </div>
@@ -993,18 +1013,23 @@ const REMOTE_REPO = "https://github.com/gowtham0992/picochat.git";
 const REMOTE_SCALES = ["smoke", "tiny", "small", "medium", "h100-100m", "h200-1b-ddp8"];
 const REMOTE_GPUS = ["A100", "H100", "A10G", "L4", "T4"];
 
-function RemoteView({ openLogsFor }: SectionProps) {
+function RemoteView({ openLogsFor, cloudSeed }: SectionProps) {
   const [provider, setProvider] = useState<"modal" | "colab" | "lambda">("modal");
   const [branch, setBranch] = useState("develop");
-  const [runName, setRunName] = useState("picochat-cloud-v1");
+  const [runName, setRunName] = useState("security-smollm3-3b-qlora-v1");
   const [scale, setScale] = useState("h100-100m");
   const [mode, setMode] = useState<"native" | "hf-sft">("hf-sft");
-  const [datasetPack, setDatasetPack] = useState("datasets/security-analyst/dataset_pack.json");
+  const [datasetPack, setDatasetPack] = useState("runs/security-analyst-pack-v1/dataset_pack.json");
   const [hfDataset, setHfDataset] = useState("karpathy/climbmix-400b-shuffle");
   const [hfMaxRows, setHfMaxRows] = useState(800000);
   const [hfModel, setHfModel] = useState("HuggingFaceTB/SmolLM3-3B");
-  const [hfSftSteps, setHfSftSteps] = useState(800);
-  const [hfPreferenceInput, setHfPreferenceInput] = useState("datasets/security-analyst/preferences.jsonl");
+  const [hfSftSteps, setHfSftSteps] = useState(3000);
+  const [hfBatchSize, setHfBatchSize] = useState(1);
+  const [hfGradAccumSteps, setHfGradAccumSteps] = useState(4);
+  const [hfEvalBatches, setHfEvalBatches] = useState(20);
+  const [hfLogEvery, setHfLogEvery] = useState(25);
+  const [timeoutHours, setTimeoutHours] = useState(12);
+  const [hfPreferenceInput, setHfPreferenceInput] = useState("runs/security-analyst-pack-v1/preferences.jsonl");
   const [runDpo, setRunDpo] = useState(false);
   const [gpu, setGpu] = useState("A100");
   const [secretName, setSecretName] = useState("");
@@ -1015,6 +1040,16 @@ function RemoteView({ openLogsFor }: SectionProps) {
   const [pullBusy, setPullBusy] = useState(false);
 
   useEffect(() => { remoteStatus().then(setModal).catch(() => setModal({ modal_available: false, modal_script: true })); }, []);
+  useEffect(() => {
+    if (!cloudSeed) return;
+    setProvider("modal");
+    setMode("hf-sft");
+    setDatasetPack(cloudSeed.datasetPack || "runs/security-analyst-pack-v1/dataset_pack.json");
+    setHfPreferenceInput(cloudSeed.preferenceInput || (cloudSeed.datasetPack || "runs/security-analyst-pack-v1/dataset_pack.json").replace(/dataset_pack\.json$/, "preferences.jsonl"));
+    setRunName(cloudSeed.runName || "security-smollm3-3b-qlora-v1");
+    setScale("h100-100m");
+    setGpu("A100");
+  }, [cloudSeed]);
 
   const modalDisabled = !!(modal && !modal.modal_available);
 
@@ -1033,9 +1068,14 @@ function RemoteView({ openLogsFor }: SectionProps) {
         hf_max_rows: hfMaxRows,
         hf_model: hfModel,
         hf_sft_steps: hfSftSteps,
+        hf_batch_size: hfBatchSize,
+        hf_grad_accum_steps: hfGradAccumSteps,
+        hf_eval_batches: hfEvalBatches,
+        hf_log_every: hfLogEvery,
         hf_quantize: "4bit",
         preference_input: hfPreferenceInput || undefined,
         run_dpo: runDpo,
+        timeout_hours: timeoutHours,
         secret_name: secretName || undefined
       });
       openLogsFor({ job: started.job?.id, run: started.job?.run_name });
@@ -1052,10 +1092,10 @@ function RemoteView({ openLogsFor }: SectionProps) {
   };
 
   const colabSnippet = mode === "hf-sft"
-    ? `!pip install -q "picochat[hf,qlora,dpo] @ git+${REMOTE_REPO}@${branch}"\n!picochat train hf-sft --model ${hfModel} --input ${datasetPack.replace(/dataset_pack\.json$/, "chat.jsonl")} --out-dir runs/${runName} --device cuda --precision bf16 --peft lora --quantize 4bit --max-steps ${hfSftSteps} --gradient-checkpointing`
+    ? `!pip install -q "picochat[hf,qlora,dpo] @ git+${REMOTE_REPO}@${branch}"\n!picochat train hf-sft --model ${hfModel} --input ${datasetPack.replace(/dataset_pack\.json$/, "chat.jsonl")} --out-dir runs/${runName} --device cuda --precision bf16 --peft lora --quantize 4bit --max-steps ${hfSftSteps} --batch-size ${hfBatchSize} --grad-accum-steps ${hfGradAccumSteps} --eval-batches ${hfEvalBatches} --log-every ${hfLogEvery} --gradient-checkpointing`
     : `!pip install -q "picochat[hf] @ git+${REMOTE_REPO}@${branch}"\n!picochat data hf-import --dataset ${hfDataset} --pack-out my_pack --max-rows ${Math.min(hfMaxRows, 20000)}\n!picochat run ${scale} --dataset-pack my_pack/dataset_pack.json --device cuda --out-dir runs/${runName}`;
   const lambdaSnippet = mode === "hf-sft"
-    ? `# On a fresh Lambda GPU instance (cloud.lambda.ai):\ngit clone -b ${branch} ${REMOTE_REPO} && cd picochat\npip install -e ".[hf,qlora,dpo]"\npicochat train hf-sft --model ${hfModel} --input ${datasetPack.replace(/dataset_pack\.json$/, "chat.jsonl")} --out-dir runs/${runName} --device cuda --precision bf16 --peft lora --quantize 4bit --max-steps ${hfSftSteps} --gradient-checkpointing`
+    ? `# On a fresh Lambda GPU instance (cloud.lambda.ai):\ngit clone -b ${branch} ${REMOTE_REPO} && cd picochat\npip install -e ".[hf,qlora,dpo]"\npicochat train hf-sft --model ${hfModel} --input ${datasetPack.replace(/dataset_pack\.json$/, "chat.jsonl")} --out-dir runs/${runName} --device cuda --precision bf16 --peft lora --quantize 4bit --max-steps ${hfSftSteps} --batch-size ${hfBatchSize} --grad-accum-steps ${hfGradAccumSteps} --eval-batches ${hfEvalBatches} --log-every ${hfLogEvery} --gradient-checkpointing`
     : `# On a fresh Lambda GPU instance (cloud.lambda.ai):\ngit clone -b ${branch} ${REMOTE_REPO} && cd picochat\npip install -e ".[hf]"\npicochat data hf-import --dataset ${hfDataset} --pack-out my_pack --max-rows ${Math.min(hfMaxRows, 100000)}\npicochat run ${scale} --dataset-pack my_pack/dataset_pack.json --device cuda --out-dir runs/${runName}`;
 
   return (
@@ -1063,24 +1103,41 @@ function RemoteView({ openLogsFor }: SectionProps) {
       <SecHead n="01" label="Plan" />
       <ScalePlanner />
       <SecHead n="02" label="Cloud training" action={<Segmented value={provider} options={["modal", "colab", "lambda"]} onChange={(v) => setProvider(v as "modal" | "colab" | "lambda")} />} />
-      <div className="pc-toolbar-meta" style={{ marginTop: -6 }}>Train on remote GPUs with this dashboard as the control plane.</div>
+      <div className="pc-toolbar-meta" style={{ marginTop: -6 }}>
+        Production path for the security model: SmolLM3-3B QLoRA on Modal A100, held-out eval, artifacts persisted on the Modal volume.
+      </div>
 
       <div className="pc-grid two">
         <Panel title="Recipe" sub="Shared across providers">
           <label className="pc-field">Run name<input value={runName} onChange={(e) => setRunName(e.target.value)} /></label>
           <div className="pc-set-row"><span>Training path</span><Segmented value={mode} options={["hf-sft", "native"]} onChange={(v) => setMode(v as "native" | "hf-sft")} /></div>
           <div className="pc-grid two">
-            <label className="pc-field">Scale<select value={scale} onChange={(e) => setScale(e.target.value)}>{REMOTE_SCALES.map((s) => <option key={s}>{s}</option>)}</select></label>
+            {mode === "native" ? (
+              <label className="pc-field">Native scale<select value={scale} onChange={(e) => setScale(e.target.value)}>{REMOTE_SCALES.map((s) => <option key={s}>{s}</option>)}</select></label>
+            ) : (
+              <label className="pc-field">Recipe<input value="Security Analyst · SmolLM3-3B QLoRA" readOnly /></label>
+            )}
             <label className="pc-field">Branch<input value={branch} onChange={(e) => setBranch(e.target.value)} /></label>
           </div>
           {mode === "hf-sft" ? (
             <>
               <label className="pc-field">Dataset pack<input value={datasetPack} onChange={(e) => setDatasetPack(e.target.value)} /></label>
               <label className="pc-field">Base model<input value={hfModel} onChange={(e) => setHfModel(e.target.value)} /></label>
-              <div className="pc-grid two">
-                <label className="pc-field">SFT steps<input type="number" value={hfSftSteps} onChange={(e) => setHfSftSteps(Math.max(1, Number(e.target.value) || 800))} /></label>
-                <label className="pc-field">Preferences<input value={hfPreferenceInput} onChange={(e) => setHfPreferenceInput(e.target.value)} /></label>
+              <div className="pc-grid three">
+                <label className="pc-field">Optimizer steps<input type="number" value={hfSftSteps} onChange={(e) => setHfSftSteps(Math.max(1, Number(e.target.value) || 3000))} /></label>
+                <label className="pc-field">Batch size<input type="number" value={hfBatchSize} onChange={(e) => setHfBatchSize(Math.max(1, Number(e.target.value) || 1))} /></label>
+                <label className="pc-field">Grad accumulation<input type="number" value={hfGradAccumSteps} onChange={(e) => setHfGradAccumSteps(Math.max(1, Number(e.target.value) || 4))} /></label>
               </div>
+              <div className="pc-grid three">
+                <label className="pc-field">Eval batches<input type="number" value={hfEvalBatches} onChange={(e) => setHfEvalBatches(Math.max(1, Number(e.target.value) || 20))} /></label>
+                <label className="pc-field">Log every<input type="number" value={hfLogEvery} onChange={(e) => setHfLogEvery(Math.max(1, Number(e.target.value) || 25))} /></label>
+                <label className="pc-field">Timeout hours<input type="number" value={timeoutHours} onChange={(e) => setTimeoutHours(Math.max(1, Number(e.target.value) || 12))} /></label>
+              </div>
+              <div className="pc-grid two">
+                <label className="pc-field">Preferences<input value={hfPreferenceInput} onChange={(e) => setHfPreferenceInput(e.target.value)} /></label>
+                <label className="pc-field">Training examples covered<input value={`${compactNumber(hfSftSteps * hfBatchSize * hfGradAccumSteps)} sample passes`} readOnly /></label>
+              </div>
+              <div className="pc-hint">Default is not a tiny run: 3,000 optimizer steps × batch {hfBatchSize} × grad accumulation {hfGradAccumSteps}. For your 9.6k-row security pack, that is roughly a full-pass run with validation.</div>
               <label className="pc-check"><input type="checkbox" checked={runDpo} onChange={(e) => setRunDpo(e.target.checked)} /> Run DPO after SFT if preferences exist</label>
             </>
           ) : (
@@ -1100,7 +1157,7 @@ function RemoteView({ openLogsFor }: SectionProps) {
               <label className="pc-field">GPU<select value={gpu} onChange={(e) => setGpu(e.target.value)}>{REMOTE_GPUS.map((g) => <option key={g}>{g}</option>)}</select></label>
               <label className="pc-field">Modal secret (HF token)<input value={secretName} onChange={(e) => setSecretName(e.target.value)} placeholder="optional, e.g. hf-secret" /></label>
             </div>
-            <div className="pc-hint">Runs <code>modal run scripts/modal_picochat_train.py</code> and streams logs here. Artifacts land on the Modal <code>picochat-runs</code> volume — pull with <code>modal volume get picochat-runs {runName}</code>.</div>
+            <div className="pc-hint">Launches <code>modal run scripts/modal_picochat_train.py</code> with GPU={gpu}, timeout={timeoutHours}h, QLoRA 4-bit, and live logs. Artifacts land on the Modal <code>picochat-runs</code> volume — pull with <code>modal volume get picochat-runs {runName}</code>.</div>
             {err ? <Banner tone="block" title="Modal action failed" body={err} onClose={() => setErr("")} /> : null}
             <button className="pc-btn primary" onClick={launchModal} disabled={busy || modalDisabled}>{busy ? <Loader2 size={15} className="spin" /> : <Cloud size={15} />} Launch on Modal</button>
             <div className="pc-pull">

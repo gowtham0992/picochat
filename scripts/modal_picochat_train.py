@@ -8,9 +8,15 @@ Example:
     modal run scripts/modal_picochat_train.py \
       --repo-url https://github.com/gowtham0992/picochat.git \
       --branch develop \
-      --run-name picochat-modal-100m-v1 \
+      --run-name security-smollm3-3b-qlora-v1 \
       --scale h100-100m \
       --gpu A100 \
+      --mode hf-sft \
+      --dataset-pack runs/security-analyst-pack-v1/dataset_pack.json \
+      --hf-model HuggingFaceTB/SmolLM3-3B \
+      --hf-sft-steps 3000 \
+      --hf-batch-size 1 \
+      --hf-grad-accum-steps 4 \
       --hf-dataset karpathy/climbmix-400b-shuffle \
       --hf-max-rows 800000
 """
@@ -253,6 +259,10 @@ def _run_hf_sft_training(
     run_name: str,
     hf_model: str,
     hf_sft_steps: int,
+    hf_batch_size: int,
+    hf_grad_accum_steps: int,
+    hf_eval_batches: int,
+    hf_log_every: int,
     hf_learning_rate: float,
     hf_max_length: int,
     hf_lora_rank: int,
@@ -279,10 +289,18 @@ def _run_hf_sft_training(
         str(out_dir),
         "--max-steps",
         str(hf_sft_steps),
+        "--batch-size",
+        str(hf_batch_size),
+        "--grad-accum-steps",
+        str(hf_grad_accum_steps),
         "--learning-rate",
         str(hf_learning_rate),
         "--max-length",
         str(hf_max_length),
+        "--eval-batches",
+        str(hf_eval_batches),
+        "--log-every",
+        str(hf_log_every),
         "--device",
         "cuda",
         "--precision",
@@ -351,6 +369,10 @@ def train_remote(
     mode: str,
     hf_model: str,
     hf_sft_steps: int,
+    hf_batch_size: int,
+    hf_grad_accum_steps: int,
+    hf_eval_batches: int,
+    hf_log_every: int,
     hf_learning_rate: float,
     hf_max_length: int,
     hf_lora_rank: int,
@@ -372,6 +394,10 @@ def train_remote(
             run_name,
             hf_model,
             hf_sft_steps,
+            hf_batch_size,
+            hf_grad_accum_steps,
+            hf_eval_batches,
+            hf_log_every,
             hf_learning_rate,
             hf_max_length,
             hf_lora_rank,
@@ -407,14 +433,18 @@ def main(
     hf_max_rows: int = 800000,
     hf_shards: int = 170,
     gpu: str = "A100",
-    timeout_hours: int = 8,
+    timeout_hours: int = 12,
     volume_name: str = DEFAULT_VOLUME_NAME,
     secret_name: str = "",
     base_steps: str = "",
     sft_steps: str = "",
     mode: str = "native",
     hf_model: str = "HuggingFaceTB/SmolLM3-3B",
-    hf_sft_steps: int = 800,
+    hf_sft_steps: int = 3000,
+    hf_batch_size: int = 1,
+    hf_grad_accum_steps: int = 4,
+    hf_eval_batches: int = 20,
+    hf_log_every: int = 25,
     hf_learning_rate: float = 2e-5,
     hf_max_length: int = 1024,
     hf_lora_rank: int = 16,
@@ -448,6 +478,10 @@ def main(
         mode,
         hf_model,
         hf_sft_steps,
+        hf_batch_size,
+        hf_grad_accum_steps,
+        hf_eval_batches,
+        hf_log_every,
         hf_learning_rate,
         hf_max_length,
         hf_lora_rank,

@@ -83,6 +83,11 @@ def test_remote_modal_builds_hf_sft_command(tmp_path, monkeypatch):
         "gpu": "A100",
         "hf_model": "HuggingFaceTB/SmolLM3-3B",
         "hf_sft_steps": 1200,
+        "hf_batch_size": 2,
+        "hf_grad_accum_steps": 8,
+        "hf_eval_batches": 12,
+        "hf_log_every": 20,
+        "timeout_hours": 16,
         "preference_input": "datasets/security-analyst/preferences.jsonl",
         "run_dpo": True,
     })
@@ -92,10 +97,17 @@ def test_remote_modal_builds_hf_sft_command(tmp_path, monkeypatch):
     assert "--dataset-pack" in command and "datasets/security-analyst/dataset_pack.json" in command
     assert "--hf-model" in command and "HuggingFaceTB/SmolLM3-3B" in command
     assert "--hf-sft-steps" in command and "1200" in command
+    assert "--hf-batch-size" in command and "2" in command
+    assert "--hf-grad-accum-steps" in command and "8" in command
+    assert "--hf-eval-batches" in command and "12" in command
+    assert "--hf-log-every" in command and "20" in command
     assert "--hf-quantize" in command and "4bit" in command
+    assert "--timeout-hours" in command and "16" in command
     assert "--preference-input" in command and "datasets/security-analyst/preferences.jsonl" in command
     assert "--run-dpo" in command
     assert started["job"]["launch_config"]["mode"] == "hf-sft"
+    assert started["job"]["launch_config"]["hf_batch_size"] == 2
+    assert started["job"]["launch_config"]["hf_grad_accum_steps"] == 8
 
 
 def test_remote_pull_requires_cli(tmp_path, monkeypatch):
