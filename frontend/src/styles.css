@@ -139,6 +139,7 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .pc-stack { display: grid; gap: 16px; }
 .pc-grid { display: grid; gap: 16px; }
 .pc-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pc-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 /* --------------------------------------------------------------- overview */
 .pc-overview-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
@@ -461,7 +462,7 @@ button.pc-lb-tr:hover { background: color-mix(in srgb, var(--text) 4%, transpare
   .pc-rail.open { transform: translateX(0); }
   .pc-scrim { position: fixed; inset: 0; z-index: 45; background: rgba(0,0,0,0.5); border: none; }
   .pc-burger { display: inline-flex; }
-  .pc-grid.two { grid-template-columns: 1fr; }
+  .pc-grid.two, .pc-grid.three { grid-template-columns: 1fr; }
   .pc-overview-top { flex-direction: column; align-items: flex-start; }
   .pc-welcome-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pc-play { grid-template-columns: 1fr; height: auto; }

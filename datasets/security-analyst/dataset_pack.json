@@ -1,0 +1,9 @@
+{
+  "name": "security-analyst",
+  "description": "Defensive security analyst SLM \u2014 SFT + held-out eval, plus a DPO preference set.",
+  "corpus": {
+    "input": "corpus.txt"
+  },
+  "chat": "chat.jsonl",
+  "eval": "eval.jsonl"
+}

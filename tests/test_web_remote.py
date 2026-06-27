@@ -51,9 +51,51 @@ def test_remote_modal_builds_command(tmp_path, monkeypatch):
     assert "scripts/modal_picochat_train.py" in command[2]
     assert "--scale" in command and "h100-100m" in command
     assert "--gpu" in command and "H100" in command
+    assert "--mode" in command and "native" in command
     assert "--hf-dataset" in command and "org/ds" in command
     assert started["job"]["run_name"] == "cloud1"
     assert (tmp_path / "cloud1" / "web_run.log").exists()
+
+
+def test_remote_modal_builds_hf_sft_command(tmp_path, monkeypatch):
+    captured = {}
+
+    class CapturingProc:
+        pid = 100
+
+        def __init__(self, command, *args, **kwargs):
+            captured["command"] = command
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+    monkeypatch.setattr("picochat.web.shutil.which", lambda name: "/usr/bin/modal")
+    monkeypatch.setattr("picochat.web.subprocess.Popen", CapturingProc)
+    web._RUN_JOBS.clear()
+
+    started = remote_modal_start_plan(tmp_path, {
+        "run_name": "security-cloud",
+        "mode": "hf-sft",
+        "dataset_pack": "datasets/security-analyst/dataset_pack.json",
+        "gpu": "A100",
+        "hf_model": "HuggingFaceTB/SmolLM3-3B",
+        "hf_sft_steps": 1200,
+        "preference_input": "datasets/security-analyst/preferences.jsonl",
+        "run_dpo": True,
+    })
+
+    command = captured["command"]
+    assert "--mode" in command and "hf-sft" in command
+    assert "--dataset-pack" in command and "datasets/security-analyst/dataset_pack.json" in command
+    assert "--hf-model" in command and "HuggingFaceTB/SmolLM3-3B" in command
+    assert "--hf-sft-steps" in command and "1200" in command
+    assert "--hf-quantize" in command and "4bit" in command
+    assert "--preference-input" in command and "datasets/security-analyst/preferences.jsonl" in command
+    assert "--run-dpo" in command
+    assert started["job"]["launch_config"]["mode"] == "hf-sft"
 
 
 def test_remote_pull_requires_cli(tmp_path, monkeypatch):

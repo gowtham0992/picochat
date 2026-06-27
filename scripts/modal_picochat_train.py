@@ -17,6 +17,7 @@ Example:
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -36,13 +37,17 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("git")
     .uv_pip_install(
+        "accelerate",
+        "bitsandbytes",
         "datasets",
         "numpy",
+        "peft",
         "safetensors",
         "tokenizers",
         "torch",
         "tqdm",
         "transformers",
+        "trl",
     )
 )
 
@@ -144,25 +149,81 @@ def _resolve_dataset_pack(
     return _import_hf_dataset(hf_dataset, hf_split, hf_text_column, hf_max_rows, hf_shards)
 
 
-@app.function(image=image, gpu="A100", volumes={str(RUNS_DIR): runs_volume}, timeout=8 * 60 * 60)
-def train_remote(
-    repo_url: str,
-    branch: str,
-    dataset_pack: str,
-    hf_dataset: str,
-    hf_split: str,
-    hf_text_column: str,
-    hf_max_rows: int,
-    hf_shards: int,
+def _build_security_pack_on_modal(hf_max_rows: int) -> Path:
+    out_dir = RUNS_DIR / "security-analyst-pack"
+    seed_dir = REPO_DIR / "datasets" / "security-analyst"
+    if not seed_dir.exists():
+        raise FileNotFoundError(
+            f"missing security seed directory in cloned repo: {seed_dir}. "
+            "Commit datasets/security-analyst before launching this Modal recipe."
+        )
+    _run(
+        [
+            sys.executable,
+            "-m",
+            "picochat.cli",
+            "data",
+            "security-pack",
+            "--source",
+            "trendyol",
+            "--out-dir",
+            str(out_dir),
+            "--seed-dir",
+            str(seed_dir),
+            "--trendyol-max-rows",
+            str(hf_max_rows),
+            "--eval-rows",
+            "500",
+            "--preference-rows",
+            "128",
+            "--force",
+        ],
+        cwd=REPO_DIR,
+    )
+    return out_dir / "dataset_pack.json"
+
+
+def _resolve_hf_sft_dataset_pack(dataset_pack: str, hf_max_rows: int) -> Path:
+    if dataset_pack:
+        candidate = Path(dataset_pack)
+        if not candidate.is_absolute():
+            candidate = REPO_DIR / candidate
+        if candidate.exists():
+            return candidate
+        print(
+            f"HF-SFT dataset pack not found on Modal image: {candidate}; rebuilding the security pack on Modal",
+            flush=True,
+        )
+    return _build_security_pack_on_modal(hf_max_rows)
+
+
+def _resolve_repo_path(path_text: str) -> Path:
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = REPO_DIR / path
+    return path
+
+
+def _chat_input_from_pack(pack_path: Path) -> Path:
+    payload = json.loads(pack_path.read_text(encoding="utf-8"))
+    chat_ref = payload.get("chat") or payload.get("chat_input")
+    if not chat_ref:
+        raise ValueError(f"dataset pack has no chat input: {pack_path}")
+    chat_path = Path(str(chat_ref))
+    if not chat_path.is_absolute():
+        chat_path = pack_path.parent / chat_path
+    if not chat_path.is_file():
+        raise FileNotFoundError(f"missing chat data from dataset pack: {chat_path}")
+    return chat_path
+
+
+def _run_native_training(
+    pack_path: Path,
     run_name: str,
     scale: str,
     base_steps: str,
     sft_steps: str,
-) -> str:
-    RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    _clone_or_update(repo_url, branch)
-    _install_repo()
-    pack_path = _resolve_dataset_pack(dataset_pack, hf_dataset, hf_split, hf_text_column, hf_max_rows, hf_shards)
+) -> Path:
     out_dir = RUNS_DIR / run_name
     cmd = [
         sys.executable,
@@ -184,6 +245,148 @@ def train_remote(
     if sft_steps:
         cmd.extend(["--sft-steps", str(sft_steps)])
     _run(cmd, cwd=REPO_DIR)
+    return out_dir
+
+
+def _run_hf_sft_training(
+    pack_path: Path,
+    run_name: str,
+    hf_model: str,
+    hf_sft_steps: int,
+    hf_learning_rate: float,
+    hf_max_length: int,
+    hf_lora_rank: int,
+    hf_lora_alpha: float,
+    hf_quantize: str,
+    preference_input: str,
+    run_dpo: bool,
+    dpo_steps: int,
+    dpo_beta: float,
+) -> Path:
+    out_dir = RUNS_DIR / run_name
+    chat_input = _chat_input_from_pack(pack_path)
+    cmd = [
+        sys.executable,
+        "-m",
+        "picochat.cli",
+        "train",
+        "hf-sft",
+        "--model",
+        hf_model,
+        "--input",
+        str(chat_input),
+        "--out-dir",
+        str(out_dir),
+        "--max-steps",
+        str(hf_sft_steps),
+        "--learning-rate",
+        str(hf_learning_rate),
+        "--max-length",
+        str(hf_max_length),
+        "--device",
+        "cuda",
+        "--precision",
+        "bf16",
+        "--peft",
+        "lora",
+        "--quantize",
+        hf_quantize,
+        "--lora-rank",
+        str(hf_lora_rank),
+        "--lora-alpha",
+        str(hf_lora_alpha),
+        "--gradient-checkpointing",
+    ]
+    _run(cmd, cwd=REPO_DIR)
+
+    if run_dpo:
+        prefs = _resolve_repo_path(preference_input) if preference_input else pack_path.parent / "preferences.jsonl"
+        if not prefs.is_file():
+            fallback_prefs = pack_path.parent / "preferences.jsonl"
+            if fallback_prefs.is_file():
+                prefs = fallback_prefs
+            else:
+                print(f"DPO preference file not found: {prefs}; skipping DPO", flush=True)
+                return out_dir
+        dpo_dir = out_dir / "dpo"
+        _run(
+            [
+                sys.executable,
+                "-m",
+                "picochat.cli",
+                "train",
+                "hf-dpo",
+                "--model",
+                str(out_dir / "final_model"),
+                "--input",
+                str(prefs),
+                "--out-dir",
+                str(dpo_dir),
+                "--max-steps",
+                str(dpo_steps),
+                "--beta",
+                str(dpo_beta),
+                "--device",
+                "cuda",
+            ],
+            cwd=REPO_DIR,
+        )
+    return out_dir
+
+
+@app.function(image=image, gpu="A100", volumes={str(RUNS_DIR): runs_volume}, timeout=8 * 60 * 60)
+def train_remote(
+    repo_url: str,
+    branch: str,
+    dataset_pack: str,
+    hf_dataset: str,
+    hf_split: str,
+    hf_text_column: str,
+    hf_max_rows: int,
+    hf_shards: int,
+    run_name: str,
+    scale: str,
+    base_steps: str,
+    sft_steps: str,
+    mode: str,
+    hf_model: str,
+    hf_sft_steps: int,
+    hf_learning_rate: float,
+    hf_max_length: int,
+    hf_lora_rank: int,
+    hf_lora_alpha: float,
+    hf_quantize: str,
+    preference_input: str,
+    run_dpo: bool,
+    dpo_steps: int,
+    dpo_beta: float,
+) -> str:
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    _clone_or_update(repo_url, branch)
+    _install_repo()
+    mode = (mode or "native").strip().lower()
+    if mode == "hf-sft":
+        pack_path = _resolve_hf_sft_dataset_pack(dataset_pack, hf_max_rows)
+        out_dir = _run_hf_sft_training(
+            pack_path,
+            run_name,
+            hf_model,
+            hf_sft_steps,
+            hf_learning_rate,
+            hf_max_length,
+            hf_lora_rank,
+            hf_lora_alpha,
+            hf_quantize,
+            preference_input,
+            run_dpo,
+            dpo_steps,
+            dpo_beta,
+        )
+    elif mode == "native":
+        pack_path = _resolve_dataset_pack(dataset_pack, hf_dataset, hf_split, hf_text_column, hf_max_rows, hf_shards)
+        out_dir = _run_native_training(pack_path, run_name, scale, base_steps, sft_steps)
+    else:
+        raise ValueError("mode must be native or hf-sft")
     try:
         runs_volume.commit()
     except Exception as exc:  # pragma: no cover - depends on Modal runtime behavior.
@@ -209,6 +412,18 @@ def main(
     secret_name: str = "",
     base_steps: str = "",
     sft_steps: str = "",
+    mode: str = "native",
+    hf_model: str = "HuggingFaceTB/SmolLM3-3B",
+    hf_sft_steps: int = 800,
+    hf_learning_rate: float = 2e-5,
+    hf_max_length: int = 1024,
+    hf_lora_rank: int = 16,
+    hf_lora_alpha: float = 32.0,
+    hf_quantize: str = "4bit",
+    preference_input: str = "",
+    run_dpo: bool = False,
+    dpo_steps: int = 100,
+    dpo_beta: float = 0.1,
 ) -> None:
     options: dict[str, object] = {"gpu": gpu, "timeout": int(timeout_hours) * 60 * 60}
     if volume_name != DEFAULT_VOLUME_NAME:
@@ -230,5 +445,17 @@ def main(
         scale,
         base_steps,
         sft_steps,
+        mode,
+        hf_model,
+        hf_sft_steps,
+        hf_learning_rate,
+        hf_max_length,
+        hf_lora_rank,
+        hf_lora_alpha,
+        hf_quantize,
+        preference_input,
+        run_dpo,
+        dpo_steps,
+        dpo_beta,
     )
     print(f"Picochat Modal run complete: {out_dir}")

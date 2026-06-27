@@ -124,6 +124,10 @@ export function initDatasetPack(payload: Record<string, unknown>): Promise<Recor
   return jsonRequest("/api/dataset-pack/init", { method: "POST", body: JSON.stringify(payload) });
 }
 
+export function buildSecurityPack(payload: Record<string, unknown>): Promise<Record<string, any>> {
+  return jsonRequest("/api/security/pack", { method: "POST", body: JSON.stringify(payload) });
+}
+
 // Clone a read-only bundled example pack into a writable workspace. No-op for
 // packs that are already writable (returns the same path with cloned=false).
 export function clonePack(datasetPack: string): Promise<{ dataset_pack: string; cloned: boolean; source?: string }> {

@@ -75,6 +75,7 @@ from picochat.registry import (
     write_registry_report,
     write_release_card,
 )
+from picochat.security_pack import SecurityPackConfig, build_security_analyst_pack
 from picochat.artifacts import (
     RunBundleConfig,
     bundle_inspection_markdown,
@@ -382,6 +383,25 @@ def build_parser() -> argparse.ArgumentParser:
     data_preference_starter.add_argument("--out", required=True, help="Output preference JSONL with user/chosen/rejected fields.")
     data_preference_starter.add_argument("--max-rows", type=int, default=0, help="Optional row limit. 0 means all rows.")
     data_preference_starter.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
+
+    data_security_pack = data_subparsers.add_parser(
+        "security-pack",
+        help="Build a defensive security-analyst SFT/eval/preference pack.",
+    )
+    data_security_pack.add_argument("--out-dir", required=True, help="Output folder for the generated dataset pack.")
+    data_security_pack.add_argument("--seed-dir", default="datasets/security-analyst", help="Local curated security seed directory.")
+    data_security_pack.add_argument(
+        "--source",
+        choices=("seed", "trendyol"),
+        default="trendyol",
+        help="Use only local seed rows or blend in Trendyol cybersecurity rows from Hugging Face.",
+    )
+    data_security_pack.add_argument("--trendyol-dataset", default="Trendyol/Trendyol-Cybersecurity-Instruction-Tuning-Dataset")
+    data_security_pack.add_argument("--trendyol-split", default="train")
+    data_security_pack.add_argument("--trendyol-max-rows", type=int, default=10000)
+    data_security_pack.add_argument("--eval-rows", type=int, default=500)
+    data_security_pack.add_argument("--preference-rows", type=int, default=64)
+    data_security_pack.add_argument("--force", action="store_true", help="Overwrite an existing output folder.")
 
     data_benchmark_pack = data_subparsers.add_parser(
         "benchmark-pack",
@@ -2369,6 +2389,28 @@ def preference_starter_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def security_pack_data(args: argparse.Namespace) -> int:
+    report = build_security_analyst_pack(SecurityPackConfig(
+        out_dir=args.out_dir,
+        seed_dir=args.seed_dir,
+        include_trendyol=args.source == "trendyol",
+        trendyol_dataset=args.trendyol_dataset,
+        trendyol_split=args.trendyol_split,
+        trendyol_max_rows=args.trendyol_max_rows,
+        eval_rows=args.eval_rows,
+        preference_target_rows=args.preference_rows,
+        force=args.force,
+    ))
+    print(f"dataset_pack: {report['dataset_pack']}")
+    print(f"chat_rows: {report['chat_rows']}")
+    print(f"eval_rows: {report['eval_rows']}")
+    print(f"preference_rows: {report['preference_rows']}")
+    print(f"report: {report['report']}")
+    print("next:")
+    print(f"picochat data preview --dataset-pack {report['dataset_pack']}")
+    return 0
+
+
 def benchmark_pack_data(args: argparse.Namespace) -> int:
     report = generate_benchmark_tuning_pack(
         dataset_pack=args.dataset_pack,
@@ -3754,6 +3796,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "data" and args.data_command == "preference-starter":
         return preference_starter_data(args)
+
+    if args.command == "data" and args.data_command == "security-pack":
+        return security_pack_data(args)
 
     if args.command == "data" and args.data_command == "benchmark-pack":
         return benchmark_pack_data(args)

@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { archiveRuns, benchmarkPack, cancelRun, clonePack, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, importRun, initDatasetPack, inspectTuning, listRuns, loadLeaderboard, loadPackEditor, loadPresets, loadRegistry, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, scalePlan, serveStart, serveStatus, serveStop, startRun, trainHfDpo, trainHfSft } from "./api";
+import { archiveRuns, benchmarkPack, buildSecurityPack, cancelRun, clonePack, compareRuns, evalRun, exportHf, generateEvalStarter, generatePreferences, generateSftStarter, generateText, importHf, importRun, initDatasetPack, inspectTuning, listRuns, loadLeaderboard, loadPackEditor, loadPresets, loadRegistry, loadReport, loadRun, loadStatus, remoteModalPull, remoteModalStart, remoteStatus, runLogStreamUrl, savePackEditor, scalePlan, serveStart, serveStatus, serveStop, startRun, trainHfDpo, trainHfSft } from "./api";
 import type { GenerateResult, JobStatus, ModelConfig, RunDetail, RunLog, RunSummary, Tone } from "./types";
 import { compactNumber, fixed, latestRun, lossPoints, metricSeries, parseEvalScore, percent, releaseTone, runTone, statusLabel, throughputSeries } from "./utils";
 
@@ -838,6 +838,9 @@ function DatasetView({ detail, settings, openNew }: SectionProps) {
       <Panel title="Import a Hugging Face dataset" sub="Turn a public dataset into a local pack you can train on">
         <HfImport defaultDataset={settings.defaultDataset} token={settings.hfToken} openNew={openNew} />
       </Panel>
+      <Panel title="Build Security Analyst pack" sub="Blend defensive seed rows with Trendyol cybersecurity instructions, held-out eval, and DPO preferences">
+        <SecurityPackBuilder openNew={openNew} />
+      </Panel>
       {s.corpus || s.tokenizer ? (
         <>
           <SecHead n="02" label="Corpus" />
@@ -862,6 +865,78 @@ function DatasetView({ detail, settings, openNew }: SectionProps) {
             <pre className="pc-pre">{String(preview).slice(0, 1600)}</pre>
           </Panel>
         </>
+      ) : null}
+    </div>
+  );
+}
+
+function SecurityPackBuilder({ openNew }: { openNew: (pack?: string) => void }) {
+  const [outDir, setOutDir] = useState("runs/security-analyst-pack-v1");
+  const [source, setSource] = useState<"trendyol" | "seed">("trendyol");
+  const [maxRows, setMaxRows] = useState(10000);
+  const [evalRows, setEvalRows] = useState(500);
+  const [preferenceRows, setPreferenceRows] = useState(64);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [result, setResult] = useState<Record<string, any> | null>(null);
+
+  const run = async () => {
+    setBusy(true); setErr(""); setResult(null);
+    try {
+      setResult(await buildSecurityPack({
+        out_dir: outDir,
+        include_trendyol: source === "trendyol",
+        trendyol_max_rows: maxRows,
+        eval_rows: evalRows,
+        preference_target_rows: preferenceRows,
+        force: true
+      }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="pc-form">
+      <div className="pc-grid two">
+        <label className="pc-field">Output folder
+          <input value={outDir} onChange={(e) => setOutDir(e.target.value)} />
+        </label>
+        <label className="pc-field">Source
+          <select value={source} onChange={(e) => setSource(e.target.value as "trendyol" | "seed")}>
+            <option value="trendyol">Seed + Trendyol HF data</option>
+            <option value="seed">Seed rows only (offline smoke)</option>
+          </select>
+        </label>
+      </div>
+      <div className="pc-grid three">
+        <label className="pc-field">HF rows
+          <input type="number" value={maxRows} onChange={(e) => setMaxRows(Math.max(0, Number(e.target.value) || 0))} disabled={source === "seed"} />
+        </label>
+        <label className="pc-field">Held-out eval rows
+          <input type="number" value={evalRows} onChange={(e) => setEvalRows(Math.max(1, Number(e.target.value) || 500))} />
+        </label>
+        <label className="pc-field">DPO preference rows
+          <input type="number" value={preferenceRows} onChange={(e) => setPreferenceRows(Math.max(0, Number(e.target.value) || 64))} />
+        </label>
+      </div>
+      <div className="pc-row">
+        <button className="pc-btn primary" onClick={run} disabled={busy}>
+          {busy ? <Loader2 size={15} className="spin" /> : <ShieldCheck size={15} />} Build security pack
+        </button>
+        <span className="pc-hint">Strictly defensive training data. Eval prompts stay held out; preferences are written beside the pack.</span>
+      </div>
+      {err ? <Banner tone="block" title="Security pack failed" body={err} onClose={() => setErr("")} /> : null}
+      {result ? (
+        <div className="pc-import-result">
+          <div>
+            <strong>{compactNumber(result.chat_rows)} SFT rows · {compactNumber(result.eval_rows)} eval rows · {compactNumber(result.preference_rows)} preferences</strong>
+            <code>{result.dataset_pack}</code>
+          </div>
+          <button className="pc-btn primary" onClick={() => openNew(result.dataset_pack)}>Train on this pack →</button>
+        </div>
       ) : null}
     </div>
   );
@@ -923,8 +998,14 @@ function RemoteView({ openLogsFor }: SectionProps) {
   const [branch, setBranch] = useState("develop");
   const [runName, setRunName] = useState("picochat-cloud-v1");
   const [scale, setScale] = useState("h100-100m");
+  const [mode, setMode] = useState<"native" | "hf-sft">("hf-sft");
+  const [datasetPack, setDatasetPack] = useState("datasets/security-analyst/dataset_pack.json");
   const [hfDataset, setHfDataset] = useState("karpathy/climbmix-400b-shuffle");
   const [hfMaxRows, setHfMaxRows] = useState(800000);
+  const [hfModel, setHfModel] = useState("HuggingFaceTB/SmolLM3-3B");
+  const [hfSftSteps, setHfSftSteps] = useState(800);
+  const [hfPreferenceInput, setHfPreferenceInput] = useState("datasets/security-analyst/preferences.jsonl");
+  const [runDpo, setRunDpo] = useState(false);
   const [gpu, setGpu] = useState("A100");
   const [secretName, setSecretName] = useState("");
   const [modal, setModal] = useState<{ modal_available: boolean; modal_script: boolean } | null>(null);
@@ -940,7 +1021,23 @@ function RemoteView({ openLogsFor }: SectionProps) {
   const launchModal = async () => {
     setBusy(true); setErr("");
     try {
-      const started = await remoteModalStart({ repo_url: REMOTE_REPO, branch, run_name: runName, scale, gpu, hf_dataset: hfDataset, hf_max_rows: hfMaxRows, secret_name: secretName || undefined });
+      const started = await remoteModalStart({
+        repo_url: REMOTE_REPO,
+        branch,
+        run_name: runName,
+        scale,
+        mode,
+        dataset_pack: datasetPack || undefined,
+        gpu,
+        hf_dataset: hfDataset,
+        hf_max_rows: hfMaxRows,
+        hf_model: hfModel,
+        hf_sft_steps: hfSftSteps,
+        hf_quantize: "4bit",
+        preference_input: hfPreferenceInput || undefined,
+        run_dpo: runDpo,
+        secret_name: secretName || undefined
+      });
       openLogsFor({ job: started.job?.id, run: started.job?.run_name });
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
@@ -954,8 +1051,12 @@ function RemoteView({ openLogsFor }: SectionProps) {
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); } finally { setPullBusy(false); }
   };
 
-  const colabSnippet = `!pip install -q "picochat[hf] @ git+${REMOTE_REPO}@${branch}"\n!picochat data hf-import --dataset ${hfDataset} --pack-out my_pack --max-rows ${Math.min(hfMaxRows, 20000)}\n!picochat run ${scale} --dataset-pack my_pack/dataset_pack.json --device cuda --out-dir runs/${runName}`;
-  const lambdaSnippet = `# On a fresh Lambda GPU instance (cloud.lambda.ai):\ngit clone -b ${branch} ${REMOTE_REPO} && cd picochat\npip install -e ".[hf]"\npicochat data hf-import --dataset ${hfDataset} --pack-out my_pack --max-rows ${Math.min(hfMaxRows, 100000)}\npicochat run ${scale} --dataset-pack my_pack/dataset_pack.json --device cuda --out-dir runs/${runName}`;
+  const colabSnippet = mode === "hf-sft"
+    ? `!pip install -q "picochat[hf,qlora,dpo] @ git+${REMOTE_REPO}@${branch}"\n!picochat train hf-sft --model ${hfModel} --input ${datasetPack.replace(/dataset_pack\.json$/, "chat.jsonl")} --out-dir runs/${runName} --device cuda --precision bf16 --peft lora --quantize 4bit --max-steps ${hfSftSteps} --gradient-checkpointing`
+    : `!pip install -q "picochat[hf] @ git+${REMOTE_REPO}@${branch}"\n!picochat data hf-import --dataset ${hfDataset} --pack-out my_pack --max-rows ${Math.min(hfMaxRows, 20000)}\n!picochat run ${scale} --dataset-pack my_pack/dataset_pack.json --device cuda --out-dir runs/${runName}`;
+  const lambdaSnippet = mode === "hf-sft"
+    ? `# On a fresh Lambda GPU instance (cloud.lambda.ai):\ngit clone -b ${branch} ${REMOTE_REPO} && cd picochat\npip install -e ".[hf,qlora,dpo]"\npicochat train hf-sft --model ${hfModel} --input ${datasetPack.replace(/dataset_pack\.json$/, "chat.jsonl")} --out-dir runs/${runName} --device cuda --precision bf16 --peft lora --quantize 4bit --max-steps ${hfSftSteps} --gradient-checkpointing`
+    : `# On a fresh Lambda GPU instance (cloud.lambda.ai):\ngit clone -b ${branch} ${REMOTE_REPO} && cd picochat\npip install -e ".[hf]"\npicochat data hf-import --dataset ${hfDataset} --pack-out my_pack --max-rows ${Math.min(hfMaxRows, 100000)}\npicochat run ${scale} --dataset-pack my_pack/dataset_pack.json --device cuda --out-dir runs/${runName}`;
 
   return (
     <div className="pc-stack pc-editorial">
@@ -967,12 +1068,27 @@ function RemoteView({ openLogsFor }: SectionProps) {
       <div className="pc-grid two">
         <Panel title="Recipe" sub="Shared across providers">
           <label className="pc-field">Run name<input value={runName} onChange={(e) => setRunName(e.target.value)} /></label>
+          <div className="pc-set-row"><span>Training path</span><Segmented value={mode} options={["hf-sft", "native"]} onChange={(v) => setMode(v as "native" | "hf-sft")} /></div>
           <div className="pc-grid two">
             <label className="pc-field">Scale<select value={scale} onChange={(e) => setScale(e.target.value)}>{REMOTE_SCALES.map((s) => <option key={s}>{s}</option>)}</select></label>
             <label className="pc-field">Branch<input value={branch} onChange={(e) => setBranch(e.target.value)} /></label>
           </div>
-          <label className="pc-field">Hugging Face dataset<input value={hfDataset} onChange={(e) => setHfDataset(e.target.value)} /></label>
-          <label className="pc-field">Max rows<input type="number" value={hfMaxRows} onChange={(e) => setHfMaxRows(Math.max(1, Number(e.target.value) || 1000))} /></label>
+          {mode === "hf-sft" ? (
+            <>
+              <label className="pc-field">Dataset pack<input value={datasetPack} onChange={(e) => setDatasetPack(e.target.value)} /></label>
+              <label className="pc-field">Base model<input value={hfModel} onChange={(e) => setHfModel(e.target.value)} /></label>
+              <div className="pc-grid two">
+                <label className="pc-field">SFT steps<input type="number" value={hfSftSteps} onChange={(e) => setHfSftSteps(Math.max(1, Number(e.target.value) || 800))} /></label>
+                <label className="pc-field">Preferences<input value={hfPreferenceInput} onChange={(e) => setHfPreferenceInput(e.target.value)} /></label>
+              </div>
+              <label className="pc-check"><input type="checkbox" checked={runDpo} onChange={(e) => setRunDpo(e.target.checked)} /> Run DPO after SFT if preferences exist</label>
+            </>
+          ) : (
+            <>
+              <label className="pc-field">Hugging Face dataset<input value={hfDataset} onChange={(e) => setHfDataset(e.target.value)} /></label>
+              <label className="pc-field">Max rows<input type="number" value={hfMaxRows} onChange={(e) => setHfMaxRows(Math.max(1, Number(e.target.value) || 1000))} /></label>
+            </>
+          )}
         </Panel>
 
         {provider === "modal" ? (

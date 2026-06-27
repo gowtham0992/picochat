@@ -54,6 +54,7 @@ from picochat.preference_starter import PreferenceStarterConfig, generate_prefer
 from picochat.run import LONG_RUN_GATE_PROFILES, TinyRunConfig
 from picochat.run_preflight import assess_run_preflight
 from picochat.scales import RUN_SCALES
+from picochat.security_pack import SecurityPackConfig, build_security_analyst_pack
 from picochat.sft_starter import generate_sft_starter
 from picochat.sft import SFT_PACKING_MODES, SFT_SAMPLING_MODES
 from picochat.tokenizer import BPE_PRETOKENIZERS, DEFAULT_BPE_PRETOKENIZER, TOKENIZER_TYPES
@@ -555,6 +556,69 @@ def init_dataset_pack_plan(payload: dict) -> dict:
             report.dataset_pack,
         ),
     }
+
+
+def security_pack_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
+    """Build the defensive Security Analyst dataset pack."""
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+
+    out_dir_text = _optional_string(payload.get("out_dir"))
+    out_dir = Path(out_dir_text) if out_dir_text else Path(runs_dir) / "security-analyst-pack"
+    seed_dir = _optional_string(payload.get("seed_dir")) or "datasets/security-analyst"
+    include_trendyol = payload.get("include_trendyol", True)
+    if not isinstance(include_trendyol, bool):
+        raise ValueError("include_trendyol must be true or false")
+    trendyol_dataset = _optional_string(payload.get("trendyol_dataset")) or "Trendyol/Trendyol-Cybersecurity-Instruction-Tuning-Dataset"
+    trendyol_split = _optional_string(payload.get("trendyol_split")) or "train"
+    trendyol_max_rows = _bounded_int(payload.get("trendyol_max_rows", 10_000), 0, 1_000_000)
+    eval_rows = _bounded_int(payload.get("eval_rows", 500), 1, 100_000)
+    preference_target_rows = _bounded_int(payload.get("preference_target_rows", 64), 0, 10_000)
+    force = payload.get("force", False)
+    if not isinstance(force, bool):
+        raise ValueError("force must be true or false")
+
+    report = build_security_analyst_pack(SecurityPackConfig(
+        out_dir=out_dir,
+        seed_dir=seed_dir,
+        include_trendyol=include_trendyol,
+        trendyol_dataset=trendyol_dataset,
+        trendyol_split=trendyol_split,
+        trendyol_max_rows=trendyol_max_rows,
+        eval_rows=eval_rows,
+        preference_target_rows=preference_target_rows,
+        force=force,
+    ))
+    command_parts = [
+        "picochat",
+        "data",
+        "security-pack",
+        "--source",
+        "trendyol" if include_trendyol else "seed",
+        "--out-dir",
+        str(out_dir),
+        "--seed-dir",
+        seed_dir,
+        "--trendyol-dataset",
+        trendyol_dataset,
+        "--trendyol-split",
+        trendyol_split,
+        "--trendyol-max-rows",
+        str(trendyol_max_rows),
+        "--eval-rows",
+        str(eval_rows),
+        "--preference-rows",
+        str(preference_target_rows),
+    ]
+    if force:
+        command_parts.append("--force")
+    report["command"] = _shell_command(*command_parts)
+    report["next_actions"] = [
+        "Preview or preflight the generated dataset pack before launching training.",
+        "Use Modal HF SFT with QLoRA on the generated chat.jsonl.",
+        "Run DPO with preferences.jsonl only after checking SFT eval behavior.",
+    ]
+    return report
 
 
 def hf_import_plan(payload: dict, runs_dir: str | Path = "runs") -> dict:
@@ -2100,8 +2164,25 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
     run_name = _slug(_optional_string(payload.get("run_name")) or "picochat-modal-v1")
     scale = _optional_string(payload.get("scale")) or "h100-100m"
     gpu = _optional_string(payload.get("gpu")) or "A100"
+    mode = (_optional_string(payload.get("mode")) or "native").lower()
+    if mode not in {"native", "hf-sft"}:
+        raise ValueError("mode must be native or hf-sft")
+    dataset_pack = _optional_string(payload.get("dataset_pack"))
     hf_dataset = _optional_string(payload.get("hf_dataset")) or "karpathy/climbmix-400b-shuffle"
     hf_max_rows = _bounded_int(payload.get("hf_max_rows", 800_000), 1, 100_000_000)
+    hf_model = _optional_string(payload.get("hf_model")) or "HuggingFaceTB/SmolLM3-3B"
+    hf_sft_steps = _bounded_int(payload.get("hf_sft_steps", 800), 1, 100_000)
+    hf_learning_rate = _bounded_float(payload.get("hf_learning_rate", 2e-5), 0.0, 1.0)
+    hf_max_length = _bounded_int(payload.get("hf_max_length", 1024), 128, 32768)
+    hf_lora_rank = _bounded_int(payload.get("hf_lora_rank", 16), 1, 1024)
+    hf_lora_alpha = _bounded_float(payload.get("hf_lora_alpha", 32.0), 0.0, 4096.0)
+    hf_quantize = _optional_string(payload.get("hf_quantize")) or "4bit"
+    if hf_quantize not in {"none", "4bit"}:
+        raise ValueError("hf_quantize must be none or 4bit")
+    preference_input = _optional_string(payload.get("preference_input"))
+    run_dpo = bool(payload.get("run_dpo", False))
+    dpo_steps = _bounded_int(payload.get("dpo_steps", 100), 1, 100_000)
+    dpo_beta = _bounded_float(payload.get("dpo_beta", 0.1), 0.0, 10.0)
     secret_name = _optional_string(payload.get("secret_name"))
 
     out_dir = _safe_child(Path(runs_dir), run_name)
@@ -2116,9 +2197,26 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
         "--run-name", run_name,
         "--scale", scale,
         "--gpu", gpu,
+        "--mode", mode,
         "--hf-dataset", hf_dataset,
         "--hf-max-rows", str(hf_max_rows),
     ]
+    if dataset_pack:
+        command.extend(["--dataset-pack", dataset_pack])
+    if mode == "hf-sft":
+        command.extend([
+            "--hf-model", hf_model,
+            "--hf-sft-steps", str(hf_sft_steps),
+            "--hf-learning-rate", str(hf_learning_rate),
+            "--hf-max-length", str(hf_max_length),
+            "--hf-lora-rank", str(hf_lora_rank),
+            "--hf-lora-alpha", str(hf_lora_alpha),
+            "--hf-quantize", hf_quantize,
+        ])
+        if preference_input:
+            command.extend(["--preference-input", preference_input])
+        if run_dpo:
+            command.extend(["--run-dpo", "--dpo-steps", str(dpo_steps), "--dpo-beta", str(dpo_beta)])
     if secret_name:
         command.extend(["--secret-name", secret_name])
 
@@ -2155,7 +2253,10 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
             "kind": "modal",
             "gpu": gpu,
             "scale": scale,
+            "mode": mode,
+            "dataset_pack": dataset_pack,
             "hf_dataset": hf_dataset,
+            "hf_model": hf_model if mode == "hf-sft" else None,
             "run_name": run_name,
         },
     }
@@ -2583,6 +2684,8 @@ def _make_handler(config: WebConfig):
                     self._send_json(clone_example_pack_plan(self._read_json_body()))
                 elif parsed.path == "/api/hf/import":
                     self._send_json(hf_import_plan(self._read_json_body(), config.runs_dir))
+                elif parsed.path == "/api/security/pack":
+                    self._send_json(security_pack_plan(self._read_json_body(), config.runs_dir))
                 elif parsed.path == "/api/tuning/inspect":
                     self._send_json(inspect_tuning_plan(self._read_json_body()))
                 elif parsed.path == "/api/sft/starter":
