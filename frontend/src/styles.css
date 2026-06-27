@@ -33,6 +33,8 @@
   --shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 28px rgba(0, 0, 0, 0.22);
   --shadow-pop: 0 2px 6px rgba(0, 0, 0, 0.35);
+  --log-bg: #07100d;
+  --log-text: #dce8e2;
   /* Apple-style motion: spring-like ease for movement, soft ease-out for entrances. */
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
@@ -59,6 +61,8 @@
   --shadow: 0 30px 70px rgba(30, 40, 70, 0.18);
   --shadow-card: 0 1px 2px rgba(30, 40, 70, 0.06), 0 6px 20px rgba(30, 40, 70, 0.08);
   --shadow-pop: 0 2px 5px rgba(30, 40, 70, 0.12);
+  --log-bg: #f8fafc;
+  --log-text: #263142;
 }
 
 * { box-sizing: border-box; }
@@ -333,7 +337,7 @@ input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; accent-color:
 @keyframes pc-sheet { from { opacity: 0; transform: scale(0.96) translateY(10px); } }
 .pc-modal header { padding: 16px 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); }
 .pc-modal h2 { margin: 2px 0; letter-spacing: -0.02em; font-size: 15px; }
-.pc-modal pre { margin: 0; overflow: auto; padding: 18px; background: var(--bg); color: #cdd6e4; font-family: var(--mono); font-size: 11.5px; line-height: 1.6; }
+.pc-modal pre { margin: 0; overflow: auto; padding: 18px; background: var(--log-bg); color: var(--log-text); font-family: var(--mono); font-size: 11.5px; line-height: 1.6; }
 
 /* --------------------------------------------------------- getting started */
 .pc-welcome { max-width: 920px; margin: 0 auto; display: grid; gap: 26px; padding: 18px 0 8px; }
