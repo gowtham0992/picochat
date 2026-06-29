@@ -53,6 +53,7 @@ export interface RunLog {
   running?: boolean;
   log_path?: string;
   log_tail?: string;
+  diagnostic?: Record<string, any> | null;
   progress?: Record<string, any> | null;
   updated_at?: number;
 }

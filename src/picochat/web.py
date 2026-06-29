@@ -1975,6 +1975,7 @@ def run_log_plan(
         raise ValueError(f"unknown run job: {scope}")
     log_path = Path(job.get("log_path") or "")
     log_tail = _read_log_tail(log_path, limit=limit) if log_path else ""
+    diagnostic = diagnose_remote_failure(log_tail)
     return {
         "job_id": job.get("id"),
         "run_name": job.get("run_name"),
@@ -1982,6 +1983,7 @@ def run_log_plan(
         "running": job.get("state") == "running",
         "log_path": str(log_path) if log_path else "",
         "log_tail": log_tail,
+        "diagnostic": diagnostic,
         "progress": job.get("progress"),
         "updated_at": max(time.time(), float(job.get("updated_at") or 0)),
     }
@@ -2139,11 +2141,216 @@ def serve_stop_plan(payload: dict) -> dict:
 _MODAL_SCRIPT = Path("scripts/modal_picochat_train.py")
 
 
+def _probe_command(command: list[str], *, timeout: float = 5.0) -> dict:
+    """Run a short local readiness probe without raising on CLI failure."""
+    try:
+        result = subprocess.run(
+            command,
+            cwd=Path.cwd(),
+            env=_child_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return {
+            "ok": result.returncode == 0,
+            "returncode": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "ok": False,
+            "returncode": None,
+            "stdout": (exc.stdout or "").strip() if isinstance(exc.stdout, str) else "",
+            "stderr": f"timed out after {timeout:.0f}s",
+        }
+    except Exception as exc:  # pragma: no cover - defensive probe guard
+        return {"ok": False, "returncode": None, "stdout": "", "stderr": str(exc)}
+
+
+def _remote_check(id_: str, label: str, status: str, detail: str, action: str = "") -> dict:
+    return {
+        "id": id_,
+        "label": label,
+        "status": status,
+        "detail": detail,
+        "action": action,
+    }
+
+
+def _looks_like_hf_auth_failure(lower_text: str) -> bool:
+    """Return true for real HF auth failures, not the common rate-limit warning."""
+    if "higher rate limits" in lower_text or "faster downloads" in lower_text:
+        return False
+    auth_markers = (
+        "401",
+        "unauthorized",
+        "requires authentication",
+        "authentication failed",
+        "invalid token",
+        "gated repo",
+        "gated model",
+        "access to this model is restricted",
+        "you are not authorized",
+    )
+    if any(marker in lower_text for marker in auth_markers):
+        return True
+    return "repository not found" in lower_text and ("private" in lower_text or "token" in lower_text)
+
+
+def diagnose_remote_failure(text: str) -> dict | None:
+    """Classify common remote-training failures into user-actionable guidance."""
+    lower = text.lower()
+    if "please add a payment method" in lower:
+        return {
+            "kind": "modal_payment_required",
+            "severity": "block",
+            "title": "Modal requires a payment method for this GPU",
+            "detail": (
+                "Modal credits can be present while A100/H100 GPU functions still require a payment "
+                "method on the workspace. Add a payment method in Modal, or choose a smaller GPU "
+                "such as L4/A10G/T4 for a cheaper smoke run."
+            ),
+            "action": "Modal dashboard -> Billing -> add payment method, then relaunch.",
+        }
+    if "cuda out of memory" in lower or "outofmemoryerror" in lower:
+        return {
+            "kind": "gpu_oom",
+            "severity": "block",
+            "title": "GPU ran out of memory",
+            "detail": "Reduce max length, batch size, LoRA rank, or switch to a larger GPU.",
+            "action": "Try max length 512, batch 1, grad accumulation 8, or GPU=A100/H100.",
+        }
+    if _looks_like_hf_auth_failure(lower):
+        return {
+            "kind": "hf_auth",
+            "severity": "block",
+            "title": "Hugging Face authentication failed",
+            "detail": "The remote job could not access a gated dataset or model.",
+            "action": "Create a Modal secret containing HF_TOKEN and pass that secret name.",
+        }
+    if "no such file or directory" in lower and "dataset_pack" in lower:
+        return {
+            "kind": "missing_dataset_pack",
+            "severity": "block",
+            "title": "Dataset pack path was not found in the remote job",
+            "detail": "Build the pack locally first, commit/push if needed, or use the Modal script's HF import path.",
+            "action": "Confirm the dataset pack path exists and is included in the repo or generated remotely.",
+        }
+    if "fileexists" in lower or "already exists" in lower:
+        return {
+            "kind": "run_exists",
+            "severity": "warn",
+            "title": "Run output already exists",
+            "detail": "Picochat refuses to overwrite an existing run folder.",
+            "action": "Use a new run name or archive/delete the old local run.",
+        }
+    return None
+
+
 def remote_status_plan() -> dict:
     """Report which remote providers the local machine can drive directly."""
+    modal_path = shutil.which("modal")
+    modal_available = modal_path is not None
+    modal_script = _MODAL_SCRIPT.exists()
+    checks: list[dict] = [
+        _remote_check(
+            "modal_cli",
+            "Modal CLI",
+            "pass" if modal_available else "block",
+            str(modal_path) if modal_path else "modal command is not on PATH",
+            "" if modal_path else "Install with `pip install modal`, then run `modal token new`.",
+        ),
+        _remote_check(
+            "modal_script",
+            "Picochat Modal script",
+            "pass" if modal_script else "block",
+            str(_MODAL_SCRIPT) if modal_script else "scripts/modal_picochat_train.py is missing",
+            "" if modal_script else "Pull the latest repo or restore the Modal training script.",
+        ),
+    ]
+    profile = None
+    workspace = None
+    modal_authenticated = False
+    profile_probe = None
+    if modal_available:
+        profile_probe = _probe_command(["modal", "profile", "current"], timeout=5)
+        modal_authenticated = bool(profile_probe.get("ok"))
+        if modal_authenticated:
+            profile = str(profile_probe.get("stdout") or "").strip() or None
+            workspace = profile
+            checks.append(_remote_check("modal_auth", "Modal profile", "pass", profile or "authenticated"))
+        else:
+            checks.append(_remote_check(
+                "modal_auth",
+                "Modal profile",
+                "block",
+                str(profile_probe.get("stderr") or profile_probe.get("stdout") or "not authenticated"),
+                "Run `modal token new` and confirm `modal profile current` works.",
+            ))
+    else:
+        checks.append(_remote_check("modal_auth", "Modal profile", "block", "Modal CLI is unavailable"))
+
+    checks.append(_remote_check(
+        "modal_gpu_entitlement",
+        "GPU entitlement",
+        "warn",
+        "A100/H100 may require a billing payment method even when credits are available.",
+        "If launch fails with payment-method text, add billing or choose L4/A10G/T4.",
+    ))
+    checks.append(_remote_check(
+        "modal_volume",
+        "Artifact volume",
+        "info" if modal_authenticated else "warn",
+        "Jobs write to Modal volume `picochat-runs`; completed runs can be pulled back locally.",
+        "Use Pull from Modal after training finishes.",
+    ))
+
+    providers = [
+        {
+            "id": "modal",
+            "label": "Modal",
+            "status": "ready" if modal_available and modal_script and modal_authenticated else "setup",
+            "detail": "Launch directly from Picochat and stream logs.",
+        },
+        {
+            "id": "colab",
+            "label": "Google Colab",
+            "status": "manual",
+            "detail": "Copy the generated notebook commands into a GPU runtime.",
+        },
+        {
+            "id": "lambda",
+            "label": "Lambda",
+            "status": "manual",
+            "detail": "Copy SSH commands into a rented GPU instance.",
+        },
+    ]
+    gpu_catalog = [
+        {"id": "T4", "tier": "cheap", "note": "Good for smoke runs and small LoRA checks."},
+        {"id": "L4", "tier": "balanced", "note": "Good first paid path for QLoRA if available."},
+        {"id": "A10G", "tier": "balanced", "note": "Often cheaper than A100; useful for 3B QLoRA."},
+        {"id": "A100", "tier": "fast", "note": "Recommended for the security 3B run; may require payment method."},
+        {"id": "H100", "tier": "fastest", "note": "Fastest, usually highest billing/entitlement friction."},
+    ]
     return {
-        "modal_available": shutil.which("modal") is not None,
-        "modal_script": _MODAL_SCRIPT.exists(),
+        "modal_available": modal_available,
+        "modal_path": modal_path,
+        "modal_script": modal_script,
+        "modal_script_path": str(_MODAL_SCRIPT),
+        "modal_authenticated": modal_authenticated,
+        "profile": profile,
+        "workspace": workspace,
+        "profile_probe": profile_probe,
+        "checks": checks,
+        "providers": providers,
+        "gpu_catalog": gpu_catalog,
+        "common_errors": [
+            diagnose_remote_failure("Please add a payment method to use A100-40GB GPU functions."),
+        ],
     }
 
 
@@ -2183,12 +2390,27 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
     hf_quantize = _optional_string(payload.get("hf_quantize")) or "4bit"
     if hf_quantize not in {"none", "4bit"}:
         raise ValueError("hf_quantize must be none or 4bit")
+    security_source = (_optional_string(payload.get("security_source")) or "trendyol").lower()
+    if security_source not in {"trendyol", "seed"}:
+        raise ValueError("security_source must be trendyol or seed")
+    security_max_rows = _bounded_int(payload.get("security_max_rows", 10_000), 0, 1_000_000)
+    security_eval_rows = _bounded_int(payload.get("security_eval_rows", 500), 1, 100_000)
+    security_preference_rows = _bounded_int(payload.get("security_preference_rows", 128), 0, 10_000)
     preference_input = _optional_string(payload.get("preference_input"))
     run_dpo = bool(payload.get("run_dpo", False))
     dpo_steps = _bounded_int(payload.get("dpo_steps", 100), 1, 100_000)
     dpo_beta = _bounded_float(payload.get("dpo_beta", 0.1), 0.0, 10.0)
     timeout_hours = _bounded_int(payload.get("timeout_hours", 12), 1, 168)
     secret_name = _optional_string(payload.get("secret_name"))
+
+    launch_readiness = remote_status_plan()
+    blocking_checks = [
+        check for check in launch_readiness.get("checks", [])
+        if check.get("status") == "block"
+    ]
+    if blocking_checks:
+        summary = "; ".join(f"{check.get('label')}: {check.get('detail')}" for check in blocking_checks)
+        raise ValueError(f"Modal readiness blocked: {summary}")
 
     out_dir = _safe_child(Path(runs_dir), run_name)
     if out_dir.exists() and any(out_dir.iterdir()):
@@ -2203,8 +2425,6 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
         "--scale", scale,
         "--gpu", gpu,
         "--mode", mode,
-        "--hf-dataset", hf_dataset,
-        "--hf-max-rows", str(hf_max_rows),
     ]
     if dataset_pack:
         command.extend(["--dataset-pack", dataset_pack])
@@ -2221,11 +2441,20 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
             "--hf-lora-rank", str(hf_lora_rank),
             "--hf-lora-alpha", str(hf_lora_alpha),
             "--hf-quantize", hf_quantize,
+            "--security-source", security_source,
+            "--security-max-rows", str(security_max_rows),
+            "--security-eval-rows", str(security_eval_rows),
+            "--security-preference-rows", str(security_preference_rows),
         ])
         if preference_input:
             command.extend(["--preference-input", preference_input])
         if run_dpo:
             command.extend(["--run-dpo", "--dpo-steps", str(dpo_steps), "--dpo-beta", str(dpo_beta)])
+    else:
+        command.extend([
+            "--hf-dataset", hf_dataset,
+            "--hf-max-rows", str(hf_max_rows),
+        ])
     if secret_name:
         command.extend(["--secret-name", secret_name])
     command.extend(["--timeout-hours", str(timeout_hours)])
@@ -2265,14 +2494,27 @@ def remote_modal_start_plan(runs_dir: str | Path, payload: dict) -> dict:
             "scale": scale,
             "mode": mode,
             "dataset_pack": dataset_pack,
-            "hf_dataset": hf_dataset,
+            "hf_dataset": hf_dataset if mode == "native" else None,
             "hf_model": hf_model if mode == "hf-sft" else None,
             "hf_sft_steps": hf_sft_steps if mode == "hf-sft" else None,
             "hf_batch_size": hf_batch_size if mode == "hf-sft" else None,
             "hf_grad_accum_steps": hf_grad_accum_steps if mode == "hf-sft" else None,
+            "hf_learning_rate": hf_learning_rate if mode == "hf-sft" else None,
+            "hf_max_length": hf_max_length if mode == "hf-sft" else None,
+            "hf_lora_rank": hf_lora_rank if mode == "hf-sft" else None,
+            "hf_lora_alpha": hf_lora_alpha if mode == "hf-sft" else None,
+            "security_source": security_source if mode == "hf-sft" else None,
+            "security_max_rows": security_max_rows if mode == "hf-sft" else None,
+            "security_eval_rows": security_eval_rows if mode == "hf-sft" else None,
+            "security_preference_rows": security_preference_rows if mode == "hf-sft" else None,
+            "preference_input": preference_input if mode == "hf-sft" else None,
+            "run_dpo": run_dpo if mode == "hf-sft" else False,
+            "dpo_steps": dpo_steps if mode == "hf-sft" and run_dpo else None,
+            "dpo_beta": dpo_beta if mode == "hf-sft" and run_dpo else None,
             "timeout_hours": timeout_hours,
             "run_name": run_name,
         },
+        "launch_readiness": launch_readiness,
     }
     _register_run_job(job_id, job)
     _write_job_record(out_dir, job)
@@ -3319,6 +3561,7 @@ def _run_job_status(job: dict) -> dict:
     state = "running" if returncode is None else "succeeded" if returncode == 0 else "failed"
     summary_path = Path(job["out_dir"]) / "summary.json"
     log_tail = _read_log_tail(Path(job["log_path"]))
+    diagnostic = diagnose_remote_failure(log_tail)
     if returncode is not None:
         _write_returncode(Path(job["out_dir"]) / "web_returncode.txt", returncode)
     return {
@@ -3334,6 +3577,7 @@ def _run_job_status(job: dict) -> dict:
         "elapsed_seconds": max(0, round(time.time() - job["started_at"], 1)),
         "summary_exists": summary_path.exists(),
         "log_tail": log_tail,
+        "diagnostic": diagnostic,
         "progress": _parse_run_progress(log_tail, state=state, summary_exists=summary_path.exists()),
         "can_cancel": state == "running",
         "source": "active",
@@ -3375,6 +3619,7 @@ def _discover_run_jobs(runs_dir: str | Path, limit: int = 20) -> list[dict]:
         unfinished = returncode is None and not summary_exists
         alive = bool(record) and unfinished and _pid_alive(pid)
         log_tail = _read_log_tail(log_path)
+        diagnostic = diagnose_remote_failure(log_tail)
         if summary_exists:
             state = "succeeded"
         elif returncode not in (None, 0):
@@ -3400,6 +3645,7 @@ def _discover_run_jobs(runs_dir: str | Path, limit: int = 20) -> list[dict]:
             "elapsed_seconds": round(time.time() - started_at, 1) if (alive and started_at) else None,
             "summary_exists": summary_exists,
             "log_tail": log_tail,
+            "diagnostic": diagnostic,
             "progress": _parse_run_progress(log_tail, state=state, summary_exists=summary_exists),
             "can_cancel": alive,
             "source": "orphan" if alive else "disk",

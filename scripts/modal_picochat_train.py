@@ -17,8 +17,10 @@ Example:
       --hf-sft-steps 3000 \
       --hf-batch-size 1 \
       --hf-grad-accum-steps 4 \
-      --hf-dataset karpathy/climbmix-400b-shuffle \
-      --hf-max-rows 800000
+      --security-source trendyol \
+      --security-max-rows 10000 \
+      --security-eval-rows 500 \
+      --security-preference-rows 128
 """
 
 from __future__ import annotations
@@ -155,7 +157,12 @@ def _resolve_dataset_pack(
     return _import_hf_dataset(hf_dataset, hf_split, hf_text_column, hf_max_rows, hf_shards)
 
 
-def _build_security_pack_on_modal(hf_max_rows: int) -> Path:
+def _build_security_pack_on_modal(
+    security_source: str,
+    security_max_rows: int,
+    security_eval_rows: int,
+    security_preference_rows: int,
+) -> Path:
     out_dir = RUNS_DIR / "security-analyst-pack"
     seed_dir = REPO_DIR / "datasets" / "security-analyst"
     if not seed_dir.exists():
@@ -163,6 +170,9 @@ def _build_security_pack_on_modal(hf_max_rows: int) -> Path:
             f"missing security seed directory in cloned repo: {seed_dir}. "
             "Commit datasets/security-analyst before launching this Modal recipe."
         )
+    source = (security_source or "trendyol").strip().lower()
+    if source not in {"trendyol", "seed"}:
+        raise ValueError("security_source must be trendyol or seed")
     _run(
         [
             sys.executable,
@@ -171,17 +181,17 @@ def _build_security_pack_on_modal(hf_max_rows: int) -> Path:
             "data",
             "security-pack",
             "--source",
-            "trendyol",
+            source,
             "--out-dir",
             str(out_dir),
             "--seed-dir",
             str(seed_dir),
             "--trendyol-max-rows",
-            str(hf_max_rows),
+            str(security_max_rows),
             "--eval-rows",
-            "500",
+            str(security_eval_rows),
             "--preference-rows",
-            "128",
+            str(security_preference_rows),
             "--force",
         ],
         cwd=REPO_DIR,
@@ -189,7 +199,13 @@ def _build_security_pack_on_modal(hf_max_rows: int) -> Path:
     return out_dir / "dataset_pack.json"
 
 
-def _resolve_hf_sft_dataset_pack(dataset_pack: str, hf_max_rows: int) -> Path:
+def _resolve_hf_sft_dataset_pack(
+    dataset_pack: str,
+    security_source: str,
+    security_max_rows: int,
+    security_eval_rows: int,
+    security_preference_rows: int,
+) -> Path:
     if dataset_pack:
         candidate = Path(dataset_pack)
         if not candidate.is_absolute():
@@ -200,7 +216,12 @@ def _resolve_hf_sft_dataset_pack(dataset_pack: str, hf_max_rows: int) -> Path:
             f"HF-SFT dataset pack not found on Modal image: {candidate}; rebuilding the security pack on Modal",
             flush=True,
         )
-    return _build_security_pack_on_modal(hf_max_rows)
+    return _build_security_pack_on_modal(
+        security_source,
+        security_max_rows,
+        security_eval_rows,
+        security_preference_rows,
+    )
 
 
 def _resolve_repo_path(path_text: str) -> Path:
@@ -342,8 +363,16 @@ def _run_hf_sft_training(
                 str(dpo_dir),
                 "--max-steps",
                 str(dpo_steps),
+                "--max-length",
+                str(hf_max_length),
+                "--lora-rank",
+                str(hf_lora_rank),
+                "--lora-alpha",
+                str(hf_lora_alpha),
                 "--beta",
                 str(dpo_beta),
+                "--log-every",
+                str(hf_log_every),
                 "--device",
                 "cuda",
             ],
@@ -378,6 +407,10 @@ def train_remote(
     hf_lora_rank: int,
     hf_lora_alpha: float,
     hf_quantize: str,
+    security_source: str,
+    security_max_rows: int,
+    security_eval_rows: int,
+    security_preference_rows: int,
     preference_input: str,
     run_dpo: bool,
     dpo_steps: int,
@@ -388,7 +421,13 @@ def train_remote(
     _install_repo()
     mode = (mode or "native").strip().lower()
     if mode == "hf-sft":
-        pack_path = _resolve_hf_sft_dataset_pack(dataset_pack, hf_max_rows)
+        pack_path = _resolve_hf_sft_dataset_pack(
+            dataset_pack,
+            security_source,
+            security_max_rows,
+            security_eval_rows,
+            security_preference_rows,
+        )
         out_dir = _run_hf_sft_training(
             pack_path,
             run_name,
@@ -450,6 +489,10 @@ def main(
     hf_lora_rank: int = 16,
     hf_lora_alpha: float = 32.0,
     hf_quantize: str = "4bit",
+    security_source: str = "trendyol",
+    security_max_rows: int = 10000,
+    security_eval_rows: int = 500,
+    security_preference_rows: int = 128,
     preference_input: str = "",
     run_dpo: bool = False,
     dpo_steps: int = 100,
@@ -487,6 +530,10 @@ def main(
         hf_lora_rank,
         hf_lora_alpha,
         hf_quantize,
+        security_source,
+        security_max_rows,
+        security_eval_rows,
+        security_preference_rows,
         preference_input,
         run_dpo,
         dpo_steps,

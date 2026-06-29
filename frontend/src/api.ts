@@ -182,7 +182,7 @@ export function serveStop(run: string): Promise<{ stopped: boolean; run: string 
   return jsonRequest("/api/serve/stop", { method: "POST", body: JSON.stringify({ run }) });
 }
 
-export function remoteStatus(): Promise<{ modal_available: boolean; modal_script: boolean }> {
+export function remoteStatus(): Promise<Record<string, any>> {
   return jsonRequest("/api/remote/status");
 }
 
