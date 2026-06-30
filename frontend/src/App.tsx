@@ -76,6 +76,16 @@ function readSettings(): SettingsState {
   }
 }
 
+const REMOTE_RECIPE_KEY = "picochat.remote.recipe";
+
+function readRemoteRecipe(): Record<string, any> {
+  try {
+    return JSON.parse(localStorage.getItem(REMOTE_RECIPE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
 export default function App() {
   const [section, setSection] = useState<SectionId>("overview");
   const [runs, setRuns] = useState<RunSummary[]>([]);
@@ -1088,35 +1098,36 @@ const REMOTE_SCALES = ["smoke", "tiny", "small", "medium", "h100-100m", "h200-1b
 const REMOTE_GPUS = ["A100", "H100", "A10G", "L4", "T4"];
 
 function RemoteView({ openLogsFor, cloudSeed }: SectionProps) {
-  const [provider, setProvider] = useState<"modal" | "colab" | "lambda">("modal");
-  const [branch, setBranch] = useState("develop");
-  const [runName, setRunName] = useState("security-smollm3-3b-qlora-v1");
-  const [scale, setScale] = useState("h100-100m");
-  const [mode, setMode] = useState<"native" | "hf-sft">("hf-sft");
-  const [datasetPack, setDatasetPack] = useState("runs/security-analyst-pack-v1/dataset_pack.json");
-  const [hfDataset, setHfDataset] = useState("karpathy/climbmix-400b-shuffle");
-  const [hfMaxRows, setHfMaxRows] = useState(800000);
-  const [hfModel, setHfModel] = useState("HuggingFaceTB/SmolLM3-3B");
-  const [hfSftSteps, setHfSftSteps] = useState(3000);
-  const [hfBatchSize, setHfBatchSize] = useState(1);
-  const [hfGradAccumSteps, setHfGradAccumSteps] = useState(4);
-  const [hfEvalBatches, setHfEvalBatches] = useState(20);
-  const [hfLogEvery, setHfLogEvery] = useState(25);
-  const [hfLearningRate, setHfLearningRate] = useState("0.00002");
-  const [hfMaxLength, setHfMaxLength] = useState(1024);
-  const [hfLoraRank, setHfLoraRank] = useState(16);
-  const [hfLoraAlpha, setHfLoraAlpha] = useState(32);
-  const [securitySource, setSecuritySource] = useState<"trendyol" | "seed">("trendyol");
-  const [securityMaxRows, setSecurityMaxRows] = useState(10000);
-  const [securityEvalRows, setSecurityEvalRows] = useState(500);
-  const [securityPreferenceRows, setSecurityPreferenceRows] = useState(128);
-  const [timeoutHours, setTimeoutHours] = useState(12);
-  const [hfPreferenceInput, setHfPreferenceInput] = useState("runs/security-analyst-pack-v1/preferences.jsonl");
-  const [runDpo, setRunDpo] = useState(false);
-  const [dpoSteps, setDpoSteps] = useState(100);
-  const [dpoBeta, setDpoBeta] = useState("0.1");
-  const [gpu, setGpu] = useState("A100");
-  const [secretName, setSecretName] = useState("");
+  const savedRecipe = useMemo(() => readRemoteRecipe(), []);
+  const [provider, setProvider] = useState<"modal" | "colab" | "lambda">(["modal", "colab", "lambda"].includes(savedRecipe.provider) ? savedRecipe.provider : "modal");
+  const [branch, setBranch] = useState(savedRecipe.branch || "develop");
+  const [runName, setRunName] = useState(savedRecipe.runName || "security-smollm3-3b-qlora-v1");
+  const [scale, setScale] = useState(savedRecipe.scale || "h100-100m");
+  const [mode, setMode] = useState<"native" | "hf-sft">(["native", "hf-sft"].includes(savedRecipe.mode) ? savedRecipe.mode : "hf-sft");
+  const [datasetPack, setDatasetPack] = useState(savedRecipe.datasetPack || "runs/security-analyst-pack-v1/dataset_pack.json");
+  const [hfDataset, setHfDataset] = useState(savedRecipe.hfDataset || "karpathy/climbmix-400b-shuffle");
+  const [hfMaxRows, setHfMaxRows] = useState(Number(savedRecipe.hfMaxRows) || 800000);
+  const [hfModel, setHfModel] = useState(savedRecipe.hfModel || "HuggingFaceTB/SmolLM3-3B");
+  const [hfSftSteps, setHfSftSteps] = useState(Number(savedRecipe.hfSftSteps) || 3000);
+  const [hfBatchSize, setHfBatchSize] = useState(Number(savedRecipe.hfBatchSize) || 1);
+  const [hfGradAccumSteps, setHfGradAccumSteps] = useState(Number(savedRecipe.hfGradAccumSteps) || 4);
+  const [hfEvalBatches, setHfEvalBatches] = useState(Number(savedRecipe.hfEvalBatches) || 20);
+  const [hfLogEvery, setHfLogEvery] = useState(Number(savedRecipe.hfLogEvery) || 25);
+  const [hfLearningRate, setHfLearningRate] = useState(savedRecipe.hfLearningRate || "0.00002");
+  const [hfMaxLength, setHfMaxLength] = useState(Number(savedRecipe.hfMaxLength) || 1024);
+  const [hfLoraRank, setHfLoraRank] = useState(Number(savedRecipe.hfLoraRank) || 16);
+  const [hfLoraAlpha, setHfLoraAlpha] = useState(Number(savedRecipe.hfLoraAlpha) || 32);
+  const [securitySource, setSecuritySource] = useState<"trendyol" | "seed">(["trendyol", "seed"].includes(savedRecipe.securitySource) ? savedRecipe.securitySource : "trendyol");
+  const [securityMaxRows, setSecurityMaxRows] = useState(Number(savedRecipe.securityMaxRows) || 10000);
+  const [securityEvalRows, setSecurityEvalRows] = useState(Number(savedRecipe.securityEvalRows) || 500);
+  const [securityPreferenceRows, setSecurityPreferenceRows] = useState(Number(savedRecipe.securityPreferenceRows) || 128);
+  const [timeoutHours, setTimeoutHours] = useState(Number(savedRecipe.timeoutHours) || 12);
+  const [hfPreferenceInput, setHfPreferenceInput] = useState(savedRecipe.hfPreferenceInput || "runs/security-analyst-pack-v1/preferences.jsonl");
+  const [runDpo, setRunDpo] = useState(Boolean(savedRecipe.runDpo));
+  const [dpoSteps, setDpoSteps] = useState(Number(savedRecipe.dpoSteps) || 100);
+  const [dpoBeta, setDpoBeta] = useState(savedRecipe.dpoBeta || "0.1");
+  const [gpu, setGpu] = useState(savedRecipe.gpu || "A100");
+  const [secretName, setSecretName] = useState(savedRecipe.secretName || "");
   const [modal, setModal] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -1138,6 +1149,21 @@ function RemoteView({ openLogsFor, cloudSeed }: SectionProps) {
     setScale("h100-100m");
     setGpu("A100");
   }, [cloudSeed]);
+  useEffect(() => {
+    localStorage.setItem(REMOTE_RECIPE_KEY, JSON.stringify({
+      provider, branch, runName, scale, mode, datasetPack, hfDataset, hfMaxRows, hfModel,
+      hfSftSteps, hfBatchSize, hfGradAccumSteps, hfEvalBatches, hfLogEvery, hfLearningRate,
+      hfMaxLength, hfLoraRank, hfLoraAlpha, securitySource, securityMaxRows, securityEvalRows,
+      securityPreferenceRows, timeoutHours, hfPreferenceInput, runDpo, dpoSteps, dpoBeta, gpu,
+      secretName
+    }));
+  }, [
+    provider, branch, runName, scale, mode, datasetPack, hfDataset, hfMaxRows, hfModel,
+    hfSftSteps, hfBatchSize, hfGradAccumSteps, hfEvalBatches, hfLogEvery, hfLearningRate,
+    hfMaxLength, hfLoraRank, hfLoraAlpha, securitySource, securityMaxRows, securityEvalRows,
+    securityPreferenceRows, timeoutHours, hfPreferenceInput, runDpo, dpoSteps, dpoBeta, gpu,
+    secretName
+  ]);
 
   const modalChecks = (modal?.checks || []) as Array<Record<string, any>>;
   const modalHasBlockingChecks = modalChecks.some((check) => check.status === "block");
@@ -1203,6 +1229,10 @@ function RemoteView({ openLogsFor, cloudSeed }: SectionProps) {
   const dpoCommand = runDpo
     ? `\npicochat train hf-dpo --model runs/${runName}/final_model --input ${preferenceInput} --out-dir runs/${runName}/dpo --device cuda --max-steps ${dpoSteps} --learning-rate 0.000005 --beta ${dpoBeta} --max-length ${hfMaxLength} --lora-rank ${hfLoraRank} --lora-alpha ${hfLoraAlpha} --log-every ${hfLogEvery}`
     : "";
+  const trainingPasses = compactNumber(hfSftSteps * hfBatchSize * hfGradAccumSteps);
+  const artifactHome = provider === "modal"
+    ? `Modal volume picochat-runs/${runName}`
+    : `remote runs/${runName}`;
   const colabDpoCommand = runDpo ? `\n!${dpoCommand.trim()}` : "";
   const colabSnippet = mode === "hf-sft"
     ? `!git clone --depth 1 --branch ${branch} ${REMOTE_REPO} picochat\n%cd picochat\n!pip install -q -e ".[hf,qlora,dpo]"\n!${securityPackCommand}\n!picochat train hf-sft --model ${hfModel} --input ${chatInput} --out-dir runs/${runName} --device cuda --precision bf16 --peft lora --quantize 4bit --max-steps ${hfSftSteps} --batch-size ${hfBatchSize} --grad-accum-steps ${hfGradAccumSteps} --learning-rate ${hfLearningRate} --max-length ${hfMaxLength} --lora-rank ${hfLoraRank} --lora-alpha ${hfLoraAlpha} --eval-batches ${hfEvalBatches} --log-every ${hfLogEvery} --gradient-checkpointing${colabDpoCommand}`
@@ -1248,6 +1278,35 @@ function RemoteView({ openLogsFor, cloudSeed }: SectionProps) {
         </Panel>
       </div>
 
+      <Panel title="Run passport" sub="Review this before launch">
+        <div className="pc-passport-grid">
+          <div>
+            <Database size={16} />
+            <span>Dataset</span>
+            <strong>{mode === "hf-sft" ? "Security Analyst pack" : hfDataset}</strong>
+            <p>{mode === "hf-sft" ? `${securitySource === "trendyol" ? compactNumber(securityMaxRows) + " Trendyol rows + seed rows" : "seed rows only"} · ${securityEvalRows} held-out eval · ${securityPreferenceRows} preference pairs` : `${compactNumber(hfMaxRows)} rows from Hugging Face`}</p>
+          </div>
+          <div>
+            <Cpu size={16} />
+            <span>Training</span>
+            <strong>{mode === "hf-sft" ? `${hfModel.split("/").pop()} QLoRA` : `${scale} native run`}</strong>
+            <p>{mode === "hf-sft" ? `${trainingPasses} sample passes · max length ${hfMaxLength} · LoRA r${hfLoraRank}/a${hfLoraAlpha}` : `dataset pack import + picochat native ${scale}`}</p>
+          </div>
+          <div>
+            <ShieldCheck size={16} />
+            <span>Gate</span>
+            <strong>{runDpo ? "SFT + DPO" : "SFT only"}</strong>
+            <p>{runDpo ? `${dpoSteps} DPO steps from ${preferenceInput}` : "DPO is off; use held-out eval before publishing."}</p>
+          </div>
+          <div>
+            <Download size={16} />
+            <span>Artifacts</span>
+            <strong>{artifactHome}</strong>
+            <p>Expect final_model, best_model, report.md, train_log.jsonl, and eval evidence.</p>
+          </div>
+        </div>
+      </Panel>
+
       <div className="pc-grid two">
         <Panel title="Recipe" sub="Shared across providers">
           <label className="pc-field">Run name<input value={runName} onChange={(e) => setRunName(e.target.value)} /></label>
@@ -1292,7 +1351,7 @@ function RemoteView({ openLogsFor, cloudSeed }: SectionProps) {
               </div>
               <div className="pc-grid two">
                 <label className="pc-field">Preferences<input value={hfPreferenceInput} onChange={(e) => setHfPreferenceInput(e.target.value)} /></label>
-                <label className="pc-field">Training examples covered<input value={`${compactNumber(hfSftSteps * hfBatchSize * hfGradAccumSteps)} sample passes`} readOnly /></label>
+                <label className="pc-field">Training examples covered<input value={`${trainingPasses} sample passes`} readOnly /></label>
               </div>
               <div className="pc-hint">Default is not a tiny run: 3,000 optimizer steps × batch {hfBatchSize} × grad accumulation {hfGradAccumSteps}. For your 9.6k-row security pack, that is roughly a full-pass run with validation.</div>
               <label className="pc-check"><input type="checkbox" checked={runDpo} onChange={(e) => setRunDpo(e.target.checked)} /> Run DPO after SFT if preferences exist</label>
