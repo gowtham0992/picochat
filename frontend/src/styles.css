@@ -456,6 +456,13 @@ input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; accent-color:
 .pc-passport-grid span { color: var(--faint); font-family: var(--mono); font-size: 10.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .pc-passport-grid strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 13.5px; letter-spacing: -.01em; }
 .pc-passport-grid p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.pc-publish-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.pc-publish-grid > div { min-width: 0; display: grid; align-content: start; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: color-mix(in srgb, var(--panel) 94%, var(--iris) 6%); }
+.pc-publish-grid svg { color: var(--iris); }
+.pc-publish-grid strong { color: var(--text); font-size: 14px; letter-spacing: -.01em; }
+.pc-publish-grid p { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.pc-publish-grid .pc-serve-snip { margin-top: 0; }
+.pc-publish-grid .pc-field { margin: 0; }
 
 .pc-diagnostic { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); }
 .pc-diagnostic > svg { margin-top: 1px; }
@@ -539,7 +546,7 @@ button.pc-lb-tr:hover { background: color-mix(in srgb, var(--text) 4%, transpare
   .pc-scrim { position: fixed; inset: 0; z-index: 45; background: rgba(0,0,0,0.5); border: none; }
   .pc-burger { display: inline-flex; }
   .pc-grid.two, .pc-grid.three, .pc-grid.fourish { grid-template-columns: 1fr; }
-  .pc-passport-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pc-passport-grid, .pc-publish-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pc-provider-grid { grid-template-columns: 1fr; }
   .pc-evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pc-overview-top { flex-direction: column; align-items: flex-start; }
@@ -551,7 +558,7 @@ button.pc-lb-tr:hover { background: color-mix(in srgb, var(--text) 4%, transpare
   .pc-content { padding: 14px; }
   .pc-kpis, .pc-kpis.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pc-welcome-steps { grid-template-columns: 1fr; }
-  .pc-passport-grid { grid-template-columns: 1fr; }
+  .pc-passport-grid, .pc-publish-grid { grid-template-columns: 1fr; }
   .pc-evidence-grid { grid-template-columns: 1fr; }
   .pc-kbd { display: none; }
   .pc-tr { grid-template-columns: minmax(0, 2fr) 0.8fr 1fr; }

@@ -1128,6 +1128,7 @@ function RemoteView({ openLogsFor, cloudSeed }: SectionProps) {
   const [dpoBeta, setDpoBeta] = useState(savedRecipe.dpoBeta || "0.1");
   const [gpu, setGpu] = useState(savedRecipe.gpu || "A100");
   const [secretName, setSecretName] = useState(savedRecipe.secretName || "");
+  const [hfRepoId, setHfRepoId] = useState(savedRecipe.hfRepoId || "gowtham0992/security-smollm3-3b-qlora");
   const [modal, setModal] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -1155,14 +1156,14 @@ function RemoteView({ openLogsFor, cloudSeed }: SectionProps) {
       hfSftSteps, hfBatchSize, hfGradAccumSteps, hfEvalBatches, hfLogEvery, hfLearningRate,
       hfMaxLength, hfLoraRank, hfLoraAlpha, securitySource, securityMaxRows, securityEvalRows,
       securityPreferenceRows, timeoutHours, hfPreferenceInput, runDpo, dpoSteps, dpoBeta, gpu,
-      secretName
+      secretName, hfRepoId
     }));
   }, [
     provider, branch, runName, scale, mode, datasetPack, hfDataset, hfMaxRows, hfModel,
     hfSftSteps, hfBatchSize, hfGradAccumSteps, hfEvalBatches, hfLogEvery, hfLearningRate,
     hfMaxLength, hfLoraRank, hfLoraAlpha, securitySource, securityMaxRows, securityEvalRows,
     securityPreferenceRows, timeoutHours, hfPreferenceInput, runDpo, dpoSteps, dpoBeta, gpu,
-    secretName
+    secretName, hfRepoId
   ]);
 
   const modalChecks = (modal?.checks || []) as Array<Record<string, any>>;
@@ -1240,6 +1241,18 @@ function RemoteView({ openLogsFor, cloudSeed }: SectionProps) {
   const lambdaSnippet = mode === "hf-sft"
     ? `# On a fresh Lambda GPU instance (cloud.lambda.ai):\ngit clone -b ${branch} ${REMOTE_REPO} && cd picochat\npip install -e ".[hf,qlora,dpo]"\n${securityPackCommand}\npicochat train hf-sft --model ${hfModel} --input ${chatInput} --out-dir runs/${runName} --device cuda --precision bf16 --peft lora --quantize 4bit --max-steps ${hfSftSteps} --batch-size ${hfBatchSize} --grad-accum-steps ${hfGradAccumSteps} --learning-rate ${hfLearningRate} --max-length ${hfMaxLength} --lora-rank ${hfLoraRank} --lora-alpha ${hfLoraAlpha} --eval-batches ${hfEvalBatches} --log-every ${hfLogEvery} --gradient-checkpointing${dpoCommand}`
     : `# On a fresh Lambda GPU instance (cloud.lambda.ai):\ngit clone -b ${branch} ${REMOTE_REPO} && cd picochat\npip install -e ".[hf]"\npicochat data hf-import --dataset ${hfDataset} --pack-out my_pack --max-rows ${Math.min(hfMaxRows, 100000)}\npicochat run ${scale} --dataset-pack my_pack/dataset_pack.json --device cuda --out-dir runs/${runName}`;
+  const pullSnippet = provider === "modal"
+    ? `modal volume get picochat-runs ${runName} runs`
+    : `# Copy the finished remote folder back to this machine as:\n# runs/${runName}`;
+  const serveSnippet = mode === "hf-sft"
+    ? `picochat serve --hf-model runs/${runName}/best_model --host 127.0.0.1 --port 8000 --model-name ${runName} --device auto`
+    : `picochat serve --checkpoint runs/${runName}/sft/checkpoint --tokenizer runs/${runName}/tokenizer.json --host 127.0.0.1 --port 8000 --model-name ${runName}`;
+  const evalSnippet = mode === "hf-sft"
+    ? `picochat eval lm-harness --model-path runs/${runName}/best_model --tasks arc_easy,hellaswag --out-dir runs/${runName}/lm-eval --device cuda --batch-size auto --limit 200`
+    : `picochat eval chat --input ${datasetPack.replace(/dataset_pack\.json$/, "eval.jsonl")} --checkpoint runs/${runName}/sft/checkpoint --tokenizer runs/${runName}/tokenizer.json --out-dir runs/${runName}/eval --device cpu`;
+  const publishSnippet = mode === "hf-sft"
+    ? `huggingface-cli repo create ${hfRepoId} --type model --yes\nhuggingface-cli upload ${hfRepoId} runs/${runName}/best_model .\nhuggingface-cli upload ${hfRepoId} runs/${runName}/report.md reports/report.md`
+    : `picochat export hf --checkpoint runs/${runName}/sft/checkpoint --tokenizer runs/${runName}/tokenizer.json --out-dir runs/${runName}/export-hf --model-name ${runName} --repo-id ${hfRepoId} --push-to-hub`;
 
   return (
     <div className="pc-stack pc-editorial">
@@ -1417,6 +1430,36 @@ function RemoteView({ openLogsFor, cloudSeed }: SectionProps) {
           </Panel>
         ) : null}
       </div>
+
+      <Panel title="Finish, verify, publish" sub="Use this after the cloud job finishes">
+        <div className="pc-publish-grid">
+          <div>
+            <Download size={17} />
+            <strong>1. Pull artifacts</strong>
+            <p>Bring the remote run folder into local <code>runs/</code> so the dashboard, playground, and reports can see it.</p>
+            <CodeBlock code={pullSnippet} />
+          </div>
+          <div>
+            <MessageSquare size={17} />
+            <strong>2. Serve locally</strong>
+            <p>Start the OpenAI-compatible local endpoint and test real defensive-security prompts before publishing.</p>
+            <CodeBlock code={serveSnippet} />
+          </div>
+          <div>
+            <BarChart3 size={17} />
+            <strong>3. Run outside checks</strong>
+            <p>Keep the training report, held-out eval, and at least one external benchmark next to the model card.</p>
+            <CodeBlock code={evalSnippet} />
+          </div>
+          <div>
+            <Upload size={17} />
+            <strong>4. Publish proof</strong>
+            <p>Upload the model/adapters with the run report. Do not publish a security model without eval and contamination evidence.</p>
+            <label className="pc-field">Hub model repo<input value={hfRepoId} onChange={(e) => setHfRepoId(e.target.value)} /></label>
+            <CodeBlock code={publishSnippet} />
+          </div>
+        </div>
+      </Panel>
     </div>
   );
 }
