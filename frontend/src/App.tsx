@@ -1172,6 +1172,13 @@ function RemoteView({ openLogsFor, cloudSeed }: SectionProps) {
   const modalDisabled = Boolean(modal && modalHasBlockingChecks);
   const gpuInfo = ((modal?.gpu_catalog || []) as Array<Record<string, any>>).find((g) => g.id === gpu);
   const localErrDiagnostic = err ? remoteDiagnosticFromText(err) : null;
+  const recoveryDiagnostics = dedupeDiagnostics([
+    ...(((modal?.common_errors || []) as Array<Record<string, any>>).filter(Boolean)),
+    remoteDiagnosticFromText("CUDA out of memory"),
+    remoteDiagnosticFromText("401 Unauthorized: access to this gated model is restricted"),
+    remoteDiagnosticFromText("No such file or directory: dataset_pack.json"),
+    remoteDiagnosticFromText("run output already exists"),
+  ]);
 
   const launchModal = async () => {
     setBusy(true); setErr("");
@@ -1279,6 +1286,15 @@ function RemoteView({ openLogsFor, cloudSeed }: SectionProps) {
               </button>
             ))}
           </div>
+          <RemoteRecoveryCards
+            diagnostics={recoveryDiagnostics}
+            onSetGpu={(nextGpu) => { setGpu(nextGpu); setErr(""); }}
+            onSetMaxLength={(nextLength) => setHfMaxLength(nextLength)}
+            onSetSecret={() => setSecretName(secretName || "hf-secret")}
+            onNewRunName={() => setRunName(`${runName.replace(/-\d{8,}$/, "")}-${Date.now().toString().slice(-6)}`)}
+            onUseColab={() => setProvider("colab")}
+            onUseLambda={() => setProvider("lambda")}
+          />
         </Panel>
         <Panel title="Security SLM path" sub="Evidence-first sequence">
           <WorkflowSteps steps={[
@@ -1521,6 +1537,7 @@ function remoteDiagnosticFromText(text: string): Record<string, any> | null {
   }
   if (lower.includes("cuda out of memory") || lower.includes("outofmemoryerror")) {
     return {
+      kind: "gpu_oom",
       severity: "block",
       title: "GPU ran out of memory",
       detail: "Reduce max length, batch size, LoRA rank, or use a larger GPU.",
@@ -1542,14 +1559,25 @@ function remoteDiagnosticFromText(text: string): Record<string, any> | null {
   );
   if (hfAuthFailure) {
     return {
+      kind: "hf_auth",
       severity: "block",
       title: "Hugging Face authentication failed",
       detail: "The remote job could not access a gated dataset or model.",
       action: "Create a Modal secret containing HF_TOKEN and pass that secret name."
     };
   }
+  if (lower.includes("no such file or directory") && lower.includes("dataset_pack")) {
+    return {
+      kind: "missing_dataset_pack",
+      severity: "block",
+      title: "Remote job could not find the dataset pack",
+      detail: "The cloud machine did not have that local pack path. Rebuild the security pack on the remote job or pull artifacts into the same path.",
+      action: "Use the Security Analyst recipe or confirm the dataset_pack.json path exists remotely."
+    };
+  }
   if (lower.includes("already exists")) {
     return {
+      kind: "run_exists",
       severity: "warn",
       title: "Run output already exists",
       detail: "Picochat refuses to overwrite existing run folders.",
@@ -1587,6 +1615,72 @@ function RemoteDiagnostic({
         ) : null}
       </div>
       {onClose ? <button onClick={onClose} aria-label="Dismiss"><X size={15} /></button> : null}
+    </div>
+  );
+}
+
+function dedupeDiagnostics(items: Array<Record<string, any> | null>): Array<Record<string, any>> {
+  const seen = new Set<string>();
+  const out: Array<Record<string, any>> = [];
+  for (const item of items) {
+    if (!item) continue;
+    const key = String(item.kind || item.title || out.length);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+function RemoteRecoveryCards({
+  diagnostics,
+  onSetGpu,
+  onSetMaxLength,
+  onSetSecret,
+  onNewRunName,
+  onUseColab,
+  onUseLambda,
+}: {
+  diagnostics: Array<Record<string, any>>;
+  onSetGpu: (gpu: string) => void;
+  onSetMaxLength: (length: number) => void;
+  onSetSecret: () => void;
+  onNewRunName: () => void;
+  onUseColab: () => void;
+  onUseLambda: () => void;
+}) {
+  if (!diagnostics.length) return null;
+  return (
+    <div className="pc-recovery-list">
+      <span className="pc-eyebrow">Recovery guide</span>
+      {diagnostics.map((diagnostic) => (
+        <div key={diagnostic.kind || diagnostic.title} className={`pc-recovery-card ${diagnostic.severity || "info"}`}>
+          <div>
+            <strong>{diagnostic.title}</strong>
+            <p>{diagnostic.detail}</p>
+            {diagnostic.action ? <code>{diagnostic.action}</code> : null}
+          </div>
+          <div className="pc-recovery-actions">
+            {diagnostic.kind === "modal_payment_required" ? (
+              <>
+                <button className="pc-btn ghost" onClick={() => onSetGpu("L4")}>Use L4</button>
+                <button className="pc-btn ghost" onClick={() => onSetGpu("A10G")}>Use A10G</button>
+                <button className="pc-btn ghost" onClick={onUseColab}>Use Colab</button>
+              </>
+            ) : null}
+            {diagnostic.kind === "gpu_oom" ? (
+              <>
+                <button className="pc-btn ghost" onClick={() => onSetMaxLength(512)}>Max length 512</button>
+                <button className="pc-btn ghost" onClick={() => onSetGpu("A100")}>Use A100</button>
+                <button className="pc-btn ghost" onClick={() => onSetGpu("H100")}>Use H100</button>
+              </>
+            ) : null}
+            {diagnostic.kind === "hf_auth" ? <button className="pc-btn ghost" onClick={onSetSecret}>Use hf-secret</button> : null}
+            {diagnostic.kind === "missing_dataset_pack" ? <button className="pc-btn ghost" onClick={onUseLambda}>Use remote rebuild command</button> : null}
+            {diagnostic.kind === "run_exists" ? <button className="pc-btn ghost" onClick={onNewRunName}>Use a new run name</button> : null}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
